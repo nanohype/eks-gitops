@@ -1,0 +1,48 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(make *)",
+      "Bash(yamllint *)",
+      "Bash(kustomize *)",
+      "Bash(helm search *)",
+      "Bash(helm repo *)",
+      "Bash(diff *)",
+      "Bash(mkdir -p rendered*)",
+      "Bash(ls *)",
+      "Bash(rm -rf rendered/)",
+      "Bash(cat rendered/*)"
+    ],
+    "deny": [
+      "Bash(kubectl *)",
+      "Bash(argocd *)",
+      "Bash(helm install *)",
+      "Bash(helm upgrade *)",
+      "Bash(helm uninstall *)",
+      "Bash(helm delete *)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "file_path=$(cat /dev/stdin | jq -r '.tool_input.file_path // .tool_input.filePath // empty'); if [ -n \"$file_path\" ] && echo \"$file_path\" | grep -qE '\\.ya?ml$'; then echo \"Running yamllint on $file_path...\"; yamllint -c .yamllint.yaml \"$file_path\" || true; fi"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "file_path=$(cat /dev/stdin | jq -r '.tool_input.file_path // .tool_input.filePath // empty'); if [ -n \"$file_path\" ] && echo \"$file_path\" | grep -q '/rendered/'; then echo 'BLOCKED: rendered/ is generated output (.gitignore). Do not edit files in rendered/ directly.'; exit 2; fi"
+          }
+        ]
+      }
+    ]
+  }
+}

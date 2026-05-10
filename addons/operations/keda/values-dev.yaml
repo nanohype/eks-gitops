@@ -1,0 +1,16 @@
+# KEDA - Dev overrides
+# Single replicas for cost
+
+serviceAccount:
+  operator:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/dev-eks-keda-operator
+
+operator:
+  replicaCount: 1
+
+metricsServer:
+  replicaCount: 1
+
+webhooks:
+  replicaCount: 1

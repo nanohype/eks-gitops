@@ -1,0 +1,8 @@
+# Falco - Dev overrides
+
+falco:
+  priority: notice
+
+resources:
+  limits:
+    memory: 1Gi

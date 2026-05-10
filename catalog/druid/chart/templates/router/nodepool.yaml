@@ -1,0 +1,9 @@
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: {{ include "druid.component.name" (list "router" .) }}-nodepool
+  labels:
+    {{- include "druid.component.labels" (list "router" .) | indent 4 }}
+  annotations:
+    {{- include "druid.component.annotations" (list "router" .) | indent 4 }}
+{{ include "druid.nodepool.spec" (list "router" .) }}

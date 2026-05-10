@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+# Dev: Audit mode (warn but don't block)
+patches:
+  - patch: |-
+      - op: replace
+        path: /spec/validationFailureAction
+        value: Audit
+    target:
+      kind: ClusterPolicy

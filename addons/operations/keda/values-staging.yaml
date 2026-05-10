@@ -1,0 +1,6 @@
+# KEDA - Staging overrides
+
+serviceAccount:
+  operator:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/staging-eks-keda-operator

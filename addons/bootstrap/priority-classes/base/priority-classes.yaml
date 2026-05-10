@@ -1,0 +1,50 @@
+# Priority Classes for EKS platform
+# Built-in K8s classes (not managed here):
+#   system-node-critical:    2000001000
+#   system-cluster-critical: 2000000000
+
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: platform-critical
+value: 1000000
+globalDefault: false
+preemptionPolicy: PreemptLowerPriority
+description: >-
+  Platform infrastructure that must not be evicted.
+  Use for: ArgoCD, cert-manager, external-secrets, kyverno, cilium.
+
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: platform-standard
+value: 100000
+globalDefault: false
+preemptionPolicy: PreemptLowerPriority
+description: >-
+  Platform services that tolerate brief disruption.
+  Use for: loki, tempo, velero, goldilocks, opencost, trivy.
+
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: tenant-critical
+value: 10000
+globalDefault: false
+preemptionPolicy: PreemptLowerPriority
+description: >-
+  Critical tenant workloads that should preempt standard workloads.
+
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: tenant-standard
+value: 0
+globalDefault: true
+preemptionPolicy: PreemptLowerPriority
+description: >-
+  Default priority for all workloads.

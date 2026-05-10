@@ -1,0 +1,43 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+patches:
+  - patch: |-
+      apiVersion: karpenter.sh/v1
+      kind: NodePool
+      metadata:
+        name: default
+      spec:
+        limits:
+          cpu: 50
+          memory: 100Gi
+        disruption:
+          budgets:
+            - nodes: "50%"
+    target:
+      kind: NodePool
+      name: default
+
+  - patch: |-
+      apiVersion: karpenter.k8s.aws/v1
+      kind: EC2NodeClass
+      metadata:
+        name: default
+      spec:
+        role: dev-eks-karpenter-node
+        subnetSelectorTerms:
+          - tags:
+              karpenter.sh/discovery: dev-eks
+              kubernetes.io/role/internal-elb: "1"
+        securityGroupSelectorTerms:
+          - tags:
+              aws:eks:cluster-name: dev-eks
+        tags:
+          environment: dev
+          managed-by: karpenter
+    target:
+      kind: EC2NodeClass
+      name: default

@@ -1,0 +1,19 @@
+# External Grafana CR — does NOT deploy a Grafana pod. The grafana-operator
+# pushes Dashboards/DataSources to the managed Grafana instance using the
+# API token in the referenced Secret.
+#
+# overlays/{env}/kustomization.yaml patches spec.external.url to the
+# environment's Amazon Managed Grafana endpoint.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: Grafana
+metadata:
+  name: external
+  labels:
+    dashboards: external
+spec:
+  external:
+    url: https://placeholder.grafana-workspace.us-west-2.amazonaws.com  # patched per-env
+    apiKey:
+      name: grafana-external-credentials
+      key: token
+  config: {}

@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-config
+  namespace: argocd
+  labels:
+    environment: staging
+data:
+  # Cluster identification
+  environment: "staging"
+  provider: "aws"
+  cluster_name: "staging-eks"
+
+  # AWS configuration
+  region: "us-west-2"
+
+  # Feature flags
+  veleroEnabled: "true"
+  goldilocksEnabled: "true"
+  hubbleUiEnabled: "true"
+  trivyAdmissionEnabled: "true"
+
+  # Karpenter configuration
+  karpenterCpuLimit: "75"
+  karpenterMemoryLimitGi: "150"
+  karpenterSpotEnabled: "true"
+
+  # Observability
+  lokiRetentionDays: "14"
+  tempoRetentionDays: "7"

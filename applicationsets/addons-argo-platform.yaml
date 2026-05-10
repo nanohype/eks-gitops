@@ -1,0 +1,80 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: addons-argo-platform
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "50"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  argocd.argoproj.io/secret-type: cluster
+          - list:
+              elements:
+                - appName: argo-rollouts
+                  namespace: argo-rollouts
+                  chartRepo: https://argoproj.github.io/argo-helm
+                  chart: argo-rollouts
+                  chartVersion: "2.39.1"
+                  path: addons/argo-platform/argo-rollouts
+                  syncWave: "50"
+                - appName: argo-events
+                  namespace: argo-events
+                  chartRepo: https://argoproj.github.io/argo-helm
+                  chart: argo-events
+                  chartVersion: "2.4.11"
+                  path: addons/argo-platform/argo-events
+                  syncWave: "51"
+                - appName: argo-workflows
+                  namespace: argo-workflows
+                  chartRepo: https://argoproj.github.io/argo-helm
+                  chart: argo-workflows
+                  chartVersion: "0.45.1"
+                  path: addons/argo-platform/argo-workflows
+                  syncWave: "52"
+  template:
+    metadata:
+      name: '{{ .appName }}'
+      annotations:
+        argocd.argoproj.io/sync-wave: '{{ .syncWave }}'
+    spec:
+      project: platform
+      sources:
+        - repoURL: '{{ .chartRepo }}'
+          chart: '{{ .chart }}'
+          targetRevision: '{{ .chartVersion }}'
+          helm:
+            releaseName: '{{ .appName }}'
+            parameters:
+              - name: clusterName
+                value: '{{ index .metadata.labels "cluster_name" }}'
+              - name: vpcId
+                value: '{{ index .metadata.labels "vpc_id" }}'
+            valueFiles:
+              - $values/{{ .path }}/values.yaml
+              - $values/{{ .path }}/values-{{ index .metadata.labels "environment" }}.yaml
+        - repoURL: https://github.com/stxkxs/eks-gitops.git
+          targetRevision: main
+          ref: values
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{ .namespace }}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m

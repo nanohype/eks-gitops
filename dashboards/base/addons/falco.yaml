@@ -1,0 +1,13 @@
+# Falco / falcosidekick
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: falco
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: external
+  resyncPeriod: 24h
+  grafanaCom:
+    id: 11914
+    revision: latest

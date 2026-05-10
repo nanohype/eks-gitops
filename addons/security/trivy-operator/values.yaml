@@ -1,0 +1,49 @@
+# Trivy Operator - Kubernetes-native security scanning
+# Adapted from aws-idp-gitops
+
+operator:
+  scanJobTimeout: 10m
+  scannerReportTTL: 24h
+  scanJobsConcurrentLimit: 5
+
+# Scanning features
+trivy:
+  severity: HIGH,CRITICAL
+  ignoreUnfixed: true
+
+# Enable vulnerability scanning
+vulnerabilityReportsScanner: Trivy
+
+# Enable config audit scanning
+configAuditScannerEnabled: true
+
+# Enable RBAC assessment
+rbacAssessmentScanner: true
+
+# Enable exposed secret scanning
+exposedSecretScannerEnabled: true
+
+# Exclude system namespaces from scanning
+excludeNamespaces: "kube-system,kube-public,kube-node-lease"
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+tolerations:
+  - key: CriticalAddonsOnly
+    operator: Exists
+
+# Scanner job resources
+scanJob:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 100Mi
+    limits:
+      cpu: 500m
+      memory: 500Mi

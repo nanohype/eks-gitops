@@ -1,0 +1,14 @@
+# KEDA - Production overrides
+
+serviceAccount:
+  operator:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/production-eks-keda-operator
+
+podDisruptionBudget:
+  operator:
+    minAvailable: 1
+  metricServer:
+    minAvailable: 1
+  webhooks:
+    minAvailable: 1

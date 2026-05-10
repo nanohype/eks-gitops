@@ -1,0 +1,88 @@
+# Self-signed CA for Druid internal mTLS
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ include "druid.name" . }}-selfsigned-issuer
+  namespace: {{ .Release.Namespace }}
+spec:
+  selfSigned: {}
+---
+# CA Certificate
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "druid.name" . }}-ca
+  namespace: {{ .Release.Namespace }}
+spec:
+  isCA: true
+  commonName: {{ include "druid.name" . }}-ca
+  secretName: {{ include "druid.name" . }}-ca-secret
+  duration: 87600h # 10 years
+  renewBefore: 720h # 30 days
+  privateKey:
+    algorithm: RSA
+    size: 2048
+  issuerRef:
+    name: {{ include "druid.name" . }}-selfsigned-issuer
+    kind: Issuer
+---
+# CA Issuer using the CA cert
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ include "druid.name" . }}-ca-issuer
+  namespace: {{ .Release.Namespace }}
+spec:
+  ca:
+    secretName: {{ include "druid.name" . }}-ca-secret
+---
+# Druid Server Certificate with proper SANs
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "druid.name" . }}-druid-tls
+  namespace: {{ .Release.Namespace }}
+spec:
+  secretName: {{ include "druid.name" . }}-druid-tls
+  duration: 8760h # 1 year
+  renewBefore: 720h # 30 days
+  commonName: druid
+  isCA: false
+  privateKey:
+    algorithm: RSA
+    size: 2048
+  usages:
+    - server auth
+    - client auth
+  dnsNames:
+    - "*.{{ .Release.Namespace }}"
+    - "*.{{ .Release.Namespace }}.svc"
+    - "*.{{ .Release.Namespace }}.svc.cluster.local"
+    # Headless service pod DNS: pod.service.namespace.svc.cluster.local
+    - "*.{{ include "druid.component.name" (list "coordinator" .) | trim }}.{{ .Release.Namespace }}.svc.cluster.local"
+    - "*.{{ include "druid.component.name" (list "historical" .) | trim }}.{{ .Release.Namespace }}.svc.cluster.local"
+    - "*.{{ include "druid.component.name" (list "overlord" .) | trim }}.{{ .Release.Namespace }}.svc.cluster.local"
+    - "*.{{ include "druid.component.name" (list "broker" .) | trim }}.{{ .Release.Namespace }}.svc.cluster.local"
+    - "*.{{ include "druid.component.name" (list "router" .) | trim }}.{{ .Release.Namespace }}.svc.cluster.local"
+    - "localhost"
+  ipAddresses:
+    - "127.0.0.1"
+  issuerRef:
+    name: {{ include "druid.name" . }}-ca-issuer
+    kind: Issuer
+  keystores:
+    pkcs12:
+      create: true
+      passwordSecretRef:
+        name: {{ include "druid.name" . }}-keystore-password
+        key: password
+---
+# Keystore password secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "druid.name" . }}-keystore-password
+  namespace: {{ .Release.Namespace }}
+type: Opaque
+stringData:
+  password: changeit

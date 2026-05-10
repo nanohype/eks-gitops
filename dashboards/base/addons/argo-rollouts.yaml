@@ -1,0 +1,13 @@
+# Argo Rollouts
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: argo-rollouts
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: external
+  resyncPeriod: 24h
+  grafanaCom:
+    id: 15386
+    revision: latest

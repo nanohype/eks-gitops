@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "druid.component.name" (list "coordinator" .) }}
+  labels:
+    {{- include "druid.component.labels" (list "coordinator" .) | indent 4 }}
+  annotations:
+    {{- include "druid.component.annotations" (list "coordinator" .) | indent 4 }}
+spec:
+  type: ClusterIP
+  clusterIP: None
+  {{- include "druid.service.ports" (list "coordinator" 8281) | nindent 2 }}
+  selector:
+    {{- include "druid.component.labels" (list "coordinator" .) | indent 4 }}
+    {{- include "druid.component.match.labels" (list "coordinator" .) | nindent 4 }}

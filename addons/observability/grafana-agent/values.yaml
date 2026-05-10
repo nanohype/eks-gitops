@@ -1,0 +1,142 @@
+# Grafana Agent - Telemetry collection (Flow mode)
+# Collects logs, metrics, and traces and forwards to Loki/Tempo/AMP.
+#
+# Metrics: scraped from kube-state-metrics + cAdvisor + node-exporter +
+#   pods with prometheus.io/scrape annotations, then remote-written to
+#   Amazon Managed Service for Prometheus (AMP) via SigV4 signing.
+#   IRSA gives the SA aps:RemoteWrite on the AMP workspace.
+
+agent:
+  mode: flow
+  configMap:
+    create: true
+    content: |
+      // ────────────────────────────── Discovery ──────────────────────────────
+      discovery.kubernetes "pods" {
+        role = "pod"
+      }
+      discovery.kubernetes "nodes" {
+        role = "node"
+      }
+      discovery.kubernetes "services" {
+        role = "service"
+      }
+      discovery.relabel "pods" {
+        targets = discovery.kubernetes.pods.targets
+        rule {
+          source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_scrape"]
+          regex         = "true"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_name"]
+          target_label  = "container"
+        }
+      }
+
+      // ────────────────────────────── Metrics → AMP ──────────────────────────
+      prometheus.scrape "pods" {
+        targets    = discovery.relabel.pods.output
+        forward_to = [prometheus.remote_write.amp.receiver]
+      }
+
+      prometheus.scrape "kube_state_metrics" {
+        targets = [{
+          __address__ = "kube-state-metrics.kube-system.svc.cluster.local:8080",
+        }]
+        forward_to = [prometheus.remote_write.amp.receiver]
+      }
+
+      prometheus.scrape "cadvisor" {
+        targets    = discovery.kubernetes.nodes.targets
+        scheme     = "https"
+        bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        tls_config {
+          ca_file              = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+          insecure_skip_verify = true
+        }
+        metrics_path = "/metrics/cadvisor"
+        forward_to   = [prometheus.remote_write.amp.receiver]
+      }
+
+      // SigV4 signs each remote-write request with the IRSA-projected
+      // AWS_ROLE_ARN / AWS_WEB_IDENTITY_TOKEN_FILE credentials. AMP
+      // expects service "aps" and the workspace's region.
+      prometheus.remote_write "amp" {
+        endpoint {
+          url = sys.env("AMP_REMOTE_WRITE_URL")
+          sigv4 {
+            region = sys.env("AWS_REGION")
+          }
+        }
+        external_labels = {
+          cluster = sys.env("CLUSTER_NAME"),
+        }
+      }
+
+      // ────────────────────────────── Logs → Loki ────────────────────────────
+      loki.source.kubernetes "pods" {
+        targets    = discovery.kubernetes.pods.targets
+        forward_to = [loki.write.default.receiver]
+      }
+      loki.write "default" {
+        endpoint {
+          url = "http://loki-gateway.monitoring.svc.cluster.local/loki/api/v1/push"
+        }
+      }
+
+      // ────────────────────────────── Traces → Tempo ─────────────────────────
+      otelcol.receiver.otlp "default" {
+        grpc {
+          endpoint = "0.0.0.0:4317"
+        }
+        http {
+          endpoint = "0.0.0.0:4318"
+        }
+        output {
+          traces = [otelcol.exporter.otlp.tempo.input]
+        }
+      }
+      otelcol.exporter.otlp "tempo" {
+        client {
+          endpoint = "tempo.monitoring.svc.cluster.local:4317"
+          tls {
+            insecure = true
+          }
+        }
+      }
+
+# IRSA is required for SigV4 to AMP. values-{env}.yaml sets the role-arn
+# annotation on the SA.
+serviceAccount:
+  create: true
+  name: grafana-agent
+
+# AMP remote-write URL is per-environment (Terraform output `amp_remote_write_url`).
+# AWS_REGION + CLUSTER_NAME are also per-environment.
+extraEnv:
+  - name: AMP_REMOTE_WRITE_URL
+    value: ""  # override per env
+  - name: AWS_REGION
+    value: "us-west-2"
+  - name: CLUSTER_NAME
+    value: ""  # override per env
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+tolerations:
+  - operator: Exists

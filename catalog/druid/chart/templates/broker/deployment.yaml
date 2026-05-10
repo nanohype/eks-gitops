@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "druid.component.name" (list "broker" .) }}
+  labels:
+    {{- include "druid.component.labels" (list "broker" .) | indent 4 }}
+  annotations:
+    {{- include "druid.component.annotations" (list "broker" .) | indent 4 }}
+spec:
+  replicas: {{ .Values.broker.replicas }}
+  selector:
+    matchLabels:
+      {{- include "druid.component.match.labels" (list "broker" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "druid.component.labels" (list "broker" .) | indent 8 }}
+        {{- include "druid.component.match.labels" (list "broker" .) | nindent 8 }}
+      annotations:
+        {{- include "druid.component.annotations" (list "broker" .) | indent 8 }}
+    spec:
+      {{- include "druid.security" (list "druid-broker" .) | nindent 6 }}
+      nodeSelector:
+        {{- include "druid.component.node.selector" (list "broker" .) | nindent 8 }}
+      volumes:
+        {{- include "druid.component.volumes" (list "broker" .) | nindent 8 }}
+      containers:
+        - name: {{ include "druid.component.name" (list "broker" .) }}
+          {{- include "druid.image" . | nindent 10 }}
+          args: ["broker"]
+          {{- include "druid.ports" (list "broker" 8282) | nindent 10 }}
+          env:
+            {{- include "druid.env" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.broker.resources | nindent 12 }}
+          volumeMounts:
+            {{- include "druid.component.volumeMounts" (list "broker" .) | nindent 12 }}
+          {{- include "druid.probes" (list 8282 "/status/health" "/druid/broker/v1/readiness") | nindent 10 }}

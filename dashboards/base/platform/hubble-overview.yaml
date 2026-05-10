@@ -1,0 +1,13 @@
+# Hubble L7 HTTP Metrics
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: hubble-overview
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: external
+  resyncPeriod: 24h
+  grafanaCom:
+    id: 16613
+    revision: latest

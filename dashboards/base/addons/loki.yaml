@@ -1,0 +1,13 @@
+# Loki Kubernetes Logs
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: loki
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: external
+  resyncPeriod: 24h
+  grafanaCom:
+    id: 13407
+    revision: latest

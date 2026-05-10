@@ -1,0 +1,52 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: kyverno-policies
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "20"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  argocd.argoproj.io/secret-type: cluster
+          - list:
+              elements:
+                - appName: kyverno-pss
+                  path: policies/kyverno/pod-security-standards
+                  syncWave: "20"
+                - appName: kyverno-best-practices
+                  path: policies/kyverno/best-practices
+                  syncWave: "21"
+  template:
+    metadata:
+      name: '{{ .appName }}'
+      annotations:
+        argocd.argoproj.io/sync-wave: '{{ .syncWave }}'
+    spec:
+      project: platform
+      source:
+        repoURL: https://github.com/stxkxs/eks-gitops.git
+        targetRevision: main
+        path: '{{ .path }}/overlays/{{ index .metadata.labels "environment" }}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: kyverno
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m

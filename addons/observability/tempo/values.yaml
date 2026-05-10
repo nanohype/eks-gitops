@@ -1,0 +1,46 @@
+# Tempo - Distributed Tracing
+# Adapted from aws-idp-gitops
+
+tempo:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: "0.0.0.0:4317"
+        http:
+          endpoint: "0.0.0.0:4318"
+    jaeger:
+      protocols:
+        grpc:
+          endpoint: "0.0.0.0:14250"
+        thrift_http:
+          endpoint: "0.0.0.0:14268"
+  ingester:
+    trace_idle_period: 10s
+    max_block_bytes: 100000000  # 100MB
+    max_block_duration: 5m
+  retention: 168h  # 7 days default
+  storage:
+    trace:
+      backend: local
+      local:
+        path: /var/tempo/traces
+      wal:
+        path: /var/tempo/wal
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+persistence:
+  enabled: true
+  size: 50Gi
+  storageClass: gp3
+
+tolerations:
+  - key: CriticalAddonsOnly
+    operator: Exists

@@ -1,0 +1,15 @@
+# Velero - Production overrides
+# Production: production backup bucket
+
+serviceAccount:
+  server:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/production-eks-velero
+
+configuration:
+  backupStorageLocation:
+    - name: default
+      provider: aws
+      bucket: aws-eks-production-backups
+      config:
+        region: us-west-2

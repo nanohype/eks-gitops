@@ -1,0 +1,80 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: addons-networking
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  argocd.argoproj.io/secret-type: cluster
+          - list:
+              elements:
+                - appName: cilium
+                  namespace: kube-system
+                  chartRepo: https://helm.cilium.io
+                  chart: cilium
+                  chartVersion: 1.18.6
+                  path: addons/networking/cilium
+                  syncWave: "1"
+                - appName: aws-load-balancer-controller
+                  namespace: kube-system
+                  chartRepo: https://aws.github.io/eks-charts
+                  chart: aws-load-balancer-controller
+                  chartVersion: "1.14.1"
+                  path: addons/networking/aws-load-balancer-controller
+                  syncWave: "1"
+                - appName: external-dns
+                  namespace: external-dns
+                  chartRepo: https://kubernetes-sigs.github.io/external-dns/
+                  chart: external-dns
+                  chartVersion: "1.17.0"
+                  path: addons/networking/external-dns
+                  syncWave: "1"
+  template:
+    metadata:
+      name: '{{ .appName }}'
+      annotations:
+        argocd.argoproj.io/sync-wave: '{{ .syncWave }}'
+    spec:
+      project: platform
+      sources:
+        - repoURL: '{{ .chartRepo }}'
+          chart: '{{ .chart }}'
+          targetRevision: '{{ .chartVersion }}'
+          helm:
+            releaseName: '{{ .appName }}'
+            parameters:
+              - name: clusterName
+                value: '{{ index .metadata.labels "cluster_name" }}'
+              - name: vpcId
+                value: '{{ index .metadata.labels "vpc_id" }}'
+            valueFiles:
+              - $values/{{ .path }}/values.yaml
+              - $values/{{ .path }}/values-{{ index .metadata.labels "environment" }}.yaml
+        - repoURL: https://github.com/stxkxs/eks-gitops.git
+          targetRevision: main
+          ref: values
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{ .namespace }}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m

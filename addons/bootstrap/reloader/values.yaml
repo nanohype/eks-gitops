@@ -1,0 +1,14 @@
+# Reloader - Auto-reload on ConfigMap/Secret changes
+
+reloader:
+  reloadStrategy: annotations
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists

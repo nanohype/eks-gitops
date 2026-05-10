@@ -1,0 +1,5 @@
+# External Secrets - Staging overrides
+
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/staging-eks-external-secrets

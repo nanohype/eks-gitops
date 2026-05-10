@@ -1,0 +1,101 @@
+# Loki - Log Aggregation
+# Adapted from aws-idp-gitops
+
+deploymentMode: SingleBinary
+
+loki:
+  auth_enabled: false
+  commonConfig:
+    replication_factor: 1
+  schemaConfig:
+    configs:
+      - from: "2024-01-01"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: loki_index_
+          period: 24h
+  storage:
+    type: filesystem
+  limits_config:
+    retention_period: 720h  # 30 days default
+    max_query_length: 721h
+    max_query_parallelism: 32
+
+singleBinary:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+  persistence:
+    enabled: true
+    size: 50Gi
+    storageClass: gp3
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+
+# Loki canary (DaemonSet)
+lokiCanary:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 50m
+      memory: 64Mi
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+
+# Caches
+chunksCache:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+
+resultsCache:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+
+# Disable other deployment modes
+read:
+  replicas: 0
+write:
+  replicas: 0
+backend:
+  replicas: 0
+
+# Gateway
+gateway:
+  enabled: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists

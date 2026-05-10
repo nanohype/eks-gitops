@@ -1,0 +1,95 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-resource-limits
+  annotations:
+    policies.kyverno.io/title: Require Resource Limits
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      As application workloads share cluster resources, it is important to limit
+      resources requested and consumed by each Pod. This policy validates that all
+      containers have resource limits specified.
+spec:
+  admission: true
+  emitWarning: false
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: require-cpu-limit
+      skipBackgroundRequests: true
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - argocd
+                - kyverno
+                - trivy-system
+                - cert-manager
+                - external-secrets
+                - external-dns
+                - monitoring
+                - velero
+                - goldilocks
+                - opencost
+                - vpa
+                - keda
+                - argo-rollouts
+                - argo-events
+                - argo-workflows
+      validate:
+        allowExistingViolations: true
+        message: "CPU limit is required for all containers."
+        pattern:
+          spec:
+            containers:
+              - resources:
+                  limits:
+                    cpu: "?*"
+    - name: require-memory-limit
+      skipBackgroundRequests: true
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - argocd
+                - kyverno
+                - trivy-system
+                - cert-manager
+                - external-secrets
+                - external-dns
+                - monitoring
+                - velero
+                - goldilocks
+                - opencost
+                - vpa
+                - keda
+                - argo-rollouts
+                - argo-events
+                - argo-workflows
+      validate:
+        allowExistingViolations: true
+        message: "Memory limit is required for all containers."
+        pattern:
+          spec:
+            containers:
+              - resources:
+                  limits:
+                    memory: "?*"

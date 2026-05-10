@@ -1,0 +1,11 @@
+# Kyverno - Dev overrides
+# Dev: single replicas for cost optimization
+
+admissionController:
+  replicas: 1
+
+backgroundController:
+  replicas: 1
+
+reportsController:
+  replicas: 1

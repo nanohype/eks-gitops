@@ -1,0 +1,13 @@
+# Kubernetes / Views / Namespaces
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: kubernetes-views-namespaces
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: external
+  resyncPeriod: 24h
+  grafanaCom:
+    id: 15758
+    revision: latest

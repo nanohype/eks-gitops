@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "druid.component.name" (list "coordinator" .) }}-conf
+  labels:
+    {{- include "druid.component.labels" (list "coordinator" .) | indent 4 }}
+  annotations:
+    {{- include "druid.component.annotations" (list "coordinator" .) | indent 4 }}
+data:
+  "log4j2.xml":
+    {{- .Files.Get "common/log4j2.xml" | toYaml | indent 4 }}
+  "jvm.config":
+    {{- include "druid.component.jvm" (list "coordinator" .) | indent 4 }}
+  "runtime.properties":
+    {{- .Values.coordinator.runtime | toYaml | indent 4 }}

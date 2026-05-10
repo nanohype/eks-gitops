@@ -1,0 +1,101 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: addons-observability
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "30"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  argocd.argoproj.io/secret-type: cluster
+          - list:
+              elements:
+                - appName: loki
+                  namespace: monitoring
+                  chartRepo: https://grafana.github.io/helm-charts
+                  chart: loki
+                  chartVersion: 6.29.0
+                  path: addons/observability/loki
+                  syncWave: "30"
+                - appName: tempo
+                  namespace: monitoring
+                  chartRepo: https://grafana.github.io/helm-charts
+                  chart: tempo
+                  chartVersion: 1.21.0
+                  path: addons/observability/tempo
+                  syncWave: "31"
+                - appName: grafana-agent
+                  namespace: monitoring
+                  chartRepo: https://grafana.github.io/helm-charts
+                  chart: grafana-agent
+                  chartVersion: 0.44.2
+                  path: addons/observability/grafana-agent
+                  syncWave: "32"
+                - appName: opencost
+                  namespace: opencost
+                  chartRepo: https://opencost.github.io/opencost-helm-chart
+                  chart: opencost
+                  chartVersion: "1.42.2"
+                  path: addons/observability/opencost
+                  syncWave: "33"
+                - appName: grafana-operator
+                  namespace: grafana-operator
+                  chartRepo: oci://ghcr.io/grafana/helm-charts
+                  chart: grafana-operator
+                  chartVersion: "v5.21.0"
+                  path: addons/observability/grafana-operator
+                  syncWave: "34"
+  template:
+    metadata:
+      name: '{{ .appName }}'
+      annotations:
+        argocd.argoproj.io/sync-wave: '{{ .syncWave }}'
+    spec:
+      project: platform
+      sources:
+        - repoURL: '{{ .chartRepo }}'
+          chart: '{{ .chart }}'
+          targetRevision: '{{ .chartVersion }}'
+          helm:
+            releaseName: '{{ .appName }}'
+            parameters:
+              - name: clusterName
+                value: '{{ index .metadata.labels "cluster_name" }}'
+              - name: vpcId
+                value: '{{ index .metadata.labels "vpc_id" }}'
+            valueFiles:
+              - $values/{{ .path }}/values.yaml
+              - $values/{{ .path }}/values-{{ index .metadata.labels "environment" }}.yaml
+        - repoURL: https://github.com/stxkxs/eks-gitops.git
+          targetRevision: main
+          ref: values
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{ .namespace }}'
+      ignoreDifferences:
+        - group: apps
+          kind: StatefulSet
+          jqPathExpressions:
+            - .spec.volumeClaimTemplates
+            - .spec.persistentVolumeClaimRetentionPolicy
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+          - RespectIgnoreDifferences=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m

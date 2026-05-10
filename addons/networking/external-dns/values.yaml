@@ -1,0 +1,22 @@
+# External DNS
+
+provider:
+  name: aws
+
+policy: sync
+
+sources:
+  - service
+  - ingress
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 64Mi
+  limits:
+    cpu: 100m
+    memory: 128Mi
+
+tolerations:
+  - key: CriticalAddonsOnly
+    operator: Exists

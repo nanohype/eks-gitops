@@ -1,0 +1,9 @@
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: {{ include "druid.component.name" (list "historical" .) }}-nodepool
+  labels:
+    {{- include "druid.component.labels" (list "historical" .) | indent 4 }}
+  annotations:
+    {{- include "druid.component.annotations" (list "historical" .) | indent 4 }}
+{{ include "druid.nodepool.spec" (list "historical" .) }}

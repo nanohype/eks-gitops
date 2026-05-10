@@ -1,0 +1,22 @@
+# Grafana Operator - Manages Grafana CRs (Grafana, GrafanaDashboard,
+# GrafanaDataSource, GrafanaFolder) targeted at an *external* Amazon
+# Managed Grafana workspace.
+#
+# The Grafana CR in dashboards/base/grafana.yaml is configured with
+# `external.url` pointing to the AMG endpoint and `external.adminPassword`
+# (a service-account-style API token) sourced from a Secret created by
+# ExternalSecret from AWS Secrets Manager.
+
+replicas: 1
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+tolerations:
+  - key: CriticalAddonsOnly
+    operator: Exists

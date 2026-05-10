@@ -1,0 +1,12 @@
+# Falco - Production overrides
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 1Gi
+  limits:
+    memory: 4Gi
+
+driver:
+  modern_ebpf:
+    cpus_for_each_buffer: 8

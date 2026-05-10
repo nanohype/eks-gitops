@@ -1,0 +1,47 @@
+# KEDA - Event-driven autoscaling
+# Supports SQS, CloudWatch, MSK triggers
+
+operator:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+
+metricsServer:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+
+webhooks:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+
+prometheus:
+  operator:
+    enabled: true
+  metricServer:
+    enabled: true

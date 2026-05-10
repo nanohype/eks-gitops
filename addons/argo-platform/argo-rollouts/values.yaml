@@ -1,0 +1,27 @@
+# Argo Rollouts - Progressive delivery (canary/blue-green)
+
+controller:
+  replicas: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+
+dashboard:
+  enabled: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists

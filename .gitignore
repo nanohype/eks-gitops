@@ -1,0 +1,38 @@
+# Secrets and credentials
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+*credentials*
+*kubeconfig*
+*secret*.yaml
+*secret*.yml
+*secret*.json
+!*secret*-store*.yaml
+!*secret*-store*.yml
+
+# IAM roles / sensitive AWS config
+*role-trust-policy*.json
+*assume-role*.json
+
+# Environment overrides
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+
+# Rendered output
+rendered/

@@ -1,0 +1,41 @@
+# External Secrets Operator
+
+replicaCount: 2
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+tolerations:
+  - key: CriticalAddonsOnly
+    operator: Exists
+
+webhook:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+
+certController:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists

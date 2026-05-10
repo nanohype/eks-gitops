@@ -1,0 +1,5 @@
+# Karpenter - Staging overrides
+
+settings:
+  clusterName: staging-eks
+  interruptionQueue: Karpenter-staging-eks

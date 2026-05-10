@@ -1,0 +1,36 @@
+# Descheduler - Pod rebalancing after Karpenter consolidation
+# Runs as a Deployment (not CronJob) for continuous rebalancing
+
+kind: Deployment
+replicas: 1
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+tolerations:
+  - key: CriticalAddonsOnly
+    operator: Exists
+
+deschedulerPolicy:
+  strategies:
+    LowNodeUtilization:
+      enabled: true
+      params:
+        nodeResourceUtilizationThresholds:
+          thresholds:
+            cpu: 20
+            memory: 20
+            pods: 20
+          targetThresholds:
+            cpu: 50
+            memory: 50
+            pods: 50
+    RemoveDuplicates:
+      enabled: true
+    RemovePodsViolatingTopologySpreadConstraint:
+      enabled: true

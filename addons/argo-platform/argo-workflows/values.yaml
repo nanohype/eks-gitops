@@ -1,0 +1,45 @@
+# Argo Workflows - Workflow orchestration
+
+server:
+  replicas: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+
+controller:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+  workflowDefaults:
+    spec:
+      ttlStrategy:
+        secondsAfterCompletion: 86400
+        secondsAfterSuccess: 43200
+        secondsAfterFailure: 172800
+
+useDefaultArtifactRepo: true
+artifactRepository:
+  s3:
+    endpoint: s3.amazonaws.com
+    useSDKCreds: true
+    insecure: false
+    accessKeySecret:
+      name: argo-workflows-s3
+      key: accessKey
+    secretKeySecret:
+      name: argo-workflows-s3
+      key: secretKey

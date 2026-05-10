@@ -1,0 +1,5 @@
+# Cilium - Dev overrides
+# Dev: single operator replica for cost optimization
+
+operator:
+  replicas: 1

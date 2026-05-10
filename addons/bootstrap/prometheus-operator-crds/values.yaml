@@ -1,0 +1,2 @@
+# Prometheus Operator CRDs
+# Installs CRDs only, no operator deployment

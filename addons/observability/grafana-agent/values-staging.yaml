@@ -1,0 +1,13 @@
+# Grafana Agent - Staging overrides
+
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/staging-eks-grafana-agent-amp
+
+extraEnv:
+  - name: AMP_REMOTE_WRITE_URL
+    value: "https://aps-workspaces.us-west-2.amazonaws.com/workspaces/ws-PLACEHOLDER/api/v1/remote_write"
+  - name: AWS_REGION
+    value: "us-west-2"
+  - name: CLUSTER_NAME
+    value: "staging-eks"

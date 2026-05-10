@@ -1,0 +1,21 @@
+# Karpenter - Node Autoscaler
+
+replicas: 2
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+tolerations:
+  - key: CriticalAddonsOnly
+    operator: Exists
+    effect: NoSchedule
+
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: DoNotSchedule

@@ -1,0 +1,45 @@
+# Falco - Runtime security and threat detection
+
+driver:
+  kind: modern_ebpf
+  modern_ebpf:
+    cpus_for_each_buffer: 4
+    buf_size_preset: 4
+
+falco:
+  grpc:
+    enabled: true
+    bind_address: "unix:///run/falco/falco.sock"
+  grpc_output:
+    enabled: true
+  json_output: true
+  log_stderr: true
+  log_syslog: false
+  priority: warning
+  rule_matching: first
+  syscall_drop_failed_exit: true
+  libs:
+    thread_table_auto_purging_interval_s: 120
+    thread_table_auto_purging_thread_timeout_s: 120
+
+# Disable falcosidekick (enable per-env if needed)
+falcosidekick:
+  enabled: false
+
+# Disable EKS marketplace addon images — use upstream chart
+collectors:
+  kubernetes:
+    enabled: true
+
+tty: false
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 512Mi
+  limits:
+    cpu: 500m
+    memory: 2Gi
+
+tolerations:
+  - operator: Exists

@@ -1,0 +1,12 @@
+# Argo Workflows - Dev overrides
+# Single replica, dev artifact bucket
+
+server:
+  replicas: 1
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/dev-eks-argo-workflows
+
+artifactRepository:
+  s3:
+    bucket: aws-eks-dev-argo-artifacts

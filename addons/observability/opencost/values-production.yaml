@@ -1,0 +1,5 @@
+# OpenCost - Production overrides
+
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/production-eks-opencost

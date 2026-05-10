@@ -1,0 +1,93 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-probes
+  annotations:
+    policies.kyverno.io/title: Require Readiness and Liveness Probes
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      Liveness and readiness probes are essential for Kubernetes to manage
+      pod lifecycle correctly. This policy validates that all containers
+      have both probes defined.
+spec:
+  admission: true
+  emitWarning: false
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: require-readiness-probe
+      skipBackgroundRequests: true
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - argocd
+                - kyverno
+                - trivy-system
+                - cert-manager
+                - external-secrets
+                - monitoring
+                - velero
+                - goldilocks
+                - opencost
+                - vpa
+                - descheduler
+                - keda
+                - argo-rollouts
+                - argo-events
+                - argo-workflows
+      validate:
+        allowExistingViolations: true
+        message: "Readiness probe is required for all containers."
+        pattern:
+          spec:
+            containers:
+              - readinessProbe:
+                  periodSeconds: ">0"
+    - name: require-liveness-probe
+      skipBackgroundRequests: true
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - argocd
+                - kyverno
+                - trivy-system
+                - cert-manager
+                - external-secrets
+                - monitoring
+                - velero
+                - goldilocks
+                - opencost
+                - vpa
+                - descheduler
+                - keda
+                - argo-rollouts
+                - argo-events
+                - argo-workflows
+      validate:
+        allowExistingViolations: true
+        message: "Liveness probe is required for all containers."
+        pattern:
+          spec:
+            containers:
+              - livenessProbe:
+                  periodSeconds: ">0"

@@ -1,0 +1,27 @@
+# Goldilocks - VPA Recommendation Dashboard
+# Adapted from aws-idp-gitops
+
+controller:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+
+dashboard:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists

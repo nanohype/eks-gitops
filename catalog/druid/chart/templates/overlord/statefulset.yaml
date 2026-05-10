@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "druid.component.name" (list "overlord" .) }}
+  labels:
+    {{- include "druid.component.labels" (list "overlord" .) | indent 4 }}
+  annotations:
+    {{- include "druid.component.annotations" (list "overlord" .) | indent 4 }}
+spec:
+  serviceName: {{ include "druid.component.name" (list "overlord" .) }}
+  replicas: {{ .Values.overlord.replicas }}
+  selector:
+    matchLabels:
+      {{- include "druid.component.match.labels" (list "overlord" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "druid.component.labels" (list "overlord" .) | indent 8 }}
+        {{- include "druid.component.match.labels" (list "overlord" .) | nindent 8 }}
+      annotations:
+        {{- include "druid.component.annotations" (list "overlord" .) | indent 8 }}
+    spec:
+      {{- include "druid.security" (list "druid-overlord" .) | nindent 6 }}
+      nodeSelector:
+        {{- include "druid.component.node.selector" (list "overlord" .) | nindent 8 }}
+      volumes:
+        {{- include "druid.component.volumes" (list "overlord" .) | nindent 8 }}
+        - name: druid-task-template
+          configMap:
+            name: {{ include "druid.name" . }}-druid-task-base-template
+      containers:
+        - name: {{ include "druid.component.name" (list "overlord" .) }}
+          {{- include "druid.image" . | nindent 10 }}
+          args: ["overlord"]
+          {{- include "druid.ports" (list "overlord" 8290) | nindent 10 }}
+          env:
+            {{- include "druid.env" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.overlord.resources | nindent 12 }}
+          volumeMounts:
+            {{- include "druid.component.volumeMounts" (list "overlord" .) | nindent 12 }}
+            - name: druid-task-template
+              mountPath: /opt/druid/conf/druid/cluster/task/task-base.yaml
+              subPath: task-base.yaml
+              readOnly: true
+          {{- include "druid.probes" (list 8290 "/status/health" "/status/health") | nindent 10 }}

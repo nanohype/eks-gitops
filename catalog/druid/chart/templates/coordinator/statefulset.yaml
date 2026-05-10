@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "druid.component.name" (list "coordinator" .) }}
+  labels:
+    {{- include "druid.component.labels" (list "coordinator" .) | indent 4 }}
+  annotations:
+    {{- include "druid.component.annotations" (list "coordinator" .) | indent 4 }}
+spec:
+  serviceName: {{ include "druid.component.name" (list "coordinator" .) }}
+  replicas: {{ .Values.coordinator.replicas }}
+  selector:
+    matchLabels:
+      {{- include "druid.component.match.labels" (list "coordinator" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "druid.component.labels" (list "coordinator" .) | indent 8 }}
+        {{- include "druid.component.match.labels" (list "coordinator" .) | nindent 8 }}
+      annotations:
+        {{- include "druid.component.annotations" (list "coordinator" .) | indent 8 }}
+    spec:
+      {{- include "druid.security" (list "druid-broker" .) | nindent 6 }}
+      nodeSelector:
+        {{- include "druid.component.node.selector" (list "coordinator" .) | nindent 8 }}
+      volumes:
+        {{- include "druid.component.volumes" (list "coordinator" .) | nindent 8 }}
+      containers:
+        - name: {{ include "druid.component.name" (list "coordinator" .) }}
+          {{- include "druid.image" . | nindent 10 }}
+          args: ["coordinator"]
+          {{- include "druid.ports" (list "coordinator" 8281) | nindent 10 }}
+          env:
+            {{- include "druid.env" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.coordinator.resources | nindent 12 }}
+          volumeMounts:
+            {{- include "druid.component.volumeMounts" (list "coordinator" .) | nindent 12 }}
+          {{- include "druid.probes" (list 8281 "/status/health" "/status/health") | nindent 10 }}

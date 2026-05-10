@@ -1,0 +1,80 @@
+# Kyverno - Kubernetes Native Policy Management
+# Adapted from aws-idp-gitops, using versions from base.ts
+
+admissionController:
+  replicas: 3
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+
+backgroundController:
+  replicas: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+
+reportsController:
+  replicas: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+
+cleanupController:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+
+# Enable policy reports for visibility
+features:
+  policyExceptions:
+    enabled: true
+  reporting:
+    validate: true
+    mutate: true
+    generate: true
+
+# Webhook configuration
+webhooksCleanup:
+  enabled: true
+
+# Override kubectl image for helm hooks (bitnami/kubectl:1.32.3 doesn't exist)
+cleanupJobs:
+  admissionReports:
+    image:
+      registry: docker.io
+      repository: bitnami/kubectl
+      tag: latest
+  clusterAdmissionReports:
+    image:
+      registry: docker.io
+      repository: bitnami/kubectl
+      tag: latest

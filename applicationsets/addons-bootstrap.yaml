@@ -1,0 +1,94 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: addons-bootstrap
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  argocd.argoproj.io/secret-type: cluster
+          - list:
+              elements:
+                - appName: cert-manager
+                  namespace: cert-manager
+                  chartRepo: https://charts.jetstack.io
+                  chart: cert-manager
+                  chartVersion: v1.19.3
+                  path: addons/bootstrap/cert-manager
+                  syncWave: "0"
+                - appName: external-secrets
+                  namespace: external-secrets
+                  chartRepo: https://charts.external-secrets.io
+                  chart: external-secrets
+                  chartVersion: "0.17.0"
+                  path: addons/bootstrap/external-secrets
+                  syncWave: "0"
+                - appName: prometheus-operator-crds
+                  namespace: monitoring
+                  chartRepo: https://prometheus-community.github.io/helm-charts
+                  chart: prometheus-operator-crds
+                  chartVersion: "19.1.0"
+                  path: addons/bootstrap/prometheus-operator-crds
+                  syncWave: "0"
+                - appName: metrics-server
+                  namespace: kube-system
+                  chartRepo: https://kubernetes-sigs.github.io/metrics-server/
+                  chart: metrics-server
+                  chartVersion: "3.13.0"
+                  path: addons/bootstrap/metrics-server
+                  syncWave: "2"
+                - appName: reloader
+                  namespace: reloader
+                  chartRepo: https://stakater.github.io/stakater-charts
+                  chart: reloader
+                  chartVersion: "2.2.5"
+                  path: addons/bootstrap/reloader
+                  syncWave: "2"
+  template:
+    metadata:
+      name: '{{ .appName }}'
+      annotations:
+        argocd.argoproj.io/sync-wave: '{{ .syncWave }}'
+    spec:
+      project: platform
+      sources:
+        - repoURL: '{{ .chartRepo }}'
+          chart: '{{ .chart }}'
+          targetRevision: '{{ .chartVersion }}'
+          helm:
+            releaseName: '{{ .appName }}'
+            parameters:
+              - name: clusterName
+                value: '{{ index .metadata.labels "cluster_name" }}'
+              - name: vpcId
+                value: '{{ index .metadata.labels "vpc_id" }}'
+            valueFiles:
+              - $values/{{ .path }}/values.yaml
+              - $values/{{ .path }}/values-{{ index .metadata.labels "environment" }}.yaml
+        - repoURL: https://github.com/stxkxs/eks-gitops.git
+          targetRevision: main
+          ref: values
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{ .namespace }}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m

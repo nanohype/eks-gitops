@@ -1,0 +1,3 @@
+# Metrics Server - Staging overrides
+
+replicas: 2

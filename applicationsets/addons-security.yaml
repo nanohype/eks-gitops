@@ -1,0 +1,80 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: addons-security
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  argocd.argoproj.io/secret-type: cluster
+          - list:
+              elements:
+                - appName: kyverno
+                  namespace: kyverno
+                  chartRepo: https://kyverno.github.io/kyverno
+                  chart: kyverno
+                  chartVersion: 3.5.0
+                  path: addons/security/kyverno
+                  syncWave: "10"
+                - appName: trivy-operator
+                  namespace: trivy-system
+                  chartRepo: https://aquasecurity.github.io/helm-charts
+                  chart: trivy-operator
+                  chartVersion: 0.31.0
+                  path: addons/security/trivy-operator
+                  syncWave: "11"
+                - appName: falco
+                  namespace: falco
+                  chartRepo: https://falcosecurity.github.io/charts
+                  chart: falco
+                  chartVersion: 8.0.1
+                  path: addons/security/falco
+                  syncWave: "12"
+  template:
+    metadata:
+      name: '{{ .appName }}'
+      annotations:
+        argocd.argoproj.io/sync-wave: '{{ .syncWave }}'
+    spec:
+      project: platform
+      sources:
+        - repoURL: '{{ .chartRepo }}'
+          chart: '{{ .chart }}'
+          targetRevision: '{{ .chartVersion }}'
+          helm:
+            releaseName: '{{ .appName }}'
+            parameters:
+              - name: clusterName
+                value: '{{ index .metadata.labels "cluster_name" }}'
+              - name: vpcId
+                value: '{{ index .metadata.labels "vpc_id" }}'
+            valueFiles:
+              - $values/{{ .path }}/values.yaml
+              - $values/{{ .path }}/values-{{ index .metadata.labels "environment" }}.yaml
+        - repoURL: https://github.com/stxkxs/eks-gitops.git
+          targetRevision: main
+          ref: values
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{ .namespace }}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m

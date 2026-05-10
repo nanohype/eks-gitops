@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "druid.component.name" (list "router" .) }}
+  labels:
+    {{- include "druid.component.labels" (list "router" .) | indent 4 }}
+  annotations:
+    {{- include "druid.component.annotations" (list "router" .) | indent 4 }}
+spec:
+  replicas: {{ .Values.router.replicas }}
+  selector:
+    matchLabels:
+      {{- include "druid.component.match.labels" (list "router" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "druid.component.labels" (list "router" .) | indent 8 }}
+        {{- include "druid.component.match.labels" (list "router" .) | nindent 8 }}
+      annotations:
+        {{- include "druid.component.annotations" (list "router" .) | indent 8 }}
+    spec:
+      {{- include "druid.security" (list "druid-broker" .) | nindent 6 }}
+      nodeSelector:
+        {{- include "druid.component.node.selector" (list "router" .) | nindent 8 }}
+      volumes:
+        {{- include "druid.component.volumes" (list "router" .) | nindent 8 }}
+      containers:
+        - name: {{ include "druid.component.name" (list "router" .) }}
+          {{- include "druid.image" . | nindent 10 }}
+          args: ["router"]
+          {{- include "druid.ports" (list "router" 9088) | nindent 10 }}
+          env:
+            {{- include "druid.env" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.router.resources | nindent 12 }}
+          volumeMounts:
+            {{- include "druid.component.volumeMounts" (list "router" .) | nindent 12 }}
+          {{- include "druid.probes" (list 9088 "/status/health" "/status/health") | nindent 10 }}

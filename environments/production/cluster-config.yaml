@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-config
+  namespace: argocd
+  labels:
+    environment: production
+data:
+  # Cluster identification
+  environment: "production"
+  provider: "aws"
+  cluster_name: "production-eks"
+
+  # AWS configuration
+  region: "us-west-2"
+
+  # Feature flags
+  veleroEnabled: "true"
+  goldilocksEnabled: "true"
+  hubbleUiEnabled: "true"
+  trivyAdmissionEnabled: "true"
+
+  # Karpenter configuration
+  karpenterCpuLimit: "200"
+  karpenterMemoryLimitGi: "400"
+  karpenterSpotEnabled: "true"
+
+  # Observability
+  lokiRetentionDays: "90"
+  tempoRetentionDays: "30"

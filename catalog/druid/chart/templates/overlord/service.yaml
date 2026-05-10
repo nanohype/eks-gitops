@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "druid.component.name" (list "overlord" .) }}
+  labels:
+    {{- include "druid.component.labels" (list "overlord" .) | indent 4 }}
+  annotations:
+    {{- include "druid.component.annotations" (list "overlord" .) | indent 4 }}
+spec:
+  type: ClusterIP
+  clusterIP: None
+  {{- include "druid.service.ports" (list "overlord" 8290) | nindent 2 }}
+  selector:
+    {{- include "druid.component.labels" (list "overlord" .) | indent 4 }}
+    {{- include "druid.component.match.labels" (list "overlord" .) | nindent 4 }}

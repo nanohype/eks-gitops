@@ -1,0 +1,101 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: addons-operations-helm
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "40"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  argocd.argoproj.io/secret-type: cluster
+          - list:
+              elements:
+                - appName: velero
+                  namespace: velero
+                  chartRepo: https://vmware-tanzu.github.io/helm-charts
+                  chart: velero
+                  chartVersion: 11.3.2
+                  path: addons/operations/velero
+                  syncWave: "40"
+                - appName: vpa
+                  namespace: vpa
+                  chartRepo: https://charts.fairwinds.com/stable
+                  chart: vpa
+                  chartVersion: "4.7.1"
+                  path: addons/operations/vpa
+                  syncWave: "41"
+                - appName: goldilocks
+                  namespace: goldilocks
+                  chartRepo: https://charts.fairwinds.com/stable
+                  chart: goldilocks
+                  chartVersion: 9.2.0
+                  path: addons/operations/goldilocks
+                  syncWave: "42"
+                - appName: descheduler
+                  namespace: kube-system
+                  chartRepo: https://kubernetes-sigs.github.io/descheduler/
+                  chart: descheduler
+                  chartVersion: "0.31.0"
+                  path: addons/operations/descheduler
+                  syncWave: "43"
+                - appName: karpenter
+                  namespace: kube-system
+                  chartRepo: oci://public.ecr.aws/karpenter/karpenter
+                  chart: karpenter
+                  chartVersion: "1.8.6"
+                  path: addons/operations/karpenter
+                  syncWave: "5"
+                - appName: keda
+                  namespace: keda
+                  chartRepo: https://kedacore.github.io/charts
+                  chart: keda
+                  chartVersion: "2.16.1"
+                  path: addons/operations/keda
+                  syncWave: "44"
+  template:
+    metadata:
+      name: '{{ .appName }}'
+      annotations:
+        argocd.argoproj.io/sync-wave: '{{ .syncWave }}'
+    spec:
+      project: platform
+      sources:
+        - repoURL: '{{ .chartRepo }}'
+          chart: '{{ .chart }}'
+          targetRevision: '{{ .chartVersion }}'
+          helm:
+            releaseName: '{{ .appName }}'
+            parameters:
+              - name: clusterName
+                value: '{{ index .metadata.labels "cluster_name" }}'
+              - name: vpcId
+                value: '{{ index .metadata.labels "vpc_id" }}'
+            valueFiles:
+              - $values/{{ .path }}/values.yaml
+              - $values/{{ .path }}/values-{{ index .metadata.labels "environment" }}.yaml
+        - repoURL: https://github.com/stxkxs/eks-gitops.git
+          targetRevision: main
+          ref: values
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{ .namespace }}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m

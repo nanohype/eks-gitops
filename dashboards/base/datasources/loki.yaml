@@ -1,0 +1,15 @@
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDatasource
+metadata:
+  name: loki
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: external
+  datasource:
+    name: Loki
+    type: loki
+    access: proxy
+    url: http://loki-gateway.monitoring.svc.cluster.local
+    jsonData:
+      maxLines: 1000

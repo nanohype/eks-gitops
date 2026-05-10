@@ -1,0 +1,13 @@
+# VPA / Goldilocks (verify ID)
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: goldilocks-vpa
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: external
+  resyncPeriod: 24h
+  grafanaCom:
+    id: 14588
+    revision: latest

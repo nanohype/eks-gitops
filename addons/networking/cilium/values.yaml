@@ -1,0 +1,51 @@
+# Cilium base configuration
+# Environment-specific values are in values-{env}.yaml
+
+# AWS ENI mode
+eni:
+  enabled: true
+ipam:
+  mode: eni
+egressMasqueradeInterfaces: eth0
+routingMode: native
+
+# Hubble observability (enabled globally)
+hubble:
+  enabled: true
+  relay:
+    enabled: true
+  ui:
+    enabled: true
+    tolerations:
+      - key: CriticalAddonsOnly
+        operator: Exists
+  metrics:
+    enabled:
+      - dns
+      - drop
+      - tcp
+      - flow
+      - port-distribution
+      - icmp
+      - "httpV2:exemplars=true;labelsContext=source_ip,source_namespace,source_workload,destination_ip,destination_namespace,destination_workload,traffic_direction"
+
+# mTLS encryption
+encryption:
+  enabled: true
+  type: wireguard
+
+# Network policies
+policyEnforcementMode: default
+
+# BPF settings
+bpf:
+  preallocateMaps: true
+
+# Tolerations for system nodes
+operator:
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+
+tolerations:
+  - operator: Exists

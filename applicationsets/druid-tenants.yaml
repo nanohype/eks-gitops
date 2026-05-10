@@ -1,0 +1,58 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: druid-tenants
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "50"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  argocd.argoproj.io/secret-type: cluster
+          - git:
+              repoURL: https://github.com/stxkxs/eks-gitops.git
+              revision: main
+              directories:
+                - path: 'catalog/druid/tenants/*'
+  template:
+    metadata:
+      name: 'druid-{{ .path.basename }}'
+      annotations:
+        argocd.argoproj.io/sync-wave: "50"
+    spec:
+      project: platform
+      sources:
+        - repoURL: https://github.com/stxkxs/eks-gitops.git
+          targetRevision: main
+          path: catalog/druid/chart
+          helm:
+            releaseName: '{{ .path.basename }}'
+            valueFiles:
+              - $values/catalog/druid/values.yaml
+              - $values/{{ .path.path }}/values.yaml
+              - $values/{{ .path.path }}/values-{{ index .metadata.labels "environment" }}.yaml
+        - repoURL: https://github.com/stxkxs/eks-gitops.git
+          targetRevision: main
+          ref: values
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: 'druid-{{ .path.basename }}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m

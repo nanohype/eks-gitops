@@ -1,0 +1,29 @@
+# Amazon Managed Service for Prometheus data source. The URL is per-environment
+# (patched by overlays/{env}/kustomization.yaml). access=proxy means Grafana
+# itself queries AMP using its workspace IAM role (which the AMG service role
+# in landing-zone grants AMP read access to).
+#
+# Note: AMG's Prometheus data source UI sets sigV4Auth=true automatically when
+# you create it through the AMG console. With grafana-operator, we declare it
+# explicitly in jsonData.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDatasource
+metadata:
+  name: managed-prometheus
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: external
+  datasource:
+    name: ManagedPrometheus
+    type: prometheus
+    access: proxy
+    url: https://aps-workspaces.us-west-2.amazonaws.com/workspaces/PLACEHOLDER  # patched per-env
+    isDefault: true
+    jsonData:
+      httpMethod: POST
+      manageAlerts: false
+      prometheusType: Prometheus
+      sigV4Auth: true
+      sigV4AuthType: ec2_iam_role
+      sigV4Region: us-west-2

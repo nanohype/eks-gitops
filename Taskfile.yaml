@@ -1,0 +1,65 @@
+version: "3"
+
+vars:
+  ENVIRONMENT: '{{.ENVIRONMENT | default "dev"}}'
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  # === Validation ===
+
+  lint:yaml:
+    desc: Run yamllint on all YAML files
+    cmds:
+      - yamllint -c .yamllint.yaml .
+
+  kustomize:build:
+    desc: Build all Kustomize overlays (all environments)
+    cmds:
+      - |
+        echo "Building all Kustomize overlays..."
+        find . -path '*/overlays/*/kustomization.yaml' -exec dirname {} \; | while read dir; do
+          echo "Building $dir ..."
+          kustomize build --enable-helm "$dir" > /dev/null || exit 1
+        done
+        echo "All overlays built successfully."
+
+  kustomize:build:env:
+    desc: "Build overlays for ENVIRONMENT (default: dev)"
+    cmds:
+      - |
+        echo "Building {{.ENVIRONMENT}} overlays..."
+        find . -path "*/overlays/{{.ENVIRONMENT}}/kustomization.yaml" -exec dirname {} \; | while read dir; do
+          echo "Building $dir ..."
+          kustomize build --enable-helm "$dir" > /dev/null || exit 1
+        done
+        echo "All {{.ENVIRONMENT}} overlays built successfully."
+
+  validate:
+    desc: Run all validations (lint + build)
+    deps: [lint:yaml, kustomize:build]
+    cmds:
+      - echo "All validations passed."
+
+  # === Rendering ===
+
+  render:
+    desc: "Render overlays to rendered/ directory for ENVIRONMENT (default: dev)"
+    cmds:
+      - |
+        mkdir -p rendered
+        echo "Rendering {{.ENVIRONMENT}} overlays..."
+        find . -path "*/overlays/{{.ENVIRONMENT}}/kustomization.yaml" -exec dirname {} \; | while read dir; do
+          name=$(echo "$dir" | sed 's|^\./||' | tr '/' '-')
+          echo "Rendering $dir ..."
+          kustomize build --enable-helm "$dir" > "rendered/${name}.yaml" || exit 1
+        done
+        echo "All {{.ENVIRONMENT}} overlays rendered to rendered/"
+
+  clean:
+    desc: Remove rendered output
+    cmds:
+      - rm -rf rendered/

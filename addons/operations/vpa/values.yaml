@@ -1,0 +1,23 @@
+# VPA - Vertical Pod Autoscaler (recommend-only mode)
+# Feeds Goldilocks dashboard with resource recommendations
+
+recommender:
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      cpu: 200m
+      memory: 512Mi
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+
+# Disabled: recommend-only mode (no automatic updates)
+updater:
+  enabled: false
+
+# Disabled: recommend-only mode (no admission webhook)
+admissionController:
+  enabled: false

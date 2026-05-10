@@ -1,0 +1,47 @@
+# cert-manager - TLS Certificate Management
+
+installCRDs: true
+
+replicaCount: 2
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+tolerations:
+  - key: CriticalAddonsOnly
+    operator: Exists
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+webhook:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+
+cainjector:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 25m
+      memory: 128Mi
+    limits:
+      cpu: 100m
+      memory: 256Mi
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists

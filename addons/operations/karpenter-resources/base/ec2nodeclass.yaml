@@ -1,0 +1,35 @@
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: default
+spec:
+  amiSelectorTerms:
+    - alias: bottlerocket@latest
+  # Role name is set per environment (exported from CDK)
+  role: "${CLUSTER_NAME}-karpenter-node"
+  subnetSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: "${CLUSTER_NAME}"
+        kubernetes.io/role/internal-elb: "1"
+  securityGroupSelectorTerms:
+    - tags:
+        aws:eks:cluster-name: "${CLUSTER_NAME}"
+  blockDeviceMappings:
+    - deviceName: /dev/xvda
+      ebs:
+        volumeSize: 50Gi
+        volumeType: gp3
+        encrypted: true
+    - deviceName: /dev/xvdb
+      ebs:
+        volumeSize: 100Gi
+        volumeType: gp3
+        encrypted: true
+  metadataOptions:
+    httpEndpoint: enabled
+    httpProtocolIPv6: disabled
+    httpPutResponseHopLimit: 2
+    httpTokens: required
+  tags:
+    managed-by: karpenter
+    environment: "${ENVIRONMENT}"

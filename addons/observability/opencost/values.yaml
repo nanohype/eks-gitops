@@ -1,0 +1,29 @@
+# OpenCost - Kubernetes cost allocation and visibility
+
+opencost:
+  exporter:
+    defaultClusterId: eks
+    aws:
+      spot_data_region: us-west-2
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+    tolerations:
+      - key: CriticalAddonsOnly
+        operator: Exists
+  ui:
+    enabled: true
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+    tolerations:
+      - key: CriticalAddonsOnly
+        operator: Exists

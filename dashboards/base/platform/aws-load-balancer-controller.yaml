@@ -1,0 +1,16 @@
+# AWS Load Balancer Controller
+# No canonical community dashboard at present — using a generic
+# kube-state-metrics deployment dashboard scoped to the controller deployment.
+# Replace `id` with a vendor dashboard if/when one ships.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: aws-load-balancer-controller
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: external
+  resyncPeriod: 24h
+  grafanaCom:
+    id: 16450
+    revision: latest

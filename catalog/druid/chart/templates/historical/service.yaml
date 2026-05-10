@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "druid.component.name" (list "historical" .) }}
+  labels:
+    {{- include "druid.component.labels" (list "historical" .) | indent 4 }}
+  annotations:
+    {{- include "druid.component.annotations" (list "historical" .) | indent 4 }}
+spec:
+  type: ClusterIP
+  clusterIP: None
+  {{- include "druid.service.ports" (list "historical" 8283) | nindent 2 }}
+  selector:
+    {{- include "druid.component.labels" (list "historical" .) | indent 4 }}
+    {{- include "druid.component.match.labels" (list "historical" .) | nindent 4 }}

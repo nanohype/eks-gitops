@@ -1,0 +1,17 @@
+# Loki - Dev overrides
+# Dev: single replica, shorter retention, smaller storage
+
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/dev-eks-loki
+
+loki:
+  commonConfig:
+    replication_factor: 1
+  limits_config:
+    retention_period: 168h
+
+singleBinary:
+  replicas: 1
+  persistence:
+    size: 10Gi

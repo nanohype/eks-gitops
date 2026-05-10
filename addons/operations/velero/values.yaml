@@ -1,0 +1,77 @@
+# Velero - Backup and Disaster Recovery
+# Adapted from aws-idp-gitops
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# AWS plugin
+initContainers:
+  - name: velero-plugin-for-aws
+    image: velero/velero-plugin-for-aws:v1.11.0
+    volumeMounts:
+      - mountPath: /target
+        name: plugins
+
+# Configuration
+configuration:
+  backupStorageLocation:
+    - name: default
+      provider: aws
+      bucket: ""  # Set per environment in values-{env}.yaml
+      config:
+        region: us-west-2
+  volumeSnapshotLocation:
+    - name: default
+      provider: aws
+      config:
+        region: us-west-2
+
+# CSI snapshots
+features: "EnableCSI"
+
+# Node agent for file-level backups
+deployNodeAgent: true
+nodeAgent:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  tolerations:
+    - operator: Exists
+
+tolerations:
+  - key: CriticalAddonsOnly
+    operator: Exists
+
+# Override kubectl image for helm hooks (bitnamilegacy/kubectl:1.35 doesn't exist)
+kubectl:
+  image:
+    repository: docker.io/bitnami/kubectl
+    tag: latest
+
+# Default backup schedules
+schedules:
+  daily:
+    disabled: false
+    schedule: "0 3 * * *"
+    template:
+      ttl: 720h  # 30 days
+      storageLocation: default
+      volumeSnapshotLocations:
+        - default
+  weekly:
+    disabled: false
+    schedule: "0 2 * * 0"
+    template:
+      ttl: 2160h  # 90 days
+      storageLocation: default
+      volumeSnapshotLocations:
+        - default
