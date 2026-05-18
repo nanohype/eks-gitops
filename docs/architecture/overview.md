@@ -2,7 +2,7 @@
 
 ## GitOps Model
 
-This repository implements the **App-of-Apps** pattern for ArgoCD. It is the EKS variant of a multi-cloud GitOps strategy (`eks-gitops`, `gke-gitops`, `aks-gitops`). The CDK infrastructure ([aws-eks](https://github.com/stxkxs/aws-eks)) deploys ArgoCD and creates a root Application that points to this repository's `applicationsets/` directory.
+This repository implements the **App-of-Apps** pattern for ArgoCD. It is the EKS variant of a multi-cloud GitOps strategy (`eks-gitops`, `gke-gitops`, `aks-gitops`). The CDK infrastructure ([aws-eks](https://github.com/nanohype/aws-eks)) deploys ArgoCD and creates a root Application that points to this repository's `applicationsets/` directory.
 
 ```mermaid
 graph TD
@@ -38,7 +38,7 @@ sources:
       valueFiles:
         - $values/{{ .path }}/values.yaml
         - $values/{{ .path }}/values-{{ index .metadata.labels "environment" }}.yaml
-  - repoURL: https://github.com/stxkxs/eks-gitops.git
+  - repoURL: https://github.com/nanohype/eks-gitops.git
     targetRevision: main
     ref: values
 ```
@@ -46,7 +46,7 @@ sources:
 **Kustomize addons** use single-source with environment-specific overlay paths:
 ```yaml
 source:
-  repoURL: https://github.com/stxkxs/eks-gitops.git
+  repoURL: https://github.com/nanohype/eks-gitops.git
   targetRevision: main
   path: '{{ .path }}/overlays/{{ index .metadata.labels "environment" }}'
 ```

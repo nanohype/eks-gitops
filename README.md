@@ -13,7 +13,7 @@ GitOps configuration for EKS cluster addons, managed by ArgoCD. Part of a multi-
 
 ## Companion Repository
 
-This repository is the EKS variant of a multi-cloud GitOps strategy. Infrastructure is provisioned by [aws-eks](https://github.com/stxkxs/aws-eks) (CDK), which deploys ArgoCD and creates the App-of-Apps Application pointing to this repository.
+This repository is the EKS variant of a multi-cloud GitOps strategy. Infrastructure is provisioned by [aws-eks](https://github.com/nanohype/aws-eks) (CDK), which deploys ArgoCD and creates the App-of-Apps Application pointing to this repository.
 
 ## Architecture
 

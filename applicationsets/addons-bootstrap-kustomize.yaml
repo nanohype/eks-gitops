@@ -33,7 +33,7 @@ spec:
     spec:
       project: platform
       source:
-        repoURL: https://github.com/stxkxs/eks-gitops.git
+        repoURL: https://github.com/nanohype/eks-gitops.git
         targetRevision: main
         path: '{{ .path }}/overlays/{{ index .metadata.labels "environment" }}'
       destination:

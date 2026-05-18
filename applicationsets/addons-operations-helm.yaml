@@ -80,7 +80,7 @@ spec:
             valueFiles:
               - $values/{{ .path }}/values.yaml
               - $values/{{ .path }}/values-{{ index .metadata.labels "environment" }}.yaml
-        - repoURL: https://github.com/stxkxs/eks-gitops.git
+        - repoURL: https://github.com/nanohype/eks-gitops.git
           targetRevision: main
           ref: values
       destination:

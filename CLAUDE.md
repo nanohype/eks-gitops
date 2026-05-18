@@ -2,7 +2,7 @@
 
 ## Overview
 
-EKS-specific GitOps configuration for ArgoCD addon lifecycle management. Part of a multi-cloud strategy (`eks-gitops`, `gke-gitops`, `aks-gitops`). Companion to [aws-eks](https://github.com/stxkxs/aws-eks) (CDK infrastructure).
+EKS-specific GitOps configuration for ArgoCD addon lifecycle management. Part of a multi-cloud strategy (`eks-gitops`, `gke-gitops`, `aks-gitops`). Companion to [aws-eks](https://github.com/nanohype/aws-eks) (CDK infrastructure).
 
 ## Directory Structure
 

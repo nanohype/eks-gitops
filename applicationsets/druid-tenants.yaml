@@ -16,7 +16,7 @@ spec:
                 matchLabels:
                   argocd.argoproj.io/secret-type: cluster
           - git:
-              repoURL: https://github.com/stxkxs/eks-gitops.git
+              repoURL: https://github.com/nanohype/eks-gitops.git
               revision: main
               directories:
                 - path: 'catalog/druid/tenants/*'
@@ -28,7 +28,7 @@ spec:
     spec:
       project: platform
       sources:
-        - repoURL: https://github.com/stxkxs/eks-gitops.git
+        - repoURL: https://github.com/nanohype/eks-gitops.git
           targetRevision: main
           path: catalog/druid/chart
           helm:
@@ -37,7 +37,7 @@ spec:
               - $values/catalog/druid/values.yaml
               - $values/{{ .path.path }}/values.yaml
               - $values/{{ .path.path }}/values-{{ index .metadata.labels "environment" }}.yaml
-        - repoURL: https://github.com/stxkxs/eks-gitops.git
+        - repoURL: https://github.com/nanohype/eks-gitops.git
           targetRevision: main
           ref: values
       destination:
