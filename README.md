@@ -2,6 +2,8 @@
 
 GitOps configuration for EKS cluster addons, managed by ArgoCD. Part of a multi-cloud GitOps strategy (`eks-gitops`, `gke-gitops`, `aks-gitops`).
 
+**AI clients / agents start here:** [`AGENTS.md`](AGENTS.md). For the stack-wide view, see the [Platform Reference](https://github.com/nanohype/nanohype/blob/main/docs/platform-reference.md).
+
 ## Features
 
 - **App-of-Apps pattern** with ArgoCD ApplicationSets for multi-cluster deployment
