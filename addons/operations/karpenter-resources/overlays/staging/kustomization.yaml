@@ -15,8 +15,23 @@ patches:
           cpu: 75
           memory: 150Gi
 
-configMapGenerator:
-  - name: karpenter-config
-    literals:
-      - CLUSTER_NAME=staging-eks
-      - ENVIRONMENT=staging
+  - patch: |-
+      apiVersion: karpenter.k8s.aws/v1
+      kind: EC2NodeClass
+      metadata:
+        name: default
+      spec:
+        role: staging-eks-karpenter-node
+        subnetSelectorTerms:
+          - tags:
+              karpenter.sh/discovery: staging-eks
+              kubernetes.io/role/internal-elb: "1"
+        securityGroupSelectorTerms:
+          - tags:
+              aws:eks:cluster-name: staging-eks
+        tags:
+          environment: staging
+          managed-by: karpenter
+    target:
+      kind: EC2NodeClass
+      name: default

@@ -38,8 +38,23 @@ patches:
               schedule: "0 9 * * 1-5"
               duration: 8h
 
-configMapGenerator:
-  - name: karpenter-config
-    literals:
-      - CLUSTER_NAME=production-eks
-      - ENVIRONMENT=production
+  - patch: |-
+      apiVersion: karpenter.k8s.aws/v1
+      kind: EC2NodeClass
+      metadata:
+        name: default
+      spec:
+        role: production-eks-karpenter-node
+        subnetSelectorTerms:
+          - tags:
+              karpenter.sh/discovery: production-eks
+              kubernetes.io/role/internal-elb: "1"
+        securityGroupSelectorTerms:
+          - tags:
+              aws:eks:cluster-name: production-eks
+        tags:
+          environment: production
+          managed-by: karpenter
+    target:
+      kind: EC2NodeClass
+      name: default
