@@ -1,0 +1,32 @@
+# MCP-tunnel addon — values overlay for the Anthropic mcp-tunnel chart
+# (oci://us-docker.pkg.dev/anthropic-public-registry/charts/mcp-tunnel).
+#
+# OPT-IN TEMPLATE — this addon is intentionally not wired into an
+# ApplicationSet. See README.md to enable it. Every REPLACE_ME below must
+# be filled with values from your own tunnel before it will deploy.
+
+# Programmatic setup via Workload Identity Federation: the chart's setup
+# Job mints the tunnel token, generates and registers the CA, and a
+# CronJob renews the server certificate. EKS is an OIDC provider, so WIF
+# is the k8s-native path. For manual credentials, see README.md.
+setup:
+  enabled: true
+
+api:
+  wif:
+    # The tunnel id and federation rule id from the Claude Console, and
+    # your Anthropic organization id.
+    tunnelId: "tnl_REPLACE_ME"
+    federationRuleId: "fdrl_REPLACE_ME"
+    organizationId: "00000000-0000-0000-0000-000000000000"
+    # Uncomment when the tunnel lives in a non-default workspace.
+    # workspaceId: "wrkspc_REPLACE_ME"
+
+gateway:
+  config:
+    # Map each subdomain to an in-cluster MCP server as scheme://host:port
+    # (no path — the proxy forwards the request path untouched). Claude
+    # reaches the server at <subdomain>.<tunnel-domain>.
+    routes: {}
+    # routes:
+    #   docs: http://docs-mcp.example-ns.svc.cluster.local:8080
