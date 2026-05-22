@@ -33,3 +33,54 @@ spec:
     consolidateAfter: 1m
     budgets:
       - nodes: "20%"
+
+---
+# Dedicated, tainted node pool for self-hosted sandbox workers.
+#
+# Agent tool execution runs on these nodes, kept off the shared `default`
+# pool by the `agents.stxkxs.io/sandbox` taint — sandbox worker pods carry
+# the matching toleration + nodeSelector. Consolidation is `WhenEmpty` so a
+# node draining its last session is reclaimed without disrupting a node
+# that still has a session running.
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: sandbox
+spec:
+  template:
+    metadata:
+      labels:
+        agents.stxkxs.io/sandbox: "true"
+    spec:
+      taints:
+        - key: agents.stxkxs.io/sandbox
+          value: "true"
+          effect: NoSchedule
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: default
+      requirements:
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["spot", "on-demand"]
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+        - key: karpenter.k8s.aws/instance-category
+          operator: In
+          values: ["c", "m"]
+        - key: karpenter.k8s.aws/instance-generation
+          operator: Gt
+          values: ["4"]
+        - key: karpenter.k8s.aws/instance-size
+          operator: In
+          values: ["medium", "large", "xlarge", "2xlarge"]
+  limits:
+    cpu: 100
+    memory: 200Gi
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 30s
+    budgets:
+      - nodes: "20%"
