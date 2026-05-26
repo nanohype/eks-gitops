@@ -72,13 +72,13 @@ agent:
       // expects service "aps" and the workspace's region.
       prometheus.remote_write "amp" {
         endpoint {
-          url = sys.env("AMP_REMOTE_WRITE_URL")
+          url = env("AMP_REMOTE_WRITE_URL")
           sigv4 {
-            region = sys.env("AWS_REGION")
+            region = env("AWS_REGION")
           }
         }
         external_labels = {
-          cluster = sys.env("CLUSTER_NAME"),
+          cluster = env("CLUSTER_NAME"),
         }
       }
 

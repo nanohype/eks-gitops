@@ -51,11 +51,13 @@ tolerations:
   - key: CriticalAddonsOnly
     operator: Exists
 
-# Override kubectl image for helm hooks (bitnamilegacy/kubectl:1.35 doesn't exist)
+# Override kubectl image for helm hooks. Bitnami migrated public images to
+# `bitnamilegacy/`; pin to a real existing tag (latest isn't published on
+# the legacy repo).
 kubectl:
   image:
-    repository: docker.io/bitnami/kubectl
-    tag: latest
+    repository: docker.io/bitnamilegacy/kubectl
+    tag: 1.33.4-debian-12-r0
 
 # Default backup schedules
 schedules:
