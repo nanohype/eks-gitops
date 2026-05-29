@@ -34,6 +34,11 @@ spec:
                   path: chart
                   namespace: tenants-protohype
                   project: tenant-protohype
+                - app: competitive-intelligence
+                  repoURL: https://github.com/nanohype/competitive-intelligence.git
+                  path: chart
+                  namespace: tenants-protohype
+                  project: tenant-protohype
   template:
     metadata:
       name: '{{ .app }}-{{ index .metadata.labels "environment" }}'
