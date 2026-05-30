@@ -38,7 +38,7 @@ spec:
 # Dedicated, tainted node pool for self-hosted sandbox workers.
 #
 # Agent tool execution runs on these nodes, kept off the shared `default`
-# pool by the `agents.stxkxs.io/sandbox` taint — sandbox worker pods carry
+# pool by the `agents.nanohype.dev/sandbox` taint — sandbox worker pods carry
 # the matching toleration + nodeSelector. Consolidation is `WhenEmpty` so a
 # node draining its last session is reclaimed without disrupting a node
 # that still has a session running.
@@ -50,10 +50,10 @@ spec:
   template:
     metadata:
       labels:
-        agents.stxkxs.io/sandbox: "true"
+        agents.nanohype.dev/sandbox: "true"
     spec:
       taints:
-        - key: agents.stxkxs.io/sandbox
+        - key: agents.nanohype.dev/sandbox
           value: "true"
           effect: NoSchedule
       nodeClassRef:

@@ -6,8 +6,8 @@ environment: ""
 name: "druid"
 alias: ""
 build: "v1"
-domain: "stxkxs.io"
-organization: stxkxs
+domain: "nanohype.dev"
+organization: nanohype
 version: "36.0.0"
 
 image:
@@ -16,11 +16,11 @@ image:
 
 labels:
   "app.kubernetes.io/name": druid
-  "stxkxs.io/resource-type": druid
-  "stxkxs.io/category": analytics
-  "stxkxs.io/type": analytics
-  "stxkxs.io/part-of": druid
-  "stxkxs.io/name": druid
+  "nanohype.dev/resource-type": druid
+  "nanohype.dev/category": analytics
+  "nanohype.dev/type": analytics
+  "nanohype.dev/part-of": druid
+  "nanohype.dev/name": druid
 
 annotations:
   "k8s.grafana.com/scrape": "true"
