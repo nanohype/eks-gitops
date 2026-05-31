@@ -65,11 +65,6 @@ spec:
           targetRevision: '{{ .chartVersion }}'
           helm:
             releaseName: '{{ .appName }}'
-            parameters:
-              - name: clusterName
-                value: '{{ index .metadata.labels "cluster_name" }}'
-              - name: vpcId
-                value: '{{ index .metadata.labels "vpc_id" }}'
             valueFiles:
               - $values/{{ .path }}/values.yaml
               - $values/{{ .path }}/values-{{ index .metadata.labels "environment" }}.yaml
