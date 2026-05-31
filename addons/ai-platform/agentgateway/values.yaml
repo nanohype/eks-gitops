@@ -1,0 +1,6 @@
+# agentgateway — model/tool gateway (mirrors the kx ai-platform install).
+# The operator emits Gateway/HTTPRoute/AgentgatewayBackend/AgentgatewayPolicy
+# CRs that route tenant traffic to Bedrock through this gateway.
+# Tune per-env below: replicas, Bedrock region/PrivateLink, guardrail config.
+controller:
+  replicaCount: 2

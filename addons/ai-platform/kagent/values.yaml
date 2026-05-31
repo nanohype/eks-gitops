@@ -1,0 +1,3 @@
+# kagent — Kubernetes-native agent runtime (mirrors the kx ai-platform install).
+# eks-agent-platform AgentFleet/ModelGateway CRs reconcile into kagent here.
+# Tune per-env below: Bedrock model access, replicas, kagent-tools/kmcp sub-charts.
