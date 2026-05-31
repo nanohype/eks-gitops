@@ -6,7 +6,10 @@
 #
 # A git directory generator discovers each per-cluster directory and recurses
 # its manifests (robust — no per-file content parsing). repoURL MUST equal the
-# portal worker's GITOPS_TENANTS_REPO_URL.
+# portal worker's GITOPS_TENANTS_REPO_URL — both the SSH form, since the portal
+# pushes over SSH (its git layer is SSH-only). ArgoCD needs a matching SSH repo
+# credential (a read-only deploy key on the private tenants repo) registered for
+# this URL so it can pull what the portal pushes.
 #
 # NOTE: static-validated only (no live EKS run yet). Verify on first use, and
 # consider two refinements: per-tenant granularity (a git files generator over
@@ -25,7 +28,7 @@ spec:
   goTemplateOptions: ["missingkey=error"]
   generators:
     - git:
-        repoURL: https://github.com/nanohype/tenants.git # == portal GITOPS_TENANTS_REPO_URL
+        repoURL: git@github.com:nanohype/tenants.git # == portal GITOPS_TENANTS_REPO_URL (SSH)
         revision: main
         directories:
           - path: tenants/*
@@ -37,7 +40,7 @@ spec:
     spec:
       project: platform
       source:
-        repoURL: https://github.com/nanohype/tenants.git
+        repoURL: git@github.com:nanohype/tenants.git
         targetRevision: main
         path: '{{ .path.path }}'
         directory:
