@@ -1,0 +1,19 @@
+# eks-agent-platform operator — base Helm values (all environments).
+#
+# Per-cluster IRSA wiring (config.oidc.providerArn/issuerHost, the
+# serviceAccount eks.amazonaws.com/role-arn annotation) and config.environment /
+# config.region are injected by the addons-agent-operator ApplicationSet from
+# the in-cluster ArgoCD Secret (labels + annotations cluster-bootstrap sets).
+# Do NOT set them here — they embed the AWS account ID, which must never be
+# committed to this public repo.
+#
+# The operator's admission webhooks need a cert-manager Issuer. The chart
+# provisions a self-signed ClusterIssuer so the addon is self-contained; point
+# at a real issuer (Vault / ACM Private CA) per-env if preferred.
+webhooks:
+  certManager:
+    installSelfSignedIssuer: true
+
+# networkPolicy.engine defaults to cilium (the cluster CNI). The operator's
+# egress to the kube-apiserver uses a Cilium reserved identity that a vanilla
+# Kubernetes NetworkPolicy cannot match, so leave it on cilium.

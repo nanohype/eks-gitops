@@ -1,0 +1,83 @@
+# Installs the eks-agent-platform operator on every cluster opted in via the
+# `eks-agent-platform/enabled=true` label that cluster-bootstrap sets on the
+# in-cluster ArgoCD Secret. The operator needs per-cluster IRSA wiring (its OIDC
+# provider + a role-arn ServiceAccount annotation) that embeds the AWS account
+# ID — so rather than committing it, cluster-bootstrap publishes those values as
+# Secret ANNOTATIONS and this ApplicationSet reads them through ArgoCD's cluster
+# generator and injects them as Helm values via valuesObject. The account ID
+# never lands in this (public) repo.
+#
+# The chart is sourced from git (the public eks-agent-platform repo's
+# charts/operator) rather than the OCI registry, so no chart release is required;
+# switch repoURL/chart to oci://ghcr.io/nanohype/eks-agent-platform/charts once
+# the operator chart is published there to match the other ai-platform addons.
+# NOTE: the operator container image (chart default
+# ghcr.io/nanohype/eks-agent-platform/operator, tag = chart version) must be
+# published multi-arch (incl. arm64 for Graviton) for the pods to start; pin
+# image.repository/tag in addons/ai-platform/operator/values.yaml otherwise.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: addons-agent-operator
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "21"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            argocd.argoproj.io/secret-type: cluster
+            eks-agent-platform/enabled: "true"
+  template:
+    metadata:
+      name: eks-agent-platform-operator
+      annotations:
+        argocd.argoproj.io/sync-wave: "21"
+    spec:
+      project: platform
+      sources:
+        - repoURL: https://github.com/nanohype/eks-agent-platform.git
+          targetRevision: main
+          path: charts/operator
+          helm:
+            releaseName: operator
+            # Per-cluster IRSA + identity, read from the cluster Secret's labels
+            # (account-agnostic) and annotations (account-specific, published by
+            # cluster-bootstrap). valuesObject overrides the valueFiles below, so
+            # the static config lives in the repo and the account-specific bits
+            # stay out of git.
+            valuesObject:
+              config:
+                environment: '{{ index .metadata.labels "environment" }}'
+                region: '{{ index .metadata.labels "region" }}'
+                oidc:
+                  providerArn: '{{ index .metadata.annotations "eks-agent-platform/oidc-provider-arn" }}'
+                  issuerHost: '{{ index .metadata.annotations "eks-agent-platform/oidc-issuer-host" }}'
+              serviceAccount:
+                annotations:
+                  eks.amazonaws.com/role-arn: '{{ index .metadata.annotations "eks-agent-platform/operator-role-arn" }}'
+            valueFiles:
+              - $values/addons/ai-platform/operator/values.yaml
+              - $values/addons/ai-platform/operator/values-{{ index .metadata.labels "environment" }}.yaml
+        - repoURL: https://github.com/nanohype/eks-gitops.git
+          targetRevision: main
+          ref: values
+      destination:
+        server: '{{ .server }}'
+        namespace: eks-agent-platform
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m

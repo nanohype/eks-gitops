@@ -1,0 +1,3 @@
+# eks-agent-platform operator — staging deltas only (base is values.yaml).
+# config.environment is injected from the cluster Secret label by the
+# ApplicationSet, so it is intentionally not set here.
