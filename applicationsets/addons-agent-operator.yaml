@@ -43,7 +43,10 @@ spec:
           targetRevision: main
           path: charts/operator
           helm:
-            releaseName: operator
+            # Matches the Application name above so Application == release ==
+            # Deployment (eks-agent-platform-operator) — one fully-qualified name
+            # instead of a bare, generic "operator" Deployment in the namespace.
+            releaseName: eks-agent-platform-operator
             # Per-cluster IRSA + identity, read from the cluster Secret's labels
             # (account-agnostic) and annotations (account-specific, published by
             # cluster-bootstrap). valuesObject overrides the valueFiles below, so
