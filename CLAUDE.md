@@ -7,7 +7,7 @@ EKS-specific GitOps configuration for ArgoCD addon lifecycle management. Part of
 ## Directory Structure
 
 ```
-applicationsets/       → ArgoCD ApplicationSets (App-of-Apps pattern, 10 total)
+applicationsets/       → ArgoCD ApplicationSets (App-of-Apps pattern, 16 total)
 addons/                → Addon configurations
   <category>/<addon>/
     # Helm addons (majority):
@@ -43,7 +43,7 @@ Environment-specific values files contain ONLY differences from base — not a f
 Three addons use pure Kustomize (no Helm): storage-classes, priority-classes, karpenter-resources. These use the `base/overlays` pattern with `kustomization.yaml` in each overlay directory. Kyverno policies also use pure Kustomize (resources + JSON patches for enforcement mode).
 
 ### ApplicationSet Generator
-All 10 ApplicationSets use `matrix` generator combining `clusters` selector with a `list` of addons. Two template styles: Helm multi-source (for Helm addons with `$values` ref) and single-source with Kustomize path (for Kustomize addons and policies). Environment is read from cluster secret labels: `{{ index .metadata.labels "environment" }}`.
+Most ApplicationSets use a `matrix` generator combining `clusters` selector with a `list` of addons. Two template styles: Helm multi-source (for Helm addons with `$values` ref) and single-source with Kustomize path (for Kustomize addons and policies). Environment is read from cluster secret labels: `{{ index .metadata.labels "environment" }}`.
 
 ## Making Changes
 

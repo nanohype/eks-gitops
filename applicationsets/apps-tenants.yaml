@@ -22,30 +22,22 @@ spec:
                 - app: slack-knowledge-bot
                   repoURL: https://github.com/nanohype/slack-knowledge-bot.git
                   path: chart
-                  namespace: tenants-protohype
-                  project: tenant-protohype
                 - app: digest-pipeline
                   repoURL: https://github.com/nanohype/digest-pipeline.git
                   path: chart
-                  namespace: tenants-protohype
-                  project: tenant-protohype
                 - app: incident-response
                   repoURL: https://github.com/nanohype/incident-response.git
                   path: chart
-                  namespace: tenants-protohype
-                  project: tenant-protohype
                 - app: competitive-intelligence
                   repoURL: https://github.com/nanohype/competitive-intelligence.git
                   path: chart
-                  namespace: tenants-protohype
-                  project: tenant-protohype
   template:
     metadata:
       name: '{{ .app }}-{{ index .metadata.labels "environment" }}'
       annotations:
         argocd.argoproj.io/sync-wave: "100"
     spec:
-      project: '{{ .project }}'
+      project: '{{ .app }}'
       sources:
         - repoURL: '{{ .repoURL }}'
           targetRevision: main
@@ -59,7 +51,9 @@ spec:
           ref: values
       destination:
         server: https://kubernetes.default.svc
-        namespace: '{{ .namespace }}'
+        # Per-app tenant namespace the operator creates from the Platform name
+        # (PlatformNamespace = tenants-<platform>); CreateNamespace=false below.
+        namespace: 'tenants-{{ .app }}'
       syncPolicy:
         automated:
           prune: true

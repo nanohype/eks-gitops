@@ -21,7 +21,7 @@ graph TD
 
 ## ApplicationSet Pattern
 
-All 10 ApplicationSets use the **matrix generator** combining:
+Most ApplicationSets use the **matrix generator** (addons-agent-operator, clusters-appset, and portal-tenants use other generators) combining:
 
 1. **Clusters generator** — selects clusters by label `argocd.argoproj.io/secret-type: cluster`
 2. **List generator** — defines addons with name, namespace, path, and sync wave

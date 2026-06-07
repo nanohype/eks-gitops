@@ -29,7 +29,7 @@ This repository is the EKS variant of a multi-cloud GitOps strategy. Infrastruct
                                 │
                                 ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│                    ApplicationSets (10)                             │
+│                    ApplicationSets (16)                             │
 ├─────────────────────────────────────────────────────────────────────┤
 │  ├── addons-bootstrap (cert-manager, external-secrets, ...)        │
 │  ├── addons-bootstrap-kustomize (storage-classes, priority-classes) │
@@ -48,7 +48,7 @@ This repository is the EKS variant of a multi-cloud GitOps strategy. Infrastruct
 
 ```
 eks-gitops/
-├── applicationsets/                    # ArgoCD ApplicationSets (10)
+├── applicationsets/                    # ArgoCD ApplicationSets (16)
 │   ├── addons-bootstrap.yaml
 │   ├── addons-bootstrap-kustomize.yaml
 │   ├── addons-networking.yaml
