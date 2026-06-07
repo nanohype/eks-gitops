@@ -45,6 +45,11 @@ spec:
                   chartVersion: "0.31.0"
                   path: addons/operations/descheduler
                   syncWave: "43"
+                # karpenter is catalogued under operations but deploys at wave 5 —
+                # right after the CNI (networking, wave 1) and before security (10),
+                # observability, and tenant workloads, so the autoscaler is ready to
+                # provision nodes for everything that follows. Its peers in this
+                # ApplicationSet run at their nominal operations waves (40+).
                 - appName: karpenter
                   namespace: kube-system
                   chartRepo: oci://public.ecr.aws/karpenter/karpenter

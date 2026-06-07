@@ -4,22 +4,23 @@ You're an AI client (or the author of one) about to add a cluster-level addon, r
 
 ## What this repo gives you
 
-ArgoCD App-of-Apps catalog for EKS clusters. Six addon categories, plus ApplicationSets that bind workloads to clusters via labels:
+ArgoCD App-of-Apps catalog for EKS clusters. Seven addon categories, plus ApplicationSets that bind workloads to clusters via labels (listed in deploy order):
 
-- **`addons/argo-platform/`** — Argo CD, Argo Workflows, Argo Rollouts, Argo Events
-- **`addons/bootstrap/`** — cluster bootstrap (cert-manager, external-secrets-operator, metrics-server, aws-load-balancer-controller, ebs-csi-driver, cluster-autoscaler/karpenter)
-- **`addons/networking/`** — ingress-nginx, cilium, hubble, network-policies
-- **`addons/observability/`** — kube-prometheus-stack, loki, tempo, grafana-cloud-otel-collector
-- **`addons/operations/`** — keda, descheduler, reloader, vpa, cluster-overprovisioner
-- **`addons/security/`** — kyverno, falco, trivy-operator, gatekeeper
+- **`addons/bootstrap/`** — cert-manager, external-secrets, metrics-server, prometheus-operator-crds, reloader, storage-classes, priority-classes
+- **`addons/networking/`** — cilium, aws-load-balancer-controller, external-dns, mcp-tunnel
+- **`addons/security/`** — kyverno, falco, trivy-operator
+- **`addons/observability/`** — grafana-agent, grafana-operator, loki, tempo, opencost
+- **`addons/operations/`** — karpenter, karpenter-resources, keda, descheduler, goldilocks, vpa, velero
+- **`addons/ai-platform/`** — kagent, agentgateway, the eks-agent-platform operator (plus their CRDs)
+- **`addons/argo-platform/`** — Argo Workflows, Argo Rollouts, Argo Events
 
 Plus:
 
 - **`applicationsets/`** — ApplicationSet generators that fan addons + tenant workloads out across clusters by label
-- **`catalog/`** — per-addon catalog metadata
+- **`catalog/`** — platform-specific tenant workloads (currently Druid)
 - **`environments/`** — per-cluster overlays (dev / staging / production)
-- **`dashboards/`** — Grafana dashboard JSON consumed by the kube-prometheus-stack Grafana sidecar
-- **`policies/`** — Kyverno + Gatekeeper policies enforced cluster-wide
+- **`dashboards/`** — `GrafanaDashboard` CRs that grafana-operator reconciles into the external Amazon Managed Grafana workspace
+- **`policies/`** — Kyverno policies (best-practices, pod-security-standards) enforced cluster-wide
 
 ## Contract surface
 
@@ -40,15 +41,14 @@ Every tenant workload (a protohype app, an AgentFleet, etc.):
 
 1. Create `addons/<category>/<name>/` with `values.yaml` + per-env deltas (`values-dev.yaml` / `values-staging.yaml` / `values-production.yaml`).
 2. Reference the upstream chart by name + version in the values structure (varies per category — see existing addons for the shape).
-3. Add an entry to `applicationsets/addons-<category>.yaml` with a sync wave that respects ordering (bootstrap < security < networking < observability < operations < argo-platform < apps).
-4. Add the addon's catalog metadata to `catalog/<category>.yaml`.
-5. Run `task validate` — checks helm-template renders cleanly across every env, ApplicationSet schema is valid, sync waves don't conflict.
-6. Open a PR. CI runs `task validate` + Kyverno policy checks.
+3. Add an entry to `applicationsets/addons-<category>.yaml` with a sync wave that respects ordering (bootstrap < networking < security < observability < operations < ai-platform < argo-platform < apps).
+4. Run `task validate` — checks helm-template renders cleanly across every env, ApplicationSet schema is valid, sync waves don't conflict.
+5. Open a PR. CI runs `task validate` + Kyverno policy checks.
 
 ## Add a Grafana dashboard
 
-1. Drop the dashboard JSON in `dashboards/<source>.json` (curated standalone) or have the app's chart emit a `ConfigMap` with the `grafana_dashboard: "1"` label.
-2. The kube-prometheus-stack Grafana sidecar auto-imports labeled ConfigMaps. Curated dashboards under `dashboards/` ship via the `dashboards.yaml` ApplicationSet.
+1. Add a `GrafanaDashboard` CR under `dashboards/base/{platform,addons}/` (reference a grafana.com dashboard id or inline JSON) with `instanceSelector` label `dashboards: external`, and register it in `dashboards/base/kustomization.yaml`.
+2. grafana-operator reconciles the `GrafanaDashboard` CRs and pushes them to the external Amazon Managed Grafana workspace. The `dashboards.yaml` ApplicationSet ships them into the `grafana-operator` namespace.
 
 ## Register a tenant workload
 
