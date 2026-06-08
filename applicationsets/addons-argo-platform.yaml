@@ -21,14 +21,14 @@ spec:
                   namespace: argo-rollouts
                   chartRepo: https://argoproj.github.io/argo-helm
                   chart: argo-rollouts
-                  chartVersion: "2.39.1"
+                  chartVersion: "2.41.0"
                   path: addons/argo-platform/argo-rollouts
                   syncWave: "50"
                 - appName: argo-events
                   namespace: argo-events
                   chartRepo: https://argoproj.github.io/argo-helm
                   chart: argo-events
-                  chartVersion: "2.4.11"
+                  chartVersion: "2.4.21"
                   path: addons/argo-platform/argo-events
                   syncWave: "51"
                 - appName: argo-workflows

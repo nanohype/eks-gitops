@@ -28,7 +28,7 @@ spec:
                   namespace: vpa
                   chartRepo: https://charts.fairwinds.com/stable
                   chart: vpa
-                  chartVersion: "4.7.1"
+                  chartVersion: "4.11.0"
                   path: addons/operations/vpa
                   syncWave: "41"
                 - appName: goldilocks
@@ -42,7 +42,7 @@ spec:
                   namespace: kube-system
                   chartRepo: https://kubernetes-sigs.github.io/descheduler/
                   chart: descheduler
-                  chartVersion: "0.31.0"
+                  chartVersion: "0.36.0"
                   path: addons/operations/descheduler
                   syncWave: "43"
                 # karpenter is catalogued under operations but deploys at wave 5 —
@@ -61,7 +61,7 @@ spec:
                   namespace: keda
                   chartRepo: https://kedacore.github.io/charts
                   chart: keda
-                  chartVersion: "2.16.1"
+                  chartVersion: "2.20.0"
                   path: addons/operations/keda
                   syncWave: "44"
   template:

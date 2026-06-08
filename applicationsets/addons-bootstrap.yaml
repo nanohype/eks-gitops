@@ -49,7 +49,7 @@ spec:
                   namespace: reloader
                   chartRepo: https://stakater.github.io/stakater-charts
                   chart: reloader
-                  chartVersion: "2.2.5"
+                  chartVersion: "2.2.12"
                   path: addons/bootstrap/reloader
                   syncWave: "2"
   template:

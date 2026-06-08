@@ -28,7 +28,7 @@ spec:
                   namespace: monitoring
                   chartRepo: https://grafana.github.io/helm-charts
                   chart: tempo
-                  chartVersion: 1.21.0
+                  chartVersion: 1.24.4
                   path: addons/observability/tempo
                   syncWave: "31"
                 - appName: grafana-agent
