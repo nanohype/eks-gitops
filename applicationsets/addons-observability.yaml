@@ -47,9 +47,9 @@ spec:
                   syncWave: "33"
                 - appName: grafana-operator
                   namespace: grafana-operator
-                  chartRepo: oci://ghcr.io/grafana/helm-charts
+                  chartRepo: https://grafana.github.io/helm-charts
                   chart: grafana-operator
-                  chartVersion: "v5.21.0"
+                  chartVersion: "5.23.0"
                   path: addons/observability/grafana-operator
                   syncWave: "34"
   template:
