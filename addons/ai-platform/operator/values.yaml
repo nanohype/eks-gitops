@@ -17,3 +17,17 @@ webhooks:
 # networkPolicy.engine defaults to cilium (the cluster CNI). The operator's
 # egress to the kube-apiserver uses a Cilium reserved identity that a vanilla
 # Kubernetes NetworkPolicy cannot match, so leave it on cilium.
+
+# The operator's own runtime, folded into the chart (0.2.0+). Enabled on every
+# agent-platform cluster (these match the chart defaults; set explicitly so the
+# deployment intent is visible at the gitops layer).
+#   - eval-runtime: the Argo WorkflowTemplate + SA/RBAC. The eval-runner role ARN
+#     and report bucket are injected per-cluster by the ApplicationSet above.
+#   - slo: the operator's PrometheusRule + CR-state metrics ConfigMap.
+# rollouts.enabled (needs the Argo Rollouts CRD) and slo.alerting.enabled (needs
+# the pagerduty/slack Secrets) stay off here; production flips alerting on in
+# values-production.yaml once those Secrets are provisioned.
+evalRuntime:
+  enabled: true
+slo:
+  enabled: true
