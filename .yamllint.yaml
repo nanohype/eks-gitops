@@ -3,6 +3,9 @@ extends: default
 
 ignore: |
   catalog/druid/chart/templates/
+  # Persona dashboards embed Grafana JSON (PromQL exprs exceed line-length); the
+  # JSON is validated by kustomize build + the GrafanaDashboard schema, not yamllint.
+  dashboards/base/platform/agent-*.yaml
 
 rules:
   line-length:
