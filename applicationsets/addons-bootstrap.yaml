@@ -28,14 +28,14 @@ spec:
                   namespace: external-secrets
                   chartRepo: https://charts.external-secrets.io
                   chart: external-secrets
-                  chartVersion: "0.17.0"
+                  chartVersion: "2.6.0"
                   path: addons/bootstrap/external-secrets
                   syncWave: "0"
                 - appName: prometheus-operator-crds
                   namespace: monitoring
                   chartRepo: https://prometheus-community.github.io/helm-charts
                   chart: prometheus-operator-crds
-                  chartVersion: "19.1.0"
+                  chartVersion: "29.0.0"
                   path: addons/bootstrap/prometheus-operator-crds
                   syncWave: "0"
                 - appName: metrics-server

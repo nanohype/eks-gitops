@@ -21,7 +21,7 @@ spec:
                   namespace: monitoring
                   chartRepo: https://grafana.github.io/helm-charts
                   chart: loki
-                  chartVersion: 6.29.0
+                  chartVersion: 7.0.0
                   path: addons/observability/loki
                   syncWave: "30"
                 - appName: tempo
@@ -42,7 +42,7 @@ spec:
                   namespace: opencost
                   chartRepo: https://opencost.github.io/opencost-helm-chart
                   chart: opencost
-                  chartVersion: "1.42.2"
+                  chartVersion: "2.5.22"
                   path: addons/observability/opencost
                   syncWave: "33"
                 - appName: grafana-operator

@@ -35,7 +35,7 @@ spec:
                   namespace: falco
                   chartRepo: https://falcosecurity.github.io/charts
                   chart: falco
-                  chartVersion: 8.0.1
+                  chartVersion: 9.0.0
                   path: addons/security/falco
                   syncWave: "12"
   template:

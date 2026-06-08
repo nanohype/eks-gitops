@@ -3,8 +3,6 @@
 opencost:
   exporter:
     defaultClusterId: eks
-    aws:
-      spot_data_region: us-west-2
     resources:
       requests:
         cpu: 50m
@@ -12,9 +10,6 @@ opencost:
       limits:
         cpu: 200m
         memory: 256Mi
-    tolerations:
-      - key: CriticalAddonsOnly
-        operator: Exists
   ui:
     enabled: true
     resources:
@@ -24,6 +19,9 @@ opencost:
       limits:
         cpu: 100m
         memory: 128Mi
-    tolerations:
-      - key: CriticalAddonsOnly
-        operator: Exists
+  # Single deployment (exporter + ui), so tolerations live at opencost.tolerations
+  # — the previous per-component exporter/ui tolerations sat on invalid paths and
+  # were silently dropped, so CriticalAddonsOnly never actually applied until now.
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists

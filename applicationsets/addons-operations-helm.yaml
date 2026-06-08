@@ -21,7 +21,7 @@ spec:
                   namespace: velero
                   chartRepo: https://vmware-tanzu.github.io/helm-charts
                   chart: velero
-                  chartVersion: 11.3.2
+                  chartVersion: 12.0.2
                   path: addons/operations/velero
                   syncWave: "40"
                 - appName: vpa
@@ -35,7 +35,7 @@ spec:
                   namespace: goldilocks
                   chartRepo: https://charts.fairwinds.com/stable
                   chart: goldilocks
-                  chartVersion: 9.2.0
+                  chartVersion: 10.3.0
                   path: addons/operations/goldilocks
                   syncWave: "42"
                 - appName: descheduler

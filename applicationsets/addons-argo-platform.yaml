@@ -35,7 +35,7 @@ spec:
                   namespace: argo-workflows
                   chartRepo: https://argoproj.github.io/argo-helm
                   chart: argo-workflows
-                  chartVersion: "0.45.1"
+                  chartVersion: "1.0.14"
                   path: addons/argo-platform/argo-workflows
                   syncWave: "52"
   template:

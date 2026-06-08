@@ -28,7 +28,7 @@ spec:
                   namespace: kube-system
                   chartRepo: https://aws.github.io/eks-charts
                   chart: aws-load-balancer-controller
-                  chartVersion: "1.14.1"
+                  chartVersion: "3.4.0"
                   path: addons/networking/aws-load-balancer-controller
                   syncWave: "1"
                 - appName: external-dns
