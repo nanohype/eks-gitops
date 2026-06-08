@@ -1,3 +1,17 @@
 # eks-agent-platform operator — staging deltas only (base is values.yaml).
 # config.environment is injected from the cluster Secret label by the
 # ApplicationSet, so it is intentionally not set here.
+
+replicaCount: 2
+leaderElection:
+  enabled: true
+reconcilers:
+  budget:
+    requeueInterval: 30m
+resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+  limits:
+    cpu: 1000m
+    memory: 1Gi

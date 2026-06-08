@@ -1,3 +1,17 @@
 # eks-agent-platform operator — dev deltas only (base is values.yaml).
 # config.environment is injected from the cluster Secret label by the
 # ApplicationSet, so it is intentionally not set here.
+
+# Single replica + no leader election — dev needs no HA, and skipping the lease
+# removes a startup dependency.
+replicaCount: 1
+leaderElection:
+  enabled: false
+reconcilers:
+  budget:
+    # Faster budget reconcile in dev for a tighter feedback loop.
+    requeueInterval: 5m
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi

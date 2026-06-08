@@ -1,3 +1,32 @@
 # eks-agent-platform operator — production deltas only (base is values.yaml).
 # config.environment is injected from the cluster Secret label by the
 # ApplicationSet, so it is intentionally not set here.
+
+# Three replicas with leader election for HA; one active reconciler, two warm.
+replicaCount: 3
+leaderElection:
+  enabled: true
+# Higher per-reconciler concurrency for production fleet sizes.
+reconcilers:
+  platform:
+    concurrent: 5
+  gateway:
+    concurrent: 5
+  runtime:
+    concurrent: 10
+  budget:
+    concurrent: 2
+    requeueInterval: 1h
+  eval:
+    concurrent: 4
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+# Keep two replicas available through voluntary disruptions (node drains).
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
