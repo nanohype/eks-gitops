@@ -94,6 +94,7 @@ eks-gitops/
 | 1 | Networking (Cilium, ALB Controller, External DNS) | CNI and ingress |
 | 2 | Bootstrap continued (metrics-server, reloader, storage-classes, priority-classes) | Cluster essentials |
 | 5 | Karpenter | Nodes must be ready before workloads |
+| 6-7 | Accelerators (gpu-operator, aws-neuron-device-plugin, nvidia-dra-driver) | GPU/Neuron device plugins advertised before security and workloads |
 | 10-12 | Security (Kyverno, Trivy, Falco) | Policy engine before policies |
 | 20-21 | Kyverno Policies | After Kyverno is ready |
 | 30-33 | Observability (Loki, Tempo, Grafana Agent, OpenCost) | After security |

@@ -4,10 +4,11 @@ You're an AI client (or the author of one) about to add a cluster-level addon, r
 
 ## What this repo gives you
 
-ArgoCD App-of-Apps catalog for EKS clusters. Seven addon categories, plus ApplicationSets that bind workloads to clusters via labels (listed in deploy order):
+ArgoCD App-of-Apps catalog for EKS clusters. Eight addon categories, plus ApplicationSets that bind workloads to clusters via labels (listed in deploy order):
 
 - **`addons/bootstrap/`** — cert-manager, external-secrets, metrics-server, prometheus-operator-crds, reloader, storage-classes, priority-classes
 - **`addons/networking/`** — cilium, aws-load-balancer-controller, external-dns, mcp-tunnel
+- **`addons/accelerators/`** — gpu-operator, nvidia-dra-driver (Helm), aws-neuron-device-plugin (Kustomize) — GPU/Neuron device plugins, gated on the `eks-agent-platform/enabled` cluster label, at waves 6-7 (early, alongside karpenter)
 - **`addons/security/`** — kyverno, falco, trivy-operator
 - **`addons/observability/`** — grafana-agent, grafana-operator, loki, tempo, opencost
 - **`addons/operations/`** — karpenter, karpenter-resources, keda, descheduler, goldilocks, vpa, velero
@@ -62,7 +63,7 @@ The workload's source repo owns the ApplicationSet entry — typically `<app>/gi
 
 - Helm values: 2-space indent. ApplicationSet manifests: 2-space indent.
 - Every addon has all three env deltas (`values-dev.yaml`, `values-staging.yaml`, `values-production.yaml`) — empty is fine, but the file must exist.
-- Cluster labels drive ApplicationSet matrix generators. Label clusters with `env: dev|staging|production` + any feature flags (`gpu: true`, `bedrock: true`).
+- Cluster labels drive ApplicationSet matrix generators. The `environment` label (`dev|staging|production`) selects the per-env values; opt-in addon groups select on additional labels — `eks-agent-platform/enabled: "true"` (set by cluster-bootstrap) gates the operator + accelerators (gpu/neuron) onto agent-platform clusters.
 - Sync waves matter — addons that everything depends on (cert-manager, external-secrets) run first (wave 0–10); apps run last (wave 100+).
 - Kyverno policies in `policies/` enforce cluster-wide invariants (no privileged pods, image registry allowlist, required labels).
 

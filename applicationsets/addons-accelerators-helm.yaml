@@ -1,0 +1,77 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: addons-accelerators-helm
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          # Accelerators are opt-in: only clusters that carry GPU/Neuron node
+          # pools (labeled eks-agent-platform/enabled by cluster-bootstrap) get
+          # the device plugins. They land at waves 6-7 — after the CNI (1) and
+          # karpenter (5), before security (10) and workloads — so accelerators
+          # are advertised before anything schedules onto them.
+          - clusters:
+              selector:
+                matchLabels:
+                  argocd.argoproj.io/secret-type: cluster
+                  eks-agent-platform/enabled: "true"
+          - list:
+              elements:
+                - appName: gpu-operator
+                  namespace: gpu-operator
+                  chartRepo: https://helm.ngc.nvidia.com/nvidia
+                  chart: gpu-operator
+                  chartVersion: v26.3.1
+                  path: addons/accelerators/gpu-operator
+                  syncWave: "6"
+                - appName: nvidia-dra-driver
+                  namespace: nvidia-dra-driver
+                  chartRepo: oci://nvcr.io/nvidia/k8s
+                  chart: k8s-dra-driver-gpu
+                  chartVersion: "25.8.0"
+                  path: addons/accelerators/nvidia-dra-driver
+                  syncWave: "7"
+  template:
+    metadata:
+      name: '{{ .appName }}'
+      annotations:
+        argocd.argoproj.io/sync-wave: '{{ .syncWave }}'
+    spec:
+      project: platform
+      sources:
+        - repoURL: '{{ .chartRepo }}'
+          chart: '{{ .chart }}'
+          targetRevision: '{{ .chartVersion }}'
+          helm:
+            releaseName: '{{ .appName }}'
+            # No clusterName/vpcId parameters: these are upstream charts with
+            # their own value schemas (passing unknown --set values fails their
+            # render, as it did for cert-manager).
+            valueFiles:
+              - $values/{{ .path }}/values.yaml
+              - $values/{{ .path }}/values-{{ index .metadata.labels "environment" }}.yaml
+        - repoURL: https://github.com/nanohype/eks-gitops.git
+          targetRevision: main
+          ref: values
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{ .namespace }}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m

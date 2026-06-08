@@ -1,0 +1,3 @@
+# Production inherits the base device-class config (TimeSlicing interval Default).
+# Latency-critical pools opt out of sharing via NodePool taints rather than a
+# longer slice interval, so there is no production delta here.

@@ -1,0 +1,53 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: addons-accelerators-kustomize
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  argocd.argoproj.io/secret-type: cluster
+                  eks-agent-platform/enabled: "true"
+          - list:
+              elements:
+                # AWS Neuron (Inferentia/Trainium) device plugin — pure YAML,
+                # no Helm chart. Lands at wave 6 alongside the GPU operator.
+                - appName: aws-neuron-device-plugin
+                  namespace: aws-neuron
+                  path: addons/accelerators/aws-neuron-device-plugin
+                  syncWave: "6"
+  template:
+    metadata:
+      name: '{{ .appName }}'
+      annotations:
+        argocd.argoproj.io/sync-wave: '{{ .syncWave }}'
+    spec:
+      project: platform
+      source:
+        repoURL: https://github.com/nanohype/eks-gitops.git
+        targetRevision: main
+        path: '{{ .path }}/overlays/{{ index .metadata.labels "environment" }}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{ .namespace }}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
