@@ -36,3 +36,6 @@ Thumbs.db
 
 # Rendered output
 rendered/
+
+# Local planning notes
+.plans/

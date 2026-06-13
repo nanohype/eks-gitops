@@ -6,26 +6,38 @@
 # clusters/<environment>/<name>.yaml; without this ApplicationSet nothing applies
 # those commits, so portal-provisioned clusters never reach the hub's Crossplane.
 #
-# A git directory generator discovers each per-environment directory and recurses
-# its manifests (robust — no per-file content parsing), mirroring portal-tenants.
+# A git FILES generator over clusters/*/*.yaml produces one Application PER CLUSTER,
+# each sourcing exactly its one CR file (directory.include scopes the source to that
+# file). So an Application's sync/health reflects exactly one cluster — portal reads
+# "did ArgoCD apply MY cluster's CR" by Getting the Application named per the
+# convention below, rather than an env-wide rollup where one sibling's bad CR would
+# taint every good vend in the same environment.
+#
+# NAME CONVENTION (portal depends on this — keep in sync with portal's per-cluster
+# ArgoCD lookup):
+#   cluster-<environment>-<name>     e.g. cluster-production-spazeks
+# where <environment> is the cluster file's parent directory (.path.basename) and
+# <name> is the CR's metadata.name (== the file stem). The singular "cluster-"
+# prefix is distinct from any env-rollup name space, so the two never collide.
+#
 # repoURL MUST equal the portal worker's GITOPS_CLUSTERS_REPO_URL — both the SSH
 # form, since the portal pushes over SSH. ArgoCD needs a matching SSH repo
 # credential (a read-only deploy key on the private clusters repo) registered for
 # this URL so it can pull what the portal pushes.
 #
 # prune+selfHeal means removing a cluster file tears the cluster down (Cluster
-# delete -> Crossplane tofu destroy); after a teardown, run cloudgov / reap-orphans
-# to sweep the EKS log group + Karpenter residue that tofu destroy can't reach.
+# delete -> Crossplane tofu destroy); after a teardown, run cloudgov to sweep the
+# EKS log group + Karpenter residue that tofu destroy can't reach. The template
+# sets NO resources-finalizer, so when the ApplicationSet controller removes a
+# generated Application (e.g. on a name-convention change) it deletes only the
+# Application object, not the Cluster CR it managed — a regeneration can't itself
+# trigger a teardown; only removing the cluster file does.
 #
 # SCOPING: this must reconcile ONLY on the management (hub) cluster — spokes have
 # no Cluster CRD/Crossplane. The destination below is in-cluster, so it's correct
 # wherever this ApplicationSet's ArgoCD runs; ensuring it's instantiated only on the
 # hub (a cluster-label selector / hub-only App-of-Apps path) is the same open
-# multi-cluster-routing question portal-tenants carries — verify on first use.
-#
-# NOTE: static-validated only (no live hub run yet). Consider per-cluster
-# granularity (a git files generator over clusters/*/*.yaml for one Application per
-# cluster) once the hub is standing.
+# multi-cluster-routing question portal-tenants carries — verify on the hub on first use.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
@@ -40,11 +52,11 @@ spec:
     - git:
         repoURL: git@github.com:nanohype/clusters.git # == portal GITOPS_CLUSTERS_REPO_URL (SSH)
         revision: main
-        directories:
-          - path: clusters/*
+        files:
+          - path: clusters/*/*.yaml
   template:
     metadata:
-      name: 'clusters-{{ .path.basename }}'
+      name: 'cluster-{{ .path.basename }}-{{ .metadata.name }}'
       annotations:
         argocd.argoproj.io/sync-wave: "100"
     spec:
@@ -54,7 +66,7 @@ spec:
         targetRevision: main
         path: '{{ .path.path }}'
         directory:
-          recurse: true
+          include: '{{ .path.filename }}'
       destination:
         server: https://kubernetes.default.svc
       syncPolicy:
