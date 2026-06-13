@@ -25,6 +25,10 @@ spec:
                   namespace: kube-system
                   path: addons/bootstrap/priority-classes
                   syncWave: "2"
+                - appName: portal-reader
+                  namespace: kube-system
+                  path: addons/bootstrap/portal-reader
+                  syncWave: "2"
   template:
     metadata:
       name: '{{ .appName }}'

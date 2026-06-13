@@ -1,0 +1,31 @@
+# Read access for the portal ops portal. portal's per-account spoke IAM role is
+# mapped to the "portal-reader" group via an EKS access entry (kubernetes_groups,
+# wired in landing-zone fleet/aws/cluster-stack). This binds that group to the
+# minimal read portal needs on a managed cluster: the eks-agent-platform
+# Tenant/Platform CRs (its tenant-inventory watcher) and nodes (best-effort node
+# count in the connection test). No Secrets, no workloads — strictly the surface
+# portal reads, replacing the broad AmazonEKSAdminViewPolicy.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: portal-reader
+rules:
+  - apiGroups: ["platform.nanohype.dev"]
+    resources: ["tenants", "platforms"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: portal-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: portal-reader
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: portal-reader
