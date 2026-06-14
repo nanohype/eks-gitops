@@ -40,6 +40,22 @@ agent:
           source_labels = ["__meta_kubernetes_pod_container_name"]
           target_label  = "container"
         }
+        // Honor prometheus.io/path — override the scrape path when annotated
+        // (no-op for pods without the annotation; default stays /metrics).
+        rule {
+          source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_path"]
+          regex         = "(.+)"
+          target_label  = "__metrics_path__"
+        }
+        // Honor prometheus.io/port — rewrite the target to pod IP : annotated
+        // port so a workload can publish metrics on a non-default port. No-op
+        // when the annotation is absent (the regex requires a port digit).
+        rule {
+          source_labels = ["__address__", "__meta_kubernetes_pod_annotation_prometheus_io_port"]
+          regex         = "([^:]+)(?::\\d+)?;(\\d+)"
+          replacement   = "$1:$2"
+          target_label  = "__address__"
+        }
       }
 
       // ────────────────────────────── Metrics → AMP ──────────────────────────
