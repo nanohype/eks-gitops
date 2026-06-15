@@ -54,7 +54,7 @@ spec:
                   namespace: kube-system
                   chartRepo: oci://public.ecr.aws/karpenter/karpenter
                   chart: karpenter
-                  chartVersion: "1.8.6"
+                  chartVersion: "1.13.0"
                   path: addons/operations/karpenter
                   syncWave: "5"
                 - appName: keda
