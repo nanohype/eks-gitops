@@ -24,8 +24,8 @@ resources:
   - platform/external-dns.yaml
   - platform/eso.yaml
   # Agent-platform persona dashboards (operator CR-state + agentgateway + spend).
-  # Their kube_customresource_* panels need the operator-slo CR-state ConfigMap
-  # mounted into kube-state-metrics (see addons/observability/kube-state-metrics).
+  # Their kube_customresource_* panels are fed by the kube-state-metrics addon's
+  # customResourceState config (addons/observability/kube-state-metrics).
   - platform/agent-tenants.yaml
   - platform/agent-eval-quality.yaml
   - platform/agent-kill-switch.yaml

@@ -1,0 +1,193 @@
+# -- kube-state-metrics: cluster-state metrics (kube_*) + the eks-agent-platform
+# operator's custom-resource-state metrics (kube_customresource_*).
+#
+# Runs in kube-system as the service `kube-state-metrics` so the grafana-agent
+# static scrape (kube-state-metrics.kube-system.svc:8080) finds it — without this
+# addon that scrape hit nothing and every kube_* / kube_customresource_* panel
+# silently no-data'd (the cilium/cert-manager/eso dashboards and, via the
+# customResourceState config below, the seven agent persona dashboards + the
+# operator-slo CR-status alerts).
+#
+# The customResourceState config mirrors the operator chart's
+# files/slo/customresourcestatemetrics.yaml. It lives here, not mounted from the
+# operator's ConfigMap, on purpose: the operator runs at a later sync wave and in
+# a different namespace, so mounting its ConfigMap would couple KSM's start to it
+# and need a restart once it appeared. Observability scrape config belongs in the
+# observability repo; keep this in step with the operator chart when its CRD
+# status surface changes.
+fullnameOverride: kube-state-metrics
+
+# The collected resources are cluster-scoped reads; that's what KSM needs anyway.
+rbac:
+  create: true
+  # Read access to the operator CRDs whose status the customResourceState config
+  # projects into metrics. Without these, KSM logs forbidden and emits no
+  # kube_customresource_* series.
+  extraRules:
+    - apiGroups: ["platform.nanohype.dev"]
+      resources: ["platforms", "tenants"]
+      verbs: ["list", "watch"]
+    - apiGroups: ["governance.nanohype.dev"]
+      resources: ["budgetpolicies", "evalsuites"]
+      verbs: ["list", "watch"]
+    - apiGroups: ["agents.nanohype.dev"]
+      resources: ["agentfleets"]
+      verbs: ["list", "watch"]
+
+# Scraped by the grafana-agent static target, but annotate too so the
+# annotation-based discovery picks it up regardless.
+selfMonitor:
+  enabled: false
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+  limits:
+    cpu: 100m
+    memory: 256Mi
+
+customResourceState:
+  enabled: true
+  config:
+    kind: CustomResourceStateMetrics
+    spec:
+      resources:
+        # Platform
+        - groupVersionKind:
+            group: platform.nanohype.dev
+            version: v1alpha1
+            kind: Platform
+          metricNamePrefix: kube_customresource
+          metrics:
+            - name: status_phase
+              help: "Platform.status.phase by name + phase value"
+              each:
+                type: StateSet
+                stateSet:
+                  labelName: customresource_phase
+                  path: [status, phase]
+                  list: [Pending, Provisioning, Ready, Suspended, Failed]
+              commonLabels:
+                customresource_kind: Platform
+            - name: status_field
+              help: "Platform.status.suspendedAt as unix ts (0 when unset)"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, suspendedAt]
+                  nilIsZero: true
+              commonLabels:
+                customresource_kind: Platform
+                field: suspendedAt
+
+        # Tenant
+        - groupVersionKind:
+            group: platform.nanohype.dev
+            version: v1alpha1
+            kind: Tenant
+          metricNamePrefix: kube_customresource
+          metrics:
+            - name: status_phase
+              help: "Tenant.status.phase by name + phase value"
+              each:
+                type: StateSet
+                stateSet:
+                  labelName: customresource_phase
+                  path: [status, phase]
+                  list: [Pending, Provisioning, Active, Suspended, Failed]
+              commonLabels:
+                customresource_kind: Tenant
+            - name: status_field
+              help: "Tenant.status.{percentOfBudget,aggregateSpendUsd}"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, percentOfBudget]
+              commonLabels:
+                customresource_kind: Tenant
+                field: percentOfBudget
+            - name: condition
+              help: "Tenant.status.conditions by type + status"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, conditions]
+                  labelsFromPath:
+                    condition_type: [type]
+                    condition_status: [status]
+                  valueFrom: [status]
+              commonLabels:
+                customresource_kind: Tenant
+
+        # BudgetPolicy
+        - groupVersionKind:
+            group: governance.nanohype.dev
+            version: v1alpha1
+            kind: BudgetPolicy
+          metricNamePrefix: kube_customresource
+          metrics:
+            - name: status_field
+              help: "BudgetPolicy.status.{lastReconciled,killSwitchFiredAt,percentOfBudget} as gauges"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, lastReconciled]
+                  nilIsZero: true
+              commonLabels:
+                customresource_kind: BudgetPolicy
+                field: lastReconciled
+
+        # AgentFleet
+        - groupVersionKind:
+            group: agents.nanohype.dev
+            version: v1alpha1
+            kind: AgentFleet
+          metricNamePrefix: kube_customresource
+          metrics:
+            - name: status_phase
+              help: "AgentFleet.status.phase"
+              each:
+                type: StateSet
+                stateSet:
+                  labelName: customresource_phase
+                  path: [status, phase]
+                  list: [Pending, Provisioning, Ready, ScaledToZero, Suspended, Failed]
+              commonLabels:
+                customresource_kind: AgentFleet
+            - name: status_field
+              help: "AgentFleet.status.readyAgents count"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, readyAgents]
+              commonLabels:
+                customresource_kind: AgentFleet
+                field: readyAgents
+
+        # EvalSuite
+        - groupVersionKind:
+            group: governance.nanohype.dev
+            version: v1alpha1
+            kind: EvalSuite
+          metricNamePrefix: kube_customresource
+          metrics:
+            - name: status_phase
+              help: "EvalSuite.status.phase"
+              each:
+                type: StateSet
+                stateSet:
+                  labelName: customresource_phase
+                  path: [status, phase]
+                  list: [Pending, Provisioning, Ready, Running, Passed, Failed]
+              commonLabels:
+                customresource_kind: EvalSuite
+            - name: status_field
+              help: "EvalSuite.status.lastScore (0..1) parsed as gauge"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, lastScore]
+              commonLabels:
+                customresource_kind: EvalSuite
+                field: lastScore
