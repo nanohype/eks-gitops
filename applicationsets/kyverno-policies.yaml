@@ -23,6 +23,9 @@ spec:
                 - appName: kyverno-best-practices
                   path: policies/kyverno/best-practices
                   syncWave: "21"
+                - appName: kyverno-supply-chain
+                  path: policies/kyverno/supply-chain
+                  syncWave: "22"
   template:
     metadata:
       name: '{{ .appName }}'

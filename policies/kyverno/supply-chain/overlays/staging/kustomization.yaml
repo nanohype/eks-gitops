@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+# Staging: Audit during the signature rollout. Flip value to Enforce once the
+# PolicyReports here show every ghcr.io/nanohype/* image verifying clean.
+patches:
+  - patch: |-
+      - op: replace
+        path: /spec/validationFailureAction
+        value: Audit
+    target:
+      kind: ClusterPolicy

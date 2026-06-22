@@ -1,0 +1,58 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-images
+  annotations:
+    policies.kyverno.io/title: Verify Image Signatures
+    policies.kyverno.io/category: Supply Chain
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      Factory-built images (ghcr.io/nanohype/*) must carry a valid keyless
+      Cosign signature produced by the org release workflow. The release
+      workflows sign with GitHub Actions OIDC (Fulcio + public Rekor), so the
+      attestor matches that workflow identity. An unsigned or foreign-signed
+      image — hand-pushed or tampered — fails verification. Images outside
+      ghcr.io/nanohype/* are not matched and pass unaffected.
+spec:
+  # Audit during the signature rollout: report every unsigned nanohype image
+  # in PolicyReports without blocking admission. Overlays flip this to Enforce
+  # per environment once reports are clean (see overlays/).
+  validationFailureAction: Audit
+  # Image verification calls the registry + Rekor; the 10s default is tight.
+  webhookTimeoutSeconds: 30
+  background: false
+  rules:
+    - name: verify-ghcr-nanohype
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - kyverno
+      verifyImages:
+        - imageReferences:
+            - "ghcr.io/nanohype/*"
+          # Pure signature verification for the rollout: report presence/validity
+          # without rewriting tags to digests or requiring digest references yet.
+          required: true
+          mutateDigest: false
+          verifyDigest: false
+          attestors:
+            - count: 1
+              entries:
+                - keyless:
+                    # GitHub Actions OIDC identity of the org release workflows.
+                    # Operator signs from release.yaml, tenants from release.yml;
+                    # both run on tag pushes (refs/tags/...).
+                    issuer: "https://token.actions.githubusercontent.com"
+                    subjectRegExp: '^https://github\.com/nanohype/[^/]+/\.github/workflows/release\.ya?ml@refs/tags/.+$'
+                    rekor:
+                      url: "https://rekor.sigstore.dev"

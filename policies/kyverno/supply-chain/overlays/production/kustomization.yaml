@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+# Production: Audit during the signature rollout. Flip value to Enforce once
+# staging has run a clean audit week and every ghcr.io/nanohype/* image
+# verifies — at which point an unsigned or tampered image is blocked at admission.
+patches:
+  - patch: |-
+      - op: replace
+        path: /spec/validationFailureAction
+        value: Audit
+    target:
+      kind: ClusterPolicy
