@@ -1,0 +1,7 @@
+# External Secrets - hub overrides. Provides the aws-secrets-manager
+# ClusterSecretStore the grafana-operator's ExternalSecret uses to pull the AMG
+# service-account token (Secrets-Manager key eks-grafana-token) in the fleet account.
+
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/hub-eks-external-secrets

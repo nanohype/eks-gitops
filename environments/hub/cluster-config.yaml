@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-config
+  namespace: argocd
+  labels:
+    environment: hub
+data:
+  # Cluster identification
+  environment: "hub"
+  provider: "aws"
+  cluster_name: "hub-eks"
+
+  # AWS configuration
+  region: "us-west-2"
+
+  # Feature flags — the hub is a control plane (Crossplane + ArgoCD + portal) on a
+  # fixed system node group; it does not run the workload catalog or Karpenter.
+  veleroEnabled: "false"
+  goldilocksEnabled: "false"
+  hubbleUiEnabled: "false"
+  trivyAdmissionEnabled: "false"
+
+  # Karpenter configuration — unused on the hub (system node group only)
+  karpenterCpuLimit: "0"
+  karpenterMemoryLimitGi: "0"
+  karpenterSpotEnabled: "false"
+
+  # Observability — full three-pillar stack (metrics → AMP, logs → Loki, traces → Tempo)
+  lokiRetentionDays: "7"
+  tempoRetentionDays: "3"

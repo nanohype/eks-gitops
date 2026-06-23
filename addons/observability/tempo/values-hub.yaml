@@ -1,0 +1,11 @@
+# Tempo - hub overrides. Traces backend for the hub (local backend, gp3 PVC).
+
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/hub-eks-tempo
+
+tempo:
+  retention: 72h
+
+persistence:
+  size: 20Gi

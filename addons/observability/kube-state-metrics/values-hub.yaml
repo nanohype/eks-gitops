@@ -1,0 +1,2 @@
+# kube-state-metrics — hub overrides (none; the base values, including the
+# customResourceState config, apply to all environments).

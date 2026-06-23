@@ -15,6 +15,12 @@ spec:
               selector:
                 matchLabels:
                   argocd.argoproj.io/secret-type: cluster
+                matchExpressions:
+                  # Exclude the hub - it runs only observability + dashboards + bootstrap deps.
+                  - key: environment
+                    operator: NotIn
+                    values:
+                      - hub
           - list:
               elements:
                 - appName: velero
