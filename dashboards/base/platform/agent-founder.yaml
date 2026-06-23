@@ -31,7 +31,7 @@ spec:
           "datasource": "prometheus",
           "targets": [
             {
-              "expr": "count(agents_platform_status_phase{phase=\"Ready\"})"
+              "expr": "count(kube_customresource_status_phase{customresource_kind=\"Platform\",customresource_phase=\"Ready\"} == 1)"
             }
           ],
           "gridPos": {
@@ -43,11 +43,11 @@ spec:
         },
         {
           "type": "stat",
-          "title": "Spend this week (USD)",
+          "title": "Spend month-to-date (USD)",
           "datasource": "prometheus",
           "targets": [
             {
-              "expr": "sum(increase(agents_spend_report_current_usd[7d]))"
+              "expr": "sum(kube_customresource_status_field{customresource_kind=\"BudgetPolicy\",field=\"currentSpendUsd\"})"
             }
           ],
           "gridPos": {
@@ -59,11 +59,11 @@ spec:
         },
         {
           "type": "timeseries",
-          "title": "Weekly spend trend",
+          "title": "Spend trend (USD, month-to-date)",
           "datasource": "prometheus",
           "targets": [
             {
-              "expr": "sum(agents_spend_report_current_usd)"
+              "expr": "sum(kube_customresource_status_field{customresource_kind=\"BudgetPolicy\",field=\"currentSpendUsd\"})"
             }
           ],
           "gridPos": {

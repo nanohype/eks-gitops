@@ -82,12 +82,12 @@ spec:
           "datasource": "prometheus",
           "targets": [
             {
-              "expr": "sum by (platform_id) (agents_spend_report_current_usd)",
-              "legendFormat": "{{platform_id}} spend"
+              "expr": "sum by (name) (kube_customresource_status_field{customresource_kind=\"BudgetPolicy\",field=\"currentSpendUsd\"})",
+              "legendFormat": "{{name}} spend"
             },
             {
-              "expr": "sum by (platform_id) (agents_budget_policy_threshold_usd)",
-              "legendFormat": "{{platform_id}} threshold"
+              "expr": "sum by (name) (kube_customresource_status_field{customresource_kind=\"BudgetPolicy\",field=\"monthlyUsd\"})",
+              "legendFormat": "{{name}} threshold"
             }
           ],
           "gridPos": {

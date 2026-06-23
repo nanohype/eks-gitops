@@ -27,11 +27,11 @@ spec:
       "panels": [
         {
           "type": "stat",
-          "title": "Active AgentRuntimes",
+          "title": "Ready agents (across fleets)",
           "datasource": "prometheus",
           "targets": [
             {
-              "expr": "count(agents_agent_runtime_replicas)"
+              "expr": "sum(kube_customresource_status_field{customresource_kind=\"AgentFleet\",field=\"readyAgents\"})"
             }
           ],
           "gridPos": {
@@ -89,11 +89,11 @@ spec:
         },
         {
           "type": "table",
-          "title": "Latest EvalRun scores",
+          "title": "Latest EvalSuite scores",
           "datasource": "prometheus",
           "targets": [
             {
-              "expr": "topk(50, agents_eval_run_score{phase=\"completed\"})"
+              "expr": "topk(50, kube_customresource_status_field{customresource_kind=\"EvalSuite\",field=\"lastScore\"})"
             }
           ],
           "gridPos": {
