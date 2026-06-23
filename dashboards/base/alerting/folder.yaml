@@ -1,0 +1,12 @@
+# Grafana folder that holds the authored SLO / burn-rate alert rules. The
+# grafana-operator creates it in the external Amazon Managed Grafana; the
+# GrafanaAlertRuleGroup CRs reference it by name via folderRef.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaFolder
+metadata:
+  name: slo-alerts
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: external
+  title: SLO & burn-rate alerts

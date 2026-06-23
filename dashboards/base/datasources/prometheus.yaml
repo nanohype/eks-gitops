@@ -16,6 +16,9 @@ spec:
       dashboards: external
   datasource:
     name: ManagedPrometheus
+    # Pinned UID so Grafana-managed alert rules (GrafanaAlertRuleGroup) can
+    # reference this datasource deterministically instead of relying on isDefault.
+    uid: managed-prometheus
     type: prometheus
     access: proxy
     url: https://aps-workspaces.us-west-2.amazonaws.com/workspaces/PLACEHOLDER  # patched per-env
