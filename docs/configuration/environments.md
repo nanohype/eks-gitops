@@ -7,6 +7,7 @@
 | dev | Development and testing | dev-eks | Audit |
 | staging | Pre-production validation | staging-eks | Enforce |
 | production | Live workloads | production-eks | Enforce |
+| hub | The eks-fleet management/control plane (Crossplane + ArgoCD + portal). Runs the observability stack + bootstrap deps only — excluded from the workload catalog. | hub-eks | n/a |
 
 ## Cluster Config
 

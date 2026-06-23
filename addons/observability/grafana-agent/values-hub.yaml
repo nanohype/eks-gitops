@@ -8,7 +8,7 @@ serviceAccount:
 
 extraEnv:
   - name: AMP_REMOTE_WRITE_URL
-    value: "https://aps-workspaces.us-west-2.amazonaws.com/workspaces/ws-PLACEHOLDER-hub/api/v1/remote_write"
+    value: "https://aps-workspaces.us-west-2.amazonaws.com/workspaces/ws-PLACEHOLDER/api/v1/remote_write"
   - name: AWS_REGION
     value: "us-west-2"
   - name: CLUSTER_NAME

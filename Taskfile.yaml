@@ -15,7 +15,7 @@ tasks:
       - |
         echo ""
         echo "Usage:"
-        echo "  task <target> [ENVIRONMENT=dev|staging|production]"
+        echo "  task <target> [ENVIRONMENT=dev|staging|production|hub]"
         echo ""
         task --list
 
