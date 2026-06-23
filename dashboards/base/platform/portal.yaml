@@ -1,0 +1,221 @@
+# portal — ops control-plane (server + worker)
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: portal
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: external
+  resyncPeriod: 24h
+  json: |
+    {
+      "title": "portal — ops control-plane",
+      "uid": "portal-overview",
+      "tags": ["portal", "slo", "nanohype"],
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "refresh": "30s",
+      "time": { "from": "now-6h", "to": "now" },
+      "panels": [
+        {
+          "type": "row",
+          "title": "API — SLO & error budget (99.9% availability / 30d)",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+        },
+        {
+          "type": "stat",
+          "title": "API availability (30d)",
+          "datasource": "prometheus",
+          "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "decimals": 4, "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 0.999 } ] } }, "overrides": [] },
+          "targets": [
+            { "expr": "1 - (sum(rate(portal_http_request_duration_seconds_count{status=~\"5..\"}[30d])) / clamp_min(sum(rate(portal_http_request_duration_seconds_count[30d])), 1))" }
+          ],
+          "gridPos": { "h": 5, "w": 6, "x": 0, "y": 1 }
+        },
+        {
+          "type": "gauge",
+          "title": "Error budget remaining (30d)",
+          "datasource": "prometheus",
+          "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "orange", "value": 0.25 }, { "color": "green", "value": 0.5 } ] } }, "overrides": [] },
+          "targets": [
+            { "expr": "clamp_min(1 - ((sum(rate(portal_http_request_duration_seconds_count{status=~\"5..\"}[30d])) / clamp_min(sum(rate(portal_http_request_duration_seconds_count[30d])), 1)) / 0.001), 0)" }
+          ],
+          "gridPos": { "h": 5, "w": 6, "x": 6, "y": 1 }
+        },
+        {
+          "type": "stat",
+          "title": "Fast burn (1h)",
+          "datasource": "prometheus",
+          "description": "Burn rate over 1h. Pages at 14.4x (2% of budget in 1h).",
+          "fieldConfig": { "defaults": { "unit": "none", "decimals": 1, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 1 }, { "color": "red", "value": 14.4 } ] } }, "overrides": [] },
+          "targets": [
+            { "expr": "(sum(rate(portal_http_request_duration_seconds_count{status=~\"5..\"}[1h])) / clamp_min(sum(rate(portal_http_request_duration_seconds_count[1h])), 1)) / 0.001" }
+          ],
+          "gridPos": { "h": 5, "w": 6, "x": 12, "y": 1 }
+        },
+        {
+          "type": "stat",
+          "title": "Slow burn (6h)",
+          "datasource": "prometheus",
+          "description": "Burn rate over 6h. Pages at 6x (5% of budget in 6h).",
+          "fieldConfig": { "defaults": { "unit": "none", "decimals": 1, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 1 }, { "color": "red", "value": 6 } ] } }, "overrides": [] },
+          "targets": [
+            { "expr": "(sum(rate(portal_http_request_duration_seconds_count{status=~\"5..\"}[6h])) / clamp_min(sum(rate(portal_http_request_duration_seconds_count[6h])), 1)) / 0.001" }
+          ],
+          "gridPos": { "h": 5, "w": 6, "x": 18, "y": 1 }
+        },
+        {
+          "type": "row",
+          "title": "API — golden signals (RED + saturation)",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 }
+        },
+        {
+          "type": "timeseries",
+          "title": "Request rate by status (req/s)",
+          "datasource": "prometheus",
+          "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+          "targets": [
+            { "expr": "sum by (status) (rate(portal_http_request_duration_seconds_count[5m]))", "legendFormat": "{{status}}" },
+            { "expr": "sum(rate(portal_http_request_duration_seconds_count[5m]))", "legendFormat": "total" }
+          ],
+          "gridPos": { "h": 7, "w": 12, "x": 0, "y": 7 }
+        },
+        {
+          "type": "timeseries",
+          "title": "5xx error ratio (5m)",
+          "datasource": "prometheus",
+          "fieldConfig": { "defaults": { "unit": "percentunit", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 0.001 } ] } }, "overrides": [] },
+          "targets": [
+            { "expr": "sum(rate(portal_http_request_duration_seconds_count{status=~\"5..\"}[5m])) / clamp_min(sum(rate(portal_http_request_duration_seconds_count[5m])), 1)", "legendFormat": "5xx ratio" }
+          ],
+          "gridPos": { "h": 7, "w": 12, "x": 12, "y": 7 }
+        },
+        {
+          "type": "timeseries",
+          "title": "Request latency p50 / p95 / p99 (s)",
+          "datasource": "prometheus",
+          "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+          "targets": [
+            { "expr": "histogram_quantile(0.50, sum by (le) (rate(portal_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p50" },
+            { "expr": "histogram_quantile(0.95, sum by (le) (rate(portal_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p95" },
+            { "expr": "histogram_quantile(0.99, sum by (le) (rate(portal_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p99" }
+          ],
+          "gridPos": { "h": 7, "w": 12, "x": 0, "y": 14 }
+        },
+        {
+          "type": "timeseries",
+          "title": "Slowest routes (p99, s)",
+          "datasource": "prometheus",
+          "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+          "targets": [
+            { "expr": "topk(10, histogram_quantile(0.99, sum by (le, route) (rate(portal_http_request_duration_seconds_bucket[5m]))))", "legendFormat": "{{route}}" }
+          ],
+          "gridPos": { "h": 7, "w": 12, "x": 12, "y": 14 }
+        },
+        {
+          "type": "timeseries",
+          "title": "Saturation — in-flight + DB pool",
+          "datasource": "prometheus",
+          "description": "HTTP requests in flight and pgx pool acquired vs max.",
+          "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] },
+          "targets": [
+            { "expr": "sum(portal_http_requests_in_flight)", "legendFormat": "http in-flight" },
+            { "expr": "sum(portal_db_pool_connections_acquired)", "legendFormat": "db acquired" },
+            { "expr": "max(portal_db_pool_connections_max)", "legendFormat": "db max" }
+          ],
+          "gridPos": { "h": 7, "w": 12, "x": 0, "y": 21 }
+        },
+        {
+          "type": "timeseries",
+          "title": "DB pool acquire-wait rate",
+          "datasource": "prometheus",
+          "description": "Cumulative connection-acquire waits — climbing means pool contention.",
+          "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+          "targets": [
+            { "expr": "sum(rate(portal_db_pool_acquire_wait_total[5m]))", "legendFormat": "acquire waits/s" }
+          ],
+          "gridPos": { "h": 7, "w": 12, "x": 12, "y": 21 }
+        },
+        {
+          "type": "row",
+          "title": "tofu / terragrunt runs",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 28 }
+        },
+        {
+          "type": "timeseries",
+          "title": "Run rate by operation & status (runs/h)",
+          "datasource": "prometheus",
+          "description": "tofu/terragrunt run completions — the core infra-execution health signal.",
+          "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] },
+          "targets": [
+            { "expr": "sum by (operation, status) (rate(portal_tofu_run_duration_seconds_count[1h]) * 3600)", "legendFormat": "{{operation}} {{status}}" }
+          ],
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 29 }
+        },
+        {
+          "type": "timeseries",
+          "title": "Run duration p50 / p95 by operation (s)",
+          "datasource": "prometheus",
+          "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+          "targets": [
+            { "expr": "histogram_quantile(0.50, sum by (le, operation) (rate(portal_tofu_run_duration_seconds_bucket[30m])))", "legendFormat": "p50 {{operation}}" },
+            { "expr": "histogram_quantile(0.95, sum by (le, operation) (rate(portal_tofu_run_duration_seconds_bucket[30m])))", "legendFormat": "p95 {{operation}}" }
+          ],
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 29 }
+        },
+        {
+          "type": "row",
+          "title": "worker — River jobs",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 37 }
+        },
+        {
+          "type": "timeseries",
+          "title": "Jobs by state (queue depth & backlog)",
+          "datasource": "prometheus",
+          "description": "available/pending/scheduled = backlog; running = active; retryable/discarded/cancelled = trouble.",
+          "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] },
+          "targets": [
+            { "expr": "sum by (state) (portal_worker_jobs)", "legendFormat": "{{state}}" }
+          ],
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 38 }
+        },
+        {
+          "type": "timeseries",
+          "title": "Job errors & panics (per 5m)",
+          "datasource": "prometheus",
+          "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+          "targets": [
+            { "expr": "sum by (kind, event) (rate(portal_worker_job_errors_total[5m]))", "legendFormat": "{{kind}} {{event}}" }
+          ],
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 38 }
+        },
+        {
+          "type": "row",
+          "title": "watcher loops (liveness)",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 46 }
+        },
+        {
+          "type": "timeseries",
+          "title": "Time since last successful tick (s)",
+          "datasource": "prometheus",
+          "description": "A loop that stalls climbs without bound — the tenant/cluster watchers' staleness signal.",
+          "fieldConfig": { "defaults": { "unit": "s", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 300 }, { "color": "red", "value": 900 } ] } }, "overrides": [] },
+          "targets": [
+            { "expr": "time() - max by (loop) (portal_watcher_last_tick_timestamp_seconds)", "legendFormat": "{{loop}}" }
+          ],
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 47 }
+        },
+        {
+          "type": "timeseries",
+          "title": "Tick p95 (s) & panic rate",
+          "datasource": "prometheus",
+          "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+          "targets": [
+            { "expr": "histogram_quantile(0.95, sum by (le, loop) (rate(portal_watcher_tick_duration_seconds_bucket[5m])))", "legendFormat": "p95 {{loop}}" },
+            { "expr": "sum by (loop) (rate(portal_watcher_panics_total[5m]))", "legendFormat": "panics/s {{loop}}" }
+          ],
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 47 }
+        }
+      ]
+    }
