@@ -1,0 +1,187 @@
+# eks-agent-platform — operator (reconcile RED + latency SLO)
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: agent-operator
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: external
+  resyncPeriod: 24h
+  json: |
+    {
+      "title": "eks-agent-platform — operator",
+      "uid": "agents-operator",
+      "tags": ["eks-agent-platform", "operator", "slo"],
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "refresh": "30s",
+      "time": { "from": "now-6h", "to": "now" },
+      "panels": [
+        {
+          "type": "row",
+          "title": "Reconcile SLO & error budget (99% of reconciles < 1s / 30d)",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+        },
+        {
+          "type": "stat",
+          "title": "Reconciles under 1s (30d)",
+          "datasource": "prometheus",
+          "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "decimals": 4, "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 0.99 } ] } }, "overrides": [] },
+          "targets": [
+            { "expr": "sum(rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\",le=\"1\"}[30d])) / clamp_min(sum(rate(controller_runtime_reconcile_time_seconds_count{namespace=\"eks-agent-platform\"}[30d])), 1)" }
+          ],
+          "gridPos": { "h": 5, "w": 6, "x": 0, "y": 1 }
+        },
+        {
+          "type": "gauge",
+          "title": "Error budget remaining (30d)",
+          "datasource": "prometheus",
+          "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "orange", "value": 0.25 }, { "color": "green", "value": 0.5 } ] } }, "overrides": [] },
+          "targets": [
+            { "expr": "clamp_min(1 - ((1 - (sum(rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\",le=\"1\"}[30d])) / clamp_min(sum(rate(controller_runtime_reconcile_time_seconds_count{namespace=\"eks-agent-platform\"}[30d])), 1))) / 0.01), 0)" }
+          ],
+          "gridPos": { "h": 5, "w": 6, "x": 6, "y": 1 }
+        },
+        {
+          "type": "stat",
+          "title": "Fast burn (1h)",
+          "datasource": "prometheus",
+          "description": "Latency-budget burn over 1h. Pages at 14.4x (2% of budget in 1h).",
+          "fieldConfig": { "defaults": { "unit": "none", "decimals": 1, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 1 }, { "color": "red", "value": 14.4 } ] } }, "overrides": [] },
+          "targets": [
+            { "expr": "(1 - (sum(rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\",le=\"1\"}[1h])) / clamp_min(sum(rate(controller_runtime_reconcile_time_seconds_count{namespace=\"eks-agent-platform\"}[1h])), 1))) / 0.01" }
+          ],
+          "gridPos": { "h": 5, "w": 6, "x": 12, "y": 1 }
+        },
+        {
+          "type": "stat",
+          "title": "Slow burn (6h)",
+          "datasource": "prometheus",
+          "description": "Latency-budget burn over 6h. Pages at 6x (5% of budget in 6h).",
+          "fieldConfig": { "defaults": { "unit": "none", "decimals": 1, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 1 }, { "color": "red", "value": 6 } ] } }, "overrides": [] },
+          "targets": [
+            { "expr": "(1 - (sum(rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\",le=\"1\"}[6h])) / clamp_min(sum(rate(controller_runtime_reconcile_time_seconds_count{namespace=\"eks-agent-platform\"}[6h])), 1))) / 0.01" }
+          ],
+          "gridPos": { "h": 5, "w": 6, "x": 18, "y": 1 }
+        },
+        {
+          "type": "row",
+          "title": "Reconcile RED (per controller)",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 }
+        },
+        {
+          "type": "timeseries",
+          "title": "Reconcile rate by controller (rec/s)",
+          "datasource": "prometheus",
+          "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+          "targets": [
+            { "expr": "sum by (controller) (rate(controller_runtime_reconcile_total{namespace=\"eks-agent-platform\"}[5m]))", "legendFormat": "{{controller}}" }
+          ],
+          "gridPos": { "h": 7, "w": 12, "x": 0, "y": 7 }
+        },
+        {
+          "type": "timeseries",
+          "title": "Reconcile error rate by controller",
+          "datasource": "prometheus",
+          "fieldConfig": { "defaults": { "unit": "percentunit", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 0.05 } ] } }, "overrides": [] },
+          "targets": [
+            { "expr": "sum by (controller) (rate(controller_runtime_reconcile_errors_total{namespace=\"eks-agent-platform\"}[5m])) / clamp_min(sum by (controller) (rate(controller_runtime_reconcile_total{namespace=\"eks-agent-platform\"}[5m])), 0.001)", "legendFormat": "{{controller}}" }
+          ],
+          "gridPos": { "h": 7, "w": 12, "x": 12, "y": 7 }
+        },
+        {
+          "type": "timeseries",
+          "title": "Reconcile latency p50 / p95 / p99 (s)",
+          "datasource": "prometheus",
+          "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+          "targets": [
+            { "expr": "histogram_quantile(0.50, sum by (le) (rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\"}[5m])))", "legendFormat": "p50" },
+            { "expr": "histogram_quantile(0.95, sum by (le) (rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\"}[5m])))", "legendFormat": "p95" },
+            { "expr": "histogram_quantile(0.99, sum by (le) (rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\"}[5m])))", "legendFormat": "p99" }
+          ],
+          "gridPos": { "h": 7, "w": 12, "x": 0, "y": 14 }
+        },
+        {
+          "type": "timeseries",
+          "title": "Reconcile p99 by controller (s) — SLO line at 1s",
+          "datasource": "prometheus",
+          "fieldConfig": { "defaults": { "unit": "s", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] },
+          "targets": [
+            { "expr": "histogram_quantile(0.99, sum by (le, controller) (rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\"}[5m])))", "legendFormat": "{{controller}}" }
+          ],
+          "gridPos": { "h": 7, "w": 12, "x": 12, "y": 14 }
+        },
+        {
+          "type": "row",
+          "title": "Work queue & workers (saturation)",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 21 }
+        },
+        {
+          "type": "timeseries",
+          "title": "Workqueue depth by queue",
+          "datasource": "prometheus",
+          "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] },
+          "targets": [
+            { "expr": "sum by (name) (workqueue_depth{namespace=\"eks-agent-platform\"})", "legendFormat": "{{name}}" }
+          ],
+          "gridPos": { "h": 7, "w": 12, "x": 0, "y": 22 }
+        },
+        {
+          "type": "timeseries",
+          "title": "Workqueue add rate by queue",
+          "datasource": "prometheus",
+          "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+          "targets": [
+            { "expr": "sum by (name) (rate(workqueue_adds_total{namespace=\"eks-agent-platform\"}[5m]))", "legendFormat": "{{name}}" }
+          ],
+          "gridPos": { "h": 7, "w": 12, "x": 12, "y": 22 }
+        },
+        {
+          "type": "timeseries",
+          "title": "Queue wait p95 by queue (s)",
+          "datasource": "prometheus",
+          "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+          "targets": [
+            { "expr": "histogram_quantile(0.95, sum by (le, name) (rate(workqueue_queue_duration_seconds_bucket{namespace=\"eks-agent-platform\"}[5m])))", "legendFormat": "{{name}}" }
+          ],
+          "gridPos": { "h": 7, "w": 12, "x": 0, "y": 29 }
+        },
+        {
+          "type": "timeseries",
+          "title": "Active workers by controller",
+          "datasource": "prometheus",
+          "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] },
+          "targets": [
+            { "expr": "sum by (controller) (controller_runtime_active_workers{namespace=\"eks-agent-platform\"})", "legendFormat": "{{controller}}" }
+          ],
+          "gridPos": { "h": 7, "w": 12, "x": 12, "y": 29 }
+        },
+        {
+          "type": "row",
+          "title": "Reconciled fleet (CR state)",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 36 }
+        },
+        {
+          "type": "stat",
+          "title": "Platforms Ready ratio",
+          "datasource": "prometheus",
+          "description": "Fraction of Platform CRs in the Ready phase — fed by the kube-state-metrics customResourceState config.",
+          "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "orange", "value": 0.9 }, { "color": "green", "value": 1 } ] } }, "overrides": [] },
+          "targets": [
+            { "expr": "count(kube_customresource_status_phase{customresource_kind=\"Platform\",customresource_phase=\"Ready\"} == 1) / clamp_min(count(kube_customresource_status_phase{customresource_kind=\"Platform\"}), 1)" }
+          ],
+          "gridPos": { "h": 7, "w": 8, "x": 0, "y": 37 }
+        },
+        {
+          "type": "timeseries",
+          "title": "Custom resources by kind & phase",
+          "datasource": "prometheus",
+          "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] },
+          "targets": [
+            { "expr": "sum by (customresource_kind, customresource_phase) (kube_customresource_status_phase == 1)", "legendFormat": "{{customresource_kind}} / {{customresource_phase}}" }
+          ],
+          "gridPos": { "h": 7, "w": 16, "x": 8, "y": 37 }
+        }
+      ]
+    }

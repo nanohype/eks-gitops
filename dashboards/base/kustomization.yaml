@@ -17,6 +17,7 @@ resources:
   # reconciled onto the external Amazon Managed Grafana.
   - alerting/folder.yaml
   - alerting/portal.yaml
+  - alerting/agent-operator.yaml
   - platform/kubernetes-cluster.yaml
   - platform/kubernetes-views-pods.yaml
   - platform/kubernetes-views-namespaces.yaml
@@ -37,6 +38,9 @@ resources:
   - platform/agent-finance.yaml
   - platform/agent-ops.yaml
   - platform/agent-founder.yaml
+  # Operator reconcile RED + latency SLO/error-budget (controller-runtime metrics
+  # reach AMP via the operator pod's prometheus.io/scrape annotation).
+  - platform/agent-operator.yaml
   # Ops control-plane app (portal): API SLO/RED + tofu-run, River-job, watcher,
   # and pgxpool surfaces — self-contained PromQL over the portal_* metrics in AMP.
   - platform/portal.yaml

@@ -1,0 +1,204 @@
+# eks-agent-platform operator — Grafana-managed SLO / health alert rules. The
+# latency SLO is "99% of reconciles complete in <1s over 30d" (budget 0.01); each
+# burn rule is a dual-window check encoded as a `> bool` product. Self-contained
+# over controller-runtime metrics, which reach AMP once the operator pod carries
+# the prometheus.io/scrape annotation (eks-agent-platform operator-prod-scrape).
+#
+# This is the PROD path (Grafana-managed, evaluated by Amazon Managed Grafana
+# against AMP). The operator chart's own PrometheusRule
+# (eks-agent-platform/charts/operator/files/slo/prometheusrule.yaml) is the
+# kube-prometheus-stack mirror — consumed only on the local kx cluster, which has
+# an in-cluster ruler. The two are the same SLO on different stacks; wire only one
+# of them to a given pager. The burn-rate model here is the more precise
+# expression of the 99%/30d objective than the PrometheusRule's coarser p99>1s.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaAlertRuleGroup
+metadata:
+  name: agent-operator-slo
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: external
+  folderRef: slo-alerts
+  interval: 1m
+  rules:
+    - uid: agent-operator-fast-burn
+      title: OperatorReconcileLatencyFastBurn
+      condition: B
+      for: 2m
+      noDataState: OK
+      execErrState: Error
+      isPaused: false
+      labels:
+        severity: page
+        service: eks-agent-platform
+        component: operator
+      annotations:
+        summary: operator reconcile latency budget burning fast (2% in 1h)
+        description: >
+          The fraction of reconciles over 1s exceeds 14.4x the 99% latency
+          objective over both the 1h and 5m windows. The control loop is slow —
+          check the operator's downstream calls (IAM/KMS/Athena/EventBridge).
+        runbook_url: https://github.com/nanohype/eks-agent-platform/blob/main/docs/runbooks/reconcile-latency.md
+      data:
+        - refId: A
+          datasourceUid: managed-prometheus
+          relativeTimeRange: {from: 3600, to: 0}
+          model:
+            refId: A
+            datasource: {type: prometheus, uid: managed-prometheus}
+            editorMode: code
+            instant: true
+            range: false
+            intervalMs: 1000
+            maxDataPoints: 43200
+            expr: "((1 - (sum(rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\",le=\"1\"}[1h])) / clamp_min(sum(rate(controller_runtime_reconcile_time_seconds_count{namespace=\"eks-agent-platform\"}[1h])), 1))) / 0.01 > bool 14.4) * ((1 - (sum(rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\",le=\"1\"}[5m])) / clamp_min(sum(rate(controller_runtime_reconcile_time_seconds_count{namespace=\"eks-agent-platform\"}[5m])), 1))) / 0.01 > bool 14.4)"
+        - refId: B
+          datasourceUid: __expr__
+          relativeTimeRange: {from: 3600, to: 0}
+          model:
+            refId: B
+            type: threshold
+            datasource: {type: __expr__, uid: __expr__}
+            expression: A
+            conditions:
+              - type: query
+                evaluator: {type: gt, params: [0]}
+                operator: {type: and}
+                query: {params: [A]}
+                reducer: {type: last, params: []}
+    - uid: agent-operator-slow-burn
+      title: OperatorReconcileLatencySlowBurn
+      condition: B
+      for: 15m
+      noDataState: OK
+      execErrState: Error
+      isPaused: false
+      labels:
+        severity: page
+        service: eks-agent-platform
+        component: operator
+      annotations:
+        summary: operator reconcile latency budget burning (5% in 6h)
+        description: >
+          The fraction of reconciles over 1s exceeds 6x the 99% latency objective
+          over both the 6h and 30m windows — a sustained slow burn of the reconcile
+          latency budget. Investigate before it escalates.
+        runbook_url: https://github.com/nanohype/eks-agent-platform/blob/main/docs/runbooks/reconcile-latency.md
+      data:
+        - refId: A
+          datasourceUid: managed-prometheus
+          relativeTimeRange: {from: 21600, to: 0}
+          model:
+            refId: A
+            datasource: {type: prometheus, uid: managed-prometheus}
+            editorMode: code
+            instant: true
+            range: false
+            intervalMs: 1000
+            maxDataPoints: 43200
+            expr: "((1 - (sum(rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\",le=\"1\"}[6h])) / clamp_min(sum(rate(controller_runtime_reconcile_time_seconds_count{namespace=\"eks-agent-platform\"}[6h])), 1))) / 0.01 > bool 6) * ((1 - (sum(rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\",le=\"1\"}[30m])) / clamp_min(sum(rate(controller_runtime_reconcile_time_seconds_count{namespace=\"eks-agent-platform\"}[30m])), 1))) / 0.01 > bool 6)"
+        - refId: B
+          datasourceUid: __expr__
+          relativeTimeRange: {from: 21600, to: 0}
+          model:
+            refId: B
+            type: threshold
+            datasource: {type: __expr__, uid: __expr__}
+            expression: A
+            conditions:
+              - type: query
+                evaluator: {type: gt, params: [0]}
+                operator: {type: and}
+                query: {params: [A]}
+                reducer: {type: last, params: []}
+    - uid: agent-operator-error-rate
+      title: OperatorReconcileErrorRateHigh
+      condition: B
+      for: 15m
+      noDataState: OK
+      execErrState: Error
+      isPaused: false
+      labels:
+        severity: page
+        service: eks-agent-platform
+        component: operator
+      annotations:
+        summary: operator reconcile error rate above 5%
+        description: >
+          More than 5% of reconciles are erroring over 15m. Probable cause: an
+          AWS-side outage or an operator IAM regression. Check CloudTrail for the
+          operator role and the controller logs.
+        runbook_url: https://github.com/nanohype/eks-agent-platform/blob/main/docs/runbooks/reconcile-errors.md
+      data:
+        - refId: A
+          datasourceUid: managed-prometheus
+          relativeTimeRange: {from: 900, to: 0}
+          model:
+            refId: A
+            datasource: {type: prometheus, uid: managed-prometheus}
+            editorMode: code
+            instant: true
+            range: false
+            intervalMs: 1000
+            maxDataPoints: 43200
+            expr: "sum(rate(controller_runtime_reconcile_errors_total{namespace=\"eks-agent-platform\"}[5m])) / clamp_min(sum(rate(controller_runtime_reconcile_total{namespace=\"eks-agent-platform\"}[5m])), 0.001)"
+        - refId: B
+          datasourceUid: __expr__
+          relativeTimeRange: {from: 900, to: 0}
+          model:
+            refId: B
+            type: threshold
+            datasource: {type: __expr__, uid: __expr__}
+            expression: A
+            conditions:
+              - type: query
+                evaluator: {type: gt, params: [0.05]}
+                operator: {type: and}
+                query: {params: [A]}
+                reducer: {type: last, params: []}
+    - uid: agent-operator-down
+      title: OperatorMetricsAbsent
+      condition: B
+      for: 5m
+      noDataState: OK
+      execErrState: Error
+      isPaused: false
+      labels:
+        severity: page
+        service: eks-agent-platform
+        component: operator
+      annotations:
+        summary: operator reconcile metrics absent — operator down or unscraped
+        description: >
+          No controller-runtime reconcile metrics are being reported for the
+          operator namespace. Either the deployment is down, leader election is
+          wedged, or the scrape has broken. Check the operator pods.
+        runbook_url: https://github.com/nanohype/eks-agent-platform/blob/main/docs/runbooks/operator-down.md
+      data:
+        - refId: A
+          datasourceUid: managed-prometheus
+          relativeTimeRange: {from: 600, to: 0}
+          model:
+            refId: A
+            datasource: {type: prometheus, uid: managed-prometheus}
+            editorMode: code
+            instant: true
+            range: false
+            intervalMs: 1000
+            maxDataPoints: 43200
+            expr: "absent(controller_runtime_reconcile_total{namespace=\"eks-agent-platform\"})"
+        - refId: B
+          datasourceUid: __expr__
+          relativeTimeRange: {from: 600, to: 0}
+          model:
+            refId: B
+            type: threshold
+            datasource: {type: __expr__, uid: __expr__}
+            expression: A
+            conditions:
+              - type: query
+                evaluator: {type: gt, params: [0]}
+                operator: {type: and}
+                query: {params: [A]}
+                reducer: {type: last, params: []}
