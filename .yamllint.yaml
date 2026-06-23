@@ -9,6 +9,7 @@ ignore: |
   dashboards/base/platform/portal.yaml
   # Alert rule groups carry long PromQL exprs in their query model.
   dashboards/base/alerting/portal.yaml
+  dashboards/base/alerting/agent-operator.yaml
 
 rules:
   line-length:
