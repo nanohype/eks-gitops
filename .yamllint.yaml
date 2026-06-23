@@ -7,9 +7,11 @@ ignore: |
   # JSON is validated by kustomize build + the GrafanaDashboard schema, not yamllint.
   dashboards/base/platform/agent-*.yaml
   dashboards/base/platform/portal.yaml
+  dashboards/base/platform/fleet-vend.yaml
   # Alert rule groups carry long PromQL exprs in their query model.
   dashboards/base/alerting/portal.yaml
   dashboards/base/alerting/agent-operator.yaml
+  dashboards/base/alerting/fleet-vend.yaml
 
 rules:
   line-length:
