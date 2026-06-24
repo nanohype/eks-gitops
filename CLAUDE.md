@@ -7,7 +7,7 @@ EKS-specific GitOps configuration for ArgoCD addon lifecycle management. Part of
 ## Directory Structure
 
 ```
-applicationsets/       → ArgoCD ApplicationSets (App-of-Apps pattern, 16 total)
+applicationsets/       → ArgoCD ApplicationSets (App-of-Apps pattern)
 addons/                → Addon configurations
   <category>/<addon>/
     # Helm addons (majority):
