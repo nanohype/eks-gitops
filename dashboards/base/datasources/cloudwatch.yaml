@@ -1,0 +1,27 @@
+# Amazon CloudWatch data source. The agent persona boards (ops, kill-switch,
+# agentgateway, finance) graph CloudWatch-native AWS metrics that have no
+# Prometheus equivalent — AWS/SQS queue depth, AWS/States Step Functions
+# execution health, AWS/Events rule failures, AWS/Bedrock throttling. These
+# exist in CloudWatch natively (no exporter), so Grafana queries them directly.
+#
+# access=proxy: AMG queries CloudWatch using its workspace IAM role, which the
+# landing-zone AMG service role grants CloudWatch read access to, and the
+# workspace's data_sources list enables the CloudWatch plugin. authType
+# ec2_iam_role uses that ambient role (no static keys). Region is us-west-2
+# across every environment, so this needs no per-env overlay patch.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDatasource
+metadata:
+  name: cloudwatch
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: external
+  datasource:
+    name: CloudWatch
+    uid: cloudwatch
+    type: cloudwatch
+    access: proxy
+    jsonData:
+      authType: ec2_iam_role
+      defaultRegion: us-west-2

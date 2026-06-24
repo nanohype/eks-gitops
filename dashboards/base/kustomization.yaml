@@ -13,6 +13,7 @@ resources:
   - datasources/prometheus.yaml
   - datasources/loki.yaml
   - datasources/tempo.yaml
+  - datasources/cloudwatch.yaml
   # Grafana-managed SLO / burn-rate alert rules (folder + per-system rule groups),
   # reconciled onto the external Amazon Managed Grafana.
   - alerting/folder.yaml
