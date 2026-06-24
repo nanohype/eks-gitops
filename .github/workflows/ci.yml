@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install yamllint
         run: pip install yamllint
@@ -33,7 +33,7 @@ jobs:
         environment: [dev, staging, production, hub]
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install kustomize
         uses: imranismail/setup-kustomize@v3
