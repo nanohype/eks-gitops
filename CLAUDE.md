@@ -2,7 +2,7 @@
 
 ## Overview
 
-EKS-specific GitOps configuration for ArgoCD addon lifecycle management. Part of a multi-cloud strategy (`eks-gitops`, `gke-gitops`, `aks-gitops`). Companion to [aws-eks](https://github.com/nanohype/aws-eks) (CDK infrastructure).
+EKS-specific GitOps configuration for ArgoCD addon lifecycle management. Part of a multi-cloud strategy (`eks-gitops`, `aks-gitops`). Companion to [landing-zone](https://github.com/nanohype/landing-zone) (OpenTofu/Terragrunt infrastructure).
 
 ## Directory Structure
 
@@ -76,9 +76,9 @@ task render                 # Render manifests to rendered/ directory
 ## Relationship to Parent Repo
 
 - This is the EKS variant of a multi-cloud GitOps strategy
-- `aws-eks` (CDK) deploys ArgoCD and creates the App-of-Apps Application pointing to this repo
+- `landing-zone` (OpenTofu) deploys ArgoCD and creates the App-of-Apps Application pointing to this repo
 - Bootstrap addons (cert-manager, external-secrets, etc.) are managed by this repo at wave 0
-- Cluster secret labels (set by CDK) drive environment selection in ApplicationSets
+- Cluster secret labels (set by landing-zone cluster-bootstrap) drive environment selection in ApplicationSets
 
 ## CI
 

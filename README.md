@@ -1,6 +1,6 @@
 # EKS GitOps Repository
 
-GitOps configuration for EKS cluster addons, managed by ArgoCD. Part of a multi-cloud GitOps strategy (`eks-gitops`, `gke-gitops`, `aks-gitops`).
+GitOps configuration for EKS cluster addons, managed by ArgoCD. Part of a multi-cloud GitOps strategy (`eks-gitops`, `aks-gitops`).
 
 **AI clients / agents start here:** [`AGENTS.md`](AGENTS.md). For the stack-wide view, see the [Platform Reference](https://github.com/nanohype/nanohype/blob/main/docs/platform-reference.md).
 
@@ -15,13 +15,13 @@ GitOps configuration for EKS cluster addons, managed by ArgoCD. Part of a multi-
 
 ## Companion Repository
 
-This repository is the EKS variant of a multi-cloud GitOps strategy. Infrastructure is provisioned by [aws-eks](https://github.com/nanohype/aws-eks) (CDK), which deploys ArgoCD and creates the App-of-Apps Application pointing to this repository.
+This repository is the EKS variant of a multi-cloud GitOps strategy. Infrastructure is provisioned by [landing-zone](https://github.com/nanohype/landing-zone) (OpenTofu/Terragrunt), which deploys ArgoCD and creates the App-of-Apps Application pointing to this repository.
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                    ArgoCD (deployed by CDK)                         │
+│              ArgoCD (deployed by landing-zone)                     │
 ├─────────────────────────────────────────────────────────────────────┤
 │                    App-of-Apps Application                          │
 │                    (points to this repository)                      │
@@ -121,7 +121,7 @@ Tools required for local development:
 - [helm](https://helm.sh/docs/intro/install/) >= 3.0
 - [yamllint](https://yamllint.readthedocs.io/) >= 1.0
 
-Infrastructure prerequisites (deployed by CDK):
+Infrastructure prerequisites (deployed by landing-zone):
 
 - ArgoCD and App-of-Apps root Application
 - EKS cluster with IRSA and cluster secret labels

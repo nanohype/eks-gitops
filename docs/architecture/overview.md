@@ -2,12 +2,12 @@
 
 ## GitOps Model
 
-This repository implements the **App-of-Apps** pattern for ArgoCD. It is the EKS variant of a multi-cloud GitOps strategy (`eks-gitops`, `gke-gitops`, `aks-gitops`). The CDK infrastructure ([aws-eks](https://github.com/nanohype/aws-eks)) deploys ArgoCD and creates a root Application that points to this repository's `applicationsets/` directory.
+This repository implements the **App-of-Apps** pattern for ArgoCD. It is the EKS variant of a multi-cloud GitOps strategy (`eks-gitops`, `aks-gitops`). The OpenTofu/Terragrunt infrastructure ([landing-zone](https://github.com/nanohype/landing-zone)) deploys ArgoCD and creates a root Application that points to this repository's `applicationsets/` directory.
 
 ```mermaid
 graph TD
-    CDK[aws-eks CDK] -->|deploys| ArgoCD
-    CDK -->|creates| AppOfApps[App-of-Apps Application]
+    IaC[landing-zone OpenTofu] -->|deploys| ArgoCD
+    IaC -->|creates| AppOfApps[App-of-Apps Application]
     AppOfApps -->|references| AppSets[ApplicationSets]
     AppSets -->|generates| BootApps[Bootstrap Apps]
     AppSets -->|generates| NetApps[Networking Apps]
