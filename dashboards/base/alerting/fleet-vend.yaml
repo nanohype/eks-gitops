@@ -29,6 +29,7 @@ spec:
         service: eks-fleet
         component: vend
       annotations:
+        runbook_url: https://github.com/nanohype/eks-fleet/blob/main/docs/runbooks/vend-failure.md
         summary: fleet vend reconcile errors burning the budget fast (2% in 1h)
         description: >
           provider-opentofu reconcile errors exceed 14.4x the 99% success
@@ -74,6 +75,7 @@ spec:
         service: eks-fleet
         component: vend
       annotations:
+        runbook_url: https://github.com/nanohype/eks-fleet/blob/main/docs/runbooks/vend-failure.md
         summary: fleet vend reconcile errors burning the budget (5% in 6h)
         description: >
           provider-opentofu reconcile errors exceed 6x the 99% success objective
@@ -118,6 +120,7 @@ spec:
         service: eks-fleet
         component: vend
       annotations:
+        runbook_url: https://github.com/nanohype/eks-fleet/blob/main/docs/runbooks/vend-failure.md
         summary: provider-opentofu reconcile metrics absent — the vend provider is down or unscraped
         description: >
           No controller-runtime reconcile metrics from crossplane-system. The
