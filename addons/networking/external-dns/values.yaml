@@ -20,3 +20,8 @@ resources:
 tolerations:
   - key: CriticalAddonsOnly
     operator: Exists
+# Scrape the external-dns controller metrics (:7979) -> AMP (platform/external-dns.yaml).
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "7979"
+  prometheus.io/path: /metrics

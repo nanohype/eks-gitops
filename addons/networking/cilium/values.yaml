@@ -9,11 +9,20 @@ ipam:
 egressMasqueradeInterfaces: eth0
 routingMode: native
 
+# Expose cilium-agent Prometheus metrics (:9962); the chart auto-stamps the pod
+# with prometheus.io/scrape so the annotation-gated grafana-agent scrapes it -> AMP
+# (platform/cilium-overview.yaml). NOTE: hubble L7 metrics (:9965) are Service-only
+# and need an Alloy service-scrape rule, tracked separately.
+prometheus:
+  enabled: true
+
 # Hubble observability (enabled globally)
 hubble:
   enabled: true
   relay:
     enabled: true
+    prometheus:
+      enabled: true
   ui:
     enabled: true
     tolerations:
@@ -43,6 +52,8 @@ bpf:
 
 # Tolerations for system nodes
 operator:
+  prometheus:
+    enabled: true
   tolerations:
     - key: CriticalAddonsOnly
       operator: Exists

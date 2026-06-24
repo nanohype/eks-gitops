@@ -44,3 +44,8 @@ persistence:
 tolerations:
   - key: CriticalAddonsOnly
     operator: Exists
+# Scrape Tempo's own metrics (:3200) -> AMP (dashboards/base/addons/tempo.yaml).
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "3200"
+  prometheus.io/path: /metrics

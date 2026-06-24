@@ -14,6 +14,15 @@ server:
       operator: Exists
 
 controller:
+  # Enable + scrape the workflow-controller metrics (:9090) -> AMP (addons/argo-workflows.yaml).
+  metricsConfig:
+    enabled: true
+    port: 9090
+    path: /metrics
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+    prometheus.io/path: /metrics
   resources:
     requests:
       cpu: 100m

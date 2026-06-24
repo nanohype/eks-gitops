@@ -1,6 +1,11 @@
 # Argo Rollouts - Progressive delivery (canary/blue-green)
 
 controller:
+  # Scrape the rollouts-controller metrics (:8090) -> AMP (addons/argo-rollouts.yaml).
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8090"
+    prometheus.io/path: /metrics
   replicas: 2
   resources:
     requests:

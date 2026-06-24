@@ -1,6 +1,11 @@
 # OpenCost - Kubernetes cost allocation and visibility
 
 opencost:
+  # Scrape the OpenCost exporter metrics (:9003) -> AMP (addons/opencost.yaml).
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9003"
+    prometheus.io/path: /metrics
   exporter:
     defaultClusterId: eks
     resources:

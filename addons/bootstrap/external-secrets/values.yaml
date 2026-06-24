@@ -39,3 +39,9 @@ certController:
   tolerations:
     - key: CriticalAddonsOnly
       operator: Exists
+# Scrape the main ESO controller (ESO + controller-runtime metrics on :8080) -> AMP
+# (platform/eso.yaml). Top-level podAnnotations land on the controller Deployment.
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8080"
+  prometheus.io/path: /metrics

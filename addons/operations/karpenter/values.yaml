@@ -19,3 +19,9 @@ topologySpreadConstraints:
   - maxSkew: 1
     topologyKey: topology.kubernetes.io/zone
     whenUnsatisfiable: DoNotSchedule
+# Scrape: the annotation-gated hub grafana-agent (Alloy) scrapes the karpenter
+# controller metrics (:8080) -> AMP, feeding dashboards/base/addons/karpenter.yaml.
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8080"
+  prometheus.io/path: /metrics

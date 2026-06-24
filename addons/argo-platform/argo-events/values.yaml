@@ -1,6 +1,11 @@
 # Argo Events - Event sources and sensors
 
 controller:
+  # Scrape the events controller-manager metrics (:7777) -> AMP (addons/argo-events.yaml).
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "7777"
+    prometheus.io/path: /metrics
   resources:
     requests:
       cpu: 50m

@@ -24,6 +24,11 @@ loki:
     max_query_parallelism: 32
 
 singleBinary:
+  # Scrape Loki's own metrics (:3100) -> AMP (addons/loki.yaml).
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "3100"
+    prometheus.io/path: /metrics
   replicas: 1
   resources:
     requests:
