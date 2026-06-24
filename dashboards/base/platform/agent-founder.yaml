@@ -75,11 +75,12 @@ spec:
         },
         {
           "type": "bargauge",
-          "title": "Top initiatives by agent activity (last 7d)",
+          "title": "Top initiatives by spend (USD, aggregate)",
           "datasource": "prometheus",
+          "description": "Per-Tenant aggregate spend, top 10 — from the kube-state-metrics customResourceState projection of Tenant.status.aggregateSpendUsd.",
           "targets": [
             {
-              "expr": "topk(10, sum by (platform_id) (increase(agents_agent_invocations_total[7d])))"
+              "expr": "topk(10, sum by (name) (kube_customresource_status_field{customresource_kind=\"Tenant\",field=\"aggregateSpendUsd\"}))"
             }
           ],
           "gridPos": {
