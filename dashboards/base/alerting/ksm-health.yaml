@@ -1,0 +1,70 @@
+# kube-state-metrics customResourceState health. The 7 agent persona dashboards
+# (agent-tenants/founder/finance/ops/kill-switch/eval-quality + the operator's
+# CR-state row) all read kube_customresource_* — projected by the single
+# customResourceState config in addons/observability/kube-state-metrics. KSM
+# parses that config as ONE unit: a malformed block, a CRD-list typo, an RBAC
+# Forbidden, or a KSM service rename drops EVERY kube_customresource_* series at
+# once, silently no-data-ing all those boards. The existing absent() alerts watch
+# controller_runtime_* (the operator/provider POD-annotation scrape path) — a
+# different path that stays green through a KSM-side break. This is the canary for
+# the KSM static-scrape path.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaAlertRuleGroup
+metadata:
+  name: ksm-health
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: external
+  folderRef: slo-alerts
+  interval: 1m
+  rules:
+    - uid: ksm-customresource-absent
+      title: KubeCustomResourceMetricsAbsent
+      condition: B
+      for: 10m
+      noDataState: OK
+      execErrState: Error
+      isPaused: false
+      labels:
+        severity: page
+        service: eks-agent-platform
+        component: kube-state-metrics
+      annotations:
+        summary: kube_customresource_* metrics absent — the CR-state projection broke
+        description: >
+          No kube_customresource_status_phase series are reaching Amazon Managed
+          Prometheus. The kube-state-metrics customResourceState config emits nothing —
+          a malformed block, a CRD-list typo, an RBAC Forbidden on agents.nanohype.dev,
+          or a KSM rename/outage drops ALL kube_customresource_* at once. Every agent
+          persona dashboard (tenants/founder/finance/ops/kill-switch/eval-quality) is
+          silently no-data until this clears. Check the kube-state-metrics pod logs for
+          a customResourceState parse error and its RBAC, then the static scrape target
+          kube-state-metrics.kube-system.svc:8080.
+      data:
+        - refId: A
+          datasourceUid: managed-prometheus
+          relativeTimeRange: {from: 600, to: 0}
+          model:
+            refId: A
+            datasource: {type: prometheus, uid: managed-prometheus}
+            editorMode: code
+            instant: true
+            range: false
+            intervalMs: 1000
+            maxDataPoints: 43200
+            expr: "absent(kube_customresource_status_phase)"
+        - refId: B
+          datasourceUid: __expr__
+          relativeTimeRange: {from: 600, to: 0}
+          model:
+            refId: B
+            type: threshold
+            datasource: {type: __expr__, uid: __expr__}
+            expression: A
+            conditions:
+              - type: query
+                evaluator: {type: gt, params: [0]}
+                operator: {type: and}
+                query: {params: [A]}
+                reducer: {type: last, params: []}
