@@ -31,7 +31,7 @@ rbac:
       resources: ["budgetpolicies", "evalsuites"]
       verbs: ["list", "watch"]
     - apiGroups: ["agents.nanohype.dev"]
-      resources: ["agentfleets"]
+      resources: ["agentfleets", "agentsandboxes", "sandboxpools", "modelgateways", "batchjobs"]
       verbs: ["list", "watch"]
 
 # Scraped by the grafana-agent static target, but annotate too so the
@@ -83,6 +83,28 @@ customResourceState:
               commonLabels:
                 customresource_kind: Platform
                 field: suspendedAt
+            - name: condition
+              help: "Platform.status.conditions by type + status (per-aspect reconcile/IRSA/ns truth)"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, conditions]
+                  labelsFromPath:
+                    condition_type: [type]
+                    condition_status: [status]
+                  valueFrom: [status]
+              commonLabels:
+                customresource_kind: Platform
+            - name: status_field
+              help: "Platform.status.observedGeneration (vs metadata.generation — stuck reconcile)"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, observedGeneration]
+                  nilIsZero: true
+              commonLabels:
+                customresource_kind: Platform
+                field: observedGeneration
 
         # Tenant
         - groupVersionKind:
@@ -123,6 +145,46 @@ customResourceState:
               commonLabels:
                 customresource_kind: Tenant
                 field: aggregateSpendUsd
+            - name: status_field
+              help: "Tenant.status.platformCount (total Platforms — denominator for ready ratio)"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, platformCount]
+                  nilIsZero: true
+              commonLabels:
+                customresource_kind: Tenant
+                field: platformCount
+            - name: status_field
+              help: "Tenant.status.readyPlatformCount (alert when < platformCount — partial outage)"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, readyPlatformCount]
+                  nilIsZero: true
+              commonLabels:
+                customresource_kind: Tenant
+                field: readyPlatformCount
+            - name: status_field
+              help: "Tenant.status.suspendedPlatformCount (kill-switch hits — alert on non-zero)"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, suspendedPlatformCount]
+                  nilIsZero: true
+              commonLabels:
+                customresource_kind: Tenant
+                field: suspendedPlatformCount
+            - name: status_field
+              help: "Tenant.status.lastReconciled (staleness watchdog)"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, lastReconciled]
+                  nilIsZero: true
+              commonLabels:
+                customresource_kind: Tenant
+                field: lastReconciled
             - name: condition
               help: "Tenant.status.conditions by type + status"
               each:
@@ -186,6 +248,28 @@ customResourceState:
               commonLabels:
                 customresource_kind: BudgetPolicy
                 field: monthlyUsd
+            - name: status_field
+              help: "BudgetPolicy.status.percentOfBudget (0..200+ — the natural alert threshold per policy)"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, percentOfBudget]
+                  nilIsZero: true
+              commonLabels:
+                customresource_kind: BudgetPolicy
+                field: percentOfBudget
+            - name: condition
+              help: "BudgetPolicy.status.conditions (budget controller reconcile health — cap unenforced if stale)"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, conditions]
+                  labelsFromPath:
+                    condition_type: [type]
+                    condition_status: [status]
+                  valueFrom: [status]
+              commonLabels:
+                customresource_kind: BudgetPolicy
 
         # AgentFleet
         - groupVersionKind:
@@ -216,6 +300,28 @@ customResourceState:
               commonLabels:
                 customresource_kind: AgentFleet
                 field: readyAgents
+            - name: condition
+              help: "AgentFleet.status.conditions (downstream kagent rollout truth; phase=Ready can mask degraded)"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, conditions]
+                  labelsFromPath:
+                    condition_type: [type]
+                    condition_status: [status]
+                  valueFrom: [status]
+              commonLabels:
+                customresource_kind: AgentFleet
+            - name: status_field
+              help: "AgentFleet.status.observedGeneration (vs metadata.generation — unapplied spec change)"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, observedGeneration]
+                  nilIsZero: true
+              commonLabels:
+                customresource_kind: AgentFleet
+                field: observedGeneration
 
         # EvalSuite
         - groupVersionKind:
@@ -246,3 +352,237 @@ customResourceState:
               commonLabels:
                 customresource_kind: EvalSuite
                 field: lastScore
+            - name: status_field
+              help: "EvalSuite.spec.passThreshold (0..1) — the required mean; pair with lastScore to alert"
+              each:
+                type: Gauge
+                gauge:
+                  path: [spec, passThreshold]
+              commonLabels:
+                customresource_kind: EvalSuite
+                field: passThreshold
+            - name: status_field
+              help: "EvalSuite.status.lastRunAt — freshness watchdog (evals silently stopped)"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, lastRunAt]
+                  nilIsZero: true
+              commonLabels:
+                customresource_kind: EvalSuite
+                field: lastRunAt
+            - name: condition
+              help: "EvalSuite.status.conditions by type + status (harness executed vs agents passed)"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, conditions]
+                  labelsFromPath:
+                    condition_type: [type]
+                    condition_status: [status]
+                  valueFrom: [status]
+              commonLabels:
+                customresource_kind: EvalSuite
+
+        # ModelGateway — every agent's Bedrock egress flows through it; a broken
+        # Route can be condition=False while phase stays Ready.
+        - groupVersionKind:
+            group: agents.nanohype.dev
+            version: v1alpha1
+            kind: ModelGateway
+          labelsFromPath:
+            name: [metadata, name]
+            namespace: [metadata, namespace]
+          metricNamePrefix: kube_customresource
+          metrics:
+            - name: status_phase
+              help: "ModelGateway.status.phase"
+              each:
+                type: StateSet
+                stateSet:
+                  labelName: customresource_phase
+                  path: [status, phase]
+                  list: [Pending, Provisioning, Ready, Failed]
+              commonLabels:
+                customresource_kind: ModelGateway
+            - name: condition
+              help: "ModelGateway.status.conditions by type + status"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, conditions]
+                  labelsFromPath:
+                    condition_type: [type]
+                    condition_status: [status]
+                  valueFrom: [status]
+              commonLabels:
+                customresource_kind: ModelGateway
+            - name: status_field
+              help: "ModelGateway.status.observedGeneration (reconcile-lag vs metadata.generation)"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, observedGeneration]
+                  nilIsZero: true
+              commonLabels:
+                customresource_kind: ModelGateway
+                field: observedGeneration
+
+        # AgentSandbox — ephemeral attributable single-session runtime
+        - groupVersionKind:
+            group: agents.nanohype.dev
+            version: v1alpha1
+            kind: AgentSandbox
+          labelsFromPath:
+            name: [metadata, name]
+            namespace: [metadata, namespace]
+          metricNamePrefix: kube_customresource
+          metrics:
+            - name: status_phase
+              help: "AgentSandbox.status.phase (run-once session lifecycle)"
+              each:
+                type: StateSet
+                stateSet:
+                  labelName: customresource_phase
+                  path: [status, phase]
+                  list: [Pending, Running, Succeeded, Failed, Suspended]
+              commonLabels:
+                customresource_kind: AgentSandbox
+            - name: status_pod_phase
+              help: "AgentSandbox.status.podPhase (the session pod's k8s phase — stuck Pending vs run failure)"
+              each:
+                type: StateSet
+                stateSet:
+                  labelName: customresource_pod_phase
+                  path: [status, podPhase]
+                  list: [Pending, Running, Succeeded, Failed, Unknown]
+              commonLabels:
+                customresource_kind: AgentSandbox
+            - name: condition
+              help: "AgentSandbox.status.conditions by type + status"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, conditions]
+                  labelsFromPath:
+                    condition_type: [type]
+                    condition_status: [status]
+                  valueFrom: [status]
+              commonLabels:
+                customresource_kind: AgentSandbox
+            - name: status_field
+              help: "AgentSandbox.status.completedAt (terminal ts; pairs with ttl for leaked-pod alerts)"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, completedAt]
+                  nilIsZero: true
+              commonLabels:
+                customresource_kind: AgentSandbox
+                field: completedAt
+
+        # SandboxPool — warm-pool of sandbox workers
+        - groupVersionKind:
+            group: agents.nanohype.dev
+            version: v1alpha1
+            kind: SandboxPool
+          labelsFromPath:
+            name: [metadata, name]
+            namespace: [metadata, namespace]
+          metricNamePrefix: kube_customresource
+          metrics:
+            - name: status_phase
+              help: "SandboxPool.status.phase"
+              each:
+                type: StateSet
+                stateSet:
+                  labelName: customresource_phase
+                  path: [status, phase]
+                  list: [Pending, Ready, Suspended, Failed]
+              commonLabels:
+                customresource_kind: SandboxPool
+            - name: status_field
+              help: "SandboxPool.status.readyWorkers (warm-pool depth — 0 when unpopulated, so under-provision alerts still fire)"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, readyWorkers]
+                  nilIsZero: true
+              commonLabels:
+                customresource_kind: SandboxPool
+                field: readyWorkers
+            - name: condition
+              help: "SandboxPool.status.conditions by type + status"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, conditions]
+                  labelsFromPath:
+                    condition_type: [type]
+                    condition_status: [status]
+                  valueFrom: [status]
+              commonLabels:
+                customresource_kind: SandboxPool
+
+        # BatchJob — bulk async agent runs
+        - groupVersionKind:
+            group: agents.nanohype.dev
+            version: v1alpha1
+            kind: BatchJob
+          labelsFromPath:
+            name: [metadata, name]
+            namespace: [metadata, namespace]
+          metricNamePrefix: kube_customresource
+          metrics:
+            - name: status_phase
+              help: "BatchJob.status.phase"
+              each:
+                type: StateSet
+                stateSet:
+                  labelName: customresource_phase
+                  path: [status, phase]
+                  list: [Pending, Provisioning, Running, Succeeded, Failed, Stopped]
+              commonLabels:
+                customresource_kind: BatchJob
+            - name: status_field
+              help: "BatchJob.status.failedCount"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, failedCount]
+                  nilIsZero: true
+              commonLabels:
+                customresource_kind: BatchJob
+                field: failedCount
+            - name: status_field
+              help: "BatchJob.status.succeededCount"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, succeededCount]
+                  nilIsZero: true
+              commonLabels:
+                customresource_kind: BatchJob
+                field: succeededCount
+            - name: status_field
+              help: "BatchJob.status.recordCount (total records to process)"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, recordCount]
+                  nilIsZero: true
+              commonLabels:
+                customresource_kind: BatchJob
+                field: recordCount
+            - name: condition
+              help: "BatchJob.status.conditions by type + status"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, conditions]
+                  labelsFromPath:
+                    condition_type: [type]
+                    condition_status: [status]
+                  valueFrom: [status]
+              commonLabels:
+                customresource_kind: BatchJob
