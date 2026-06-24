@@ -8,6 +8,17 @@
 
 agent:
   mode: flow
+  # Expose the OTLP receiver ports on the agent Service so tenant apps in other
+  # namespaces can push to grafana-agent.monitoring.svc:4317/4318.
+  extraPorts:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+      protocol: TCP
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+      protocol: TCP
   configMap:
     create: true
     content: |
@@ -83,6 +94,37 @@ agent:
         forward_to   = [prometheus.remote_write.amp.receiver]
       }
 
+      // Hubble L7 metrics (:9965) are served per cilium-agent pod and exposed only
+      // via the headless hubble-metrics Service in kube-system. The annotation-gated
+      // pod scrape can't reach them (the agent pod's prometheus.io/port is its own
+      // :9962), so scrape the service endpoints directly.
+      discovery.kubernetes "hubble" {
+        role = "endpoints"
+        namespaces {
+          names = ["kube-system"]
+        }
+      }
+      discovery.relabel "hubble" {
+        targets = discovery.kubernetes.hubble.targets
+        rule {
+          source_labels = ["__meta_kubernetes_service_name"]
+          regex         = "hubble-metrics"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+      }
+      prometheus.scrape "hubble" {
+        targets    = discovery.relabel.hubble.output
+        forward_to = [prometheus.remote_write.amp.receiver]
+      }
+
       // SigV4 signs each remote-write request with the IRSA-projected
       // AWS_ROLE_ARN / AWS_WEB_IDENTITY_TOKEN_FILE credentials. AMP
       // expects service "aps" and the workspace's region.
@@ -109,7 +151,12 @@ agent:
         }
       }
 
-      // ────────────────────────────── Traces → Tempo ─────────────────────────
+      // ──────────────────── OTLP ingest (traces + metrics + logs) ─────────────
+      // Tenant apps push OTLP to this agent on :4317/:4318 (exposed via the agent
+      // Service + agent.extraPorts above). Traces go to Tempo; metrics and logs are
+      // converted and fed into the same AMP remote-write / Loki sinks the scrape and
+      // tail pipelines use — without these outputs the OTLP metrics and logs were
+      // silently dropped.
       otelcol.receiver.otlp "default" {
         grpc {
           endpoint = "0.0.0.0:4317"
@@ -118,7 +165,9 @@ agent:
           endpoint = "0.0.0.0:4318"
         }
         output {
-          traces = [otelcol.exporter.otlp.tempo.input]
+          traces  = [otelcol.exporter.otlp.tempo.input]
+          metrics = [otelcol.exporter.prometheus.otlp.input]
+          logs    = [otelcol.exporter.loki.otlp.input]
         }
       }
       otelcol.exporter.otlp "tempo" {
@@ -128,6 +177,14 @@ agent:
             insecure = true
           }
         }
+      }
+      // OTLP metrics → Prometheus → AMP (same SigV4 remote-write as the scrape path).
+      otelcol.exporter.prometheus "otlp" {
+        forward_to = [prometheus.remote_write.amp.receiver]
+      }
+      // OTLP logs → Loki (same sink as the kubernetes log tail).
+      otelcol.exporter.loki "otlp" {
+        forward_to = [loki.write.default.receiver]
       }
 
 # IRSA is required for SigV4 to AMP. values-{env}.yaml sets the role-arn
