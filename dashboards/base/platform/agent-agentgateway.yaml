@@ -30,7 +30,7 @@ spec:
             "name": "platform",
             "type": "query",
             "datasource": "prometheus",
-            "query": "label_values(agentgateway_invocation_duration_seconds_count, platform)",
+            "query": "label_values(agentgateway_llm_request_duration_seconds_count, platform)",
             "includeAll": true,
             "multi": true
           }
@@ -43,15 +43,15 @@ spec:
           "datasource": "prometheus",
           "targets": [
             {
-              "expr": "histogram_quantile(0.50, sum by (le, model_id) (rate(agentgateway_invocation_duration_seconds_bucket{platform=~\"$platform\"}[5m])))",
+              "expr": "histogram_quantile(0.50, sum by (le, model_id) (rate(agentgateway_llm_request_duration_seconds_bucket{platform=~\"$platform\"}[5m])))",
               "legendFormat": "p50 {{model_id}}"
             },
             {
-              "expr": "histogram_quantile(0.95, sum by (le, model_id) (rate(agentgateway_invocation_duration_seconds_bucket{platform=~\"$platform\"}[5m])))",
+              "expr": "histogram_quantile(0.95, sum by (le, model_id) (rate(agentgateway_llm_request_duration_seconds_bucket{platform=~\"$platform\"}[5m])))",
               "legendFormat": "p95 {{model_id}}"
             },
             {
-              "expr": "histogram_quantile(0.99, sum by (le, model_id) (rate(agentgateway_invocation_duration_seconds_bucket{platform=~\"$platform\"}[5m])))",
+              "expr": "histogram_quantile(0.99, sum by (le, model_id) (rate(agentgateway_llm_request_duration_seconds_bucket{platform=~\"$platform\"}[5m])))",
               "legendFormat": "p99 {{model_id}}"
             }
           ],
@@ -73,7 +73,7 @@ spec:
           "datasource": "prometheus",
           "targets": [
             {
-              "expr": "sum by (model_id, status) (rate(agentgateway_invocation_total{platform=~\"$platform\",status!=\"200\"}[5m]))",
+              "expr": "sum by (model_id, status) (rate(agentgateway_llm_requests_total{platform=~\"$platform\",status!=\"200\"}[5m]))",
               "legendFormat": "{{model_id}} {{status}}"
             }
           ],
@@ -90,7 +90,7 @@ spec:
           "datasource": "prometheus",
           "targets": [
             {
-              "expr": "sum by (route) (rate(agentgateway_invocation_total{platform=~\"$platform\"}[1m]))",
+              "expr": "sum by (route) (rate(agentgateway_llm_requests_total{platform=~\"$platform\"}[1m]))",
               "legendFormat": "{{route}}"
             }
           ],
