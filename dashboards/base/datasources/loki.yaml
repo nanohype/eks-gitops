@@ -8,6 +8,9 @@ spec:
       dashboards: external
   datasource:
     name: Loki
+    # Pinned UID so dashboards (tenant logs rows) and the Tempo→Loki
+    # tracesToLogsV2 bridge can reference this datasource deterministically.
+    uid: loki
     type: loki
     access: proxy
     url: http://loki-gateway.monitoring.svc.cluster.local

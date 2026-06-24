@@ -8,6 +8,9 @@ spec:
       dashboards: external
   datasource:
     name: Tempo
+    # Pinned UID so dashboards (tenant logs rows) and the Tempo→Loki
+    # tracesToLogsV2 bridge can reference this datasource deterministically.
+    uid: tempo
     type: tempo
     access: proxy
     url: http://tempo.monitoring.svc.cluster.local:3200
