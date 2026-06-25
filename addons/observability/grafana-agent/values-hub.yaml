@@ -2,10 +2,6 @@
 # scrapes pods (metrics → AMP via the IRSA role below), tails logs (→ Loki) and
 # receives traces (→ Tempo), both in-cluster in the monitoring namespace.
 
-serviceAccount:
-  annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/hub-eks-grafana-agent-amp
-
 extraEnv:
   - name: AMP_REMOTE_WRITE_URL
     value: "https://aps-workspaces.us-west-2.amazonaws.com/workspaces/ws-PLACEHOLDER/api/v1/remote_write"

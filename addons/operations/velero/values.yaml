@@ -1,6 +1,13 @@
 # Velero - Backup and Disaster Recovery
 # Adapted from aws-idp-gitops
 
+# Pin the server ServiceAccount name so it matches the EKS Pod Identity
+# association (namespace velero, service_account velero). The chart otherwise
+# names it <release>-server, which the association would not bind.
+serviceAccount:
+  server:
+    name: velero
+
 resources:
   requests:
     cpu: 100m

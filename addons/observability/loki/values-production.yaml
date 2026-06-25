@@ -1,10 +1,6 @@
 # Loki - Production overrides
 # Production: longer retention, larger storage
 
-serviceAccount:
-  annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/production-eks-loki
-
 loki:
   commonConfig:
     replication_factor: 1
