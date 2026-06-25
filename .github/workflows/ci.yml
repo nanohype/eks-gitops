@@ -10,6 +10,16 @@ permissions:
   contents: read
 
 jobs:
+  placeholders:
+    name: Zero-placeholder gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: No unfilled placeholders in deploy config
+        run: ./scripts/no-placeholders.sh
+
   lint:
     name: Lint YAML
     runs-on: ubuntu-latest
