@@ -53,7 +53,7 @@ jobs:
   pr-summary:
     name: PR Summary
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    if: always() && github.event_name == 'pull_request'
     needs: [lint, validate]
     permissions:
       pull-requests: write
@@ -62,23 +62,24 @@ jobs:
         uses: actions/github-script@v9
         with:
           script: |
-            const environments = ['dev', 'staging', 'production', 'hub'];
-            const rows = environments.map(env => {
-              const job = context.payload.workflow_run?.jobs?.find(j => j.name.includes(env));
-              return `| ${env} | :white_check_mark: |`;
-            }).join('\n');
+            const icon = r => r === 'success' ? ':white_check_mark:'
+              : r === 'skipped' ? ':fast_forward:' : ':x:';
+            const results = {
+              'YAML Lint': '${{ needs.lint.result }}',
+              'Kustomize Build (all environments)': '${{ needs.validate.result }}',
+            };
+            const rows = Object.entries(results)
+              .map(([check, r]) => `| ${check} | ${icon(r)} ${r} |`)
+              .join('\n');
+            const passed = Object.values(results).every(r => r === 'success' || r === 'skipped');
 
             const body = `## CI Results
 
             | Check | Status |
             |-------|--------|
-            | YAML Lint | :white_check_mark: |
-
-            | Environment | Kustomize Build |
-            |-------------|-----------------|
             ${rows}
 
-            All validations passed.`;
+            ${passed ? 'All checks passed.' : 'One or more checks failed — see the job logs.'}`;
 
             github.rest.issues.createComment({
               issue_number: context.issue.number,
