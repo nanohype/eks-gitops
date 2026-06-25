@@ -48,9 +48,14 @@ tasks:
         done
         echo "All {{.ENVIRONMENT}} overlays built successfully."
 
+  audit:placeholders:
+    desc: Fail on unacknowledged deploy-time placeholders (role ARNs, AMP/AMG workspace ids)
+    cmds:
+      - ./scripts/check-placeholders.sh
+
   validate:
-    desc: Run all validations (lint + build)
-    deps: [lint:yaml, kustomize:build]
+    desc: Run all validations (lint + build + placeholder audit)
+    deps: [lint:yaml, kustomize:build, audit:placeholders]
     cmds:
       - echo "All validations passed."
 
