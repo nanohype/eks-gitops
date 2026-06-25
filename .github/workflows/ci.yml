@@ -51,21 +51,31 @@ jobs:
       - name: Install Helm
         uses: azure/setup-helm@v5
 
-      - name: Build manifests
+      - name: Render manifests
         run: |
-          echo "Building ${{ matrix.environment }} overlays..."
+          mkdir -p rendered
+          echo "Rendering ${{ matrix.environment }} overlays..."
           find . -path "*/overlays/${{ matrix.environment }}/kustomization.yaml" -exec dirname {} \; | while read dir; do
-            echo "Building $dir ..."
-            kustomize build --enable-helm "$dir" > /dev/null || exit 1
+            echo "Rendering $dir ..."
+            kustomize build --enable-helm "$dir" > "rendered/$(echo "$dir" | tr '/' '_').yaml" || exit 1
           done
           # Env-agnostic kustomize roots — identical on every cluster (their
           # per-environment values resolve through External Secrets and the
           # cluster generator), so they carry no per-env overlays.
           for dir in dashboards/base addons/bootstrap/secret-stores; do
-            echo "Building $dir ..."
-            kustomize build --enable-helm "$dir" > /dev/null || exit 1
+            echo "Rendering $dir ..."
+            kustomize build --enable-helm "$dir" > "rendered/$(echo "$dir" | tr '/' '_').yaml" || exit 1
           done
-          echo "All ${{ matrix.environment }} manifests built successfully."
+          echo "All ${{ matrix.environment }} manifests rendered successfully."
+
+      # Source files are gated by the zero-placeholder job; this asserts the
+      # RENDERED output too — catching a zero account id, placeholder token, or
+      # account-less ARN that only appears after kustomize/helm templating.
+      - name: Assert no unfilled sentinels in rendered output
+        uses: nanohype/nanohype/.github/actions/render-assert@main
+        with:
+          manifests: rendered
+          exclude: 'mcp-tunnel'
 
   pr-summary:
     name: PR Summary
@@ -83,7 +93,7 @@ jobs:
               : r === 'skipped' ? ':fast_forward:' : ':x:';
             const results = {
               'YAML Lint': '${{ needs.lint.result }}',
-              'Kustomize Build (all environments)': '${{ needs.validate.result }}',
+              'Render + assert (all environments)': '${{ needs.validate.result }}',
             };
             const rows = Object.entries(results)
               .map(([check, r]) => `| ${check} | ${icon(r)} ${r} |`)
