@@ -1,9 +1,10 @@
 # eks-agent-platform operator — base Helm values (all environments).
 #
-# Per-cluster IRSA wiring (config.oidc.providerArn/issuerHost, the
-# serviceAccount eks.amazonaws.com/role-arn annotation) and config.environment /
-# config.region are injected by the addons-agent-operator ApplicationSet from
-# the in-cluster ArgoCD Secret (labels + annotations cluster-bootstrap sets).
+# Per-cluster wiring (config.clusterName — the EKS cluster the operator creates
+# tenant Pod Identity associations on — the serviceAccount eks.amazonaws.com/role-arn
+# annotation, config.environment, and config.region) is injected by the
+# addons-agent-operator ApplicationSet from the in-cluster ArgoCD Secret (labels +
+# annotations cluster-bootstrap sets).
 # Do NOT set them here — they embed the AWS account ID, which must never be
 # committed to this public repo.
 #

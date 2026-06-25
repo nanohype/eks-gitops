@@ -56,9 +56,7 @@ spec:
               config:
                 environment: '{{ index .metadata.labels "environment" }}'
                 region: '{{ index .metadata.labels "region" }}'
-                oidc:
-                  providerArn: '{{ index .metadata.annotations "eks-agent-platform/oidc-provider-arn" }}'
-                  issuerHost: '{{ index .metadata.annotations "eks-agent-platform/oidc-issuer-host" }}'
+                clusterName: '{{ index .metadata.annotations "eks-agent-platform/cluster-name" }}'
               serviceAccount:
                 annotations:
                   eks.amazonaws.com/role-arn: '{{ index .metadata.annotations "eks-agent-platform/operator-role-arn" }}'
