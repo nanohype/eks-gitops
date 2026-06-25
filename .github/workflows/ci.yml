@@ -41,14 +41,21 @@ jobs:
       - name: Install Helm
         uses: azure/setup-helm@v5
 
-      - name: Build overlays
+      - name: Build manifests
         run: |
           echo "Building ${{ matrix.environment }} overlays..."
           find . -path "*/overlays/${{ matrix.environment }}/kustomization.yaml" -exec dirname {} \; | while read dir; do
             echo "Building $dir ..."
             kustomize build --enable-helm "$dir" > /dev/null || exit 1
           done
-          echo "All ${{ matrix.environment }} overlays built successfully."
+          # Env-agnostic kustomize roots — identical on every cluster (their
+          # per-environment values resolve through External Secrets and the
+          # cluster generator), so they carry no per-env overlays.
+          for dir in dashboards/base addons/bootstrap/secret-stores; do
+            echo "Building $dir ..."
+            kustomize build --enable-helm "$dir" > /dev/null || exit 1
+          done
+          echo "All ${{ matrix.environment }} manifests built successfully."
 
   pr-summary:
     name: PR Summary

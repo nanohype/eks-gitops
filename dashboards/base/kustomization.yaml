@@ -9,6 +9,7 @@ namespace: grafana-operator
 resources:
   - namespace.yaml
   - grafana-token.yaml
+  - monitoring-endpoints.yaml
   - grafana.yaml
   - datasources/prometheus.yaml
   - datasources/loki.yaml

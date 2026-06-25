@@ -1,0 +1,21 @@
+# The Grafana data source resolves its AMP query URL from this Secret (via the
+# GrafanaDatasource's valuesFrom). Synced from the Secrets Manager secret the
+# landing-zone managed-monitoring component publishes, through the
+# aws-secrets-manager ClusterSecretStore — the same store the Grafana token uses.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: managed-monitoring-endpoints
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: aws-secrets-manager
+    kind: ClusterSecretStore
+  target:
+    name: managed-monitoring-endpoints
+    creationPolicy: Owner
+  data:
+    - secretKey: AMP_QUERY_URL
+      remoteRef:
+        key: eks-managed-monitoring-endpoints
+        property: AMP_QUERY_URL

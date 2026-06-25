@@ -1,14 +1,19 @@
 # Grafana Agent - hub overrides. The collector for all three pillars on the hub:
-# scrapes pods (metrics → AMP via the IRSA role below), tails logs (→ Loki) and
-# receives traces (→ Tempo), both in-cluster in the monitoring namespace.
+# scrapes pods (metrics → AMP via the Pod Identity association), tails logs
+# (→ Loki) and receives traces (→ Tempo), both in-cluster in the monitoring
+# namespace.
 
-extraEnv:
-  - name: AMP_REMOTE_WRITE_URL
-    value: "https://aps-workspaces.us-west-2.amazonaws.com/workspaces/ws-PLACEHOLDER/api/v1/remote_write"
-  - name: AWS_REGION
-    value: "us-west-2"
-  - name: CLUSTER_NAME
-    value: "hub-eks"
+agent:
+  extraEnv:
+    - name: AMP_REMOTE_WRITE_URL
+      valueFrom:
+        secretKeyRef:
+          name: managed-monitoring-endpoints
+          key: AMP_REMOTE_WRITE_URL
+    - name: AWS_REGION
+      value: "us-west-2"
+    - name: CLUSTER_NAME
+      value: "hub-eks"
 
 resources:
   requests:

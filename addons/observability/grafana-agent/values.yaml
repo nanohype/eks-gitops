@@ -4,10 +4,25 @@
 # Metrics: scraped from kube-state-metrics + cAdvisor + node-exporter +
 #   pods with prometheus.io/scrape annotations, then remote-written to
 #   Amazon Managed Service for Prometheus (AMP) via SigV4 signing.
-#   IRSA gives the SA aps:RemoteWrite on the AMP workspace.
+#   An EKS Pod Identity association gives the SA aps:RemoteWrite on the AMP
+#   workspace.
 
 agent:
   mode: flow
+  # AMP_REMOTE_WRITE_URL resolves from the managed-monitoring-endpoints Secret
+  # (synced from Secrets Manager by External Secrets Operator). CLUSTER_NAME is
+  # the per-environment external label, set in values-{env}.yaml. Helm replaces
+  # the whole list, so each per-env file repeats these entries.
+  extraEnv:
+    - name: AMP_REMOTE_WRITE_URL
+      valueFrom:
+        secretKeyRef:
+          name: managed-monitoring-endpoints
+          key: AMP_REMOTE_WRITE_URL
+    - name: AWS_REGION
+      value: "us-west-2"
+    - name: CLUSTER_NAME
+      value: ""  # override per env
   # Expose the OTLP receiver ports on the agent Service so tenant apps in other
   # namespaces can push to grafana-agent.monitoring.svc:4317/4318.
   extraPorts:
@@ -125,9 +140,9 @@ agent:
         forward_to = [prometheus.remote_write.amp.receiver]
       }
 
-      // SigV4 signs each remote-write request with the IRSA-projected
-      // AWS_ROLE_ARN / AWS_WEB_IDENTITY_TOKEN_FILE credentials. AMP
-      // expects service "aps" and the workspace's region.
+      // SigV4 signs each remote-write request with the credentials the EKS Pod
+      // Identity agent projects for the SA. AMP expects service "aps" and the
+      // workspace's region.
       prometheus.remote_write "amp" {
         endpoint {
           url = env("AMP_REMOTE_WRITE_URL")
@@ -187,21 +202,12 @@ agent:
         forward_to = [loki.write.default.receiver]
       }
 
-# IRSA is required for SigV4 to AMP. values-{env}.yaml sets the role-arn
-# annotation on the SA.
+# An EKS Pod Identity association (landing-zone) gives this SA aps:RemoteWrite —
+# no role-arn annotation. The SigV4 credential chain is satisfied by the Pod
+# Identity agent.
 serviceAccount:
   create: true
   name: grafana-agent
-
-# AMP remote-write URL is per-environment (Terraform output `amp_remote_write_url`).
-# AWS_REGION + CLUSTER_NAME are also per-environment.
-extraEnv:
-  - name: AMP_REMOTE_WRITE_URL
-    value: ""  # override per env
-  - name: AWS_REGION
-    value: "us-west-2"
-  - name: CLUSTER_NAME
-    value: ""  # override per env
 
 resources:
   requests:

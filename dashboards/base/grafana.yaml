@@ -2,8 +2,12 @@
 # pushes Dashboards/DataSources to the managed Grafana instance using the
 # API token in the referenced Secret.
 #
-# overlays/{env}/kustomization.yaml patches spec.external.url to the
-# environment's Amazon Managed Grafana endpoint.
+# spec.external.url is the per-cluster Amazon Managed Grafana workspace endpoint.
+# grafana-operator can't template this field from a Secret (unlike the data
+# source), so the dashboards ApplicationSet patches it via the cluster generator
+# from the monitoring/grafana-url annotation cluster-bootstrap stamps on the
+# ArgoCD cluster Secret. The empty default below is always overridden by that
+# patch on clusters running managed-monitoring.
 apiVersion: grafana.integreatly.org/v1beta1
 kind: Grafana
 metadata:
@@ -12,7 +16,7 @@ metadata:
     dashboards: external
 spec:
   external:
-    url: https://placeholder.grafana-workspace.us-west-2.amazonaws.com  # patched per-env
+    url: ""
     apiKey:
       name: grafana-external-credentials
       key: token

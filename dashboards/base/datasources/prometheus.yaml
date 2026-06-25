@@ -1,7 +1,9 @@
-# Amazon Managed Service for Prometheus data source. The URL is per-environment
-# (patched by overlays/{env}/kustomization.yaml). access=proxy means Grafana
-# itself queries AMP using its workspace IAM role (which the AMG service role
-# in landing-zone grants AMP read access to).
+# Amazon Managed Service for Prometheus data source. The query URL is
+# per-environment: grafana-operator resolves ${AMP_QUERY_URL} from the
+# managed-monitoring-endpoints Secret (synced from Secrets Manager by External
+# Secrets Operator) via spec.valuesFrom. access=proxy means Grafana itself
+# queries AMP using its workspace IAM role (which the AMG service role in
+# landing-zone grants AMP read access to).
 #
 # Note: AMG's Prometheus data source UI sets sigV4Auth=true automatically when
 # you create it through the AMG console. With grafana-operator, we declare it
@@ -14,6 +16,15 @@ spec:
   instanceSelector:
     matchLabels:
       dashboards: external
+  # Resolve the AMP query endpoint from the ESO-synced Secret. grafana-operator
+  # substitutes the ${AMP_QUERY_URL} token in datasource.url below with the Secret
+  # value.
+  valuesFrom:
+    - targetPath: datasource.url
+      valueFrom:
+        secretKeyRef:
+          name: managed-monitoring-endpoints
+          key: AMP_QUERY_URL
   datasource:
     name: ManagedPrometheus
     # Pinned UID so Grafana-managed alert rules (GrafanaAlertRuleGroup) can
@@ -21,7 +32,7 @@ spec:
     uid: managed-prometheus
     type: prometheus
     access: proxy
-    url: https://aps-workspaces.us-west-2.amazonaws.com/workspaces/PLACEHOLDER  # patched per-env
+    url: ${AMP_QUERY_URL}
     isDefault: true
     jsonData:
       httpMethod: POST

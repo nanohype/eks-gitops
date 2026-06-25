@@ -27,7 +27,7 @@ tasks:
       - yamllint -c .yamllint.yaml .
 
   kustomize:build:
-    desc: Build all Kustomize overlays (all environments)
+    desc: Build all Kustomize overlays (all environments) + env-agnostic roots
     cmds:
       - |
         echo "Building all Kustomize overlays..."
@@ -35,7 +35,14 @@ tasks:
           echo "Building $dir ..."
           kustomize build --enable-helm "$dir" > /dev/null || exit 1
         done
-        echo "All overlays built successfully."
+        # Env-agnostic kustomize roots — identical on every cluster (their
+        # per-environment values resolve through External Secrets and the
+        # cluster generator), so they carry no per-env overlays.
+        for dir in dashboards/base addons/bootstrap/secret-stores; do
+          echo "Building $dir ..."
+          kustomize build --enable-helm "$dir" > /dev/null || exit 1
+        done
+        echo "All manifests built successfully."
 
   kustomize:build:env:
     desc: "Build overlays for ENVIRONMENT (default: dev)"

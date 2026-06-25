@@ -29,7 +29,7 @@ jobs:
       - name: Install Helm
         uses: azure/setup-helm@v5
 
-      - name: Render overlays
+      - name: Render manifests
         run: |
           mkdir -p rendered
           find . -path "*/overlays/${{ inputs.environment }}/kustomization.yaml" -exec dirname {} \; | while read dir; do
@@ -37,7 +37,13 @@ jobs:
             echo "Rendering $dir ..."
             kustomize build --enable-helm "$dir" > "rendered/${name}.yaml" || exit 1
           done
-          echo "All overlays rendered."
+          # Env-agnostic kustomize roots (no per-env overlays — same on every cluster).
+          for dir in dashboards/base addons/bootstrap/secret-stores; do
+            name=$(echo "$dir" | sed 's|^\./||' | tr '/' '-')
+            echo "Rendering $dir ..."
+            kustomize build --enable-helm "$dir" > "rendered/${name}.yaml" || exit 1
+          done
+          echo "All manifests rendered."
 
       - name: Upload rendered manifests
         uses: actions/upload-artifact@v7
