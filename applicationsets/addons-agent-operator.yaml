@@ -59,14 +59,12 @@ spec:
               serviceAccount:
                 annotations:
                   eks.amazonaws.com/role-arn: '{{ index .metadata.annotations "eks-agent-platform/operator-role-arn" }}'
-              # eval-runtime IRSA + bucket. The role ARN embeds the account id, so
-              # like the operator role it is read from a cluster-Secret annotation
-              # published by cluster-bootstrap, never committed here. Both render
-              # empty until cluster-bootstrap publishes the annotations (the chart
-              # skips the SA annotation / leaves the bucket empty when blank).
+              # eval-runtime reports bucket, read from a cluster-Secret annotation
+              # published by cluster-bootstrap, never committed here; renders empty
+              # until then (the chart leaves the bucket empty when blank). The
+              # eval-runner ServiceAccount is bound to its role by an EKS Pod
+              # Identity association, so no role ARN is injected here.
               evalRuntime:
-                serviceAccount:
-                  roleArn: '{{ index .metadata.annotations "eks-agent-platform/eval-runner-role-arn" }}'
                 evalReportsBucket: '{{ index .metadata.annotations "eks-agent-platform/eval-reports-bucket" }}'
             valueFiles:
               - $values/addons/ai-platform/operator/values.yaml

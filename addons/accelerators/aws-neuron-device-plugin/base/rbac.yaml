@@ -3,8 +3,8 @@ kind: ServiceAccount
 metadata:
   name: neuron-device-plugin
   namespace: aws-neuron
-  # IRSA: annotate with eks.amazonaws.com/role-arn = <accelerator-pools.neuron_role_arn>
-  # via ArgoCD ApplicationSet values per-env.
+  # AWS credentials are bound to this ServiceAccount by an EKS Pod Identity
+  # association (terraform/components/accelerator-pools) — no role-arn annotation.
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
