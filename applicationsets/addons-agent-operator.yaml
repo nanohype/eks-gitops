@@ -56,7 +56,6 @@ spec:
               config:
                 environment: '{{ index .metadata.labels "environment" }}'
                 region: '{{ index .metadata.labels "region" }}'
-                clusterName: '{{ index .metadata.annotations "eks-agent-platform/cluster-name" }}'
               serviceAccount:
                 annotations:
                   eks.amazonaws.com/role-arn: '{{ index .metadata.annotations "eks-agent-platform/operator-role-arn" }}'
