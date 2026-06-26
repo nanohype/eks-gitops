@@ -73,5 +73,4 @@ The workload's source repo owns the ApplicationSet entry — typically `<app>/gi
 - [`docs/`](docs/) — addon catalog, sync-wave reference, cluster bootstrap process
 - [`CLAUDE.md`](CLAUDE.md) — Claude Code session instructions
 - [Platform Reference](https://github.com/nanohype/nanohype/blob/main/docs/platform-reference.md) — the stack-wide view
-- [`aks-gitops/AGENTS.md`](../aks-gitops/AGENTS.md) — same pattern, Azure-specific differences
 - [`kx/AGENTS.md`](../kx/AGENTS.md) — local kind workspace that mirrors this catalog

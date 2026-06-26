@@ -2,7 +2,7 @@
 
 ## GitOps Model
 
-This repository implements the **App-of-Apps** pattern for ArgoCD. It is the EKS variant of a multi-cloud GitOps strategy (`eks-gitops`, `aks-gitops`). The OpenTofu/Terragrunt infrastructure ([landing-zone](https://github.com/nanohype/landing-zone)) deploys ArgoCD and creates a root Application that points to this repository's `applicationsets/` directory.
+This repository implements the **App-of-Apps** pattern for ArgoCD. It is the EKS ArgoCD addon catalog. The OpenTofu/Terragrunt infrastructure ([landing-zone](https://github.com/nanohype/landing-zone)) deploys ArgoCD and creates a root Application that points to this repository's `applicationsets/` directory.
 
 ```mermaid
 graph TD

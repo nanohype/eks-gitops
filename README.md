@@ -1,6 +1,6 @@
 # EKS GitOps Repository
 
-GitOps configuration for EKS cluster addons, managed by ArgoCD. Part of a multi-cloud GitOps strategy (`eks-gitops`, `aks-gitops`).
+GitOps configuration for EKS cluster addons, managed by ArgoCD. The EKS ArgoCD addon catalog for the nanohype platform.
 
 **AI clients / agents start here:** [`AGENTS.md`](AGENTS.md). For the stack-wide view, see the [Platform Reference](https://github.com/nanohype/nanohype/blob/main/docs/platform-reference.md).
 
@@ -15,7 +15,7 @@ GitOps configuration for EKS cluster addons, managed by ArgoCD. Part of a multi-
 
 ## Companion Repository
 
-This repository is the EKS variant of a multi-cloud GitOps strategy. Infrastructure is provisioned by [landing-zone](https://github.com/nanohype/landing-zone) (OpenTofu/Terragrunt), which deploys ArgoCD and creates the App-of-Apps Application pointing to this repository.
+This repository is the EKS ArgoCD addon catalog. Infrastructure is provisioned by [landing-zone](https://github.com/nanohype/landing-zone) (OpenTofu/Terragrunt), which deploys ArgoCD and creates the App-of-Apps Application pointing to this repository.
 
 ## Architecture
 

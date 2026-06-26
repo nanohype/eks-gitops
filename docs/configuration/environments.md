@@ -28,7 +28,7 @@ data:
   region: "us-west-2"
 ```
 
-The `environment` label on the cluster secret is what ApplicationSets use to select the correct values files or overlay paths. The `provider` field identifies this as an EKS cluster in the multi-cloud strategy.
+The `environment` label on the cluster secret is what ApplicationSets use to select the correct values files or overlay paths. The `provider` field identifies this as an EKS (AWS) cluster.
 
 ## Environment Differences
 
