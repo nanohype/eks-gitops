@@ -38,7 +38,10 @@ This repository is the EKS ArgoCD addon catalog. Infrastructure is provisioned b
 │  ├── addons-observability (Loki, Tempo, Grafana Agent, OpenCost)   │
 │  ├── addons-operations-helm (Velero, VPA, Goldilocks, ...)         │
 │  ├── addons-operations-kustomize (Karpenter Resources)             │
+│  ├── addons-accelerators-helm (gpu-operator, nvidia-dra)           │
+│  ├── addons-accelerators-kustomize (aws-neuron-device-plugin)      │
 │  ├── addons-argo-platform (Rollouts, Events, Workflows)            │
+│  ├── addons-ai-platform (kagent, agentgateway, operator)           │
 │  ├── kyverno-policies (PSS, Best Practices)                        │
 │  └── druid-tenants                                                 │
 └─────────────────────────────────────────────────────────────────────┘
@@ -56,7 +59,10 @@ eks-gitops/
 │   ├── addons-observability.yaml
 │   ├── addons-operations-helm.yaml
 │   ├── addons-operations-kustomize.yaml
+│   ├── addons-accelerators-helm.yaml
+│   ├── addons-accelerators-kustomize.yaml
 │   ├── addons-argo-platform.yaml
+│   ├── addons-ai-platform.yaml
 │   ├── kyverno-policies.yaml
 │   └── druid-tenants.yaml
 │
@@ -69,7 +75,9 @@ eks-gitops/
 │   ├── observability/{loki,tempo,grafana-agent,opencost}/
 │   ├── operations/{velero,vpa,goldilocks,descheduler,karpenter,
 │   │               karpenter-resources,keda}/
-│   └── argo-platform/{argo-rollouts,argo-events,argo-workflows}/
+│   ├── accelerators/{gpu-operator,nvidia-dra-driver,aws-neuron-device-plugin}/
+│   ├── argo-platform/{argo-rollouts,argo-events,argo-workflows}/
+│   └── ai-platform/{kagent,kagent-crds,agentgateway,agentgateway-crds,operator}/
 │
 ├── policies/                           # Kyverno policies (pure Kustomize)
 │   └── kyverno/{pod-security-standards,best-practices}/
