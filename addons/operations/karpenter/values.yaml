@@ -2,6 +2,12 @@
 
 replicas: 2
 
+# Karpenter is the only thing that can relieve a saturated cluster, so it must
+# never be the pod that gets evicted or stranded. system-cluster-critical lets
+# the scheduler preempt lower-priority pods to keep it running on a contended
+# bootstrap node. (#82)
+priorityClassName: system-cluster-critical
+
 resources:
   requests:
     cpu: 100m

@@ -15,7 +15,10 @@ spec:
           values: ["spot", "on-demand"]
         - key: kubernetes.io/arch
           operator: In
-          values: ["amd64"]
+          # Graviton/arm64 is the org default — the bootstrap nodes are m7g and
+          # the agent/sandbox images are arm64, so an amd64 node provisioned
+          # here would exec-format-crash the arm64 pods scheduled onto it.
+          values: ["arm64"]
         - key: karpenter.k8s.aws/instance-category
           operator: In
           values: ["m", "c", "r"]
@@ -66,7 +69,10 @@ spec:
           values: ["spot", "on-demand"]
         - key: kubernetes.io/arch
           operator: In
-          values: ["amd64"]
+          # Graviton/arm64 is the org default — the bootstrap nodes are m7g and
+          # the agent/sandbox images are arm64, so an amd64 node provisioned
+          # here would exec-format-crash the arm64 pods scheduled onto it.
+          values: ["arm64"]
         - key: karpenter.k8s.aws/instance-category
           operator: In
           values: ["c", "m"]
