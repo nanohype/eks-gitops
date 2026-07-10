@@ -1,6 +1,6 @@
-# Grafana Agent - Dev overrides
+# Grafana Alloy - Production overrides
 
-agent:
+alloy:
   extraEnv:
     - name: AMP_REMOTE_WRITE_URL
       valueFrom:
@@ -10,4 +10,11 @@ agent:
     - name: AWS_REGION
       value: "us-west-2"
     - name: CLUSTER_NAME
-      value: "dev-eks"
+      value: "production-eks"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi

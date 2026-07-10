@@ -1,4 +1,4 @@
-# Grafana Agent - Telemetry collection (Flow mode)
+# Grafana Alloy - Telemetry collection.
 # Collects logs, metrics, and traces and forwards to Loki/Tempo/AMP.
 #
 # Metrics: scraped from kube-state-metrics + cAdvisor + node-exporter +
@@ -7,8 +7,7 @@
 #   An EKS Pod Identity association gives the SA aps:RemoteWrite on the AMP
 #   workspace.
 
-agent:
-  mode: flow
+alloy:
   # AMP_REMOTE_WRITE_URL resolves from the managed-monitoring-endpoints Secret
   # (synced from Secrets Manager by External Secrets Operator). CLUSTER_NAME is
   # the per-environment external label, set in values-{env}.yaml. Helm replaces
@@ -23,8 +22,8 @@ agent:
       value: "us-west-2"
     - name: CLUSTER_NAME
       value: ""  # override per env
-  # Expose the OTLP receiver ports on the agent Service so tenant apps in other
-  # namespaces can push to grafana-agent.monitoring.svc:4317/4318.
+  # Expose the OTLP receiver ports on the Alloy Service so tenant apps in other
+  # namespaces can push to alloy.monitoring.svc:4317/4318.
   extraPorts:
     - name: otlp-grpc
       port: 4317
@@ -34,6 +33,13 @@ agent:
       port: 4318
       targetPort: 4318
       protocol: TCP
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
   configMap:
     create: true
     content: |
@@ -111,8 +117,8 @@ agent:
 
       // Hubble L7 metrics (:9965) are served per cilium-agent pod and exposed only
       // via the headless hubble-metrics Service in kube-system. The annotation-gated
-      // pod scrape can't reach them (the agent pod's prometheus.io/port is its own
-      // :9962), so scrape the service endpoints directly.
+      // pod scrape can't reach them (the cilium-agent pod's prometheus.io/port is its
+      // own :9962), so scrape the service endpoints directly.
       discovery.kubernetes "hubble" {
         role = "endpoints"
         namespaces {
@@ -167,10 +173,10 @@ agent:
       }
 
       // ──────────────────── OTLP ingest (traces + metrics + logs) ─────────────
-      // Tenant apps push OTLP to this agent on :4317/:4318 (exposed via the agent
-      // Service + agent.extraPorts above). Traces go to Tempo; metrics and logs are
+      // Tenant apps push OTLP to Alloy on :4317/:4318 (exposed via the Alloy
+      // Service + alloy.extraPorts above). Traces go to Tempo; metrics and logs are
       // converted and fed into the same AMP remote-write / Loki sinks the scrape and
-      // tail pipelines use — without these outputs the OTLP metrics and logs were
+      // tail pipelines use — without these outputs the OTLP metrics and logs would be
       // silently dropped.
       otelcol.receiver.otlp "default" {
         grpc {
@@ -207,15 +213,10 @@ agent:
 # Identity agent.
 serviceAccount:
   create: true
-  name: grafana-agent
+  name: alloy
 
-resources:
-  requests:
-    cpu: 50m
-    memory: 128Mi
-  limits:
-    cpu: 200m
-    memory: 256Mi
-
-tolerations:
-  - operator: Exists
+# DaemonSet on every node — tolerate all taints so the collector also lands on
+# tainted (GPU / Neuron / system) nodes.
+controller:
+  tolerations:
+    - operator: Exists

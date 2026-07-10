@@ -38,12 +38,12 @@ spec:
                   chartVersion: 1.24.4
                   path: addons/observability/tempo
                   syncWave: "31"
-                - appName: grafana-agent
+                - appName: alloy
                   namespace: monitoring
                   chartRepo: https://grafana.github.io/helm-charts
-                  chart: grafana-agent
-                  chartVersion: 0.44.2
-                  path: addons/observability/grafana-agent
+                  chart: alloy
+                  chartVersion: 1.10.0
+                  path: addons/observability/alloy
                   syncWave: "32"
                 - appName: opencost
                   namespace: opencost

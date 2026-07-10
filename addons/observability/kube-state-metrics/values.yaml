@@ -1,7 +1,7 @@
 # -- kube-state-metrics: cluster-state metrics (kube_*) + the eks-agent-platform
 # operator's custom-resource-state metrics (kube_customresource_*).
 #
-# Runs in kube-system as the service `kube-state-metrics` so the grafana-agent
+# Runs in kube-system as the service `kube-state-metrics` so the Alloy
 # static scrape (kube-state-metrics.kube-system.svc:8080) finds it — without this
 # addon that scrape hit nothing and every kube_* / kube_customresource_* panel
 # silently no-data'd (the cilium/cert-manager/eso dashboards and, via the
@@ -34,7 +34,7 @@ rbac:
       resources: ["agentfleets", "agentsandboxes", "sandboxpools", "modelgateways", "batchjobs"]
       verbs: ["list", "watch"]
 
-# Scraped by the grafana-agent static target, but annotate too so the
+# Scraped by the Alloy static target, but annotate too so the
 # annotation-based discovery picks it up regardless.
 selfMonitor:
   enabled: false

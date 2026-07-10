@@ -10,7 +10,7 @@ ArgoCD App-of-Apps catalog for EKS clusters. Eight addon categories, plus Applic
 - **`addons/networking/`** — cilium, aws-load-balancer-controller, external-dns, mcp-tunnel
 - **`addons/accelerators/`** — gpu-operator, nvidia-dra-driver (Helm), aws-neuron-device-plugin (Kustomize) — GPU/Neuron device plugins, gated on the `eks-agent-platform/enabled` cluster label, at waves 6-7 (early, alongside karpenter)
 - **`addons/security/`** — kyverno, falco, trivy-operator
-- **`addons/observability/`** — grafana-agent, grafana-operator, loki, tempo, opencost
+- **`addons/observability/`** — alloy, grafana-operator, loki, tempo, opencost
 - **`addons/operations/`** — karpenter, karpenter-resources, keda, descheduler, goldilocks, vpa, velero
 - **`addons/ai-platform/`** — kagent, agentgateway, the eks-agent-platform operator (plus their CRDs)
 - **`addons/argo-platform/`** — Argo Workflows, Argo Rollouts, Argo Events

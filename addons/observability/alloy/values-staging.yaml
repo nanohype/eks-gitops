@@ -1,6 +1,6 @@
-# Grafana Agent - Staging overrides
+# Grafana Alloy - Staging overrides
 
-agent:
+alloy:
   extraEnv:
     - name: AMP_REMOTE_WRITE_URL
       valueFrom:

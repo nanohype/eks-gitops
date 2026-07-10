@@ -35,7 +35,7 @@ This repository is the EKS ArgoCD addon catalog. Infrastructure is provisioned b
 │  ├── addons-bootstrap-kustomize (storage-classes, priority-classes) │
 │  ├── addons-networking (Cilium, ALB Controller, External DNS)      │
 │  ├── addons-security (Kyverno, Trivy, Falco)                      │
-│  ├── addons-observability (Loki, Tempo, Grafana Agent, OpenCost)   │
+│  ├── addons-observability (Loki, Tempo, Alloy, OpenCost)          │
 │  ├── addons-operations-helm (Velero, VPA, Goldilocks, ...)         │
 │  ├── addons-operations-kustomize (Karpenter Resources)             │
 │  ├── addons-accelerators-helm (gpu-operator, nvidia-dra)           │
@@ -72,7 +72,7 @@ eks-gitops/
 │   │              priority-classes}/
 │   ├── networking/{cilium,aws-load-balancer-controller,external-dns}/
 │   ├── security/{kyverno,trivy-operator,falco}/
-│   ├── observability/{loki,tempo,grafana-agent,opencost}/
+│   ├── observability/{loki,tempo,alloy,opencost}/
 │   ├── operations/{velero,vpa,goldilocks,descheduler,karpenter,
 │   │               karpenter-resources,keda}/
 │   ├── accelerators/{gpu-operator,nvidia-dra-driver,aws-neuron-device-plugin}/
@@ -105,7 +105,7 @@ eks-gitops/
 | 6-7 | Accelerators (gpu-operator, aws-neuron-device-plugin, nvidia-dra-driver) | GPU/Neuron device plugins advertised before security and workloads |
 | 10-12 | Security (Kyverno, Trivy, Falco) | Policy engine before policies |
 | 20-21 | Kyverno Policies | After Kyverno is ready |
-| 30-33 | Observability (Loki, Tempo, Grafana Agent, OpenCost) | After security |
+| 30-33 | Observability (Loki, Tempo, Alloy, OpenCost) | After security |
 | 40-44 | Operations (Velero, VPA, Goldilocks, Descheduler, Karpenter Resources, KEDA) | After everything |
 | 50-52 | Argo Platform (Rollouts, Events, Workflows) | Application layer |
 

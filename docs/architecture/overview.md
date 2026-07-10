@@ -76,7 +76,7 @@ graph LR
 | 5 | Karpenter | Karpenter (nodes ready before workloads) |
 | 10-12 | Security | Kyverno, Trivy Operator, Falco |
 | 20-21 | Policies | Kyverno PSS, Best Practices |
-| 30-33 | Observability | Loki, Tempo, Grafana Agent, OpenCost |
+| 30-33 | Observability | Loki, Tempo, Alloy, OpenCost |
 | 40-44 | Operations | Velero, VPA, Goldilocks, Descheduler, Karpenter Resources, KEDA |
 | 50-52 | Argo Platform | Argo Rollouts, Argo Events, Argo Workflows |
 

@@ -1,9 +1,9 @@
-# Grafana Agent - hub overrides. The collector for all three pillars on the hub:
+# Grafana Alloy - hub overrides. The collector for all three pillars on the hub:
 # scrapes pods (metrics → AMP via the Pod Identity association), tails logs
 # (→ Loki) and receives traces (→ Tempo), both in-cluster in the monitoring
 # namespace.
 
-agent:
+alloy:
   extraEnv:
     - name: AMP_REMOTE_WRITE_URL
       valueFrom:
@@ -14,11 +14,10 @@ agent:
       value: "us-west-2"
     - name: CLUSTER_NAME
       value: "hub-eks"
-
-resources:
-  requests:
-    cpu: 100m
-    memory: 256Mi
-  limits:
-    cpu: 500m
-    memory: 512Mi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
