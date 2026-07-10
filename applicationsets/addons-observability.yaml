@@ -21,7 +21,7 @@ spec:
                   namespace: kube-system
                   chartRepo: https://prometheus-community.github.io/helm-charts
                   chart: kube-state-metrics
-                  chartVersion: 7.5.1
+                  chartVersion: 7.5.2
                   path: addons/observability/kube-state-metrics
                   syncWave: "29"
                 - appName: loki

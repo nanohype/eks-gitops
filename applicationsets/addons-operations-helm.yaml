@@ -27,7 +27,7 @@ spec:
                   namespace: velero
                   chartRepo: https://vmware-tanzu.github.io/helm-charts
                   chart: velero
-                  chartVersion: 12.0.2
+                  chartVersion: 12.1.0
                   path: addons/operations/velero
                   syncWave: "40"
                 - appName: vpa
@@ -67,7 +67,7 @@ spec:
                   namespace: keda
                   chartRepo: https://kedacore.github.io/charts
                   chart: keda
-                  chartVersion: "2.20.0"
+                  chartVersion: "2.20.1"
                   path: addons/operations/keda
                   syncWave: "44"
   template:

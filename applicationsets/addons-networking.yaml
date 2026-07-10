@@ -27,14 +27,14 @@ spec:
                   namespace: kube-system
                   chartRepo: https://helm.cilium.io
                   chart: cilium
-                  chartVersion: 1.19.4
+                  chartVersion: 1.19.5
                   path: addons/networking/cilium
                   syncWave: "1"
                 - appName: aws-load-balancer-controller
                   namespace: kube-system
                   chartRepo: https://aws.github.io/eks-charts
                   chart: aws-load-balancer-controller
-                  chartVersion: "3.4.0"
+                  chartVersion: "3.4.1"
                   path: addons/networking/aws-load-balancer-controller
                   syncWave: "1"
                 - appName: external-dns

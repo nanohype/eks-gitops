@@ -21,14 +21,14 @@ spec:
                   namespace: cert-manager
                   chartRepo: https://charts.jetstack.io
                   chart: cert-manager
-                  chartVersion: v1.20.2
+                  chartVersion: v1.21.0
                   path: addons/bootstrap/cert-manager
                   syncWave: "0"
                 - appName: external-secrets
                   namespace: external-secrets
                   chartRepo: https://charts.external-secrets.io
                   chart: external-secrets
-                  chartVersion: "2.6.0"
+                  chartVersion: "2.7.0"
                   path: addons/bootstrap/external-secrets
                   syncWave: "0"
                 - appName: prometheus-operator-crds
@@ -42,14 +42,14 @@ spec:
                   namespace: kube-system
                   chartRepo: https://kubernetes-sigs.github.io/metrics-server/
                   chart: metrics-server
-                  chartVersion: "3.13.0"
+                  chartVersion: "3.13.1"
                   path: addons/bootstrap/metrics-server
                   syncWave: "2"
                 - appName: reloader
                   namespace: reloader
                   chartRepo: https://stakater.github.io/stakater-charts
                   chart: reloader
-                  chartVersion: "2.2.12"
+                  chartVersion: "2.2.14"
                   path: addons/bootstrap/reloader
                   syncWave: "2"
   template:

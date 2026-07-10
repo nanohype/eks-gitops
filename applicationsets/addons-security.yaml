@@ -27,21 +27,21 @@ spec:
                   namespace: kyverno
                   chartRepo: https://kyverno.github.io/kyverno
                   chart: kyverno
-                  chartVersion: 3.8.1
+                  chartVersion: 3.8.2
                   path: addons/security/kyverno
                   syncWave: "10"
                 - appName: trivy-operator
                   namespace: trivy-system
                   chartRepo: https://aquasecurity.github.io/helm-charts
                   chart: trivy-operator
-                  chartVersion: 0.33.1
+                  chartVersion: 0.34.0
                   path: addons/security/trivy-operator
                   syncWave: "11"
                 - appName: falco
                   namespace: falco
                   chartRepo: https://falcosecurity.github.io/charts
                   chart: falco
-                  chartVersion: 9.0.0
+                  chartVersion: 9.1.0
                   path: addons/security/falco
                   syncWave: "12"
   template:
