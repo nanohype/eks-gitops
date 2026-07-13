@@ -40,7 +40,7 @@ spec:
     spec:
       project: platform
       source:
-        repoURL: https://github.com/nanohype/eks-gitops.git
+        repoURL: '{{ index .metadata.annotations "gitops/repo-url" }}'
         targetRevision: main
         path: '{{ .path }}/overlays/{{ index .metadata.labels "environment" }}'
       destination:

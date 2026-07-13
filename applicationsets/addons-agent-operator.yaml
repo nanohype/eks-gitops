@@ -69,7 +69,7 @@ spec:
             valueFiles:
               - $values/addons/ai-platform/operator/values.yaml
               - $values/addons/ai-platform/operator/values-{{ index .metadata.labels "environment" }}.yaml
-        - repoURL: https://github.com/nanohype/eks-gitops.git
+        - repoURL: '{{ index .metadata.annotations "gitops/repo-url" }}'
           targetRevision: main
           ref: values
       destination:

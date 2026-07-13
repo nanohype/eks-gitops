@@ -22,7 +22,7 @@ spec:
                     values:
                       - hub
           - git:
-              repoURL: https://github.com/nanohype/eks-gitops.git
+              repoURL: '{{ index .metadata.annotations "gitops/repo-url" }}'
               revision: main
               directories:
                 - path: 'catalog/druid/tenants/*'
@@ -34,7 +34,7 @@ spec:
     spec:
       project: platform
       sources:
-        - repoURL: https://github.com/nanohype/eks-gitops.git
+        - repoURL: '{{ index .metadata.annotations "gitops/repo-url" }}'
           targetRevision: main
           path: catalog/druid/chart
           helm:
@@ -43,7 +43,7 @@ spec:
               - $values/catalog/druid/values.yaml
               - $values/{{ .path.path }}/values.yaml
               - $values/{{ .path.path }}/values-{{ index .metadata.labels "environment" }}.yaml
-        - repoURL: https://github.com/nanohype/eks-gitops.git
+        - repoURL: '{{ index .metadata.annotations "gitops/repo-url" }}'
           targetRevision: main
           ref: values
       destination:

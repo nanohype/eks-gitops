@@ -48,7 +48,7 @@ spec:
               sigV4Proxy:
                 region: "{{ index .metadata.labels \"region\" }}"
                 host: "aps-workspaces.{{ index .metadata.labels \"region\" }}.amazonaws.com"
-        - repoURL: https://github.com/nanohype/eks-gitops.git
+        - repoURL: '{{ index .metadata.annotations "gitops/repo-url" }}'
           targetRevision: main
           ref: values
       destination:

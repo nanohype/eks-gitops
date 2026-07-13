@@ -29,7 +29,7 @@ spec:
     spec:
       project: platform
       source:
-        repoURL: https://github.com/nanohype/eks-gitops.git
+        repoURL: '{{ index .metadata.annotations "gitops/repo-url" }}'
         targetRevision: main
         path: '{{ .path }}/base'
         # The Grafana CR's workspace URL is per-cluster and can't be templated
