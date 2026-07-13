@@ -71,17 +71,30 @@ spec:
       destination:
         server: https://kubernetes.default.svc
         namespace: '{{ .namespace }}'
-      # The kyverno chart renders `metadata.labels: {}` — an EMPTY map — on its CRDs.
-      # The API server stores no labels field at all for an empty map, so git ({}) and
-      # live (absent) are semantically identical but never compare equal, and the app
-      # sat permanently OutOfSync while perfectly Healthy. The two states carry the
-      # same meaning (no labels), so ignoring the path loses nothing.
-      # RespectIgnoreDifferences stops selfHeal from churning it too.
+      # Kyverno's CRDs drift on three paths that carry no meaning, so the app sat
+      # permanently OutOfSync while perfectly Healthy. Enumerated by diffing the
+      # rendered target against the live object:
+      #
+      #   .metadata.annotations  git {}  vs live absent  — the chart renders an EMPTY
+      #   .metadata.labels       git {}  vs live absent    map; the API server stores
+      #                                                    no field at all for one, so
+      #                                                    the two are semantically
+      #                                                    identical ("nothing") yet
+      #                                                    never compare equal.
+      #   .spec.conversion       live {"strategy": "None"} — API-server default for a
+      #                                                    CRD that declares no
+      #                                                    conversion strategy.
+      #
+      # Ignoring all three loses nothing: git asserts no labels/annotations, and the
+      # conversion strategy is the server's own default.
+      # RespectIgnoreDifferences stops selfHeal from churning them too.
       ignoreDifferences:
         - group: apiextensions.k8s.io
           kind: CustomResourceDefinition
           jqPathExpressions:
+            - .metadata.annotations
             - .metadata.labels
+            - .spec.conversion
       syncPolicy:
         automated:
           prune: true
