@@ -55,9 +55,19 @@ tasks:
         done
         echo "All {{.ENVIRONMENT}} overlays built successfully."
 
+  validate:dashboards:
+    desc: "Dashboard gate — grafana.com ids must exist and be AMG-saveable"
+    cmds:
+      - ./scripts/validate-dashboards.py
+
+  validate:fork-safety:
+    desc: "Fork-safety gate — no hardcoded nanohype org in ApplicationSet repoURLs (report-only)"
+    cmds:
+      - ./scripts/check-hardcoded-org.py
+
   validate:
-    desc: Run all validations (lint + build)
-    deps: [lint:yaml, kustomize:build]
+    desc: Run all validations (lint + build + dashboard/fork-safety gates)
+    deps: [lint:yaml, kustomize:build, validate:dashboards, validate:fork-safety]
     cmds:
       - echo "All validations passed."
 

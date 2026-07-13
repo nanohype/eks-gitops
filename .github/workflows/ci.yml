@@ -33,6 +33,49 @@ jobs:
       - name: Run yamllint
         run: yamllint -c .yamllint.yaml .
 
+  # ── Dashboard gate ───────────────────────────────────────────────────
+  # Every spec.grafanaCom.id must (a) still exist on grafana.com and (b) be
+  # saveable by Amazon Managed Grafana. Both failure modes park the CR forever
+  # and hold the dashboards Application — and app-of-apps — Degraded, and
+  # neither is visible to kustomize/kubeconform/trivy: the ids render as valid
+  # ints, so only grafana.com itself can answer. Talks to grafana.com over the
+  # network; the script retries each request with backoff so a blip is a retry,
+  # not a red build.
+  dashboards:
+    name: Dashboard gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Dead ids + AMG-unsaveable legacy alerts
+        run: ./scripts/validate-dashboards.py
+
+  # ── Fork-safety gate ─────────────────────────────────────────────────
+  # This catalog gets forked into a customer org, so no ApplicationSet may
+  # hardcode the nanohype org in a gitops repoURL — a fork would keep syncing
+  # from upstream and the customer's own edits would never take effect.
+  # Published artifacts (ghcr.io/nanohype/* images, oci://ghcr.io/nanohype
+  # charts, the Kyverno subjectRegExp) are correctly consumed from nanohype and
+  # are out of scope by construction — only repoURL values are inspected.
+  #
+  # TODO: MAKE THIS BLOCKING ONCE THE repoURL-TEMPLATING PR LANDS — add
+  # `--blocking` to the run step below (see the matching TODO in
+  # scripts/check-hardcoded-org.py). The catalog currently carries these
+  # violations (19 ApplicationSets hardcode github.com/nanohype/eks-gitops.git)
+  # and a separate PR is replacing them with a templated repoURL, so until that
+  # merges this gate is report-only: it prints every violation and exits 0,
+  # rather than red-lighting the very PR that fixes it.
+  fork-safety:
+    name: Fork-safety gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: No hardcoded upstream org in ApplicationSet repoURLs
+        run: ./scripts/check-hardcoded-org.py
+
   validate:
     name: Validate (${{ matrix.environment }})
     runs-on: ubuntu-latest
@@ -164,7 +207,7 @@ jobs:
     name: PR Summary
     runs-on: ubuntu-latest
     if: always() && github.event_name == 'pull_request'
-    needs: [lint, validate]
+    needs: [lint, dashboards, fork-safety, validate]
     permissions:
       pull-requests: write
     steps:
@@ -176,6 +219,8 @@ jobs:
               : r === 'skipped' ? ':fast_forward:' : ':x:';
             const results = {
               'YAML Lint': '${{ needs.lint.result }}',
+              'Dashboard gate (live grafana.com ids + AMG-saveable)': '${{ needs.dashboards.result }}',
+              'Fork-safety gate (no hardcoded org, report-only)': '${{ needs.fork-safety.result }}',
               'Render + assert + schema + misconfig (all environments)': '${{ needs.validate.result }}',
             };
             const rows = Object.entries(results)
