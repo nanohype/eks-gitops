@@ -1,0 +1,81 @@
+# Upstream Gateway API CRDs (gateway.networking.k8s.io).
+#
+# These were never installed. agentgateway is a Gateway API implementation and was
+# running against an API that did not exist on the cluster; the eks-agent-platform
+# operator's ModelGateway controller — the Bedrock front door, the thing that routes
+# agent traffic through guardrails and rate limits — sat in phase=Pending with
+#
+#   RoutesReconciled=False: waiting on Platform or agentgateway / Gateway-API CRDs
+#
+# because it cannot create the Gateway/HTTPRoute it exists to create. The operator's
+# own chart RBAC grants gateway.networking.k8s.io on gateways + httproutes, so the
+# code has always expected them. Nothing in this catalog installed them.
+#
+# SOURCE: the upstream repo, pinned to a tag, rather than vendoring several thousand
+# lines of CRD into this catalog or fetching a release URL at sync time (which would
+# make every sync depend on a GitHub download and silently drift as the tag moves).
+# ArgoCD renders config/crd/standard as a plain manifest directory — there is no
+# kustomization.yaml there, and none is needed.
+#
+# VERSION: v1.5.1 (stable since 2026-03), not v1.6.0 (2026-06-29). For CRDs that
+# every gateway on the cluster depends on, four months of soak beats two weeks of
+# novelty, and the v1 CRDs are backward compatible — v1.5.1 carries GatewayClass,
+# Gateway, HTTPRoute and GRPCRoute, which is everything the operator and agentgateway
+# use. Bump deliberately, not incidentally.
+#
+# CHANNEL: standard, not experimental. Nothing here needs TCPRoute/UDPRoute.
+#
+# SYNC WAVE 30: before the ai-platform CRDs (40) and controllers (42) — agentgateway
+# and the operator both need these to exist before they start.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: gateway-api-crds
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "30"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  argocd.argoproj.io/secret-type: cluster
+          - list:
+              elements:
+                - appName: gateway-api-crds
+                  syncWave: "30"
+  template:
+    metadata:
+      name: '{{ .appName }}'
+      annotations:
+        argocd.argoproj.io/sync-wave: '{{ .syncWave }}'
+    spec:
+      project: platform
+      source:
+        # Upstream, pinned. NOT this org's catalog — these are someone else's
+        # artifacts, consumed at a version we choose, exactly like a Helm chart.
+        repoURL: https://github.com/kubernetes-sigs/gateway-api
+        targetRevision: v1.5.1
+        path: config/crd/standard
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: kube-system
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          # Gateway API CRDs are large enough to blow the 262144-byte
+          # last-applied-configuration annotation that client-side apply uses.
+          # ServerSideApply is not optional here.
+          - ServerSideApply=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
