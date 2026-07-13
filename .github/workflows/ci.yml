@@ -75,12 +75,14 @@ jobs:
   #     applicationsets/opt-in/README.md as a repoint-before-enabling step.
   # See the full rationale in scripts/check-hardcoded-org.py.
   #
-  # TODO: MAKE THIS BLOCKING ONCE THE repoURL-TEMPLATING PR LANDS — add
-  # `--blocking` to the run step below (matching TODO in the script). The
-  # catalog currently carries 19 such refs and a companion PR is templating
-  # them, so until that merges this gate is report-only: it prints every
-  # violation and exits 0, rather than red-lighting the PR that fixes it.
-  # Expected count after that lands: 0.
+  # BLOCKING. The templating landed: every applied ApplicationSet now reads its
+  # source from `{{ index .metadata.annotations "gitops/repo-url" }}`, which
+  # cluster-bootstrap stamps on the ArgoCD cluster Secret. A hardcoded catalog
+  # repoURL reintroduced here would silently make a forked catalog INERT — the
+  # fork would sync from the upstream org's repo and edits to it would do nothing.
+  # That is exactly the bug this gate exists to prevent, and it is not theoretical:
+  # a cluster vended into another org was found syncing app-of-apps from
+  # nanohype/eks-gitops@main while its own fork sat unread. Expected count: 0.
   fork-safety:
     name: Fork-safety gate
     runs-on: ubuntu-latest
@@ -89,7 +91,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: No hardcoded catalog repoURL in applied ApplicationSets
-        run: ./scripts/check-hardcoded-org.py
+        run: ./scripts/check-hardcoded-org.py --blocking
 
   validate:
     name: Validate (${{ matrix.environment }})

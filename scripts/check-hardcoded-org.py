@@ -58,14 +58,11 @@ OUT OF SCOPE -- DELIBERATELY, each for a specific reason. Do not "fix" these:
         non-recursive: top-level applicationsets/*.yaml only.
 
     ####################################################################
-    # TODO: FLIP TO BLOCKING ONCE THE repoURL-TEMPLATING PR LANDS.
-    # The catalog currently HAS these violations -- 19 catalog repoURLs across
-    # the applied ApplicationSets -- and a companion PR is replacing them with
-    # `{{ index .metadata.annotations "gitops/repo-url" }}`. Until that merges
-    # this gate REPORTS ONLY: it prints every violation and exits 0, so it
-    # cannot red-light the very PR that fixes it. When that PR lands, pass
-    # --blocking in .github/workflows/ci.yml (or flip the default here) so a
-    # reintroduced hardcoded catalog ref fails CI. Expected count after: 0.
+    # BLOCKING as of the repoURL-templating landing. Every applied
+    # ApplicationSet now sources itself from the gitops/repo-url annotation
+    # that cluster-bootstrap stamps on the ArgoCD cluster Secret. A hardcoded
+    # catalog repoURL reintroduced here makes a forked catalog INERT: the fork
+    # syncs from the upstream org and edits to it do nothing. Expected count: 0.
     ####################################################################
 
 Stdlib only -- CI runs this on a bare ubuntu-latest with no pip install.
