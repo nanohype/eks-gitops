@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+# Monthly Bedrock spend cap for this environment. killSwitchEnabled means the
+# platform stops serving the gateway at 100% rather than billing past it — which is
+# the only budget control that actually holds when an agent loops.
+patches:
+  - patch: |-
+      apiVersion: governance.nanohype.dev/v1alpha1
+      kind: BudgetPolicy
+      metadata:
+        name: ops-budget
+      spec:
+        monthlyUsd: "200"
+    target:
+      kind: BudgetPolicy
+      name: ops-budget

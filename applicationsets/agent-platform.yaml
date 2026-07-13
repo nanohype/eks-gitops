@@ -1,0 +1,66 @@
+# Instantiates the eks-agent-platform CRs — the platform's OWN agent surface.
+#
+# The operator runs controllers for platform, tenant, modelgateway, agentfleet,
+# budget, eval, agentsandbox, sandboxpool and batch, and until now not one custom
+# resource existed for any of them: the product was installed and never turned on,
+# while the kagent chart's demo agents ran in its place against OpenAI.
+#
+# Sync wave 44: after kagent-crds (40) and the kagent + operator controllers (42),
+# because a ModelGateway/AgentFleet reconciles down into kagent CRs.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: agent-platform
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "44"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  argocd.argoproj.io/secret-type: cluster
+                matchExpressions:
+                  # The hub runs observability + bootstrap only; agent platforms are
+                  # a workload-cluster concern.
+                  - key: environment
+                    operator: NotIn
+                    values:
+                      - hub
+          - list:
+              elements:
+                - appName: agent-platform
+                  namespace: eks-agent-platform
+                  path: addons/ai-platform/agent-platform
+                  syncWave: "44"
+  template:
+    metadata:
+      name: '{{ .appName }}'
+      annotations:
+        argocd.argoproj.io/sync-wave: '{{ .syncWave }}'
+    spec:
+      project: platform
+      source:
+        repoURL: https://github.com/nanohype/eks-gitops.git
+        targetRevision: main
+        path: '{{ .path }}/overlays/{{ index .metadata.labels "environment" }}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{ .namespace }}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m

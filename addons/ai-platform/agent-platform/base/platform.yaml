@@ -1,0 +1,59 @@
+apiVersion: platform.nanohype.dev/v1alpha1
+kind: Tenant
+metadata:
+  name: protohypd
+spec:
+  aggregateMonthlyBudgetUsd: "100"
+---
+apiVersion: platform.nanohype.dev/v1alpha1
+kind: Platform
+metadata:
+  name: ops
+spec:
+  tenant: protohypd
+  displayName: Cluster Operations
+  persona: ops
+  isolation: namespace
+  budget:
+    name: ops-budget
+  identity:
+    # The IAM allowlist. This is the RIGHT place to bound what an LLM may reach —
+    # a model outside this list cannot be invoked even if an agent asks for it.
+    # allowedModels and allowedModelFamilies are mutually exclusive (the webhook
+    # enforces it). The explicit model list is the tighter of the two: a family
+    # allowlist would admit every future anthropic model automatically.
+    allowedModels:
+      - us.anthropic.claude-sonnet-5
+      - global.anthropic.claude-haiku-4-5-20251001-v1:0
+  attribution:
+    operators:
+      - stxkxs
+    sessionRoleMaxDurationSeconds: 3600
+---
+apiVersion: governance.nanohype.dev/v1alpha1
+kind: BudgetPolicy
+metadata:
+  name: ops-budget
+spec:
+  platformRef:
+    name: ops
+  monthlyUsd: "50"
+  killSwitchEnabled: true
+  alertThresholdsPercent: [50, 80, 100]
+---
+apiVersion: agents.nanohype.dev/v1alpha1
+kind: ModelGateway
+metadata:
+  name: ops
+spec:
+  platformRef:
+    name: ops
+  routes:
+    - name: reason
+      modelFamily: anthropic
+      modelId: us.anthropic.claude-sonnet-5
+      rateLimit: 60
+    - name: cheap
+      modelFamily: anthropic
+      modelId: global.anthropic.claude-haiku-4-5-20251001-v1:0
+      rateLimit: 120

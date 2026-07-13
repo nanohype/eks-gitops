@@ -1,3 +1,86 @@
-# kagent — Kubernetes-native agent runtime (mirrors the kx ai-platform install).
-# eks-agent-platform AgentFleet/ModelGateway CRs reconcile into kagent here.
-# Tune per-env below: Bedrock model access, replicas, kagent-tools/kmcp sub-charts.
+# kagent — Kubernetes-native agent runtime.
+#
+# kagent is the RUNTIME this platform builds on, not the interface to it. The
+# eks-agent-platform operator's AgentFleet CR "composes kagent Agent / ModelConfig
+# / ToolServer CRs plus platform-specific scaffolding (KEDA, NetworkPolicy, IRSA
+# binding)" — so agents are declared as AgentFleets and routed through a
+# ModelGateway (which is Bedrock-backed, guardrailed and budgeted). Nothing here
+# should hand-roll kagent CRs; that bypasses the identity, isolation and spend
+# controls the platform exists to apply.
+#
+# Everything below is therefore about switching OFF the chart's own opinions so the
+# platform's can apply instead.
+
+# ─────────────────────────── SECURITY: the tools server ───────────────────────────
+#
+# The bundled kagent-tools sub-chart binds its ServiceAccount to a ClusterRole of:
+#
+#     rules:
+#       - apiGroups: ["*"]  resources: ["*"]  verbs: ["*"]
+#       - nonResourceURLs: ["*"]  verbs: ["*"]
+#
+# i.e. cluster-admin — unconditionally. It is not gated by any value: setting
+# rbac.namespaces does NOT scope it (verified by templating the chart), and the
+# kagent-tools sub-chart cannot be pulled independently to override it. Every
+# agent's tool call executes through that ServiceAccount, and the 124-tool set it
+# serves includes k8s_apply_manifest, k8s_delete_resource, k8s_execute_command,
+# helm_uninstall and a raw shell tool.
+#
+# Enabling it therefore hands an LLM cluster-admin with no human-in-the-loop gate.
+# We do not run it. Agents get their tools from ToolServers the operator composes
+# per AgentFleet, whose identity and RBAC the platform controls.
+kagent-tools:
+  enabled: false
+
+# ─────────────────────────── The bundled sample agents ───────────────────────────
+#
+# These ten Agent CRs are chart SAMPLE CONTENT, not the product — each is a system
+# prompt plus a tool list, all pointing at the chart's default ModelConfig. They are
+# off for three reasons:
+#
+#   1. They depend on kagent-tools (disabled above), so they have no tools.
+#   2. They are hardwired to the chart's default OpenAI ModelConfig, which expects a
+#      `kagent-openai` Secret this platform never creates and never should — on an
+#      AWS cluster the model is Bedrock, reached by IAM, with no static key.
+#   3. Several are hollow regardless: promql-agent ships with ZERO tools (it is a
+#      system prompt that cannot see your metrics), and kgateway-agent /
+#      cilium-policy-agent are close to prompt-only.
+#
+# Real ops agents belong in an AgentFleet, where they get a modelRoute, a scoped
+# tool set, an IRSA binding and a NetworkPolicy.
+k8s-agent: { enabled: false }
+helm-agent: { enabled: false }
+istio-agent: { enabled: false }
+promql-agent: { enabled: false }
+kgateway-agent: { enabled: false }
+observability-agent: { enabled: false }
+argo-rollouts-agent: { enabled: false }
+cilium-manager-agent: { enabled: false }
+cilium-debug-agent: { enabled: false }
+cilium-policy-agent: { enabled: false }
+
+# ─────────────────────────── The default ModelConfig ───────────────────────────
+#
+# The chart always renders one ModelConfig from providers.default; there is no value
+# that suppresses it. Left alone it emits provider: OpenAI with an apiKeySecretRef to
+# a `kagent-openai` Secret — which is what wedged every agent pod in
+# CreateContainerConfigError, since nothing creates (or should create) that Secret.
+#
+# kagent's ModelConfig CRD (v1alpha2) supports Bedrock as a first-class provider, and
+# the Bedrock path takes NO credentials: `spec.bedrock` requires only a region, and
+# the runtime resolves AWS credentials from the ambient chain (so EKS Pod Identity /
+# IRSA works). We therefore repoint the default at Bedrock, which leaves no OpenAI
+# surface anywhere in the release and no Secret to create.
+#
+# Note the chart's template emits only `provider` and `model` — it has no bedrock
+# stanza, so it cannot set spec.bedrock.region here. That is fine BECAUSE this
+# ModelConfig is a stub that no agent uses: real agents are declared as AgentFleets,
+# and the operator composes their ModelConfig with the correct region. Do not attach
+# an agent to this one.
+providers:
+  default: openAI # the key name is fixed by the chart; the provider below is what counts
+  openAI:
+    provider: Bedrock
+    model: us.anthropic.claude-sonnet-5
+    apiKeySecretRef: ""
+    apiKeySecretKey: ""
