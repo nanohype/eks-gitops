@@ -32,10 +32,13 @@ spec:
     cpu: 100
     memory: 200Gi
   disruption:
+    # Stability over cost: consolidate only after a sustained idle window (not a
+    # 1-minute blip), and disrupt at most ONE node at a time so voluntary
+    # consolidation + spot reclaim can never cycle the fleet in a storm.
     consolidationPolicy: WhenEmptyOrUnderutilized
-    consolidateAfter: 1m
+    consolidateAfter: 15m
     budgets:
-      - nodes: "20%"
+      - nodes: "1"
 
 ---
 # Dedicated, tainted node pool for self-hosted sandbox workers.

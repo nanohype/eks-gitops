@@ -16,7 +16,7 @@ patches:
           memory: 100Gi
         disruption:
           budgets:
-            - nodes: "50%"
+            - nodes: "1"
     target:
       kind: NodePool
       name: default
