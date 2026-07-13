@@ -48,6 +48,22 @@ spec:
       destination:
         server: https://kubernetes.default.svc
         namespace: '{{ .namespace }}'
+      # The external-secrets mutating webhook defaults remoteRef.{conversionStrategy,
+      # decodingStrategy,metadataPolicy} and target.deletionPolicy onto every
+      # ExternalSecret. Git omits them, so ArgoCD saw perpetual drift on the two
+      # dashboards ExternalSecrets (grafana-external-credentials, managed-monitoring-
+      # endpoints) and selfHeal churned forever — the app never reached a clean
+      # Synced/Healthy state. Ignore those server-defaulted paths; the
+      # RespectIgnoreDifferences syncOption makes selfHeal honor the ignores too,
+      # not just the diff view.
+      ignoreDifferences:
+        - group: external-secrets.io
+          kind: ExternalSecret
+          jqPathExpressions:
+            - .spec.data[].remoteRef.conversionStrategy
+            - .spec.data[].remoteRef.decodingStrategy
+            - .spec.data[].remoteRef.metadataPolicy
+            - .spec.target.deletionPolicy
       syncPolicy:
         automated:
           prune: true
@@ -55,6 +71,7 @@ spec:
         syncOptions:
           - CreateNamespace=true
           - ServerSideApply=true
+          - RespectIgnoreDifferences=true
         retry:
           limit: 5
           backoff:
