@@ -1,4 +1,11 @@
-# Hubble L7 HTTP Metrics
+# Hubble — "Cilium Flows (Hubble Observer)" (grafana.com 23862).
+#
+# NOT 16613 ("Cilium v1.12 Hubble Metrics"): that dashboard carries four
+# panels with legacy dashboard `alert` blocks (Missing TCPv4/TCPv6 SYN-ACKs,
+# Missing ICMPv4 Echo-Reply, Missing DNS Responses). Grafana dropped legacy
+# dashboard alerting in favor of unified alerting, so Amazon Managed Grafana
+# rejects the save outright — POST /api/dashboards/db returns 500 "Failed to
+# save dashboard" — leaving the CR permanently ApplyFailed.
 apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDashboard
 metadata:
@@ -9,4 +16,4 @@ spec:
       dashboards: external
   resyncPeriod: 24h
   grafanaCom:
-    id: 16613
+    id: 23862
