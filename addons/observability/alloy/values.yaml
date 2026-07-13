@@ -35,11 +35,15 @@ alloy:
       protocol: TCP
   resources:
     requests:
-      cpu: 50m
-      memory: 128Mi
-    limits:
-      cpu: 200m
+      cpu: 100m
       memory: 256Mi
+    limits:
+      # Alloy scrapes every pod on its node and buffers a WAL for remote_write
+      # into AMP; 256Mi/200m OOMKilled + CPU-throttled it mid-flush, stalling
+      # remote_write so AMP stayed empty (and opencost crashed on "no running
+      # jobs"). Give it headroom for WAL flush + remote_write batching.
+      cpu: 500m
+      memory: 512Mi
   configMap:
     create: true
     content: |
