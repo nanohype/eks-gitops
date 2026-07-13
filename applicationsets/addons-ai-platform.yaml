@@ -28,7 +28,7 @@ spec:
                   namespace: kagent
                   chartRepo: oci://ghcr.io/kagent-dev/kagent/helm/kagent-crds
                   chart: kagent-crds
-                  chartVersion: "0.9.6"
+                  chartVersion: "0.9.11"
                   path: addons/ai-platform/kagent-crds
                   syncWave: "40"
                 - appName: agentgateway-crds
@@ -42,7 +42,7 @@ spec:
                   namespace: kagent
                   chartRepo: oci://ghcr.io/kagent-dev/kagent/helm/kagent
                   chart: kagent
-                  chartVersion: "0.9.6"
+                  chartVersion: "0.9.11"
                   path: addons/ai-platform/kagent
                   syncWave: "42"
                 - appName: agentgateway
