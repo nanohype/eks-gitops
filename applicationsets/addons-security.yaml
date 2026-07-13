@@ -71,16 +71,17 @@ spec:
       destination:
         server: https://kubernetes.default.svc
         namespace: '{{ .namespace }}'
-      # The API server defaults `conversion: {strategy: None}` onto every CRD that
-      # doesn't declare one. Kyverno's chart ships 11 such CRDs, so git (which omits
-      # the field) never matches the live objects and the app sat permanently
-      # OutOfSync while perfectly Healthy. Ignore the server-defaulted field;
+      # The kyverno chart renders `metadata.labels: {}` — an EMPTY map — on its CRDs.
+      # The API server stores no labels field at all for an empty map, so git ({}) and
+      # live (absent) are semantically identical but never compare equal, and the app
+      # sat permanently OutOfSync while perfectly Healthy. The two states carry the
+      # same meaning (no labels), so ignoring the path loses nothing.
       # RespectIgnoreDifferences stops selfHeal from churning it too.
       ignoreDifferences:
         - group: apiextensions.k8s.io
           kind: CustomResourceDefinition
           jqPathExpressions:
-            - .spec.conversion
+            - .metadata.labels
       syncPolicy:
         automated:
           prune: true

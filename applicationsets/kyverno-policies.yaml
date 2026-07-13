@@ -46,20 +46,29 @@ spec:
       destination:
         server: https://kubernetes.default.svc
         namespace: kyverno
-      # Kyverno rewrites its own ClusterPolicies after admission: it defaults
-      # .spec.emitWarning / .spec.admission, and its autogen feature injects a
-      # generated `autogen-<name>` rule per pod controller (Deployment, DaemonSet,
-      # CronJob, ...) into .spec.rules. None of that is in git, so the policy was
-      # permanently OutOfSync. Ignore only the fields Kyverno owns — the autogen
-      # rules are selected by name, so a genuine change to a real rule in git is
-      # still detected as drift.
+      # Kyverno defaults five fields onto its own ClusterPolicies at admission. None
+      # are in git, so the policy sat permanently OutOfSync while Healthy. The exact
+      # set was enumerated by diffing `kustomize build overlays/dev` against the live
+      # object — not guessed:
+      #
+      #   .spec.admission                                                = true
+      #   .spec.emitWarning                                              = false
+      #   .spec.rules[].skipBackgroundRequests                           = true
+      #   .spec.rules[].verifyImages[].useCache                          = true
+      #   .spec.rules[].verifyImages[].attestors[].entries[]
+      #     .signatureAlgorithm                                          = "sha256"
+      #
+      # Each path is a Kyverno-owned default, so the ignores stay narrow: a genuine
+      # change to a rule's match/exclude/attestor identity in git is still drift.
       ignoreDifferences:
         - group: kyverno.io
           kind: ClusterPolicy
           jqPathExpressions:
-            - .spec.rules[]? | select(.name | startswith("autogen-"))
-            - .spec.emitWarning
             - .spec.admission
+            - .spec.emitWarning
+            - .spec.rules[].skipBackgroundRequests
+            - .spec.rules[].verifyImages[].useCache
+            - .spec.rules[].verifyImages[].attestors[].entries[].signatureAlgorithm
       syncPolicy:
         automated:
           prune: true
