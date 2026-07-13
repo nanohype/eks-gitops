@@ -4,3 +4,15 @@
 # Tune per-env below: replicas, Bedrock region/PrivateLink, guardrail config.
 controller:
   replicaCount: 2
+
+# Bind the agentgateway GatewayClass to the AgentgatewayParameters that forces the
+# generated Service to ClusterIP (addons/ai-platform/agent-platform/base/gateway-params.yaml).
+#
+# Without this the Service defaults to type: LoadBalancer, and every Gateway the
+# ModelGateway controller creates provisions an AWS Classic ELB — ~$18/month each,
+# idle, for a gateway whose only consumers are in-cluster AgentFleets reaching it on
+# ops-gateway.agentgateway.svc.cluster.local:8080.
+gatewayClassParametersRefs:
+  agentgateway:
+    name: internal-only
+    namespace: agentgateway

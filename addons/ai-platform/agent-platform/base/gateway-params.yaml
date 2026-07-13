@@ -1,0 +1,22 @@
+# Keep the model gateway INSIDE the cluster.
+#
+# agentgateway's generated Service defaults to type: LoadBalancer, so the moment the
+# ModelGateway controller created its Gateway, AWS provisioned a Classic ELB — about
+# $18/month, idle, for something nothing outside the cluster talks to.
+#
+# The ModelGateway's own published endpoint is
+#   http://ops-gateway.agentgateway.svc.cluster.local:8080
+# i.e. cluster-internal DNS, and the agents that consume it are AgentFleets running on
+# this cluster. The external load balancer buys nothing and bills monthly.
+#
+# ClusterIP. If a model gateway ever genuinely needs to be reachable from outside the
+# cluster, expose it deliberately — and as an NLB, not a Classic ELB.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayParameters
+metadata:
+  name: internal-only
+  namespace: agentgateway
+spec:
+  service:
+    spec:
+      type: ClusterIP
