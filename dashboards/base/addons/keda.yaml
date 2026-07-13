@@ -9,4 +9,4 @@ spec:
       dashboards: external
   resyncPeriod: 24h
   grafanaCom:
-    id: 15623
+    id: 22111

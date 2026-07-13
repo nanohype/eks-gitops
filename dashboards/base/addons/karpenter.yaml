@@ -1,4 +1,4 @@
-# Karpenter (verify ID)
+# Karpenter
 apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDashboard
 metadata:
@@ -9,4 +9,4 @@ spec:
       dashboards: external
   resyncPeriod: 24h
   grafanaCom:
-    id: 21111
+    id: 16237
