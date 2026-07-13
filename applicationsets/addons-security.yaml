@@ -71,6 +71,16 @@ spec:
       destination:
         server: https://kubernetes.default.svc
         namespace: '{{ .namespace }}'
+      # The API server defaults `conversion: {strategy: None}` onto every CRD that
+      # doesn't declare one. Kyverno's chart ships 11 such CRDs, so git (which omits
+      # the field) never matches the live objects and the app sat permanently
+      # OutOfSync while perfectly Healthy. Ignore the server-defaulted field;
+      # RespectIgnoreDifferences stops selfHeal from churning it too.
+      ignoreDifferences:
+        - group: apiextensions.k8s.io
+          kind: CustomResourceDefinition
+          jqPathExpressions:
+            - .spec.conversion
       syncPolicy:
         automated:
           prune: true
@@ -78,6 +88,7 @@ spec:
         syncOptions:
           - CreateNamespace=true
           - ServerSideApply=true
+          - RespectIgnoreDifferences=true
         retry:
           limit: 5
           backoff:

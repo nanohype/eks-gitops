@@ -46,6 +46,20 @@ spec:
       destination:
         server: https://kubernetes.default.svc
         namespace: kyverno
+      # Kyverno rewrites its own ClusterPolicies after admission: it defaults
+      # .spec.emitWarning / .spec.admission, and its autogen feature injects a
+      # generated `autogen-<name>` rule per pod controller (Deployment, DaemonSet,
+      # CronJob, ...) into .spec.rules. None of that is in git, so the policy was
+      # permanently OutOfSync. Ignore only the fields Kyverno owns — the autogen
+      # rules are selected by name, so a genuine change to a real rule in git is
+      # still detected as drift.
+      ignoreDifferences:
+        - group: kyverno.io
+          kind: ClusterPolicy
+          jqPathExpressions:
+            - .spec.rules[]? | select(.name | startswith("autogen-"))
+            - .spec.emitWarning
+            - .spec.admission
       syncPolicy:
         automated:
           prune: true
@@ -53,6 +67,7 @@ spec:
         syncOptions:
           - CreateNamespace=true
           - ServerSideApply=true
+          - RespectIgnoreDifferences=true
         retry:
           limit: 5
           backoff:
