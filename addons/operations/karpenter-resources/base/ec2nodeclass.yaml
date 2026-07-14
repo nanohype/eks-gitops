@@ -11,9 +11,28 @@ spec:
     - tags:
         karpenter.sh/discovery: "${CLUSTER_NAME}"
         kubernetes.io/role/internal-elb: "1"
+  # Select the NODE security group — the same one the managed node group uses — not the
+  # EKS *cluster* security group.
+  #
+  # `aws:eks:cluster-name` matches the cluster SG, which EKS creates and which allows all
+  # traffic from itself. Karpenter nodes landed there while the managed node group stayed
+  # in the node SG, so the two groups had NO path between them. Karpenter-to-Karpenter
+  # worked; Karpenter-to-nodegroup did not:
+  #
+  #     cilium-dbg status  →  Cluster health: 4/6 reachable
+  #
+  # CoreDNS runs on the managed node group, so every pod Karpenter scheduled had no DNS.
+  # falco's init container sat in CrashLoopBackOff on every new node, and ArgoCD reported
+  # 43/44 Healthy the whole time — a readiness probe is local and never leaves the node.
+  #
+  # `karpenter.sh/discovery` is the tag landing-zone puts on the node SG
+  # (node_security_group_tags), and it is what the subnetSelectorTerms above already use.
+  # Selecting it puts every node in ONE security group, which is what makes Cilium's
+  # self-referencing rules (WireGuard 51871/udp, health 4240/tcp, icmp) actually cover
+  # the whole fleet.
   securityGroupSelectorTerms:
     - tags:
-        aws:eks:cluster-name: "${CLUSTER_NAME}"
+        karpenter.sh/discovery: "${CLUSTER_NAME}"
   blockDeviceMappings:
     - deviceName: /dev/xvda
       ebs:

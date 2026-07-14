@@ -15,9 +15,14 @@ spec:
     - tags:
         kubernetes.io/role/internal-elb: "1"
         karpenter.sh/discovery: "{{ .Values.hostedId }}-eks"
+  # The NODE security group, not the EKS cluster SG — see
+  # addons/operations/karpenter-resources/base/ec2nodeclass.yaml. Selecting the cluster
+  # SG puts these nodes in a group with no path to the managed node group, and Cilium's
+  # self-referencing rules (WireGuard/health) do not cover them: the nodes come up, and
+  # every pod on them silently loses DNS.
   securityGroupSelectorTerms:
     - tags:
-        "aws:eks:cluster-name": "{{ .Values.hostedId }}-eks"
+        "karpenter.sh/discovery": "{{ .Values.hostedId }}-eks"
   tags:
     "{{ .Values.domain }}:resource-type": dynamic-instance
     "{{ .Values.domain }}:category": analytics

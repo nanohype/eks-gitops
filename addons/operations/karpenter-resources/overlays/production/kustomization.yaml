@@ -50,8 +50,12 @@ patches:
               karpenter.sh/discovery: production-eks
               kubernetes.io/role/internal-elb: "1"
         securityGroupSelectorTerms:
+          # The NODE security group (same one the managed node group uses), not the EKS
+          # cluster SG. See base/ec2nodeclass.yaml — selecting the cluster SG put
+          # Karpenter nodes in a separate group with no path to the node group, and every
+          # pod Karpenter scheduled lost DNS.
           - tags:
-              aws:eks:cluster-name: production-eks
+              karpenter.sh/discovery: production-eks
         tags:
           environment: production
           managed-by: karpenter
