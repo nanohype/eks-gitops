@@ -127,3 +127,45 @@ controller:
     initialDelaySeconds: 15
     periodSeconds: 15
     failureThreshold: 40
+
+# ─────────────────────── SECURITY + CORRECTNESS: grafana-mcp ───────────────────────
+#
+# The chart enables an MCP tool server for Grafana by default, pointed at a Grafana it
+# assumes is bundled in-cluster:
+#
+#     grafana-mcp:
+#       enabled: true
+#       grafana:
+#         url: "grafana.kagent:3000/api"     # no scheme, and no such Service here
+#         serviceAccountToken: ""            # empty
+#
+# We do not run Grafana in-cluster. This platform uses Amazon Managed Grafana. So the
+# server comes up, resolves nothing, and returns 403 to every MCP `initialize` — which
+# leaves its RemoteMCPServer permanently Accepted=False:
+#
+#     failed to fetch tools for toolServer kagent/kagent-grafana-mcp:
+#       calling "initialize": sending "initialize": Forbidden
+#
+# One un-Accepted RemoteMCPServer holds the whole kagent Application at Progressing, so
+# ArgoCD never reports it Healthy and the convergence gate cannot pass. A tool server
+# that is broken by construction is worse than one that is absent.
+#
+# ── Why we do not simply point it at AMG ──
+#
+# The only Grafana credential this platform has is the ADMIN service-account token that
+# grafana-operator uses to push dashboards and data sources (eks-grafana-token). Handing
+# that to an MCP tool server means every agent tool call reaches Grafana as an admin —
+# able to rewrite dashboards, repoint data sources, and delete alert rules.
+#
+# That is the same trade we already refused for kagent-tools' cluster-admin ServiceAccount,
+# on the same reasoning: an LLM-driven tool server does not get an admin credential.
+#
+# ── What a correct wire-up needs ──
+#
+# A dedicated AMG service account with the VIEWER role, its own token in Secrets Manager,
+# an ExternalSecret projecting it into the kagent namespace, and the AMG endpoint injected
+# per-cluster from the `monitoring/grafana-url` annotation cluster-bootstrap stamps on the
+# ArgoCD cluster Secret (the same channel the dashboards ApplicationSet already uses).
+# Read-only, per-cluster, and no admin anywhere. Until that exists, this stays off.
+grafana-mcp:
+  enabled: false
