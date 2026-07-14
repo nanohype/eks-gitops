@@ -28,6 +28,22 @@ misconfigurations:
       registry. Image provenance is enforced cluster-side by the Kyverno
       verify-images policy (policies/kyverno/supply-chain).
 
+  # ── grafana-token-rotator (dashboards/base) ───────────────────────────
+  - id: KSV-0125
+    paths:
+      - "*dashboards_base*"
+    statement: >-
+      Registry-allowlist check; the rotator runs AWS's official CLI image from
+      public.ecr.aws, which trivy's default allowlist predates. It is
+      deliberately not the docker.io mirror — this CronJob runs on nodes
+      Karpenter churns, and Docker Hub's anonymous pull limits are the exact
+      problem public.ecr.aws exists to solve. Image provenance is enforced
+      cluster-side by the Kyverno verify-images policy
+      (policies/kyverno/supply-chain), same as aws-neuron-device-plugin above.
+      The rotator is the only container in this rendered root — every other
+      resource in dashboards/base is a CR or an ExternalSecret — so this
+      exception cannot silently cover a second image.
+
   # ── druid catalog chart ───────────────────────────────────────────────
   - id: KSV-0014
     paths:
