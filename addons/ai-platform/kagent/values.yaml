@@ -94,3 +94,36 @@ providers:
     model: us.anthropic.claude-sonnet-5
     apiKeySecretRef: ""
     apiKeySecretKey: ""
+
+# ─────────────────────── The controller needs time to migrate ───────────────────────
+#
+# On a FRESH install the controller crash-loops forever, and nothing says why:
+#
+#   msg: "running database migrations"
+#   <49s later>  exit=137 (SIGKILL)   CrashLoopBackOff
+#
+# The chart's default startupProbe is initialDelaySeconds=15, periodSeconds=15,
+# failureThreshold=3 — a 60-second budget to become healthy. That is ample on a cluster
+# that has run before, because the migrations are already applied and the controller is
+# up in seconds. On a fresh install it must apply the ENTIRE migration set against an
+# empty Postgres, which takes longer than the budget. The kubelet SIGKILLs it, the pod
+# restarts, the migrations start over from nothing, and it hits the same wall — forever.
+#
+# It never resolves on its own, and the failure is silent: no error is logged, because
+# nothing errored. The process was killed.
+#
+# A startupProbe exists precisely so a slow-starting container can take as long as it
+# needs WITHOUT loosening the ongoing health checks. failureThreshold=3 defeats that. The
+# readinessProbe (periodSeconds=30) still governs steady-state health once it is up, so a
+# long startup budget costs nothing.
+#
+# Overriding replaces the chart's probe entirely, so the handler is restated here.
+# 15 + (15 x 40) = ~10 minutes, against migrations observed to need more than one.
+controller:
+  startupProbe:
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 15
+    periodSeconds: 15
+    failureThreshold: 40
