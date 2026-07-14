@@ -9,6 +9,9 @@ namespace: grafana-operator
 resources:
   - namespace.yaml
   - grafana-token.yaml
+  # Keeps the AMG service-account token alive. It caps at 30 days, so an
+  # unrotated token silently takes the dashboards down a month after install.
+  - grafana-token-rotator.yaml
   - monitoring-endpoints.yaml
   - grafana.yaml
   - datasources/prometheus.yaml

@@ -2,8 +2,16 @@
 # Manager and materializes it as a Secret named grafana-external-credentials.
 # The Grafana CR below references it as the apiKey.
 #
-# The Secrets Manager secret `eks-grafana-token` must be a JSON document
-# with key `token`, populated from `aws grafana create-workspace-service-account-token`.
+# The Secrets Manager secret `eks-grafana-token` is created and seeded by the
+# landing-zone managed-monitoring component — it is not hand-made. Alongside the
+# token it carries the workspace id, service-account id and region. That is what
+# lets grafana-token-rotator refresh the token with no ApplicationSet templating
+# and no extra cluster-Secret annotations: everything it needs is already in the
+# one secret it has to read.
+#
+# refreshInterval bounds the rotation handover — consumers pick up a newly minted
+# token within the hour, which is why the rotator keeps the previous token valid
+# instead of pruning it immediately.
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
@@ -21,3 +29,15 @@ spec:
       remoteRef:
         key: eks-grafana-token
         property: token
+    - secretKey: workspaceId
+      remoteRef:
+        key: eks-grafana-token
+        property: workspaceId
+    - secretKey: serviceAccountId
+      remoteRef:
+        key: eks-grafana-token
+        property: serviceAccountId
+    - secretKey: region
+      remoteRef:
+        key: eks-grafana-token
+        property: region

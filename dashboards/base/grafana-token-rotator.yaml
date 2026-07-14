@@ -1,0 +1,140 @@
+# Rotates the Amazon Managed Grafana service-account token that grafana-operator
+# uses to push dashboards, data sources and alert rules into the workspace.
+#
+# WHY THIS EXISTS
+#
+# AMG caps a service-account token at 30 days — CreateWorkspaceServiceAccountToken
+# rejects secondsToLive > 2592000 — and grafana-operator's `external` Grafana CR
+# authenticates only with a bearer apiKey; it has no SigV4/IAM path. So there is
+# no long-lived credential available, and *something* must rotate the token. Left
+# unrotated it is a 30-day fuse under every cluster: nothing errors, the Secret
+# still syncs, and the dashboards simply stop reconciling.
+#
+# landing-zone (managed-monitoring) creates the service account and seeds the
+# first token, so day 0 is green with no human in the loop. This CronJob keeps it
+# that way.
+#
+# It reads its own configuration out of the synced credentials Secret — the
+# workspace id, service-account id and region travel with the token in Secrets
+# Manager. That is deliberate: it means this manifest is identical on every
+# cluster and needs no ApplicationSet templating.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: grafana-token-rotator
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: grafana-token-rotator
+spec:
+  # Weekly against a 30-day token: three consecutive failed runs before anything
+  # breaks, and the failures are visible for a fortnight before they bite.
+  schedule: "17 3 * * 0"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 3600
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          serviceAccountName: grafana-token-rotator
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: rotate
+              image: public.ecr.aws/aws-cli/aws-cli:2.35.22
+              command: ["/bin/bash", "-c"]
+              args:
+                - |
+                  set -euo pipefail
+
+                  # Mint the replacement first. If this fails the job fails and the
+                  # existing token — still valid for up to another 30 days — is
+                  # left untouched.
+                  NEW=$(aws grafana create-workspace-service-account-token \
+                    --workspace-id "$WORKSPACE_ID" \
+                    --service-account-id "$SERVICE_ACCOUNT_ID" \
+                    --name "rotator-$(date -u +%Y%m%d%H%M%S)" \
+                    --seconds-to-live 2592000 \
+                    --query 'serviceAccountToken.[id,key]' --output text)
+
+                  TOKEN_ID=$(printf '%s' "$NEW" | cut -f1)
+                  TOKEN_KEY=$(printf '%s' "$NEW" | cut -f2)
+                  test -n "$TOKEN_KEY" || { echo "AMG returned no token key"; exit 1; }
+
+                  # Write it back with the same config keys this job reads, so the
+                  # secret stays self-describing across every future rotation.
+                  aws secretsmanager put-secret-value \
+                    --secret-id "$SECRET_ID" \
+                    --secret-string "$(printf '{"token":"%s","workspaceId":"%s","serviceAccountId":"%s","region":"%s"}' \
+                        "$TOKEN_KEY" "$WORKSPACE_ID" "$SERVICE_ACCOUNT_ID" "$AWS_REGION")" >/dev/null
+
+                  echo "rotated: minted $TOKEN_ID and wrote it to $SECRET_ID"
+
+                  # Prune, but keep the two newest. Consumers refresh the Secret
+                  # hourly (ExternalSecret refreshInterval: 1h), so the previous
+                  # token has to outlive this run — deleting it now would break
+                  # grafana-operator until the next sync. AMG caps tokens per
+                  # service account, so they cannot simply be left to pile up.
+                  OLD=$(aws grafana list-workspace-service-account-tokens \
+                    --workspace-id "$WORKSPACE_ID" \
+                    --service-account-id "$SERVICE_ACCOUNT_ID" \
+                    --query 'serviceAccountTokens | sort_by(@, &createdAt) | [:-2] | [].id' \
+                    --output text)
+
+                  for id in $OLD; do
+                    aws grafana delete-workspace-service-account-token \
+                      --workspace-id "$WORKSPACE_ID" \
+                      --service-account-id "$SERVICE_ACCOUNT_ID" \
+                      --token-id "$id" >/dev/null
+                    echo "pruned expired token $id"
+                  done
+              env:
+                # Every one of these travels with the token in Secrets Manager,
+                # which is why this manifest is cluster-agnostic.
+                - name: WORKSPACE_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: grafana-external-credentials
+                      key: workspaceId
+                - name: SERVICE_ACCOUNT_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: grafana-external-credentials
+                      key: serviceAccountId
+                - name: AWS_REGION
+                  valueFrom:
+                    secretKeyRef:
+                      name: grafana-external-credentials
+                      key: region
+                - name: SECRET_ID
+                  value: eks-grafana-token
+                # The image runs as nobody with a read-only root filesystem; the
+                # CLI needs a writable HOME for its config/cache.
+                - name: HOME
+                  value: /tmp
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  memory: 128Mi
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tmp
+              emptyDir: {}
