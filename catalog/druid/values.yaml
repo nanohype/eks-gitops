@@ -12,7 +12,9 @@ version: "36.0.0"
 
 image:
   uri: apache/druid:36.0.0
-  pullPolicy: Always
+  # The tag is pinned, so Always just re-pulls the same digest every restart;
+  # IfNotPresent is the deterministic match for a pinned reference.
+  pullPolicy: IfNotPresent
 
 labels:
   "app.kubernetes.io/name": druid
