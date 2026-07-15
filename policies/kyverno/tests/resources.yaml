@@ -145,3 +145,36 @@ spec:
           path: /healthz
           port: 8080
         periodSeconds: 10
+---
+# verify-images scoping: a non-nanohype image is outside imageReferences
+# (ghcr.io/nanohype/*), so verify-images skips it (Pass/Excluded). Widening the
+# references to "*" makes this pod get evaluated and flips it to fail.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vi-external-image
+  namespace: workloads
+  labels:
+    app.kubernetes.io/name: example
+spec:
+  securityContext:
+    runAsNonRoot: true
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+---
+# verify-images scoping: a nanohype image, but in an EXCLUDED namespace (kyverno),
+# so verify-images skips it. Dropping the namespace exclude flips this to fail.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vi-excluded-ns
+  namespace: kyverno
+  labels:
+    app.kubernetes.io/name: example
+spec:
+  securityContext:
+    runAsNonRoot: true
+  containers:
+    - name: app
+      image: ghcr.io/nanohype/eks-agent-platform:v0.1.0
