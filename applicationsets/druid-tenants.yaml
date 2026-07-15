@@ -29,6 +29,12 @@ spec:
   template:
     metadata:
       name: 'druid-{{ .path.basename }}'
+      labels:
+        app.kubernetes.io/managed-by: argocd
+        app.kubernetes.io/component: druid
+        platform.nanohype.dev/environment: '{{ index .metadata.labels "environment" }}'
+        platform.nanohype.dev/repository: nanohype/eks-gitops
+        platform.nanohype.dev/team: platform-engineering
       annotations:
         argocd.argoproj.io/sync-wave: "50"
     spec:

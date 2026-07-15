@@ -18,7 +18,24 @@ Naming
 Labels & Annotations
 */}}
 
-{{- define "common.labels" -}}
+{{/*
+Required resource-tagging taxonomy (nanohype/standards/resource-tagging, required
+tier) emitted on every object, then the chart's extra .Values.labels. The org
+dimensions mirror the values landing-zone stamps on the druid AWS substrate
+(CostCenter/BusinessUnit/DataClassification/Compliance/Team) so the k8s labels and
+the cloud tags describe the same resource identically. app.kubernetes.io/component
+is role-specific and added in druid.component.labels / druid.task.labels instead.
+*/}}
+{{- define "common.labels" }}
+app.kubernetes.io/managed-by: {{ .Values.managedBy | default "argocd" | quote }}
+platform.nanohype.dev/environment: {{ .Values.environment | quote }}
+platform.nanohype.dev/project: {{ .Values.project | quote }}
+platform.nanohype.dev/repository: {{ .Values.repository | quote }}
+platform.nanohype.dev/team: {{ .Values.team | quote }}
+platform.nanohype.dev/cost-center: {{ .Values.costCenter | quote }}
+platform.nanohype.dev/business-unit: {{ .Values.businessUnit | quote }}
+platform.nanohype.dev/data-classification: {{ .Values.dataClassification | quote }}
+platform.nanohype.dev/compliance: {{ .Values.compliance | quote }}
 {{- range $k, $v := .Values.labels }}
 {{ $k | quote }}: {{ $v | quote }}
 {{- end }}
@@ -34,6 +51,7 @@ Labels & Annotations
 {{- $component := index . 0 -}}
 {{- $ctx := index . 1 -}}
 {{- include "common.labels" $ctx }}
+app.kubernetes.io/component: {{ $component | quote }}
 {{ $ctx.Values.domain }}/version: {{ $ctx.Values.version }}
 {{- $componentValues := index $ctx.Values $component -}}
 {{- range $k, $v := $componentValues.metadata.labels }}
@@ -412,6 +430,7 @@ Task (special case — nested under task.base)
 
 {{- define "druid.task.labels" -}}
 {{- include "common.labels" . }}
+app.kubernetes.io/component: task
 {{ .Values.domain }}/version: {{ .Values.version }}
 {{- range $k, $v := .Values.task.base.metadata.labels }}
 {{ $k | quote }}: {{ $v | quote }}

@@ -10,6 +10,20 @@ domain: "nanohype.dev"
 organization: nanohype
 version: "36.0.0"
 
+# Required resource-tagging taxonomy (nanohype/standards/resource-tagging, required
+# tier), emitted on every object via common.labels. Values mirror what landing-zone
+# stamps on the druid AWS substrate so the k8s labels and cloud tags agree. team is
+# data-platform (the druid component's owning team in landing-zone). environment is
+# set per tenant/environment above; the org dimensions are constant for this stack.
+managedBy: "argocd"
+project: "landing-zone"
+repository: "nanohype/eks-gitops"
+team: "data-platform"
+costCenter: "platform-engineering"
+businessUnit: "engineering"
+dataClassification: "internal"
+compliance: "soc2"
+
 image:
   uri: apache/druid:36.0.0
   # The tag is pinned, so Always just re-pulls the same digest every restart;
