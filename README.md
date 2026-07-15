@@ -17,6 +17,27 @@ GitOps configuration for EKS cluster addons, managed by ArgoCD. The EKS ArgoCD a
 
 This repository is the EKS ArgoCD addon catalog. Infrastructure is provisioned by [landing-zone](https://github.com/nanohype/landing-zone) (OpenTofu/Terragrunt), which deploys ArgoCD and creates the App-of-Apps Application pointing to this repository.
 
+## Forking
+
+This catalog is **vended**: you fork it, point your own hub at your fork, and your edits take effect. No source changes are needed to repoint it.
+
+**How it works.** Every applied ApplicationSet reads its Git source from the cluster, not a hardcoded URL:
+
+```yaml
+repoURL: '{{ index .metadata.annotations "gitops/repo-url" }}'
+```
+
+`cluster-bootstrap` (in landing-zone) stamps `gitops/repo-url` on the ArgoCD cluster Secret. Set it to your fork and every Application follows. A CI gate (**Fork-safety gate**, `scripts/check-hardcoded-org.py --blocking`) fails the build if a catalog `repoURL` is ever hardcoded — a hardcoded ref would silently keep a fork syncing from upstream while its own edits sat unread.
+
+**Intentionally NOT templated** — these are consumed, not forked, so they correctly point at upstream:
+
+- `nanohype/eks-agent-platform` — the operator's own source/chart. You consume the product; you don't fork it.
+- `ghcr.io/nanohype/*` images and `oci://` charts — pulled like any registry.
+- The Kyverno keyless-signing identity (`subjectRegExp`) — a signing identity to *verify against*, not a source to sync from.
+- Everything under `applicationsets/opt-in/` — not applied by a default install; its org-specific URLs are a documented repoint-before-enabling step (see [`applicationsets/opt-in/README.md`](applicationsets/opt-in/README.md)).
+
+**To fork:** fork this repo → set `gitops/repo-url` on your cluster Secret (via landing-zone) to your fork → optionally repoint the `opt-in/` appsets if you enable them.
+
 ## Architecture
 
 ```
