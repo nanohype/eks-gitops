@@ -161,6 +161,7 @@ task clean                    # Remove rendered output
   - [Addon Sync Stuck or Degraded](docs/runbooks/addon-sync-degraded.md)
   - [Rolling Back an Addon](docs/runbooks/rollback.md)
   - [Druid Operations](docs/runbooks/druid-operations.md)
+  - [AI Platform — Budget, Kill-Switch, and Model Access](docs/runbooks/ai-platform-budget-killswitch.md)
   - [Render-Gate Failures on PRs](docs/runbooks/render-gate-failures.md)
 
 ## License
