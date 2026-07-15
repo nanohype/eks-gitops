@@ -11,6 +11,7 @@ policies:
   - ../best-practices/base/require-probes.yaml
   - ../pod-security-standards/base/require-non-root.yaml
   - ../pod-security-standards/base/require-resource-limits.yaml
+  - ../supply-chain/base/verify-images.yaml
 resources:
   - resources.yaml
 results:
@@ -81,3 +82,24 @@ results:
     kind: Pod
     resources: [bad-pod-no-limits]
     result: fail
+
+  # verify-images — SCOPING ONLY. `kyverno test` cannot reach Fulcio/Rekor, so it
+  # never actually verifies a Cosign signature (a matched image reports Pass/Ok
+  # regardless of the attestor). These cases therefore pin the MATCH/EXCLUDE
+  # scoping, which IS deterministic offline: a non-nanohype image and a pod in an
+  # excluded namespace are skipped (Pass/Excluded, no verification attempted).
+  # Widening imageReferences to "*" flips vi-external-image to fail; dropping the
+  # namespace exclude flips vi-excluded-ns to fail — both verified against
+  # mutations. The signing-IDENTITY contract (required signature, issuer, anchored
+  # org-scoped subjectRegExp) is what kyverno test is blind to; it is guarded
+  # structurally by scripts/check-image-verification.py in CI.
+  - policy: verify-images
+    rule: verify-ghcr-nanohype
+    kind: Pod
+    resources: [vi-external-image]
+    result: pass
+  - policy: verify-images
+    rule: verify-ghcr-nanohype
+    kind: Pod
+    resources: [vi-excluded-ns]
+    result: pass

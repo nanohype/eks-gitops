@@ -76,6 +76,17 @@ jobs:
       - name: Run policy unit tests
         run: kyverno test policies/kyverno/tests
 
+      # `kyverno test` cannot reach Fulcio/Rekor, so it never verifies a Cosign
+      # signature offline — the unit tests above only pin verify-images' match/
+      # exclude scoping. This structural gate guards the signing-IDENTITY contract
+      # the unit tests are blind to (required signature, GitHub OIDC issuer,
+      # anchored org-scoped release-workflow subjectRegExp), so a widened
+      # subjectRegExp or a flipped `required` can't ship silently.
+      - name: Verify-images signing-identity contract
+        run: |
+          pip install --quiet pyyaml
+          ./scripts/check-image-verification.py
+
   # ── Fork-safety gate ─────────────────────────────────────────────────
   # An applied ApplicationSet must not hardcode nanohype/eks-gitops — THIS
   # CATALOG — in a repoURL. The catalog is vended: a customer forks it and
