@@ -23,6 +23,7 @@ spec:
       {{- include "druid.security" (list "druid-overlord" .) | nindent 6 }}
       nodeSelector:
         {{- include "druid.component.node.selector" (list "overlord" .) | nindent 8 }}
+      {{- include "druid.component.topologySpread" (list "overlord" .) | nindent 6 }}
       volumes:
         {{- include "druid.component.volumes" (list "overlord" .) | nindent 8 }}
         - name: druid-task-template

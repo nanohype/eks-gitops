@@ -179,13 +179,43 @@ runtime: |-
   druid.monitoring.monitors=["org.apache.druid.java.util.metrics.JvmMonitor", "org.apache.druid.server.metrics.ServiceStatusMonitor"]
 
 # --- Component Defaults ---
+#
+# High-availability knobs (per role, overridable per tenant/env):
+#   replicas          desired long-running pods. Defaults are HA-sane: stateless
+#                     broker/router and segment-bearing historical scale
+#                     horizontally at 2; leader-elected coordinator/overlord run
+#                     2 = one active + one standby.
+#   pdb.enabled       emit a PodDisruptionBudget for the role.
+#   pdb.maxUnavailable  at most this many pods may be voluntarily evicted at once.
+#                     maxUnavailable is drain-safe at ANY replica count, and the
+#                     template ALSO gates PDB rendering on replicas>1, so a role
+#                     scaled to 1 gets no PDB and a node drain can never wedge.
+#   pdb.minAvailable  opt-in alternative expression (mutually exclusive with
+#                     maxUnavailable); still only rendered at replicas>1, so it
+#                     too can never block the last pod.
+#   topologySpread    SOFT (whenUnsatisfiable: ScheduleAnyway) zone/host spread —
+#                     replicas prefer separate zones/hosts for HA, but a
+#                     single-zone or small dev cluster still schedules them
+#                     instead of leaving pods Pending. maxSkew/topologyKeys/
+#                     whenUnsatisfiable are overridable.
 
 router:
   metadata:
     labels: {}
     annotations:
       "k8s.grafana.com/job": "integrations/druid-router"
-  replicas: 1
+  replicas: 2
+  pdb:
+    enabled: true
+    maxUnavailable: 1
+    # minAvailable: 1   # opt-in alternative to maxUnavailable (rendered only at replicas>1)
+  topologySpread:
+    enabled: true
+    maxSkew: 1
+    whenUnsatisfiable: ScheduleAnyway
+    topologyKeys:
+      - topology.kubernetes.io/zone
+      - kubernetes.io/hostname
   resources:
     requests:
       cpu: 250m
@@ -241,7 +271,18 @@ broker:
     labels: {}
     annotations:
       "k8s.grafana.com/job": "integrations/druid-broker"
-  replicas: 1
+  replicas: 2
+  pdb:
+    enabled: true
+    maxUnavailable: 1
+    # minAvailable: 1   # opt-in alternative to maxUnavailable (rendered only at replicas>1)
+  topologySpread:
+    enabled: true
+    maxSkew: 1
+    whenUnsatisfiable: ScheduleAnyway
+    topologyKeys:
+      - topology.kubernetes.io/zone
+      - kubernetes.io/hostname
   resources:
     requests:
       cpu: 1500m
@@ -346,7 +387,18 @@ coordinator:
     labels: {}
     annotations:
       "k8s.grafana.com/job": "integrations/druid-coordinator"
-  replicas: 1
+  replicas: 2
+  pdb:
+    enabled: true
+    maxUnavailable: 1
+    # minAvailable: 1   # opt-in alternative to maxUnavailable (rendered only at replicas>1)
+  topologySpread:
+    enabled: true
+    maxSkew: 1
+    whenUnsatisfiable: ScheduleAnyway
+    topologyKeys:
+      - topology.kubernetes.io/zone
+      - kubernetes.io/hostname
   resources:
     requests:
       cpu: 1500m
@@ -426,7 +478,18 @@ overlord:
     labels: {}
     annotations:
       "k8s.grafana.com/job": "integrations/druid-overlord"
-  replicas: 1
+  replicas: 2
+  pdb:
+    enabled: true
+    maxUnavailable: 1
+    # minAvailable: 1   # opt-in alternative to maxUnavailable (rendered only at replicas>1)
+  topologySpread:
+    enabled: true
+    maxSkew: 1
+    whenUnsatisfiable: ScheduleAnyway
+    topologyKeys:
+      - topology.kubernetes.io/zone
+      - kubernetes.io/hostname
   resources:
     requests:
       cpu: 1500m
@@ -515,7 +578,18 @@ historical:
     labels: {}
     annotations:
       "k8s.grafana.com/job": "integrations/druid-historical"
-  replicas: 1
+  replicas: 2
+  pdb:
+    enabled: true
+    maxUnavailable: 1
+    # minAvailable: 1   # opt-in alternative to maxUnavailable (rendered only at replicas>1)
+  topologySpread:
+    enabled: true
+    maxSkew: 1
+    whenUnsatisfiable: ScheduleAnyway
+    topologyKeys:
+      - topology.kubernetes.io/zone
+      - kubernetes.io/hostname
   resources:
     requests:
       cpu: 3500m

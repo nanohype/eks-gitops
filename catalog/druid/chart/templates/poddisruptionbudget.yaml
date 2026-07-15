@@ -1,0 +1,11 @@
+{{- /*
+One PodDisruptionBudget per long-running role, so a node drain or rolling upgrade
+never takes broker / router / coordinator / overlord / historical fully offline.
+The task role is an ephemeral-task PodTemplate (templates/task/base/), not a
+managed workload, so it is deliberately absent here. druid.component.pdb self-gates
+on enabled && replicas>1 and prefixes its own document separator, so disabled or
+single-replica roles emit nothing.
+*/ -}}
+{{- range $component := (list "broker" "router" "coordinator" "overlord" "historical") -}}
+{{- include "druid.component.pdb" (list $component $) }}
+{{- end }}

@@ -425,6 +425,79 @@ spec:
 {{- end -}}
 
 {{/*
+High availability — PodDisruptionBudget & topology spread
+
+Both are parameterized by (list component ctx) like every other component helper
+and reuse druid.component.match.labels for their selectors, so a PDB and a spread
+constraint always target exactly the pods that role's Deployment/StatefulSet owns.
+*/}}
+
+{{/*
+PodDisruptionBudget for a long-running role. Rendered ONLY when the role's pdb is
+enabled AND its replicas > 1 — a PDB on a single replica can only ever wedge a
+node drain (minAvailable:1 blocks the sole pod; maxUnavailable:1 is a no-op), so a
+role scaled to 1 gets no PDB at all. The budget is expressed as maxUnavailable
+(drain-safe at any replica count) by default; setting pdb.minAvailable switches to
+that expression, and because rendering is gated on replicas>1 even a minAvailable
+budget can never block the last pod. The leading document separator lets the
+ranging poddisruptionbudget.yaml emit one PDB per HA role from a single template.
+*/}}
+{{- define "druid.component.pdb" -}}
+{{- $component := index . 0 -}}
+{{- $ctx := index . 1 -}}
+{{- $componentValues := index $ctx.Values $component -}}
+{{- $pdb := $componentValues.pdb | default dict -}}
+{{- $replicas := $componentValues.replicas | default 1 | int -}}
+{{- if and $pdb.enabled (gt $replicas 1) }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "druid.component.name" (list $component $ctx) }}
+  labels:
+    {{- include "druid.component.labels" (list $component $ctx) | indent 4 }}
+  annotations:
+    {{- include "druid.component.annotations" (list $component $ctx) | indent 4 }}
+spec:
+  {{- if $pdb.minAvailable }}
+  minAvailable: {{ $pdb.minAvailable }}
+  {{- else }}
+  maxUnavailable: {{ $pdb.maxUnavailable | default 1 }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "druid.component.match.labels" (list $component $ctx) | nindent 6 }}
+{{- end }}
+{{- end -}}
+
+{{/*
+Soft topology spread for a long-running role. whenUnsatisfiable is ScheduleAnyway
+(overridable) so replicas PREFER to land in different zones/hosts for HA but a
+single-zone or small dev cluster still schedules them rather than leaving pods
+Pending. labelSelector reuses druid.component.match.labels so the skew is computed
+over exactly this role's pods. topologyKeys / maxSkew / whenUnsatisfiable are
+per-role knobs; the helper emits nothing when topologySpread.enabled is false.
+*/}}
+{{- define "druid.component.topologySpread" -}}
+{{- $component := index . 0 -}}
+{{- $ctx := index . 1 -}}
+{{- $componentValues := index $ctx.Values $component -}}
+{{- $ts := $componentValues.topologySpread | default dict -}}
+{{- if $ts.enabled }}
+{{- $keys := $ts.topologyKeys | default (list "topology.kubernetes.io/zone") }}
+topologySpreadConstraints:
+{{- range $key := $keys }}
+  - maxSkew: {{ $ts.maxSkew | default 1 }}
+    topologyKey: {{ $key }}
+    whenUnsatisfiable: {{ $ts.whenUnsatisfiable | default "ScheduleAnyway" }}
+    labelSelector:
+      matchLabels:
+        {{- include "druid.component.match.labels" (list $component $ctx) | nindent 8 }}
+{{- end }}
+{{- end }}
+{{- end -}}
+
+{{/*
 Task (special case — nested under task.base)
 */}}
 

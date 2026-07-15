@@ -23,6 +23,7 @@ spec:
       {{- include "druid.security" (list "druid-historical" .) | nindent 6 }}
       nodeSelector:
         {{- include "druid.component.node.selector" (list "historical" .) | nindent 8 }}
+      {{- include "druid.component.topologySpread" (list "historical" .) | nindent 6 }}
       volumes:
         {{- include "druid.component.volumes" (list "historical" .) | nindent 8 }}
       containers:
