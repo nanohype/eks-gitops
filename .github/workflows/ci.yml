@@ -51,6 +51,31 @@ jobs:
       - name: Dead ids + AMG-unsaveable legacy alerts
         run: ./scripts/validate-dashboards.py
 
+  # ── Kyverno policy unit tests ────────────────────────────────────────
+  # `kyverno test` proves each policy rule PASSES a compliant resource and FAILS
+  # a violating one (policies/kyverno/tests). Without this, a policy could be
+  # weakened, mis-indented into a no-op, or have its pattern silently broken and
+  # still render + schema-validate clean — the cluster would just stop enforcing
+  # it. This gate catches that at PR time. CLI pinned to the release the policies
+  # were authored against.
+  kyverno:
+    name: Kyverno policy tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Kyverno CLI
+        run: |
+          VERSION=v1.18.2
+          curl -fsSL "https://github.com/kyverno/kyverno/releases/download/${VERSION}/kyverno-cli_${VERSION}_linux_x86_64.tar.gz" \
+            | tar -xz -C /tmp kyverno
+          sudo install -m 0755 /tmp/kyverno /usr/local/bin/kyverno
+          kyverno version
+
+      - name: Run policy unit tests
+        run: kyverno test policies/kyverno/tests
+
   # ── Fork-safety gate ─────────────────────────────────────────────────
   # An applied ApplicationSet must not hardcode nanohype/eks-gitops — THIS
   # CATALOG — in a repoURL. The catalog is vended: a customer forks it and

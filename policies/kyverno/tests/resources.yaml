@@ -1,0 +1,147 @@
+# Fixtures for the Kyverno policy unit tests. All live in a non-excluded
+# namespace (workloads) so the policies actually evaluate them. Each "bad-*"
+# resource violates exactly one policy and stays compliant with the others, so
+# a failure points at a single rule.
+---
+# Compliant Deployment: carries app.kubernetes.io/name.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: good-deploy
+  namespace: workloads
+  labels:
+    app.kubernetes.io/name: example
+    app.kubernetes.io/managed-by: argocd
+spec:
+  selector:
+    matchLabels:
+      app: example
+  template:
+    metadata:
+      labels:
+        app: example
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+---
+# Violates require-labels: no app.kubernetes.io/name.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bad-deploy
+  namespace: workloads
+  labels:
+    app: example
+spec:
+  selector:
+    matchLabels:
+      app: example
+  template:
+    metadata:
+      labels:
+        app: example
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+---
+# Compliant Pod: non-root, both probes, cpu + memory limits.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: good-pod
+  namespace: workloads
+  labels:
+    app.kubernetes.io/name: example
+spec:
+  securityContext:
+    runAsNonRoot: true
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      readinessProbe:
+        httpGet:
+          path: /healthz
+          port: 8080
+        periodSeconds: 10
+      livenessProbe:
+        httpGet:
+          path: /healthz
+          port: 8080
+        periodSeconds: 10
+      resources:
+        limits:
+          cpu: "500m"
+          memory: "256Mi"
+---
+# Violates require-probes only: no readiness/liveness probes.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: bad-pod-no-probes
+  namespace: workloads
+  labels:
+    app.kubernetes.io/name: example
+spec:
+  securityContext:
+    runAsNonRoot: true
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      resources:
+        limits:
+          cpu: "500m"
+          memory: "256Mi"
+---
+# Violates require-run-as-non-root only: no runAsNonRoot.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: bad-pod-root
+  namespace: workloads
+  labels:
+    app.kubernetes.io/name: example
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      readinessProbe:
+        httpGet:
+          path: /healthz
+          port: 8080
+        periodSeconds: 10
+      livenessProbe:
+        httpGet:
+          path: /healthz
+          port: 8080
+        periodSeconds: 10
+      resources:
+        limits:
+          cpu: "500m"
+          memory: "256Mi"
+---
+# Violates require-resource-limits only: no cpu/memory limits.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: bad-pod-no-limits
+  namespace: workloads
+  labels:
+    app.kubernetes.io/name: example
+spec:
+  securityContext:
+    runAsNonRoot: true
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      readinessProbe:
+        httpGet:
+          path: /healthz
+          port: 8080
+        periodSeconds: 10
+      livenessProbe:
+        httpGet:
+          path: /healthz
+          port: 8080
+        periodSeconds: 10

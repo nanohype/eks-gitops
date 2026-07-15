@@ -1,0 +1,83 @@
+# Unit tests for the Kyverno policies in this repo. Run with:
+#   kyverno test policies/kyverno/tests
+# Each rule is proven to PASS a compliant resource and FAIL a violating one, so
+# a regression that weakens (or silently no-ops) a policy is caught in CI.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: nanohype-kyverno-policies
+policies:
+  - ../best-practices/base/require-labels.yaml
+  - ../best-practices/base/require-probes.yaml
+  - ../pod-security-standards/base/require-non-root.yaml
+  - ../pod-security-standards/base/require-resource-limits.yaml
+resources:
+  - resources.yaml
+results:
+  # require-labels
+  - policy: require-labels
+    rule: require-app-label
+    kind: Deployment
+    resources: [good-deploy]
+    result: pass
+  - policy: require-labels
+    rule: require-app-label
+    kind: Deployment
+    resources: [bad-deploy]
+    result: fail
+
+  # require-probes
+  - policy: require-probes
+    rule: require-readiness-probe
+    kind: Pod
+    resources: [good-pod]
+    result: pass
+  - policy: require-probes
+    rule: require-liveness-probe
+    kind: Pod
+    resources: [good-pod]
+    result: pass
+  - policy: require-probes
+    rule: require-readiness-probe
+    kind: Pod
+    resources: [bad-pod-no-probes]
+    result: fail
+  - policy: require-probes
+    rule: require-liveness-probe
+    kind: Pod
+    resources: [bad-pod-no-probes]
+    result: fail
+
+  # require-run-as-non-root
+  - policy: require-run-as-non-root
+    rule: run-as-non-root
+    kind: Pod
+    resources: [good-pod]
+    result: pass
+  - policy: require-run-as-non-root
+    rule: run-as-non-root
+    kind: Pod
+    resources: [bad-pod-root]
+    result: fail
+
+  # require-resource-limits
+  - policy: require-resource-limits
+    rule: require-cpu-limit
+    kind: Pod
+    resources: [good-pod]
+    result: pass
+  - policy: require-resource-limits
+    rule: require-memory-limit
+    kind: Pod
+    resources: [good-pod]
+    result: pass
+  - policy: require-resource-limits
+    rule: require-cpu-limit
+    kind: Pod
+    resources: [bad-pod-no-limits]
+    result: fail
+  - policy: require-resource-limits
+    rule: require-memory-limit
+    kind: Pod
+    resources: [bad-pod-no-limits]
+    result: fail
