@@ -57,3 +57,59 @@ spec:
       modelFamily: anthropic
       modelId: global.anthropic.claude-haiku-4-5-20251001-v1:0
       rateLimit: 120
+---
+# The ops platform's own agent fleet. Its single agent runs on the `reason` route
+# above (a route that must exist on the ModelGateway); it is the fleet the EvalSuite
+# below evaluates. Without a fleet the EvalSuite's agentFleetRef would dangle, so the
+# two ship together — mirroring the operator's canonical tenant set.
+#
+# min:1 keeps one agent warm for the daily eval (with no queueUrl the operator
+# autoscales on CPU, which cannot scale to zero anyway); Bedrock spend is capped by the
+# ops BudgetPolicy above (killSwitch + monthlyUsd). A fork sets min:0 or disables the
+# fleet if it does not want a resident ops agent.
+apiVersion: agents.nanohype.dev/v1alpha1
+kind: AgentFleet
+metadata:
+  name: ops-fleet
+spec:
+  platformRef:
+    name: ops
+  scaling:
+    enabled: true
+    min: 1
+    max: 2
+  agents:
+    - name: assistant
+      systemPrompt: "You are the cluster operations assistant. Answer concisely and name the resource you inspected."
+      modelRoute: reason
+---
+# Starter EvalSuite — gives the agent-platform eval alerts (AgentEvalBelowThreshold,
+# AgentEvalStale) and the eval-quality dashboard a live signal out of the box instead
+# of an empty catalog. The operator runs it on schedule against ops-fleet and writes
+# status.lastScore / lastRunAt / phase, which kube-state-metrics emits and the alerts
+# watch against spec.passThreshold. A fork tightens passThreshold, extends cases, or
+# points casesFromManifest at its own S3 manifest.
+apiVersion: governance.nanohype.dev/v1alpha1
+kind: EvalSuite
+metadata:
+  name: ops-eval
+spec:
+  platformRef:
+    name: ops
+  agentFleetRef:
+    name: ops-fleet
+  schedule: "0 6 * * *" # daily 06:00 UTC
+  passThreshold: "0.85"
+  # AgentEvalBelowThreshold is a paging alert, so these cases assert AGENT CORRECTNESS,
+  # not model latency: maxLatencyMs is a loose stuck-agent bound (a cold start or a
+  # throttle-retry on Sonnet must not page on-call), not a latency SLO. A fork replaces
+  # these with a real suite (or points casesFromManifest at its own S3 manifest).
+  cases:
+    - name: liveness
+      input: "Reply with the single word 'pong'."
+      expectContains: ["pong"]
+      maxLatencyMs: 20000
+    - name: follows-instructions
+      input: "Respond with exactly the word: ready"
+      expectContains: ["ready"]
+      maxLatencyMs: 20000

@@ -205,8 +205,8 @@ jobs:
       #   generator patch), and the catalog schema is stricter than the
       #   upstream CRD (requires tenantNamespace, which upstream does not).
       #
-      #   -skip Platform,Tenant,ModelGateway,BudgetPolicy — the platform's OWN
-      #   CRDs (platform.nanohype.dev, agents.nanohype.dev,
+      #   -skip Platform,Tenant,ModelGateway,BudgetPolicy,AgentFleet,EvalSuite —
+      #   the platform's OWN CRDs (platform.nanohype.dev, agents.nanohype.dev,
       #   governance.nanohype.dev). They are first-party: their schemas live in
       #   eks-agent-platform and are published to no public catalog, so neither
       #   schema-location can resolve them and kubeconform reports them as
@@ -255,7 +255,7 @@ jobs:
             -cache "$HOME/.cache/kubeconform" \
             -schema-location default \
             -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
-            -skip Grafana,Platform,Tenant,ModelGateway,BudgetPolicy \
+            -skip Grafana,Platform,Tenant,ModelGateway,BudgetPolicy,AgentFleet,EvalSuite \
             rendered
 
       # ── Misconfiguration gate ──────────────────────────────────────────
