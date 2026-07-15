@@ -61,7 +61,7 @@ tasks:
       - ./scripts/validate-dashboards.py
 
   validate:fork-safety:
-    desc: "Fork-safety gate — no hardcoded catalog repoURL in applied ApplicationSets (report-only)"
+    desc: "Fork-safety gate — no hardcoded catalog repoURL in applied ApplicationSets (local report-only; CI runs it --blocking)"
     cmds:
       - ./scripts/check-hardcoded-org.py
 
