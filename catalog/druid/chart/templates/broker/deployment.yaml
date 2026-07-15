@@ -22,6 +22,7 @@ spec:
       {{- include "druid.security" (list "druid-broker" .) | nindent 6 }}
       nodeSelector:
         {{- include "druid.component.node.selector" (list "broker" .) | nindent 8 }}
+      {{- include "druid.component.topologySpread" (list "broker" .) | nindent 6 }}
       volumes:
         {{- include "druid.component.volumes" (list "broker" .) | nindent 8 }}
       containers:
