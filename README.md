@@ -99,15 +99,19 @@ eks-gitops/
 |------|------------|-----------|
 | -1 | App-of-Apps | Root application |
 | 0 | Bootstrap Helm (cert-manager, external-secrets, prometheus-operator-crds) | Foundational CRDs |
-| 1 | Networking (Cilium, ALB Controller, External DNS) | CNI and ingress |
+| 1 | Networking (Cilium, ALB Controller, External DNS); Secret Stores (ClusterSecretStores) | CNI/ingress + secret backends |
 | 2 | Bootstrap continued (metrics-server, reloader, storage-classes, priority-classes) | Cluster essentials |
 | 5 | Karpenter | Nodes must be ready before workloads |
-| 6-7 | Accelerators (gpu-operator, aws-neuron-device-plugin, nvidia-dra-driver) | GPU/Neuron device plugins advertised before security and workloads |
-| 10-12 | Security (Kyverno, Trivy, Falco) | Policy engine before policies |
-| 20-21 | Kyverno Policies | After Kyverno is ready |
-| 30-33 | Observability (Loki, Tempo, Alloy, OpenCost) | After security |
-| 40-44 | Operations (Velero, VPA, Goldilocks, Descheduler, Karpenter Resources, KEDA) | After everything |
-| 50-52 | Argo Platform (Rollouts, Events, Workflows) | Application layer |
+| 6 | Accelerators (gpu-operator, aws-neuron-device-plugin, nvidia-dra-driver) | GPU/Neuron device plugins advertised before workloads |
+| 10 | Security (Kyverno, Trivy, Falco) | Policy engine before policies |
+| 20 | Kyverno Policies | After Kyverno is ready |
+| 21 | Agent Operator (eks-agent-platform) | Operator + CRDs before the agent platform consumes them |
+| 30 | Observability (Loki, Tempo, Alloy), Gateway API CRDs; OpenCost (33) | After security |
+| 40 | AI Platform (kagent, agentgateway); Operations (Velero, VPA, Goldilocks, Descheduler, KEDA) | After operator + observability |
+| 42 | Operations kustomize (Karpenter Resources) | After operations Helm |
+| 44 | Agent Platform CRs | After the AI-platform runtime is up |
+| 50 | Argo Platform (Rollouts, Events, Workflows); Druid tenants | Application layer |
+| 60 | Dashboards | After the systems they chart exist |
 
 ## Environment Differences
 

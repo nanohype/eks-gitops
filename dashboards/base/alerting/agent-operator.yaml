@@ -112,6 +112,96 @@ spec:
                 operator: {type: and}
                 query: {params: [A]}
                 reducer: {type: last, params: []}
+    - uid: agent-operator-ticket-burn-1d
+      title: OperatorReconcileLatencyTicketBurn1d
+      condition: B
+      for: 1h
+      noDataState: OK
+      execErrState: Error
+      isPaused: false
+      labels:
+        severity: ticket
+        service: eks-agent-platform
+        component: operator
+      annotations:
+        summary: operator reconcile latency budget burning slowly (10% in 1d)
+        description: >
+          The fraction of reconciles over 1s exceeds 3x the 99% latency objective
+          over both the 1d and 2h windows — a slow burn that exhausts the latency
+          budget in days. File a ticket; this does not page.
+        runbook_url: https://github.com/nanohype/eks-agent-platform/blob/main/docs/runbooks/reconcile-latency.md
+      data:
+        - refId: A
+          datasourceUid: managed-prometheus
+          relativeTimeRange: {from: 86400, to: 0}
+          model:
+            refId: A
+            datasource: {type: prometheus, uid: managed-prometheus}
+            editorMode: code
+            instant: true
+            range: false
+            intervalMs: 1000
+            maxDataPoints: 43200
+            expr: "((1 - (sum(rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\",le=\"1\"}[1d])) / clamp_min(sum(rate(controller_runtime_reconcile_time_seconds_count{namespace=\"eks-agent-platform\"}[1d])), 1))) / 0.01 > bool 3) * ((1 - (sum(rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\",le=\"1\"}[2h])) / clamp_min(sum(rate(controller_runtime_reconcile_time_seconds_count{namespace=\"eks-agent-platform\"}[2h])), 1))) / 0.01 > bool 3)"
+        - refId: B
+          datasourceUid: __expr__
+          relativeTimeRange: {from: 86400, to: 0}
+          model:
+            refId: B
+            type: threshold
+            datasource: {type: __expr__, uid: __expr__}
+            expression: A
+            conditions:
+              - type: query
+                evaluator: {type: gt, params: [0]}
+                operator: {type: and}
+                query: {params: [A]}
+                reducer: {type: last, params: []}
+    - uid: agent-operator-ticket-burn-3d
+      title: OperatorReconcileLatencyTicketBurn3d
+      condition: B
+      for: 2h
+      noDataState: OK
+      execErrState: Error
+      isPaused: false
+      labels:
+        severity: ticket
+        service: eks-agent-platform
+        component: operator
+      annotations:
+        summary: operator reconcile latency budget burning (100% over 3d)
+        description: >
+          The fraction of reconciles over 1s exceeds 1x the 99% latency objective
+          over both the 3d and 6h windows — the budget is being spent at exactly the
+          rate that exhausts it over the 30d SLO window. File a ticket.
+        runbook_url: https://github.com/nanohype/eks-agent-platform/blob/main/docs/runbooks/reconcile-latency.md
+      data:
+        - refId: A
+          datasourceUid: managed-prometheus
+          relativeTimeRange: {from: 259200, to: 0}
+          model:
+            refId: A
+            datasource: {type: prometheus, uid: managed-prometheus}
+            editorMode: code
+            instant: true
+            range: false
+            intervalMs: 1000
+            maxDataPoints: 43200
+            expr: "((1 - (sum(rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\",le=\"1\"}[3d])) / clamp_min(sum(rate(controller_runtime_reconcile_time_seconds_count{namespace=\"eks-agent-platform\"}[3d])), 1))) / 0.01 > bool 1) * ((1 - (sum(rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\",le=\"1\"}[6h])) / clamp_min(sum(rate(controller_runtime_reconcile_time_seconds_count{namespace=\"eks-agent-platform\"}[6h])), 1))) / 0.01 > bool 1)"
+        - refId: B
+          datasourceUid: __expr__
+          relativeTimeRange: {from: 259200, to: 0}
+          model:
+            refId: B
+            type: threshold
+            datasource: {type: __expr__, uid: __expr__}
+            expression: A
+            conditions:
+              - type: query
+                evaluator: {type: gt, params: [0]}
+                operator: {type: and}
+                query: {params: [A]}
+                reducer: {type: last, params: []}
     - uid: agent-operator-error-rate
       title: OperatorReconcileErrorRateHigh
       condition: B
