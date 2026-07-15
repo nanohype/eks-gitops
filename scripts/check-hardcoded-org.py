@@ -68,8 +68,8 @@ OUT OF SCOPE -- DELIBERATELY, each for a specific reason. Do not "fix" these:
 Stdlib only -- CI runs this on a bare ubuntu-latest with no pip install.
 
 Usage:  scripts/check-hardcoded-org.py [--root DIR] [--blocking]
-Exit:   0 clean, or violations found while in warn-only mode (current default)
-        1 violations found with --blocking
+Exit:   0 clean, or violations found without --blocking (warn-only)
+        1 violations found with --blocking (how CI runs it — see the fork-safety job)
 """
 
 from __future__ import annotations
@@ -105,7 +105,7 @@ def main() -> int:
     ap.add_argument(
         "--blocking",
         action="store_true",
-        help="exit 1 on violations (default: report and exit 0 — see the TODO above)",
+        help="exit 1 on violations (without this flag: report and exit 0)",
     )
     args = ap.parse_args()
 
@@ -168,9 +168,9 @@ def main() -> int:
         return 1
 
     print(
-        "\n  WARNING (non-blocking): this gate is in report-only mode while the\n"
-        "  repoURL-templating PR is in flight. It will be flipped to blocking once\n"
-        "  that lands — see the TODO in scripts/check-hardcoded-org.py."
+        "\n  WARNING (non-blocking): running without --blocking, so this is report-only.\n"
+        "  CI runs it with --blocking (the fork-safety job), where a hardcoded catalog\n"
+        "  repoURL fails the build."
     )
     return 0
 

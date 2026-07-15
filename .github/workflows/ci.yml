@@ -294,7 +294,7 @@ jobs:
             const results = {
               'YAML Lint': '${{ needs.lint.result }}',
               'Dashboard gate (live grafana.com ids + AMG-saveable)': '${{ needs.dashboards.result }}',
-              'Fork-safety gate (no hardcoded org, report-only)': '${{ needs.fork-safety.result }}',
+              'Fork-safety gate (no hardcoded org, blocking)': '${{ needs.fork-safety.result }}',
               'Render + assert + schema + misconfig (all environments)': '${{ needs.validate.result }}',
             };
             const rows = Object.entries(results)
