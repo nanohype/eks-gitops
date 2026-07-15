@@ -1,0 +1,330 @@
+# eks-agent-platform governance — Grafana-managed PAGING alert rules for the
+# agent kill-switch, two-tier budget, and eval-quality signals. These signals are
+# richly metered (kube_customresource_* projected by the kube-state-metrics
+# customResourceState config in addons/observability/kube-state-metrics) and
+# dashboarded (agent-kill-switch / agent-finance / agent-eval-quality), but until
+# now NOTHING pages when the kill-switch fires, a budget crosses its cap, an
+# EvalSuite regresses below its passThreshold, or evals silently stop. This group
+# closes that meter-but-don't-alert gap.
+#
+# WHY CI CANNOT TEST THESE: kubeconform SKIPs the grafana.integreatly.org CRDs and
+# nothing in CI executes the PromQL, so a wrong metric name or label selector
+# yields an alert that silently NEVER fires while CI stays green. Correctness
+# therefore rests ENTIRELY on every metric+label selector matching the series
+# kube-state-metrics actually emits. Each expr below is copied from a dashboard
+# query that already renders that exact series (or, for passThreshold — which no
+# dashboard queries — from the KSM emission config's field-label name verbatim).
+# The `derived_from:` note on each rule cites the source.
+#
+# Ground-truth series (metricNamePrefix kube_customresource; the per-field label
+# is `field`, the per-phase label is `customresource_phase`, kind is
+# `customresource_kind`; see addons/observability/kube-state-metrics/values.yaml):
+#   BudgetPolicy: field=killSwitchFiredAt | currentSpendUsd | monthlyUsd | percentOfBudget
+#   EvalSuite:    field=lastScore | passThreshold | lastRunAt
+#
+# Severity vocabulary matches the rest of dashboards/base/alerting (page | ticket);
+# the "warn" tier is expressed as `ticket` (the non-paging severity this repo routes).
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaAlertRuleGroup
+metadata:
+  name: agent-platform-governance
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: external
+  folderRef: slo-alerts
+  interval: 1m
+  rules:
+    # 1. Kill-switch fired. Discrete event — a BudgetPolicy hit the hard 120% cap
+    #    (or was tripped in log-only mode) and the operator stamped
+    #    status.killSwitchFiredAt. The stamp is a lifetime marker (cleared only on
+    #    re-arm), so this stays firing until on-call runs the recovery in the
+    #    runbook — exactly the desired active-incident semantics. Zero `for`: page
+    #    the instant it is observed. Fires per-policy so the alert names the
+    #    BudgetPolicy. This is the ONE signal that also works in log-only mode,
+    #    where nothing is suspended but killSwitchFiredAt is still set.
+    #    derived_from: dashboards/base/platform/agent-kill-switch.yaml line 128 —
+    #      count(kube_customresource_status_field{customresource_kind="BudgetPolicy",field="killSwitchFiredAt"} != 0)
+    #      (inner selector reused verbatim; per-policy instead of count()).
+    - uid: agent-platform-killswitch-fired
+      title: AgentKillSwitchFired
+      condition: B
+      for: 0m
+      noDataState: OK
+      execErrState: Error
+      isPaused: false
+      labels:
+        severity: page
+        service: eks-agent-platform
+        component: kill-switch
+      annotations:
+        summary: agent budget kill-switch has fired — a Platform is (or is being) suspended
+        description: >
+          A BudgetPolicy's status.killSwitchFiredAt is set: month-to-date spend
+          crossed the hard 120% cap and the operator tripped the kill-switch. With
+          the EventBridge/SFN bus wired this suspends the Platform (phase Suspended,
+          IRSA revoked, AgentFleets scaled to zero); in log-only mode only the
+          KillSwitchFired condition is recorded. This does not self-clear — follow
+          the recovery runbook (deal with spend, un-suspend, then re-arm by
+          clearing status.killSwitchFiredAt).
+        runbook_url: https://github.com/nanohype/eks-gitops/blob/main/docs/runbooks/ai-platform-budget-killswitch.md
+      data:
+        - refId: A
+          datasourceUid: managed-prometheus
+          relativeTimeRange: {from: 600, to: 0}
+          model:
+            refId: A
+            datasource: {type: prometheus, uid: managed-prometheus}
+            editorMode: code
+            instant: true
+            range: false
+            intervalMs: 1000
+            maxDataPoints: 43200
+            expr: "kube_customresource_status_field{customresource_kind=\"BudgetPolicy\",field=\"killSwitchFiredAt\"} != 0"
+        - refId: B
+          datasourceUid: __expr__
+          relativeTimeRange: {from: 600, to: 0}
+          model:
+            refId: B
+            type: threshold
+            datasource: {type: __expr__, uid: __expr__}
+            expression: A
+            conditions:
+              - type: query
+                evaluator: {type: gt, params: [0]}
+                operator: {type: and}
+                query: {params: [A]}
+                reducer: {type: last, params: []}
+    # 2a. Budget threshold crossed — WARN tier (ticket). Per-BudgetPolicy
+    #     month-to-date spend has reached >=100% of spec.monthlyUsd (the top value
+    #     in alertThresholdsPercent [50,80,100]) but is below the 120% hard kill.
+    #     Advisory: the budget is exhausted and headed toward the kill-switch, but
+    #     nothing is suspended yet — file a ticket, do not page. percent is computed
+    #     from the two dashboard-proven BudgetPolicy gauges (no dashboard queries
+    #     BudgetPolicy.percentOfBudget directly), matched with ignoring(field) since
+    #     the two series differ only by the `field` label.
+    #     derived_from: dashboards/base/platform/agent-finance.yaml lines 85 & 89 —
+    #       currentSpendUsd and monthlyUsd BudgetPolicy selectors reused verbatim.
+    - uid: agent-platform-budget-threshold-crossed
+      title: AgentBudgetThresholdCrossed
+      condition: B
+      for: 15m
+      noDataState: OK
+      execErrState: Error
+      isPaused: false
+      labels:
+        severity: ticket
+        service: eks-agent-platform
+        component: budget
+      annotations:
+        summary: a BudgetPolicy has consumed its monthly budget (>=100%, below the 120% hard cap)
+        description: >
+          Month-to-date spend for this BudgetPolicy has reached or passed 100% of
+          spec.monthlyUsd — the top of alertThresholdsPercent — but has not yet hit
+          the hard 120% kill-switch cap. Nothing is suspended; this is the advisory
+          warn tier. Review the spend (agent-finance dashboard) and either accept
+          the overage, raise monthlyUsd, or expect the kill-switch to fire near 120%.
+        runbook_url: https://github.com/nanohype/eks-gitops/blob/main/docs/runbooks/ai-platform-budget-killswitch.md
+      data:
+        - refId: A
+          datasourceUid: managed-prometheus
+          relativeTimeRange: {from: 600, to: 0}
+          model:
+            refId: A
+            datasource: {type: prometheus, uid: managed-prometheus}
+            editorMode: code
+            instant: true
+            range: false
+            intervalMs: 1000
+            maxDataPoints: 43200
+            expr: "100 * kube_customresource_status_field{customresource_kind=\"BudgetPolicy\",field=\"currentSpendUsd\"} / ignoring(field) clamp_min(kube_customresource_status_field{customresource_kind=\"BudgetPolicy\",field=\"monthlyUsd\"}, 1)"
+        - refId: B
+          datasourceUid: __expr__
+          relativeTimeRange: {from: 600, to: 0}
+          model:
+            refId: B
+            type: threshold
+            datasource: {type: __expr__, uid: __expr__}
+            expression: A
+            conditions:
+              - type: query
+                evaluator: {type: gt, params: [100]}
+                operator: {type: and}
+                query: {params: [A]}
+                reducer: {type: last, params: []}
+    # 2b. Budget threshold crossed — PAGE tier (hard cap). Per-BudgetPolicy spend
+    #     has reached the 120% hard kill-switch cap the runbook defines
+    #     (percentOfBudget >= 120 && killSwitchEnabled). At/above this the operator
+    #     fires the kill-switch and suspends the Platform, so this pages. Same
+    #     dashboard-proven expr as 2a with the 120 evaluator; a shorter `for` since
+    #     it is materially more urgent. Overlaps 2a above 120% by design (defense in
+    #     depth — page wins routing).
+    #     derived_from: dashboards/base/platform/agent-finance.yaml lines 85 & 89
+    #       (currentSpendUsd / monthlyUsd); hard-cap value 120 from
+    #       docs/runbooks/ai-platform-budget-killswitch.md ("hard 120%").
+    - uid: agent-platform-budget-hardcap-breached
+      title: AgentBudgetHardCapBreached
+      condition: B
+      for: 5m
+      noDataState: OK
+      execErrState: Error
+      isPaused: false
+      labels:
+        severity: page
+        service: eks-agent-platform
+        component: budget
+      annotations:
+        summary: a BudgetPolicy has crossed the 120% hard cap — kill-switch territory
+        description: >
+          Month-to-date spend for this BudgetPolicy has reached the hard 120% cap.
+          Per the runbook the operator fires the kill-switch at percentOfBudget >= 120
+          when killSwitchEnabled, suspending the Platform. Expect (or confirm) an
+          AgentKillSwitchFired page alongside this. Investigate the spend spike and
+          follow the recovery runbook.
+        runbook_url: https://github.com/nanohype/eks-gitops/blob/main/docs/runbooks/ai-platform-budget-killswitch.md
+      data:
+        - refId: A
+          datasourceUid: managed-prometheus
+          relativeTimeRange: {from: 600, to: 0}
+          model:
+            refId: A
+            datasource: {type: prometheus, uid: managed-prometheus}
+            editorMode: code
+            instant: true
+            range: false
+            intervalMs: 1000
+            maxDataPoints: 43200
+            expr: "100 * kube_customresource_status_field{customresource_kind=\"BudgetPolicy\",field=\"currentSpendUsd\"} / ignoring(field) clamp_min(kube_customresource_status_field{customresource_kind=\"BudgetPolicy\",field=\"monthlyUsd\"}, 1)"
+        - refId: B
+          datasourceUid: __expr__
+          relativeTimeRange: {from: 600, to: 0}
+          model:
+            refId: B
+            type: threshold
+            datasource: {type: __expr__, uid: __expr__}
+            expression: A
+            conditions:
+              - type: query
+                evaluator: {type: gt, params: [120]}
+                operator: {type: and}
+                query: {params: [A]}
+                reducer: {type: last, params: []}
+    # 3. Eval below threshold. An EvalSuite's last-run mean score dropped below its
+    #    own spec.passThreshold — a quality regression: agents are shipping
+    #    below-bar outputs. Fires per-suite (the alert names the suite). `< bool`
+    #    with ignoring(field) yields 1/0 per suite (both gauges share name+namespace
+    #    and differ only by the `field` label); the score/threshold are absent until
+    #    a suite has actually run, so never-run suites do not false-fire here (they
+    #    are caught by AgentEvalStale instead). `for` spans a couple of eval ticks so
+    #    a single transient bad run does not page.
+    #    derived_from: dashboards/base/platform/agent-eval-quality.yaml line 108
+    #      (lastScore selector, verbatim) + passThreshold field label from
+    #      addons/observability/kube-state-metrics/values.yaml lines 355-363
+    #      (EvalSuite field="passThreshold"; no dashboard queries it).
+    - uid: agent-platform-eval-below-threshold
+      title: AgentEvalBelowThreshold
+      condition: B
+      for: 15m
+      noDataState: OK
+      execErrState: Error
+      isPaused: false
+      labels:
+        severity: page
+        service: eks-agent-platform
+        component: eval
+      annotations:
+        summary: an EvalSuite's last score fell below its passThreshold — quality regression
+        description: >
+          The most recent eval run for this suite scored below spec.passThreshold,
+          the contractual quality bar. Agents are producing below-bar outputs. Check
+          the agent-eval-quality dashboard for the suite's score history and the
+          EvalSuite conditions (harness executed vs agents passed), and gate/roll
+          back the offending agent change.
+        runbook_url: https://github.com/nanohype/eks-gitops/blob/main/docs/runbooks/ai-platform-budget-killswitch.md
+      data:
+        - refId: A
+          datasourceUid: managed-prometheus
+          relativeTimeRange: {from: 600, to: 0}
+          model:
+            refId: A
+            datasource: {type: prometheus, uid: managed-prometheus}
+            editorMode: code
+            instant: true
+            range: false
+            intervalMs: 1000
+            maxDataPoints: 43200
+            expr: "kube_customresource_status_field{customresource_kind=\"EvalSuite\",field=\"lastScore\"} < bool ignoring(field) kube_customresource_status_field{customresource_kind=\"EvalSuite\",field=\"passThreshold\"}"
+        - refId: B
+          datasourceUid: __expr__
+          relativeTimeRange: {from: 600, to: 0}
+          model:
+            refId: B
+            type: threshold
+            datasource: {type: __expr__, uid: __expr__}
+            expression: A
+            conditions:
+              - type: query
+                evaluator: {type: gt, params: [0]}
+                operator: {type: and}
+                query: {params: [A]}
+                reducer: {type: last, params: []}
+    # 4. Eval stale. No EvalSuite has run within its freshness window — the eval
+    #    harness has silently stopped (a scheduler wedge, a broken CronJob, an RBAC
+    #    regression). Non-paging watchdog: file a ticket. Mirrors the proven
+    #    staleness idiom max(time() - <last-ts gauge>); the `!= 0` guard drops
+    #    never-run suites (lastRunAt is nilIsZero, so 0 means "never ran", a
+    #    different condition than "stopped running"). 48h window: evals run far less
+    #    frequently than the 1h budget tick, so a >2-day gap unambiguously means
+    #    they stopped rather than a skipped cycle.
+    #    derived_from: dashboards/base/platform/agent-finance.yaml line 107
+    #      (max(time() - kube_customresource_status_field{...field="lastReconciled"}))
+    #      pattern + portal.yaml line 141 (max(time() - ...) as an ALERT expr),
+    #      retargeted to EvalSuite field="lastRunAt"
+    #      (addons/observability/kube-state-metrics/values.yaml lines 364-373).
+    - uid: agent-platform-eval-stale
+      title: AgentEvalStale
+      condition: B
+      for: 1h
+      noDataState: OK
+      execErrState: Error
+      isPaused: false
+      labels:
+        severity: ticket
+        service: eks-agent-platform
+        component: eval
+      annotations:
+        summary: no EvalSuite has run in over 48h — the eval harness has silently stopped
+        description: >
+          The oldest EvalSuite.status.lastRunAt is more than 48h in the past: evals
+          are no longer running and the quality signal has gone stale (a below-bar
+          regression would now go unnoticed). Check the eval CronJob/scheduler, the
+          harness pod, and KSM RBAC on governance.nanohype.dev EvalSuites. File a
+          ticket — this does not page.
+        runbook_url: https://github.com/nanohype/eks-gitops/blob/main/docs/runbooks/ai-platform-budget-killswitch.md
+      data:
+        - refId: A
+          datasourceUid: managed-prometheus
+          relativeTimeRange: {from: 600, to: 0}
+          model:
+            refId: A
+            datasource: {type: prometheus, uid: managed-prometheus}
+            editorMode: code
+            instant: true
+            range: false
+            intervalMs: 1000
+            maxDataPoints: 43200
+            expr: "max(time() - (kube_customresource_status_field{customresource_kind=\"EvalSuite\",field=\"lastRunAt\"} != 0))"
+        - refId: B
+          datasourceUid: __expr__
+          relativeTimeRange: {from: 600, to: 0}
+          model:
+            refId: B
+            type: threshold
+            datasource: {type: __expr__, uid: __expr__}
+            expression: A
+            conditions:
+              - type: query
+                evaluator: {type: gt, params: [172800]}
+                operator: {type: and}
+                query: {params: [A]}
+                reducer: {type: last, params: []}

@@ -13,6 +13,7 @@ ignore: |
   dashboards/base/alerting/agent-operator.yaml
   dashboards/base/alerting/fleet-vend.yaml
   dashboards/base/alerting/ksm-health.yaml
+  dashboards/base/alerting/agent-platform.yaml
 
 rules:
   line-length:
