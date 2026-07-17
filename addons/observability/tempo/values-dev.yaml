@@ -1,8 +1,0 @@
-# Tempo - Dev overrides
-# Dev: shorter retention, smaller storage
-
-tempo:
-  retention: 72h
-
-persistence:
-  size: 10Gi

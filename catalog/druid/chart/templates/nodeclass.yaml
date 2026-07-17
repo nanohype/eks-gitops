@@ -7,14 +7,16 @@ metadata:
   annotations:
     {{- include "common.annotations" . | indent 4 }}
 spec:
-  role: "{{ .Values.hostedId }}-eks-karpenter-node"
+  role: "{{ .Values.hostedId }}-platform-karpenter-node"
   amiFamily: "Bottlerocket"
   amiSelectorTerms:
     - alias: bottlerocket@latest
+  # Shared per-env subnets: select by cluster-ownership (coexists across co-located
+  # siblings) + role, not the single-valued karpenter.sh/discovery tag.
   subnetSelectorTerms:
     - tags:
         kubernetes.io/role/internal-elb: "1"
-        karpenter.sh/discovery: "{{ .Values.hostedId }}-eks"
+        "kubernetes.io/cluster/{{ .Values.hostedId }}-platform": "shared"
   # The NODE security group, not the EKS cluster SG — see
   # addons/operations/karpenter-resources/base/ec2nodeclass.yaml. Selecting the cluster
   # SG puts these nodes in a group with no path to the managed node group, and Cilium's
@@ -22,7 +24,7 @@ spec:
   # every pod on them silently loses DNS.
   securityGroupSelectorTerms:
     - tags:
-        "karpenter.sh/discovery": "{{ .Values.hostedId }}-eks"
+        "karpenter.sh/discovery": "{{ .Values.hostedId }}-platform"
   tags:
     "{{ .Values.domain }}:resource-type": dynamic-instance
     "{{ .Values.domain }}:category": analytics

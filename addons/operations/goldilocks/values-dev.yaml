@@ -1,5 +1,0 @@
-# Goldilocks - Dev overrides
-# Dev: single dashboard replica
-
-dashboard:
-  replicaCount: 1

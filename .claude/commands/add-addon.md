@@ -24,9 +24,9 @@ Create these 4 files:
 ```
 (Populate with sensible defaults if the user provides them, otherwise leave as a placeholder comment.)
 
-### `addons/<category>/<name>/values-dev.yaml`
+### `addons/<category>/<name>/values-development.yaml`
 ```yaml
-# <Addon name> - Dev overrides
+# <Addon name> - Development overrides
 # Uses base configuration — no environment overrides
 ```
 
@@ -72,7 +72,7 @@ resources:
 ### `addons/<category>/<name>/base/<resource>.yaml`
 Create the Kubernetes resource manifests.
 
-### `addons/<category>/<name>/overlays/<env>/kustomization.yaml` (for dev, staging, production)
+### `addons/<category>/<name>/overlays/<env>/kustomization.yaml` (for development, staging, production)
 ```yaml
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization

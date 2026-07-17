@@ -12,12 +12,12 @@ For each addon, report:
 Example output:
 ```
 addons/networking/cilium
-  values-dev.yaml          — Clean (1 override: operator.replicas)
+  values-development.yaml  — Clean (1 override: operator.replicas)
   values-staging.yaml      — Clean (no overrides)
   values-production.yaml   — Clean (no overrides)
 
 addons/security/kyverno
-  values-dev.yaml          — DUPLICATE: replicaCount: 1 (same as base)
+  values-development.yaml  — DUPLICATE: replicaCount: 1 (same as base)
   values-staging.yaml      — Clean (1 override: replicaCount)
   values-production.yaml   — Clean (2 overrides: replicaCount, resources)
 ```

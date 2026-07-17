@@ -7,10 +7,14 @@ spec:
     - alias: bottlerocket@latest
   # Role name is set per environment (exported from CDK)
   role: "${CLUSTER_NAME}-karpenter-node"
+  # Shared per-env subnets: select by the cluster-ownership tag (the cluster is in the
+  # KEY, so co-located siblings coexist) + role. NOT karpenter.sh/discovery — that's a
+  # single key with the cluster in the value and would collide across siblings on a
+  # shared subnet.
   subnetSelectorTerms:
     - tags:
-        karpenter.sh/discovery: "${CLUSTER_NAME}"
         kubernetes.io/role/internal-elb: "1"
+        "kubernetes.io/cluster/${CLUSTER_NAME}": "shared"
   # Select the NODE security group — the same one the managed node group uses — not the
   # EKS *cluster* security group.
   #
@@ -25,8 +29,10 @@ spec:
   # falco's init container sat in CrashLoopBackOff on every new node, and ArgoCD reported
   # 43/44 Healthy the whole time — a readiness probe is local and never leaves the node.
   #
-  # `karpenter.sh/discovery` is the tag landing-zone puts on the node SG
-  # (node_security_group_tags), and it is what the subnetSelectorTerms above already use.
+  # `karpenter.sh/discovery` is the tag landing-zone puts on the per-cluster node SG
+  # (node_security_group_tags). The subnetSelectorTerms above instead select on the
+  # cluster-ownership tag (shared-subnet-safe); this SG selector stays on discovery
+  # because the node SG is per-cluster, so there's no cross-cluster collision here.
   # Selecting it puts every node in ONE security group, which is what makes Cilium's
   # self-referencing rules (WireGuard 51871/udp, health 4240/tcp, icmp) actually cover
   # the whole fleet.

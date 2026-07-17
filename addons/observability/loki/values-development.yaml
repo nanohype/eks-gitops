@@ -1,0 +1,13 @@
+# Loki - Development overrides
+# Development: single replica, shorter retention, smaller storage
+
+loki:
+  commonConfig:
+    replication_factor: 1
+  limits_config:
+    retention_period: 168h
+
+singleBinary:
+  replicas: 1
+  persistence:
+    size: 10Gi

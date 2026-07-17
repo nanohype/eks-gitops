@@ -1,0 +1,5 @@
+# Argo Rollouts - Development overrides
+# Single replica for cost
+
+controller:
+  replicas: 1

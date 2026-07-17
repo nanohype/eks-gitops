@@ -21,13 +21,13 @@ For each Helm addon (directories with `values.yaml` at the top level), verify th
 ### 5. Structural Completeness
 **Helm addons** — for each addon directory in `addons/*/*/` that contains a top-level `values.yaml`:
 - `values.yaml` exists
-- `values-dev.yaml` exists
+- `values-development.yaml` exists
 - `values-staging.yaml` exists
 - `values-production.yaml` exists
 
 **Kustomize addons** — for each addon directory in `addons/*/*/` that contains a `base/` directory:
 - `base/kustomization.yaml` exists
-- `overlays/dev/kustomization.yaml` exists
+- `overlays/development/kustomization.yaml` exists
 - `overlays/staging/kustomization.yaml` exists
 - `overlays/production/kustomization.yaml` exists
 
@@ -56,7 +56,7 @@ Flag any addon or policy with a sync wave outside its category's range.
 
 ### 8. Policy Enforcement Modes
 Verify Kyverno policy overlays use the correct enforcement modes:
-- dev: `validationFailureAction: Audit`
+- development: `validationFailureAction: Audit`
 - staging: `validationFailureAction: Enforce`
 - production: `validationFailureAction: Enforce`
 
@@ -68,7 +68,7 @@ Verify Kyverno policy overlays use the correct enforcement modes:
 [PASS] 1. YAML Lint
 [PASS] 2. Kustomize Build
 [FAIL] 3. Chart Version Consistency
-       - addons/security/kyverno: dev overlay has version 3.2.0, base has 3.3.0
+       - addons/security/kyverno: development overlay has version 3.2.0, base has 3.3.0
 [PASS] 4. Overlay Delta Compliance
 [PASS] 5. Structural Completeness
 [PASS] 6. ApplicationSet Integrity

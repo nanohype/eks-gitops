@@ -1,0 +1,12 @@
+# cert-manager - Development overrides
+
+replicaCount: 1
+
+podDisruptionBudget:
+  enabled: false
+
+webhook:
+  replicaCount: 1
+
+cainjector:
+  replicaCount: 1

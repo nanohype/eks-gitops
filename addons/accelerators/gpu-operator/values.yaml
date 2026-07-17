@@ -21,8 +21,8 @@ devicePlugin:
     - name: DEVICE_ID_STRATEGY
       value: uuid
   # Time-slicing for shared GPU workloads (eval runners, small inference).
-  # Per-env overrides in values-dev.yaml / values-staging.yaml / values-production.yaml
-  # tune the `replicas` count (8 in dev, 4 in staging, 1 in production).
+  # Per-env overrides in values-development.yaml / values-staging.yaml / values-production.yaml
+  # tune the `replicas` count (8 in development, 4 in staging, 1 in production).
   config:
     name: time-slicing-config
     default: any

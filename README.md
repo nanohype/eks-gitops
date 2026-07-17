@@ -10,7 +10,7 @@ GitOps configuration for EKS cluster addons, managed by ArgoCD. The EKS ArgoCD a
 - **ArgoCD multi-source Helm values** — base values with flat environment-specific deltas
 - **Matrix generators** — environment selection from cluster secret labels
 - **Sync wave ordering** — deterministic deployment order across addon categories
-- **Three environments** — dev, staging, production with appropriate sizing and policies
+- **Three environments** — development, staging, production with appropriate sizing and policies
 - **CI validation** — automated YAML lint and Kustomize build on every PR
 
 ## Companion Repository
@@ -104,7 +104,7 @@ eks-gitops/
 │   └── kyverno/{pod-security-standards,best-practices}/
 │
 ├── environments/                       # Cluster-config ConfigMaps
-│   ├── dev/
+│   ├── development/
 │   ├── staging/
 │   └── production/
 │
@@ -136,8 +136,8 @@ eks-gitops/
 
 ## Environment Differences
 
-| Setting | Dev | Staging | Production |
-|---------|-----|---------|------------|
+| Setting | Development | Staging | Production |
+|---------|-------------|---------|------------|
 | Replicas | 1 | 2-3 | 2-3 |
 | Kyverno Mode | Audit | Enforce | Enforce |
 | Velero | Disabled | Enabled | Enabled |
@@ -165,7 +165,7 @@ Infrastructure prerequisites (deployed by landing-zone):
 task                          # Show all available tasks
 task lint:yaml                # Lint all YAML files
 task kustomize:build          # Build all overlays (all environments)
-task kustomize:build:env      # Build overlays for ENVIRONMENT (default: dev)
+task kustomize:build:env      # Build overlays for ENVIRONMENT (default: development)
 task validate                 # Run all validations (lint + build)
 task render                   # Render manifests to rendered/ directory
 task clean                    # Remove rendered output

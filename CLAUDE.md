@@ -12,12 +12,12 @@ addons/                → Addon configurations
   <category>/<addon>/
     # Helm addons (majority):
     values.yaml            → Base Helm values (all environments)
-    values-dev.yaml        → Dev delta overrides
+    values-development.yaml → Development delta overrides
     values-staging.yaml    → Staging delta overrides
     values-production.yaml → Production delta overrides
     # Kustomize addons (storage-classes, priority-classes, karpenter-resources):
     base/                  → Kustomization + resource manifests
-    overlays/{dev,staging,production}/
+    overlays/{development,staging,production}/
                            → Environment-specific kustomization.yaml
 policies/              → Kyverno ClusterPolicy manifests (pure Kustomize, base/overlays)
 environments/          → Cluster-config ConfigMaps per environment (includes provider field)
@@ -68,7 +68,7 @@ See `docs/configuration/adding-addons.md` for full guide.
 ```bash
 task lint:yaml              # YAML lint all files
 task kustomize:build        # Build all overlays (all environments)
-task kustomize:build:env    # Build overlays for ENVIRONMENT (default: dev)
+task kustomize:build:env    # Build overlays for ENVIRONMENT (default: development)
 task validate               # Lint + build combined
 task render                 # Render manifests to rendered/ (incl. druid chart)
 task scan                   # kubeconform + trivy config gates over rendered/

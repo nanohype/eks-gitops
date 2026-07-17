@@ -1,6 +1,6 @@
 # Runbook — Render-Gate Failures on PRs
 
-**Severity**: low (nothing is deployed — CI blocked the merge, which is the gate doing its job). **Scope**: the `validate` job in `.github/workflows/ci.yml`, which renders every kustomize root (per environment: dev, staging, production, hub) plus the druid catalog chart with synthetic tenant values, then runs three gates over the *rendered* output.
+**Severity**: low (nothing is deployed — CI blocked the merge, which is the gate doing its job). **Scope**: the `validate` job in `.github/workflows/ci.yml`, which renders every kustomize root (per environment: development, staging, production, hub) plus the druid catalog chart with synthetic tenant values, then runs three gates over the *rendered* output.
 
 ## Symptoms
 
@@ -22,7 +22,7 @@ Then map the failing step to what it actually checks:
 
 **Zero-placeholder / render-assert** — an unfilled sentinel (placeholder token, zero account id, account-less ARN) either in source files or appearing only after templating. The fix is always filling the real value; these gates exist precisely so a placeholder never reaches a cluster.
 
-**Render failure** — `kustomize build --enable-helm` or `helm template` errored. Usual causes: overlay missing its `kustomization.yaml`, a `values-{env}.yaml` absent for one of the four environments, or (druid) a template change that breaks under the synthetic `--set` values in the workflow. Note the matrix renders *every* environment — a change that renders fine in dev can still fail the hub leg.
+**Render failure** — `kustomize build --enable-helm` or `helm template` errored. Usual causes: overlay missing its `kustomization.yaml`, a `values-{env}.yaml` absent for one of the four environments, or (druid) a template change that breaks under the synthetic `--set` values in the workflow. Note the matrix renders *every* environment — a change that renders fine in development can still fail the hub leg.
 
 **Schema gate (kubeconform)** — strict mode, native kinds from the default kubernetes-json-schema location, CRD kinds from the datreeio CRDs-catalog, deliberately **no** `-ignore-missing-schemas`. Two failure shapes:
 
