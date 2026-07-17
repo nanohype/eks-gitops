@@ -112,11 +112,13 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
   AWS account ID never lands in git (addons-agent-operator.yaml:67).
   `no-placeholders.sh` blocks the JVM `changeit` default and `FILL_ME`-class
   sentinels from shipping as config.
-- **Residual** — this is an *architecture*, not an *enforced scan*: there is **no
-  dedicated secret-scanner** (gitleaks/trufflehog) in CI. Nothing mechanically
-  stops a future commit from pasting a raw credential into a values file;
-  `no-placeholders.sh` only catches known sentinel strings. A fork handling real
-  secrets should add push-protection / a secret-scanning gate.
+- **Residual** — the architecture is backstopped by an enforced scan: a
+  **gitleaks** job scans the working tree on every PR and push (`ci.yml`
+  `secrets` job), failing the build on a committed credential — so a raw secret
+  pasted into a values file no longer merges. gitleaks is pattern- and
+  entropy-based, so a novel secret format it has no rule for can still slip; a
+  fork handling real secrets should pair it with GitHub push-protection and
+  narrow its allowlist to the repo's known example values.
 
 ## 6. Agent platform governance  (`addons/ai-platform/`, `dashboards/base/alerting/agent-platform.yaml`)
 

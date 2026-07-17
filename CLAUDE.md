@@ -69,7 +69,10 @@ See `docs/configuration/adding-addons.md` for full guide.
 task lint:yaml              # YAML lint all files
 task kustomize:build        # Build all overlays (all environments)
 task kustomize:build:env    # Build overlays for ENVIRONMENT (default: development)
-task validate               # Lint + build combined
+task validate               # Lint + build + helm-render + appset-schema + sync-wave gates
+task validate:helm-render   # Helm-template every addon against its appset-pinned chart + per-env values
+task validate:appset-schema # kubeconform over applicationsets/
+task validate:sync-waves    # Assert the documented sync-wave category ordering
 task render                 # Render manifests to rendered/ (incl. druid chart)
 task scan                   # kubeconform + trivy config gates over rendered/
 ```
@@ -84,7 +87,9 @@ task scan                   # kubeconform + trivy config gates over rendered/
 ## CI
 
 - PR and push to main trigger `.github/workflows/ci.yml` (lint → validate per environment → PR summary)
-- The validate job renders every kustomize root plus the druid catalog chart, then gates the rendered output: render-assert (no unfilled sentinels), kubeconform strict (native schemas + datreeio CRDs-catalog, no ignore-missing-schemas), and `trivy config` (misconfiguration scan, MEDIUM+ hard-fails; scoped justified exceptions live in `.trivyignore.yaml`)
+- The validate job renders every kustomize root plus the druid catalog chart, then gates the rendered output: render-assert (no unfilled sentinels), kubeconform strict (native schemas + datreeio CRDs-catalog, no ignore-missing-schemas, via the shared `scripts/kubeconform-scan.sh`), and `trivy config` (misconfiguration scan, MEDIUM+ hard-fails; scoped justified exceptions live in `.trivyignore.yaml`)
+- Standalone jobs on every PR: `helm-render` (templates every addon against its appset-pinned chart with base + each env's values — an unknown key fails here, not fleet-wide at sync), `appsets` (ApplicationSet schema + documented sync-wave ordering), `secrets` (gitleaks over the working tree), plus the dashboard, fork-safety, and Kyverno policy gates
+- Chart pins in `applicationsets/` are watched by Renovate (`renovate.json`); `.github/dependabot.yml` owns the github-actions bumps
 - Manual diff rendering available via `.github/workflows/diff.yml`
 
 ## Claude Code Tooling
