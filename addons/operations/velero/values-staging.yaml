@@ -1,10 +1,4 @@
 # Velero - Staging overrides
-# Staging: staging backup bucket
-
-configuration:
-  backupStorageLocation:
-    - name: default
-      provider: aws
-      bucket: aws-eks-staging-backups
-      config:
-        region: us-west-2
+# The backup bucket and region are injected by the addons-velero ApplicationSet
+# from the cluster Secret (annotation `velero/backup-bucket` + `region` label),
+# so staging carries no storage-location delta of its own.

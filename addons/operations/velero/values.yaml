@@ -24,19 +24,10 @@ initContainers:
       - mountPath: /target
         name: plugins
 
-# Configuration
-configuration:
-  backupStorageLocation:
-    - name: default
-      provider: aws
-      bucket: ""  # Set per environment in values-{env}.yaml
-      config:
-        region: us-west-2
-  volumeSnapshotLocation:
-    - name: default
-      provider: aws
-      config:
-        region: us-west-2
+# The backup storage + volume snapshot locations are injected per cluster by the
+# addons-velero ApplicationSet: the bucket from the `velero/backup-bucket` cluster
+# Secret annotation, the region from the `region` label. They are not set here
+# because the bucket is account-specific and must never be committed.
 
 # CSI snapshots
 features: "EnableCSI"

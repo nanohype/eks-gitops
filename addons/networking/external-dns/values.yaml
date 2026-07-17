@@ -1,7 +1,20 @@
 # External DNS
+#
+# Ownership model: external-dns tracks the records it owns through a TXT registry.
+# `txtOwnerId` (injected per cluster by the addons-external-dns ApplicationSet
+# from the `cluster_name` label) tags every managed record so a cluster never
+# deletes another cluster's records when they share a Route53 zone. `txtPrefix`
+# keeps that registry TXT record off the same name as a managed CNAME (a CNAME
+# and a TXT cannot coexist at one name). `domainFilters` (injected from the
+# `external-dns/domain-filter` annotation) confines each cluster to its own zone.
 
 provider:
   name: aws
+
+# Track ownership via a prefixed TXT registry — required for the per-cluster
+# txtOwnerId to be honored (the ApplicationSet supplies the owner id and zone).
+registry: txt
+txtPrefix: "extdns-"
 
 policy: sync
 

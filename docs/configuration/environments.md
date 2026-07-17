@@ -57,9 +57,16 @@ The `environment` label on the cluster secret is what ApplicationSets use to sel
 | Setting | Development | Staging | Production |
 |---------|-----|---------|------------|
 | Velero Enabled | No | Yes | Yes |
-| Backup Bucket | none | aws-eks-staging-backups | aws-eks-production-backups |
+| Backup Bucket | none | injected per cluster | injected per cluster |
 | Node Agent | No | Yes | Yes |
 | Daily Backups | Disabled | Enabled | Enabled |
+
+The backup bucket is not committed. landing-zone builds it per cluster as
+`${cluster_name}-${account_id}-${region}-velero`, and cluster-bootstrap publishes
+the finished name on the ArgoCD cluster Secret as the `velero/backup-bucket`
+annotation; the `addons-velero` ApplicationSet injects it (with the `region`
+label) as a Helm value. Development runs no Velero — the ApplicationSet selects
+`environment NotIn [hub, development]`.
 
 ### Security
 
