@@ -1,5 +1,4 @@
 # Karpenter - Production overrides
-
-settings:
-  clusterName: production-platform
-  interruptionQueue: Karpenter-production-platform
+# settings.clusterName + settings.interruptionQueue are injected per cluster by
+# the addons-karpenter ApplicationSet. Production matches the base otherwise, so
+# this file is intentionally empty (the delta is zero).

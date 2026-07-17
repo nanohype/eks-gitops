@@ -3,7 +3,7 @@
 # resource violates exactly one policy and stays compliant with the others, so
 # a failure points at a single rule.
 ---
-# Compliant Deployment: carries app.kubernetes.io/name.
+# Compliant Deployment: carries the full required label tier.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -12,6 +12,9 @@ metadata:
   labels:
     app.kubernetes.io/name: example
     app.kubernetes.io/managed-by: argocd
+    app.kubernetes.io/component: api
+    platform.nanohype.dev/environment: development
+    platform.nanohype.dev/team: platform-engineering
 spec:
   selector:
     matchLabels:
@@ -25,7 +28,7 @@ spec:
         - name: app
           image: registry.k8s.io/pause:3.10
 ---
-# Violates require-labels: no app.kubernetes.io/name.
+# Violates require-labels: no required labels at all.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -33,6 +36,32 @@ metadata:
   namespace: workloads
   labels:
     app: example
+spec:
+  selector:
+    matchLabels:
+      app: example
+  template:
+    metadata:
+      labels:
+        app: example
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+---
+# Violates require-labels via the EXTENDED tier only: it carries
+# app.kubernetes.io/name (the old single-label check would pass it) but is
+# missing platform.nanohype.dev/team, so it fails once the tier is enforced.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bad-deploy-missing-tier
+  namespace: workloads
+  labels:
+    app.kubernetes.io/name: example
+    app.kubernetes.io/managed-by: argocd
+    app.kubernetes.io/component: api
+    platform.nanohype.dev/environment: development
 spec:
   selector:
     matchLabels:

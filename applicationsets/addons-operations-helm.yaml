@@ -44,18 +44,9 @@ spec:
                   chartVersion: "0.36.0"
                   path: addons/operations/descheduler
                   syncWave: "43"
-                # karpenter is catalogued under operations but deploys at wave 5 —
-                # right after the CNI (networking, wave 1) and before security (10),
-                # observability, and tenant workloads, so the autoscaler is ready to
-                # provision nodes for everything that follows. Its peers in this
-                # ApplicationSet run at their nominal operations waves (40+).
-                - appName: karpenter
-                  namespace: kube-system
-                  chartRepo: oci://public.ecr.aws/karpenter/karpenter
-                  chart: karpenter
-                  chartVersion: "1.13.0"
-                  path: addons/operations/karpenter
-                  syncWave: "5"
+                # karpenter deploys at wave 5 (before this appset's operations
+                # band) and needs per-cluster Helm parameters, so it lives in its
+                # own addons-karpenter ApplicationSet rather than this shared one.
                 - appName: keda
                   namespace: keda
                   chartRepo: https://kedacore.github.io/charts
@@ -82,11 +73,11 @@ spec:
           targetRevision: '{{ .chartVersion }}'
           helm:
             releaseName: '{{ .appName }}'
-            parameters:
-              - name: clusterName
-                value: '{{ index .metadata.labels "cluster_name" }}'
-              - name: vpcId
-                value: '{{ index .metadata.labels "vpc_id" }}'
+            # No clusterName/vpcId parameters: vpa, goldilocks, descheduler and
+            # keda read neither, and passing unknown --set values risks failing a
+            # chart whose schema rejects them. Charts that need cluster identity
+            # (aws-load-balancer-controller) carry the parameters in their own
+            # ApplicationSet.
             valueFiles:
               - $values/{{ .path }}/values.yaml
               - $values/{{ .path }}/values-{{ index .metadata.labels "environment" }}.yaml

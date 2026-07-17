@@ -71,11 +71,9 @@ spec:
           targetRevision: '{{ .chartVersion }}'
           helm:
             releaseName: '{{ .appName }}'
-            parameters:
-              - name: clusterName
-                value: '{{ index .metadata.labels "cluster_name" }}'
-              - name: vpcId
-                value: '{{ index .metadata.labels "vpc_id" }}'
+            # No clusterName/vpcId parameters: kube-state-metrics, loki, tempo,
+            # alloy and grafana-operator read neither, and passing unknown --set
+            # values risks failing a chart whose schema rejects them.
             valueFiles:
               - $values/{{ .path }}/values.yaml
               - $values/{{ .path }}/values-{{ index .metadata.labels "environment" }}.yaml

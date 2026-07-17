@@ -5,7 +5,13 @@ metadata:
 spec:
   amiSelectorTerms:
     - alias: bottlerocket@latest
-  # Role name is set per environment (exported from CDK)
+  # The node IAM role, subnet selector, and security-group selector are all keyed
+  # to the cluster name. Each overlay carries its environment's primary-cluster
+  # value as the render-time default; the addons-operations-kustomize
+  # ApplicationSet then patches them per cluster from the cluster Secret's
+  # `cluster_name` label, so two co-located sibling clusters in one environment
+  # each get their own role and discovery scope instead of colliding on the
+  # first one's. The base value below is a template default, always overridden.
   role: "${CLUSTER_NAME}-karpenter-node"
   # Shared per-env subnets: select by the cluster-ownership tag (the cluster is in the
   # KEY, so co-located siblings coexist) + role. NOT karpenter.sh/discovery — that's a
@@ -55,6 +61,16 @@ spec:
     httpProtocolIPv6: disabled
     httpPutResponseHopLimit: 2
     httpTokens: required
+  # The org resource-tagging standard's required AWS tier, rendered as PascalCase
+  # keys, propagated onto every EC2 instance Karpenter launches. Environment is
+  # per-env and set in the overlay; the rest are constant across the fleet.
   tags:
-    managed-by: karpenter
-    environment: "${ENVIRONMENT}"
+    ManagedBy: karpenter
+    Project: landing-zone
+    Repository: nanohype/eks-gitops
+    CostCenter: platform-engineering
+    BusinessUnit: engineering
+    DataClassification: internal
+    Compliance: none
+    Component: karpenter-node
+    Team: platform-engineering

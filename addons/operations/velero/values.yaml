@@ -49,13 +49,14 @@ tolerations:
   - key: CriticalAddonsOnly
     operator: Exists
 
-# Override kubectl image for helm hooks. Bitnami migrated public images to
-# `bitnamilegacy/`; pin to a real existing tag (latest isn't published on
-# the legacy repo).
+# Override the kubectl image the chart's backup/restore helm hooks run. The
+# chart default is a Bitnami image, whose free public catalog Broadcom archived;
+# pin the maintained upstream image the Kubernetes project publishes, matched to
+# the cluster's minor version.
 kubectl:
   image:
-    repository: docker.io/bitnamilegacy/kubectl
-    tag: 1.33.4-debian-12-r0
+    repository: registry.k8s.io/kubectl
+    tag: v1.33.4
 
 # Default backup schedules
 schedules:

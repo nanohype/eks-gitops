@@ -1,5 +1,4 @@
 # Karpenter - Staging overrides
-
-settings:
-  clusterName: staging-platform
-  interruptionQueue: Karpenter-staging-platform
+# settings.clusterName + settings.interruptionQueue are injected per cluster by
+# the addons-karpenter ApplicationSet. Staging matches the base otherwise, so
+# this file is intentionally empty (the delta is zero).

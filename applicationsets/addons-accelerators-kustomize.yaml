@@ -15,7 +15,11 @@ spec:
               selector:
                 matchLabels:
                   argocd.argoproj.io/secret-type: cluster
-                  eks-agent-platform/enabled: "true"
+                  # Gate on the dedicated accelerators label, the same one the GPU
+                  # addons use — a Neuron device plugin belongs on accelerator
+                  # shapes, not on every agent-platform cluster. cluster-bootstrap
+                  # sets it only when enable_accelerators is true.
+                  eks-agent-platform/accelerators: "true"
           - list:
               elements:
                 # AWS Neuron (Inferentia/Trainium) device plugin — pure YAML,

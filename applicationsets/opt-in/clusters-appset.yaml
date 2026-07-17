@@ -57,6 +57,13 @@ spec:
   template:
     metadata:
       name: 'cluster-{{ .path.basename }}-{{ .metadata.name }}'
+      # A git-files generator carries no cluster Secret labels, so the standard
+      # block omits the per-cluster environment label the addon appsets stamp.
+      labels:
+        app.kubernetes.io/managed-by: argocd
+        app.kubernetes.io/component: cluster
+        platform.nanohype.dev/repository: nanohype/eks-gitops
+        platform.nanohype.dev/team: platform-engineering
       annotations:
         argocd.argoproj.io/sync-wave: "100"
     spec:

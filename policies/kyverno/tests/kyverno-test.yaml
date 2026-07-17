@@ -15,16 +15,24 @@ policies:
 resources:
   - resources.yaml
 results:
-  # require-labels
+  # require-labels — the full required tier (name + managed-by + component +
+  # environment + team). good-deploy carries all five; bad-deploy carries none;
+  # bad-deploy-missing-tier carries name but omits team, so it proves the tier is
+  # enforced, not just the legacy app.kubernetes.io/name check.
   - policy: require-labels
-    rule: require-app-label
+    rule: require-standard-labels
     kind: Deployment
     resources: [good-deploy]
     result: pass
   - policy: require-labels
-    rule: require-app-label
+    rule: require-standard-labels
     kind: Deployment
     resources: [bad-deploy]
+    result: fail
+  - policy: require-labels
+    rule: require-standard-labels
+    kind: Deployment
+    resources: [bad-deploy-missing-tier]
     result: fail
 
   # require-probes

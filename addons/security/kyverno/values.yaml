@@ -66,18 +66,18 @@ features:
 webhooksCleanup:
   enabled: true
 
-# Override kubectl image for helm hooks. Bitnami migrated public images to
-# `bitnamilegacy/` (the `bitnami/kubectl` repo on Docker Hub is no longer
-# published). Pin to a real, existing tag — `latest` on the legacy repo
-# isn't reliably maintained either.
+# Override the kubectl image the report-cleanup jobs run. The chart default is a
+# Bitnami image, whose free public catalog Broadcom archived; pin the maintained
+# upstream image the Kubernetes project publishes, matched to the cluster's minor
+# version.
 cleanupJobs:
   admissionReports:
     image:
-      registry: docker.io
-      repository: bitnamilegacy/kubectl
-      tag: 1.33.4-debian-12-r0
+      registry: registry.k8s.io
+      repository: kubectl
+      tag: v1.33.4
   clusterAdmissionReports:
     image:
-      registry: docker.io
-      repository: bitnamilegacy/kubectl
-      tag: 1.33.4-debian-12-r0
+      registry: registry.k8s.io
+      repository: kubectl
+      tag: v1.33.4

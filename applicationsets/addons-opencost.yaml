@@ -11,8 +11,16 @@ spec:
   # that would otherwise leak to the other observability charts. The AMP
   # workspace id + region flow from the cluster Secret annotations/labels that
   # cluster-bootstrap stamps from managed-monitoring; the opencost IRSA role
-  # grants aps:QueryMetrics. Targets clusters that have managed-monitoring
-  # applied (the amp-workspace-id annotation is required to render).
+  # grants aps:QueryMetrics.
+  #
+  # Gated on the dedicated `monitoring/managed` label, not the generic
+  # `eks-agent-platform/enabled`: opencost is a managed-monitoring concern (it
+  # queries AMP and requires the `monitoring/amp-workspace-id` annotation to
+  # render), not an agent-platform one. An agent-platform cluster without managed
+  # monitoring lacks that annotation, so gating on `enabled` would generate an
+  # Application that can never render. cluster-bootstrap sets `monitoring/managed`
+  # only when enable_managed_monitoring is true — the same condition that stamps
+  # the AMP annotations opencost reads.
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
   generators:
@@ -20,7 +28,7 @@ spec:
         selector:
           matchLabels:
             argocd.argoproj.io/secret-type: cluster
-            eks-agent-platform/enabled: "true"
+            monitoring/managed: "true"
   template:
     metadata:
       name: opencost

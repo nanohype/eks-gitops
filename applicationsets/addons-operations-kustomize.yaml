@@ -44,6 +44,32 @@ spec:
         repoURL: '{{ index .metadata.annotations "gitops/repo-url" }}'
         targetRevision: main
         path: '{{ .path }}/overlays/{{ index .metadata.labels "environment" }}'
+        # The overlay renders this environment's primary-cluster identity; patch
+        # the EC2NodeClass per cluster from the cluster_name label so co-located
+        # sibling clusters in one environment each provision nodes with their own
+        # role and discovery scope instead of colliding on the overlay default —
+        # the same per-cluster patch-from-label seam secret-stores uses for its
+        # region.
+        kustomize:
+          patches:
+            - target:
+                kind: EC2NodeClass
+                name: default
+              patch: |-
+                - op: replace
+                  path: /spec/role
+                  value: '{{ index .metadata.labels "cluster_name" }}-karpenter-node'
+                - op: replace
+                  path: /spec/subnetSelectorTerms
+                  value:
+                    - tags:
+                        kubernetes.io/role/internal-elb: "1"
+                        kubernetes.io/cluster/{{ index .metadata.labels "cluster_name" }}: shared
+                - op: replace
+                  path: /spec/securityGroupSelectorTerms
+                  value:
+                    - tags:
+                        karpenter.sh/discovery: '{{ index .metadata.labels "cluster_name" }}'
       destination:
         server: https://kubernetes.default.svc
         namespace: '{{ .namespace }}'

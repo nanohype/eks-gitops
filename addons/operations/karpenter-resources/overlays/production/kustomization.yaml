@@ -23,6 +23,10 @@ patches:
               schedule: "0 9 * * 1-5"
               duration: 8h
 
+  # Role, subnet, and SG selectors carry this environment's primary-cluster name
+  # as the render-time default; the addons-operations-kustomize ApplicationSet
+  # patches them per cluster from the cluster_name label at sync (see
+  # base/ec2nodeclass.yaml). Only the Environment tag is genuinely per-env.
   - patch: |-
       apiVersion: karpenter.k8s.aws/v1
       kind: EC2NodeClass
@@ -44,8 +48,7 @@ patches:
           - tags:
               karpenter.sh/discovery: production-platform
         tags:
-          environment: production
-          managed-by: karpenter
+          Environment: production
     target:
       kind: EC2NodeClass
       name: default
