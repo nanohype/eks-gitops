@@ -1,0 +1,14 @@
+# Velero - Development overrides
+# Development: backups disabled, no node agent, no backup locations
+
+configuration:
+  backupStorageLocation: []
+  volumeSnapshotLocation: []
+
+deployNodeAgent: false
+
+schedules:
+  daily:
+    disabled: true
+  weekly:
+    disabled: true

@@ -73,7 +73,7 @@ resources:
   - <policy-name>.yaml
 ```
 
-**`policies/kyverno/<group>/overlays/dev/kustomization.yaml`**:
+**`policies/kyverno/<group>/overlays/development/kustomization.yaml`**:
 ```yaml
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -81,7 +81,7 @@ kind: Kustomization
 resources:
   - ../../base
 
-# Dev: Audit mode (warn but don't block)
+# Development: Audit mode (warn but don't block)
 patches:
   - patch: |-
       - op: replace

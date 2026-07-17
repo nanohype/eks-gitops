@@ -38,9 +38,9 @@ tolerations:
 
 For each environment, create a delta-only values file. Only include values that differ from base:
 
-**`values-dev.yaml`:**
+**`values-development.yaml`:**
 ```yaml
-# <Addon name> - Dev overrides
+# <Addon name> - Development overrides
 # Uses base configuration — no environment overrides
 ```
 
@@ -75,7 +75,7 @@ For addons that deploy raw Kubernetes resources without Helm.
 
 ```bash
 mkdir -p addons/<category>/<addon-name>/base
-mkdir -p addons/<category>/<addon-name>/overlays/{dev,staging,production}
+mkdir -p addons/<category>/<addon-name>/overlays/{development,staging,production}
 ```
 
 ### 2. Create Base Resources
@@ -130,7 +130,7 @@ task lint:yaml
 task kustomize:build
 
 # Render to inspect output
-task render ENVIRONMENT=dev
+task render ENVIRONMENT=development
 ```
 
 ## Commit and PR

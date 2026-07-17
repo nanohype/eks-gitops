@@ -15,7 +15,7 @@ metadata:
       image — hand-pushed or tampered — fails verification. Images outside
       ghcr.io/nanohype/* are not matched and pass unaffected.
 spec:
-  # Base is Audit: dev keeps it (violations land in PolicyReports without
+  # Base is Audit: development keeps it (violations land in PolicyReports without
   # blocking iteration); the staging and production overlays patch this to
   # Enforce so unsigned images are rejected at admission (see overlays/).
   validationFailureAction: Audit

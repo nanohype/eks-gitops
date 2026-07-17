@@ -1,9 +1,0 @@
-# Karpenter - Dev overrides
-
-settings:
-  clusterName: dev-eks
-  interruptionQueue: Karpenter-dev-eks
-
-replicas: 1
-
-topologySpreadConstraints: []

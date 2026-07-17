@@ -5,13 +5,14 @@ Naming
 */}}
 
 {{- define "druid.name" -}}
-{{ .Values.hostedId }}-{{ .Release.Name }}
+{{- $id := required "druid: .Values.hostedId is required — it prefixes every resource name" .Values.hostedId -}}
+{{- printf "%s-%s" $id .Release.Name | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
 {{- define "druid.component.name" -}}
 {{- $component := index . 0 -}}
 {{- $ctx := index . 1 -}}
-{{ include "druid.name" $ctx }}-druid-{{ $component }}
+{{- printf "%s-druid-%s" (include "druid.name" $ctx) $component | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
 {{/*

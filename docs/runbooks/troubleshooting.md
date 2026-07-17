@@ -4,7 +4,7 @@
 
 ```bash
 # Build Kustomize overlays for a specific environment
-task kustomize:build:env ENVIRONMENT=dev
+task kustomize:build:env ENVIRONMENT=development
 ```
 
 **Common issues:**
@@ -73,7 +73,7 @@ task kustomize:build:env ENVIRONMENT=dev
    kubectl get clusterpolicyreport
    ```
 
-3. In dev, policies are in Audit mode — violations generate reports but don't block. In staging/production, policies Enforce — violations are rejected.
+3. In development, policies are in Audit mode — violations generate reports but don't block. In staging/production, policies Enforce — violations are rejected.
 
 ## Velero Backup Issues
 
@@ -88,7 +88,7 @@ task kustomize:build:env ENVIRONMENT=dev
    velero backup-location get
    ```
 
-3. In dev, backups are disabled — no backup storage location is configured. Ensure you're checking the correct environment.
+3. In development, backups are disabled — no backup storage location is configured. Ensure you're checking the correct environment.
 
 ## Falco Issues
 

@@ -59,10 +59,10 @@ operator:
 
 ```bash
 # Render all addons for an environment
-task render ENVIRONMENT=dev
+task render ENVIRONMENT=development
 
 # Compare rendered output between environments
-diff <(task render ENVIRONMENT=dev 2>/dev/null) <(task render ENVIRONMENT=staging 2>/dev/null)
+diff <(task render ENVIRONMENT=development 2>/dev/null) <(task render ENVIRONMENT=staging 2>/dev/null)
 
 # Lint all YAML
 task lint:yaml

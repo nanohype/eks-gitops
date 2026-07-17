@@ -19,7 +19,7 @@ Plus:
 
 - **`applicationsets/`** — ApplicationSet generators that fan addons + tenant workloads out across clusters by label
 - **`catalog/`** — platform-specific tenant workloads (currently Druid)
-- **`environments/`** — per-cluster overlays (dev / staging / production)
+- **`environments/`** — per-cluster overlays (development / staging / production)
 - **`dashboards/`** — `GrafanaDashboard` CRs that grafana-operator reconciles into the external Amazon Managed Grafana workspace
 - **`policies/`** — Kyverno policies (best-practices, pod-security-standards) enforced cluster-wide
 
@@ -28,7 +28,7 @@ Plus:
 Every addon:
 
 - Lives at `addons/<category>/<name>/`
-- Has a base `values.yaml` plus per-env deltas: `values-dev.yaml`, `values-staging.yaml`, `values-production.yaml`
+- Has a base `values.yaml` plus per-env deltas: `values-development.yaml`, `values-staging.yaml`, `values-production.yaml`
 - Is referenced by an ApplicationSet in `applicationsets/addons-<category>.yaml` with a sync wave
 - Sync waves run in order — bootstrap before security before observability before tenant workloads
 
@@ -40,7 +40,7 @@ Every tenant workload (a protohype app, an AgentFleet, etc.):
 
 ## Add a new addon
 
-1. Create `addons/<category>/<name>/` with `values.yaml` + per-env deltas (`values-dev.yaml` / `values-staging.yaml` / `values-production.yaml`).
+1. Create `addons/<category>/<name>/` with `values.yaml` + per-env deltas (`values-development.yaml` / `values-staging.yaml` / `values-production.yaml`).
 2. Reference the upstream chart by name + version in the values structure (varies per category — see existing addons for the shape).
 3. Add an entry to `applicationsets/addons-<category>.yaml` with a sync wave that respects ordering (bootstrap < networking < security < observability < operations < ai-platform < argo-platform < apps).
 4. Run `task validate` — checks helm-template renders cleanly across every env, ApplicationSet schema is valid, sync waves don't conflict.
@@ -62,8 +62,8 @@ The workload's source repo owns the ApplicationSet entry — typically `<app>/gi
 ## Conventions
 
 - Helm values: 2-space indent. ApplicationSet manifests: 2-space indent.
-- Every addon has all three env deltas (`values-dev.yaml`, `values-staging.yaml`, `values-production.yaml`) — empty is fine, but the file must exist.
-- Cluster labels drive ApplicationSet matrix generators. The `environment` label (`dev|staging|production`) selects the per-env values; opt-in addon groups select on additional labels — `eks-agent-platform/enabled: "true"` (set by cluster-bootstrap) gates the operator + accelerators (gpu/neuron) onto agent-platform clusters.
+- Every addon has all three env deltas (`values-development.yaml`, `values-staging.yaml`, `values-production.yaml`) — empty is fine, but the file must exist.
+- Cluster labels drive ApplicationSet matrix generators. The `environment` label (`development|staging|production`) selects the per-env values; opt-in addon groups select on additional labels — `eks-agent-platform/enabled: "true"` (set by cluster-bootstrap) gates the operator + accelerators (gpu/neuron) onto agent-platform clusters.
 - Sync waves matter — addons that everything depends on (cert-manager, external-secrets) run first (wave 0–10); apps run last (wave 100+).
 - Kyverno policies in `policies/` enforce cluster-wide invariants (no privileged pods, image registry allowlist, required labels).
 

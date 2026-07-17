@@ -1,0 +1,9 @@
+# Karpenter - Development overrides
+
+settings:
+  clusterName: development-platform
+  interruptionQueue: Karpenter-development-platform
+
+replicas: 1
+
+topologySpreadConstraints: []

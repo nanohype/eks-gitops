@@ -1,0 +1,6 @@
+# AWS LB Controller - Development overrides
+
+replicaCount: 1
+
+podDisruptionBudget:
+  minAvailable: 0

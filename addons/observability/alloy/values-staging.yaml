@@ -10,4 +10,4 @@ alloy:
     - name: AWS_REGION
       value: "us-west-2"
     - name: CLUSTER_NAME
-      value: "staging-eks"
+      value: "staging-platform"

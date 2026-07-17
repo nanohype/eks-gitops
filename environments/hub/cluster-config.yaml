@@ -9,7 +9,7 @@ data:
   # Cluster identification
   environment: "hub"
   provider: "aws"
-  cluster_name: "hub-eks"
+  cluster_name: "hub-fleet"
 
   # AWS configuration
   region: "us-west-2"

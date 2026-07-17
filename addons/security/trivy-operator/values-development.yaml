@@ -1,0 +1,8 @@
+# Trivy Operator - Development overrides
+# Development: CRITICAL only, lower concurrency
+
+operator:
+  scanJobsConcurrentLimit: 3
+
+trivy:
+  severity: CRITICAL

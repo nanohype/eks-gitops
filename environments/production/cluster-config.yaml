@@ -9,7 +9,7 @@ data:
   # Cluster identification
   environment: "production"
   provider: "aws"
-  cluster_name: "production-eks"
+  cluster_name: "production-platform"
 
   # AWS configuration
   region: "us-west-2"

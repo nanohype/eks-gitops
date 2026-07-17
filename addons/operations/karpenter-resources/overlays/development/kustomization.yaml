@@ -1,0 +1,49 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+patches:
+  - patch: |-
+      apiVersion: karpenter.sh/v1
+      kind: NodePool
+      metadata:
+        name: default
+      spec:
+        limits:
+          cpu: 50
+          memory: 100Gi
+        disruption:
+          budgets:
+            - nodes: "1"
+    target:
+      kind: NodePool
+      name: default
+
+  - patch: |-
+      apiVersion: karpenter.k8s.aws/v1
+      kind: EC2NodeClass
+      metadata:
+        name: default
+      spec:
+        role: development-platform-karpenter-node
+        subnetSelectorTerms:
+          # Cluster-ownership tag (coexists across co-located siblings), not the
+          # single-valued karpenter.sh/discovery — see base/ec2nodeclass.yaml.
+          - tags:
+              kubernetes.io/role/internal-elb: "1"
+              "kubernetes.io/cluster/development-platform": "shared"
+        securityGroupSelectorTerms:
+          # The NODE security group (same one the managed node group uses), not the EKS
+          # cluster SG. See base/ec2nodeclass.yaml — selecting the cluster SG put
+          # Karpenter nodes in a separate group with no path to the node group, and every
+          # pod Karpenter scheduled lost DNS.
+          - tags:
+              karpenter.sh/discovery: development-platform
+        tags:
+          environment: development
+          managed-by: karpenter
+    target:
+      kind: EC2NodeClass
+      name: default

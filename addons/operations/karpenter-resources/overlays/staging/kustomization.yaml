@@ -21,18 +21,20 @@ patches:
       metadata:
         name: default
       spec:
-        role: staging-eks-karpenter-node
+        role: staging-platform-karpenter-node
         subnetSelectorTerms:
+          # Cluster-ownership tag (coexists across co-located siblings), not the
+          # single-valued karpenter.sh/discovery — see base/ec2nodeclass.yaml.
           - tags:
-              karpenter.sh/discovery: staging-eks
               kubernetes.io/role/internal-elb: "1"
+              "kubernetes.io/cluster/staging-platform": "shared"
         securityGroupSelectorTerms:
           # The NODE security group (same one the managed node group uses), not the EKS
           # cluster SG. See base/ec2nodeclass.yaml — selecting the cluster SG put
           # Karpenter nodes in a separate group with no path to the node group, and every
           # pod Karpenter scheduled lost DNS.
           - tags:
-              karpenter.sh/discovery: staging-eks
+              karpenter.sh/discovery: staging-platform
         tags:
           environment: staging
           managed-by: karpenter

@@ -61,6 +61,7 @@ spec:
             valuesObject:
               config:
                 environment: '{{ index .metadata.labels "environment" }}'
+                clusterName: '{{ index .metadata.labels "cluster_name" }}'
                 region: '{{ index .metadata.labels "region" }}'
               serviceAccount:
                 annotations:

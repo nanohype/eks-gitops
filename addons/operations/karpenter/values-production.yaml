@@ -1,5 +1,5 @@
 # Karpenter - Production overrides
 
 settings:
-  clusterName: production-eks
-  interruptionQueue: Karpenter-production-eks
+  clusterName: production-platform
+  interruptionQueue: Karpenter-production-platform

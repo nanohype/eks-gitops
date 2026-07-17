@@ -51,7 +51,7 @@ source:
   path: '{{ .path }}/overlays/{{ index .metadata.labels "environment" }}'
 ```
 
-This enables a single ApplicationSet definition to deploy across dev, staging, and production clusters.
+This enables a single ApplicationSet definition to deploy across development, staging, and production clusters.
 
 ## Sync Wave Ordering
 
@@ -87,7 +87,7 @@ The majority of addons use Helm charts managed via ArgoCD multi-source:
 ```
 addons/<category>/<addon>/
   values.yaml              → complete base configuration (shared across all environments)
-  values-dev.yaml          → dev-specific overrides ONLY (delta from base)
+  values-development.yaml  → development-specific overrides ONLY (delta from base)
   values-staging.yaml      → staging-specific overrides ONLY
   values-production.yaml   → production-specific overrides ONLY
 ```
@@ -110,6 +110,6 @@ addons/<category>/<addon>/
   base/
     kustomization.yaml     → defines resources
     <resource>.yaml        → Kubernetes manifests
-  overlays/{dev,staging,production}/
+  overlays/{development,staging,production}/
     kustomization.yaml     → references ../../base, may add patches
 ```

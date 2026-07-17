@@ -4,10 +4,10 @@
 
 | Environment | Purpose | Cluster Name | Kyverno Mode |
 |-------------|---------|--------------|--------------|
-| dev | Development and testing | dev-eks | Audit |
-| staging | Pre-production validation | staging-eks | Enforce |
-| production | Live workloads | production-eks | Enforce |
-| hub | The eks-fleet management/control plane (Crossplane + ArgoCD + portal). Runs the observability stack + bootstrap deps only — excluded from the workload catalog. | hub-eks | n/a |
+| development | Development and testing | development-platform | Audit |
+| staging | Pre-production validation | staging-platform | Enforce |
+| production | Live workloads | production-platform | Enforce |
+| hub | The eks-fleet management/control plane (Crossplane + ArgoCD + portal). Runs the observability stack + bootstrap deps only — excluded from the workload catalog. | hub-fleet | n/a |
 
 ## Cluster Config
 
@@ -20,11 +20,11 @@ metadata:
   name: cluster-config
   namespace: argocd
   labels:
-    environment: dev  # Used by ApplicationSet generators
+    environment: development  # Used by ApplicationSet generators
 data:
-  environment: "dev"
+  environment: "development"
   provider: "aws"
-  cluster_name: "dev-eks"
+  cluster_name: "development-platform"
   region: "us-west-2"
 ```
 
@@ -34,7 +34,7 @@ The `environment` label on the cluster secret is what ApplicationSets use to sel
 
 ### Replica Counts
 
-| Component | Dev | Staging | Production |
+| Component | Development | Staging | Production |
 |-----------|-----|---------|------------|
 | Cilium Operator | 1 | default (from base) | default (from base) |
 | Kyverno Admission | 1 | 3 | 3 |
@@ -45,7 +45,7 @@ The `environment` label on the cluster secret is what ApplicationSets use to sel
 
 ### Retention and Storage
 
-| Component | Dev | Staging | Production |
+| Component | Development | Staging | Production |
 |-----------|-----|---------|------------|
 | Loki Retention | 7 days | 14 days | 90 days |
 | Loki Storage | 10Gi | 50Gi | 100Gi |
@@ -54,7 +54,7 @@ The `environment` label on the cluster secret is what ApplicationSets use to sel
 
 ### Backup Configuration
 
-| Setting | Dev | Staging | Production |
+| Setting | Development | Staging | Production |
 |---------|-----|---------|------------|
 | Velero Enabled | No | Yes | Yes |
 | Backup Bucket | none | aws-eks-staging-backups | aws-eks-production-backups |
@@ -63,7 +63,7 @@ The `environment` label on the cluster secret is what ApplicationSets use to sel
 
 ### Security
 
-| Setting | Dev | Staging | Production |
+| Setting | Development | Staging | Production |
 |---------|-----|---------|------------|
 | Trivy Severity | CRITICAL | HIGH,CRITICAL | HIGH,CRITICAL |
 | Scan Concurrency | 3 | 5 | 5 |

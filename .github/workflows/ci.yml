@@ -136,7 +136,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        environment: [dev, staging, production, hub]
+        environment: [development, staging, production, hub]
     steps:
       - name: Checkout
         uses: actions/checkout@v7

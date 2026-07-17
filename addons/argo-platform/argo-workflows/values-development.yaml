@@ -1,0 +1,9 @@
+# Argo Workflows - Development overrides
+# Single replica, development artifact bucket
+
+server:
+  replicas: 1
+
+artifactRepository:
+  s3:
+    bucket: aws-eks-development-argo-artifacts

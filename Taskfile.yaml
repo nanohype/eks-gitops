@@ -1,7 +1,7 @@
 version: "3"
 
 vars:
-  ENVIRONMENT: '{{.ENVIRONMENT | default "dev"}}'
+  ENVIRONMENT: '{{.ENVIRONMENT | default "development"}}'
 
 tasks:
   default:
@@ -15,7 +15,7 @@ tasks:
       - |
         echo ""
         echo "Usage:"
-        echo "  task <target> [ENVIRONMENT=dev|staging|production|hub]"
+        echo "  task <target> [ENVIRONMENT=development|staging|production|hub]"
         echo ""
         task --list
 
@@ -45,7 +45,7 @@ tasks:
         echo "All manifests built successfully."
 
   kustomize:build:env:
-    desc: "Build overlays for ENVIRONMENT (default: dev)"
+    desc: "Build overlays for ENVIRONMENT (default: development)"
     cmds:
       - |
         echo "Building {{.ENVIRONMENT}} overlays..."
@@ -89,7 +89,7 @@ tasks:
   # === Rendering ===
 
   render:
-    desc: "Render overlays to rendered/ directory for ENVIRONMENT (default: dev)"
+    desc: "Render overlays to rendered/ directory for ENVIRONMENT (default: development)"
     cmds:
       - |
         mkdir -p rendered

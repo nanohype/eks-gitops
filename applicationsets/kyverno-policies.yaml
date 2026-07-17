@@ -54,7 +54,7 @@ spec:
         namespace: kyverno
       # Kyverno defaults five fields onto its own ClusterPolicies at admission. None
       # are in git, so the policy sat permanently OutOfSync while Healthy. The exact
-      # set was enumerated by diffing `kustomize build overlays/dev` against the live
+      # set was enumerated by diffing `kustomize build overlays/development` against the live
       # object — not guessed:
       #
       #   .spec.admission                                                = true
