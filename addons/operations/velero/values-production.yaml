@@ -1,10 +1,4 @@
 # Velero - Production overrides
-# Production: production backup bucket
-
-configuration:
-  backupStorageLocation:
-    - name: default
-      provider: aws
-      bucket: aws-eks-production-backups
-      config:
-        region: us-west-2
+# The backup bucket and region are injected by the addons-velero ApplicationSet
+# from the cluster Secret (annotation `velero/backup-bucket` + `region` label),
+# so production carries no storage-location delta of its own.

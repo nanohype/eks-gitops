@@ -37,13 +37,6 @@ spec:
                   chartVersion: "3.4.1"
                   path: addons/networking/aws-load-balancer-controller
                   syncWave: "1"
-                - appName: external-dns
-                  namespace: external-dns
-                  chartRepo: https://kubernetes-sigs.github.io/external-dns/
-                  chart: external-dns
-                  chartVersion: "1.21.1"
-                  path: addons/networking/external-dns
-                  syncWave: "1"
   template:
     metadata:
       name: '{{ .appName }}'

@@ -1,14 +1,5 @@
 # Velero - Development overrides
-# Development: backups disabled, no node agent, no backup locations
-
-configuration:
-  backupStorageLocation: []
-  volumeSnapshotLocation: []
-
-deployNodeAgent: false
-
-schedules:
-  daily:
-    disabled: true
-  weekly:
-    disabled: true
+# Velero is not deployed to development — the addons-velero ApplicationSet
+# selects `environment NotIn [hub, development]` because development has no
+# backup bucket. This file exists to satisfy the per-env delta convention and is
+# never loaded.

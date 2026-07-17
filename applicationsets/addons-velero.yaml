@@ -1,0 +1,95 @@
+# Velero is split out of addons-operations-helm because it needs a
+# velero-specific valuesObject (the backup bucket + region) that would otherwise
+# leak onto the other operations charts. The backup bucket is per cluster and
+# account-specific — landing-zone builds it as
+# `${cluster_name}-${account_id}-${region}-velero`, so it can never be committed
+# here. cluster-bootstrap publishes the finished bucket name as the cluster
+# Secret annotation `velero/backup-bucket` (the same mechanism the agent operator
+# reads `eks-agent-platform/eval-reports-bucket` through), and this ApplicationSet
+# injects it as a Helm value. The account ID never lands in this (public) repo.
+#
+# Scoped to backup-bearing clusters via `environment NotIn [hub, development]`:
+# the hub runs only observability + bootstrap deps, and development has no backup
+# bucket (see docs/configuration/environments.md — Velero is enabled in staging
+# and production only). Every targeted cluster carries the `velero/backup-bucket`
+# annotation and a `region` label, so both render.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: addons-velero
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "40"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            argocd.argoproj.io/secret-type: cluster
+          matchExpressions:
+            - key: environment
+              operator: NotIn
+              values:
+                - hub
+                - development
+  template:
+    metadata:
+      name: velero
+      labels:
+        app.kubernetes.io/managed-by: argocd
+        app.kubernetes.io/component: velero
+        platform.nanohype.dev/environment: '{{ index .metadata.labels "environment" }}'
+        platform.nanohype.dev/repository: nanohype/eks-gitops
+        platform.nanohype.dev/team: platform-engineering
+      annotations:
+        argocd.argoproj.io/sync-wave: "40"
+    spec:
+      project: platform
+      sources:
+        - repoURL: https://vmware-tanzu.github.io/helm-charts
+          chart: velero
+          targetRevision: 12.1.0
+          helm:
+            releaseName: velero
+            # Bucket from the per-cluster annotation, region from the per-cluster
+            # label. valuesObject owns the whole backup/snapshot location list
+            # (Helm replaces lists rather than merging them), so the static
+            # values files below carry everything else and none of the
+            # per-cluster storage config.
+            valuesObject:
+              configuration:
+                backupStorageLocation:
+                  - name: default
+                    provider: aws
+                    bucket: '{{ index .metadata.annotations "velero/backup-bucket" }}'
+                    config:
+                      region: '{{ index .metadata.labels "region" }}'
+                volumeSnapshotLocation:
+                  - name: default
+                    provider: aws
+                    config:
+                      region: '{{ index .metadata.labels "region" }}'
+            valueFiles:
+              - $values/addons/operations/velero/values.yaml
+              - $values/addons/operations/velero/values-{{ index .metadata.labels "environment" }}.yaml
+        - repoURL: '{{ index .metadata.annotations "gitops/repo-url" }}'
+          targetRevision: main
+          ref: values
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: velero
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m

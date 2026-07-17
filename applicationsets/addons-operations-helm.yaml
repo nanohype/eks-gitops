@@ -23,13 +23,6 @@ spec:
                       - hub
           - list:
               elements:
-                - appName: velero
-                  namespace: velero
-                  chartRepo: https://vmware-tanzu.github.io/helm-charts
-                  chart: velero
-                  chartVersion: 12.1.0
-                  path: addons/operations/velero
-                  syncWave: "40"
                 - appName: vpa
                   namespace: vpa
                   chartRepo: https://charts.fairwinds.com/stable
