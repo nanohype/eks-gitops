@@ -1,0 +1,35 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "description": "Chart-pin currency for the ApplicationSet catalog. Renovate watches every Helm chart version pinned in applicationsets/ and opens a PR when a newer release ships — the helm-render + schema CI gates then validate each bump before merge. Restricted to chart managers so it never overlaps the github-actions updates dependabot owns.",
+  "enabledManagers": ["argocd", "custom.regex"],
+  "argocd": {
+    "managerFilePatterns": ["/^applicationsets/[^/]+\\.ya?ml$/"]
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "HTTPS Helm chart pins in ApplicationSet matrix list elements (chartRepo/chart/chartVersion), which the argocd manager cannot resolve because they are templated onto the source.",
+      "managerFilePatterns": ["/^applicationsets/[^/]+\\.ya?ml$/"],
+      "matchStrings": [
+        "chartRepo:\\s*(?<registryUrl>https://[^\\s]+)\\s*\\n\\s*chart:\\s*(?<depName>[^\\s]+)\\s*\\n\\s*chartVersion:\\s*\"?(?<currentValue>[^\"\\s]+)\"?"
+      ],
+      "datasourceTemplate": "helm"
+    },
+    {
+      "customType": "regex",
+      "description": "OCI Helm chart pins in ApplicationSet matrix list elements. The registry path already carries the chart name for every pin except the NVIDIA DRA driver, which is auth-gated and updated out of band.",
+      "managerFilePatterns": ["/^applicationsets/[^/]+\\.ya?ml$/"],
+      "matchStrings": [
+        "chartRepo:\\s*oci://(?<packageName>[^\\s]+)\\s*\\n\\s*chart:[^\\n]*\\n\\s*chartVersion:\\s*\"?(?<currentValue>[^\"\\s]+)\"?"
+      ],
+      "datasourceTemplate": "docker"
+    }
+  ],
+  "packageRules": [
+    {
+      "matchDatasources": ["helm", "docker"],
+      "labels": ["dependencies", "charts"]
+    }
+  ]
+}

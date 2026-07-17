@@ -43,8 +43,8 @@ Every tenant workload (a protohype app, an AgentFleet, etc.):
 1. Create `addons/<category>/<name>/` with `values.yaml` + per-env deltas (`values-development.yaml` / `values-staging.yaml` / `values-production.yaml`).
 2. Reference the upstream chart by name + version in the values structure (varies per category — see existing addons for the shape).
 3. Add an entry to `applicationsets/addons-<category>.yaml` with a sync wave that respects ordering (bootstrap < networking < security < observability < operations < ai-platform < argo-platform < apps).
-4. Run `task validate` — checks helm-template renders cleanly across every env, ApplicationSet schema is valid, sync waves don't conflict.
-5. Open a PR. CI runs `task validate` + Kyverno policy checks.
+4. Run `task validate` — helm-templates every addon against its appset-pinned chart with base + each env's values (an unknown key fails here, not fleet-wide at sync), schema-validates the ApplicationSets, and checks the documented sync-wave ordering, on top of YAML lint, kustomize build, and the dashboard/fork-safety gates.
+5. Open a PR. CI runs the same gates plus Kyverno policy tests, a gitleaks secret scan, and a per-environment render → schema → misconfiguration scan.
 
 ## Add a Grafana dashboard
 

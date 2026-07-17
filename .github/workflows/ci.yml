@@ -129,6 +129,111 @@ jobs:
       - name: No hardcoded catalog repoURL in applied ApplicationSets
         run: ./scripts/check-hardcoded-org.py --blocking
 
+  # ── Helm-render gate ─────────────────────────────────────────────────
+  # Every addon is a base values.yaml plus per-env deltas, and nothing templates
+  # the chart until an ArgoCD sync. A key the chart does not accept — several
+  # upstream charts ship a values.schema.json that rejects unknown keys — renders
+  # clean through kustomize and kubeconform and only fails at sync, fleet-wide,
+  # after merge. This job templates every addon against its appset-pinned chart
+  # version with the committed base + each env's values, so a bad key, a
+  # malformed override, or a chart bump that drops a value fails the build
+  # instead of the fleet. Chart coordinates are DERIVED from the ApplicationSets —
+  # the single source of truth — by scripts/render-addons.py; charts are cached,
+  # keyed on the appset pins so a version bump refetches.
+  helm-render:
+    name: Helm-render addons
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Helm
+        uses: azure/setup-helm@v5
+
+      - name: Install PyYAML
+        run: pip install --quiet pyyaml
+
+      - name: Cache Helm charts
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/helm
+          key: helm-charts-${{ hashFiles('applicationsets/*.yaml') }}
+          restore-keys: |
+            helm-charts-
+
+      - name: Render every addon across every environment
+        run: ./scripts/render-addons.py
+
+  # ── ApplicationSet gate ──────────────────────────────────────────────
+  # The render→scan path gates rendered/ output; it never schema-checks the
+  # ApplicationSet generators themselves. This validates every ApplicationSet
+  # against its published schema and asserts the documented sync-wave category
+  # ordering (bootstrap < networking < security < observability < operations <
+  # ai-platform < argo-platform < apps) holds across them — so a malformed
+  # generator or a category deployed out of order fails at PR time.
+  appsets:
+    name: ApplicationSet schema + sync waves
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install PyYAML
+        run: pip install --quiet pyyaml
+
+      - name: Cache kubeconform + schemas
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.local/bin/kubeconform
+            ~/.cache/kubeconform
+          key: kubeconform-v0.8.0-${{ github.run_id }}
+          restore-keys: |
+            kubeconform-v0.8.0-
+
+      - name: Install kubeconform
+        run: |
+          if [ ! -x "$HOME/.local/bin/kubeconform" ]; then
+            mkdir -p "$HOME/.local/bin"
+            curl -fsSL https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz \
+              | tar -xz -C "$HOME/.local/bin" kubeconform
+          fi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: ApplicationSet schema gate
+        run: |
+          mkdir -p "$HOME/.cache/kubeconform"
+          KUBECONFORM_SKIP="" KUBECONFORM_CACHE="$HOME/.cache/kubeconform" \
+            ./scripts/kubeconform-scan.sh applicationsets/
+
+      - name: Sync-wave ordering gate
+        run: ./scripts/check-sync-waves.py
+
+  # ── Secret scan ──────────────────────────────────────────────────────
+  # gitleaks over the working tree. The catalog keeps secrets out by
+  # construction (External Secrets + Pod Identity, no static keys in values), but
+  # nothing mechanically stopped a future commit from pasting a raw credential
+  # into a values file — the residual the threat model named
+  # (docs/threat-model.md). Run as the pinned binary rather than the marketplace
+  # action, which is license-gated for organization accounts.
+  secrets:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install gitleaks
+        run: |
+          VERSION=8.30.1
+          curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /tmp gitleaks
+          sudo install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: Scan working tree
+        run: gitleaks dir . --redact -v
+
   validate:
     name: Validate (${{ matrix.environment }})
     runs-on: ubuntu-latest
@@ -194,41 +299,17 @@ jobs:
           exclude: 'mcp-tunnel'
 
       # ── Schema gate ────────────────────────────────────────────────────
-      # kubeconform in strict mode over everything just rendered. Native
-      # kinds resolve from the default kubernetes-json-schema location; CRD
-      # kinds resolve from the datreeio CRDs-catalog. There is deliberately
-      # no -ignore-missing-schemas: a kind neither source knows fails the
-      # build until it gets a schema or an explicit, justified -skip below.
-      #   -skip Grafana — the single external Grafana CR ships
-      #   spec.external.url empty by design (the dashboards ApplicationSet
-      #   injects the per-cluster Amazon Managed Grafana URL via its cluster
-      #   generator patch), and the catalog schema is stricter than the
-      #   upstream CRD (requires tenantNamespace, which upstream does not).
+      # kubeconform in strict mode over everything just rendered, via the shared
+      # scripts/kubeconform-scan.sh — the SINGLE source of truth for the strict
+      # invocation and its skip list, so `task scan` (local) and this job never
+      # disagree. Native kinds resolve from the default kubernetes-json-schema
+      # location; CRD kinds resolve from the datreeio CRDs-catalog; there is
+      # deliberately no -ignore-missing-schemas. The skip list (the external
+      # Grafana CR and the first-party platform CRDs, validated out-of-band
+      # against the real webhook) and its full rationale live in that script.
       #
-      #   -skip Platform,Tenant,ModelGateway,BudgetPolicy,AgentFleet,EvalSuite —
-      #   the platform's OWN CRDs (platform.nanohype.dev, agents.nanohype.dev,
-      #   governance.nanohype.dev). They are first-party: their schemas live in
-      #   eks-agent-platform and are published to no public catalog, so neither
-      #   schema-location can resolve them and kubeconform reports them as
-      #   Errors (schema not found) rather than Invalid.
-      #
-      #   These are NOT unchecked. They are validated against the real
-      #   validation webhook with `kubectl apply --dry-run=server`, which is a
-      #   strictly stronger gate than a JSON-schema match — it caught a real
-      #   error kubeconform could not have (identity.allowedModels and
-      #   identity.allowedModelFamilies are mutually exclusive). CI has no
-      #   cluster, so it cannot run that check; the skip records the gap rather
-      #   than pretending the schema resolved.
-      #
-      #   To remove this skip: publish the eks-agent-platform CRD schemas (e.g.
-      #   openapi2jsonschema over the CRD manifests) and add a -schema-location
-      #   for them. Deferred deliberately — a vendored copy of a first-party
-      #   schema drifts from the CRD that generates it, which is a worse failure
-      #   than a documented skip.
-      #
-      # The binary and downloaded schemas are cached; restore-keys lets each
-      # run reuse the newest cache while still persisting newly fetched
-      # schemas.
+      # The binary and downloaded schemas are cached; restore-keys lets each run
+      # reuse the newest cache while still persisting newly fetched schemas.
       - name: Cache kubeconform + schemas
         uses: actions/cache@v6
         with:
@@ -251,12 +332,7 @@ jobs:
       - name: Schema gate (kubeconform)
         run: |
           mkdir -p "$HOME/.cache/kubeconform"
-          kubeconform -strict -summary \
-            -cache "$HOME/.cache/kubeconform" \
-            -schema-location default \
-            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
-            -skip Grafana,Platform,Tenant,ModelGateway,BudgetPolicy,AgentFleet,EvalSuite \
-            rendered
+          KUBECONFORM_CACHE="$HOME/.cache/kubeconform" ./scripts/kubeconform-scan.sh rendered
 
       # ── Misconfiguration gate ──────────────────────────────────────────
       # trivy config over the rendered manifests — not the repo tree — so
@@ -281,7 +357,7 @@ jobs:
     name: PR Summary
     runs-on: ubuntu-latest
     if: always() && github.event_name == 'pull_request'
-    needs: [lint, dashboards, fork-safety, validate]
+    needs: [lint, dashboards, fork-safety, helm-render, appsets, secrets, validate]
     permissions:
       pull-requests: write
     steps:
@@ -295,6 +371,9 @@ jobs:
               'YAML Lint': '${{ needs.lint.result }}',
               'Dashboard gate (live grafana.com ids + AMG-saveable)': '${{ needs.dashboards.result }}',
               'Fork-safety gate (no hardcoded org, blocking)': '${{ needs.fork-safety.result }}',
+              'Helm-render (every addon × every env)': '${{ needs.helm-render.result }}',
+              'ApplicationSet schema + sync waves': '${{ needs.appsets.result }}',
+              'Secret scan (gitleaks)': '${{ needs.secrets.result }}',
               'Render + assert + schema + misconfig (all environments)': '${{ needs.validate.result }}',
             };
             const rows = Object.entries(results)

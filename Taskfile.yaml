@@ -65,21 +65,39 @@ tasks:
     cmds:
       - ./scripts/check-hardcoded-org.py
 
+  validate:helm-render:
+    desc: "Helm-render gate — template every addon against its appset-pinned chart + per-env values"
+    cmds:
+      - ./scripts/render-addons.py
+
+  validate:appset-schema:
+    desc: "ApplicationSet schema gate — kubeconform over applicationsets/"
+    cmds:
+      - KUBECONFORM_SKIP="" ./scripts/kubeconform-scan.sh applicationsets/
+
+  validate:sync-waves:
+    desc: "Sync-wave gate — documented category ordering holds across the appsets"
+    cmds:
+      - ./scripts/check-sync-waves.py
+
   validate:
-    desc: Run all validations (lint + build + dashboard/fork-safety gates)
-    deps: [lint:yaml, kustomize:build, validate:dashboards, validate:fork-safety]
+    desc: Run all validations (lint, build, helm-render, appset schema, sync waves, dashboard/fork-safety)
+    deps:
+      - lint:yaml
+      - kustomize:build
+      - validate:helm-render
+      - validate:appset-schema
+      - validate:sync-waves
+      - validate:dashboards
+      - validate:fork-safety
     cmds:
       - echo "All validations passed."
 
   scan:
     desc: "Schema + misconfiguration gates on rendered/ (run task render first)"
     cmds:
-      - |
-        kubeconform -strict -summary \
-          -schema-location default \
-          -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{"{{"}}.Group{{"}}"}}/{{"{{"}}.ResourceKind{{"}}"}}_{{"{{"}}.ResourceAPIVersion{{"}}"}}.json' \
-          -skip Grafana \
-          rendered
+      # Shared kubeconform invocation — same skip list as CI (scripts/kubeconform-scan.sh).
+      - ./scripts/kubeconform-scan.sh rendered
       - |
         trivy config --exit-code 1 \
           --severity MEDIUM,HIGH,CRITICAL \
