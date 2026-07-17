@@ -1,5 +1,4 @@
 # Goldilocks - VPA Recommendation Dashboard
-# Adapted from aws-idp-gitops
 
 controller:
   resources:

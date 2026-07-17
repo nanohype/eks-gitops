@@ -38,7 +38,7 @@ sources:
       valueFiles:
         - $values/{{ .path }}/values.yaml
         - $values/{{ .path }}/values-{{ index .metadata.labels "environment" }}.yaml
-  - repoURL: https://github.com/nanohype/eks-gitops.git
+  - repoURL: '{{ index .metadata.annotations "gitops/repo-url" }}'
     targetRevision: main
     ref: values
 ```
@@ -46,12 +46,16 @@ sources:
 **Kustomize addons** use single-source with environment-specific overlay paths:
 ```yaml
 source:
-  repoURL: https://github.com/nanohype/eks-gitops.git
+  repoURL: '{{ index .metadata.annotations "gitops/repo-url" }}'
   targetRevision: main
   path: '{{ .path }}/overlays/{{ index .metadata.labels "environment" }}'
 ```
 
-This enables a single ApplicationSet definition to deploy across development, staging, and production clusters.
+The `repoURL` is never hardcoded. Every ApplicationSet reads it from the
+`gitops/repo-url` annotation on the ArgoCD cluster Secret (published by
+cluster-bootstrap), so a fork stays self-referential and the fork-safety gate
+passes. This enables a single ApplicationSet definition to deploy across
+development, staging, and production clusters.
 
 ## Sync Wave Ordering
 
@@ -62,7 +66,7 @@ graph LR
     A[Wave 0-2: Bootstrap] --> B[Wave 1: Networking]
     B --> C[Wave 5: Karpenter]
     C --> D[Wave 10-12: Security]
-    D --> E[Wave 20-21: Policies]
+    D --> E[Wave 20-22: Policies]
     E --> F[Wave 30-33: Observability]
     F --> G[Wave 40-44: Operations]
     G --> H[Wave 50-52: Argo Platform]
@@ -75,7 +79,7 @@ graph LR
 | 2 | Bootstrap | metrics-server, reloader, storage-classes, priority-classes |
 | 5 | Karpenter | Karpenter (nodes ready before workloads) |
 | 10-12 | Security | Kyverno, Trivy Operator, Falco |
-| 20-21 | Policies | Kyverno PSS, Best Practices |
+| 20-22 | Policies | Kyverno PSS, Best Practices, Supply Chain |
 | 30-33 | Observability | Loki, Tempo, Alloy, OpenCost |
 | 40-44 | Operations | Velero, VPA, Goldilocks, Descheduler, Karpenter Resources, KEDA |
 | 50-52 | Argo Platform | Argo Rollouts, Argo Events, Argo Workflows |

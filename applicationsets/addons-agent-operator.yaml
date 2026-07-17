@@ -8,9 +8,12 @@
 # never lands in this (public) repo.
 #
 # The chart is sourced from git (the public eks-agent-platform repo's
-# charts/operator) rather than the OCI registry, so no chart release is required;
-# switch repoURL/chart to oci://ghcr.io/nanohype/eks-agent-platform/charts once
-# the operator chart is published there to match the other ai-platform addons.
+# charts/operator) rather than the OCI registry, so no chart release is required.
+# The operator chart is not yet published to OCI (the upstream charts-oci release
+# job runs only on a charts-v* tag, none pushed yet), so this stays git-sourced and
+# outside helm-render + Renovate chart-pin coverage until then. Switch repoURL/chart
+# to oci://ghcr.io/nanohype/eks-agent-platform/charts once published, to match the
+# other ai-platform addons — tracked in nanohype/eks-gitops#131.
 # NOTE: the operator container image (chart default
 # ghcr.io/nanohype/eks-agent-platform/operator, tag = chart version) must be
 # published multi-arch (incl. arm64 for Graviton) for the pods to start; pin

@@ -8,7 +8,7 @@ ArgoCD App-of-Apps catalog for EKS clusters. Eight addon categories, plus Applic
 
 - **`addons/bootstrap/`** — cert-manager, external-secrets, metrics-server, prometheus-operator-crds, reloader, storage-classes, priority-classes
 - **`addons/networking/`** — cilium, aws-load-balancer-controller, external-dns, mcp-tunnel
-- **`addons/accelerators/`** — gpu-operator, nvidia-dra-driver (Helm), aws-neuron-device-plugin (Kustomize) — GPU/Neuron device plugins, gated on the `eks-agent-platform/enabled` cluster label, at waves 6-7 (early, alongside karpenter)
+- **`addons/accelerators/`** — gpu-operator, nvidia-dra-driver (Helm), aws-neuron-device-plugin (Kustomize) — GPU/Neuron device plugins, gated on the dedicated `eks-agent-platform/accelerators` cluster label, at waves 6-7 (early, alongside karpenter)
 - **`addons/security/`** — kyverno, falco, trivy-operator
 - **`addons/observability/`** — alloy, grafana-operator, loki, tempo, opencost
 - **`addons/operations/`** — karpenter, karpenter-resources, keda, descheduler, goldilocks, vpa, velero
@@ -19,7 +19,7 @@ Plus:
 
 - **`applicationsets/`** — ApplicationSet generators that fan addons + tenant workloads out across clusters by label
 - **`catalog/`** — platform-specific tenant workloads (currently Druid)
-- **`environments/`** — per-cluster overlays (development / staging / production)
+- **`environments/`** — per-cluster overlays (development / staging / production / hub)
 - **`dashboards/`** — `GrafanaDashboard` CRs that grafana-operator reconciles into the external Amazon Managed Grafana workspace
 - **`policies/`** — Kyverno policies (best-practices, pod-security-standards) enforced cluster-wide
 
@@ -63,7 +63,7 @@ The workload's source repo owns the ApplicationSet entry — typically `<app>/gi
 
 - Helm values: 2-space indent. ApplicationSet manifests: 2-space indent.
 - Every addon has all three env deltas (`values-development.yaml`, `values-staging.yaml`, `values-production.yaml`) — empty is fine, but the file must exist.
-- Cluster labels drive ApplicationSet matrix generators. The `environment` label (`development|staging|production`) selects the per-env values; opt-in addon groups select on additional labels — `eks-agent-platform/enabled: "true"` (set by cluster-bootstrap) gates the operator + accelerators (gpu/neuron) onto agent-platform clusters.
+- Cluster labels drive ApplicationSet matrix generators. The `environment` label (`development|staging|production|hub`) selects the per-env values; opt-in addon groups select on additional labels (both set by cluster-bootstrap) — `eks-agent-platform/enabled: "true"` gates the operator onto agent-platform clusters, and `eks-agent-platform/accelerators: "true"` gates the accelerator device plugins (gpu/neuron) onto clusters with accelerator node pools.
 - Sync waves matter — addons that everything depends on (cert-manager, external-secrets) run first (wave 0–10); apps run last (wave 100+).
 - Kyverno policies in `policies/` enforce cluster-wide invariants (no privileged pods, image registry allowlist, required labels).
 

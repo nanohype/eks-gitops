@@ -1,5 +1,4 @@
 # Kyverno - Kubernetes Native Policy Management
-# Adapted from aws-idp-gitops, using versions from base.ts
 
 admissionController:
   replicas: 3
