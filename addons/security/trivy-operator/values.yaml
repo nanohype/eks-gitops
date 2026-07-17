@@ -1,5 +1,4 @@
 # Trivy Operator - Kubernetes-native security scanning
-# Adapted from aws-idp-gitops
 
 operator:
   scanJobTimeout: 10m

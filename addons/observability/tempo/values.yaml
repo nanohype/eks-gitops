@@ -1,5 +1,4 @@
 # Tempo - Distributed Tracing
-# Adapted from aws-idp-gitops
 
 tempo:
   receivers:

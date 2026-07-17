@@ -44,6 +44,6 @@ ArgoCD builds each overlay path with `--enable-helm`, producing the final manife
 
 ## Superseded
 
-This approach was replaced by **ArgoCD multi-source** for Helm addons. Chart versions and repository URLs are now defined in ApplicationSet element lists. Values use a flat directory pattern (`values.yaml` + `values-{env}.yaml`) referenced via ArgoCD's `$values` ref mechanism. The delta-only principle for environment values files remains unchanged.
+Superseded by [ADR-002](002-argocd-multi-source-flat-values.md): **ArgoCD multi-source** for Helm addons. Chart versions and repository URLs are now defined in ApplicationSet element lists. Values use a flat directory pattern (`values.yaml` + `values-{env}.yaml`) referenced via ArgoCD's `$values` ref mechanism. The delta-only principle for environment values files remains unchanged.
 
 The Kustomize `base/overlays` pattern is retained only for non-Helm addons (storage-classes, priority-classes, karpenter-resources) and Kyverno policies.
