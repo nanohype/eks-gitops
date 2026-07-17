@@ -42,16 +42,6 @@ annotations:
   "k8s.grafana.com/scrape": "true"
   "k8s.grafana.com/metrics.portNumber": "9000"
 
-serviceAccounts:
-  druid-historical:
-    roleArn: ""
-  druid-overlord:
-    roleArn: ""
-  druid-broker:
-    roleArn: ""
-  druid-msk-client:
-    roleArn: ""
-
 secrets:
   metadata: ""
   admin: ""

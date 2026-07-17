@@ -1,8 +1,7 @@
 # Karpenter - Development overrides
-
-settings:
-  clusterName: development-platform
-  interruptionQueue: Karpenter-development-platform
+# settings.clusterName + settings.interruptionQueue are injected per cluster by
+# the addons-karpenter ApplicationSet from the cluster Secret label; only genuine
+# per-env deltas live here.
 
 replicas: 1
 

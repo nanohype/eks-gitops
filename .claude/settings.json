@@ -1,7 +1,7 @@
 {
   "permissions": {
     "allow": [
-      "Bash(make *)",
+      "Bash(task *)",
       "Bash(yamllint *)",
       "Bash(kustomize *)",
       "Bash(helm search *)",

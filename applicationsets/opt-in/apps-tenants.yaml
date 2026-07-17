@@ -39,7 +39,16 @@ spec:
                   path: chart
   template:
     metadata:
-      name: '{{ .app }}-{{ index .metadata.labels "environment" }}'
+      # In-cluster destination, so an Application only ever lands on the one
+      # cluster its ArgoCD runs — one environment — and the env token would be
+      # redundant. The app name alone identifies it.
+      name: '{{ .app }}'
+      labels:
+        app.kubernetes.io/managed-by: argocd
+        app.kubernetes.io/component: '{{ .app }}'
+        platform.nanohype.dev/environment: '{{ index .metadata.labels "environment" }}'
+        platform.nanohype.dev/repository: nanohype/eks-gitops
+        platform.nanohype.dev/team: platform-engineering
       annotations:
         argocd.argoproj.io/sync-wave: "100"
     spec:

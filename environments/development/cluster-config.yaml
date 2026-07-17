@@ -13,18 +13,3 @@ data:
 
   # AWS configuration
   region: "us-west-2"
-
-  # Feature flags
-  veleroEnabled: "false"
-  goldilocksEnabled: "true"
-  hubbleUiEnabled: "true"
-  trivyAdmissionEnabled: "false"
-
-  # Karpenter configuration
-  karpenterCpuLimit: "50"
-  karpenterMemoryLimitGi: "100"
-  karpenterSpotEnabled: "true"
-
-  # Observability
-  lokiRetentionDays: "7"
-  tempoRetentionDays: "3"
