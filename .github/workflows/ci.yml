@@ -164,6 +164,57 @@ jobs:
       - name: Render every addon across every environment
         run: ./scripts/render-addons.py
 
+  # ── Policy-admission gate ────────────────────────────────────────────
+  # The best-practice / pod-security policies run in Enforce mode on staging and
+  # production (the overlays flip validationFailureAction to Enforce), so a
+  # workload that violates one is DENIED at admission on a vended cluster. Each
+  # such policy carries a hand-maintained namespace exclusion list, and the addon
+  # fleet cannot satisfy the policies (upstream charts never carry the org
+  # platform.nanohype.dev/* label tier, device plugins and security agents need
+  # root/host access, batch jobs have no service-style probes). If an addon lands
+  # in a namespace that is NOT excluded, its Deployment/DaemonSet is denied — and
+  # every other gate (render, kubeconform, kyverno unit tests) stays green,
+  # because the contradiction only exists where the addon MEETS the policy on a
+  # real Enforce cluster. This job renders the whole fleet into its real
+  # destination namespaces and runs `kyverno apply` against the Enforce overlay,
+  # so that class of contradiction fails here instead of at sync. It also asserts
+  # all four exclusion lists are identical (their divergence is the same bug
+  # class) and exercises the Audit overlay to prove the warn-vs-deny split.
+  policy-admission:
+    name: Policy-admission gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Helm
+        uses: azure/setup-helm@v5
+
+      - name: Install kustomize
+        uses: imranismail/setup-kustomize@v3
+
+      - name: Install PyYAML
+        run: pip install --quiet pyyaml
+
+      - name: Install Kyverno CLI
+        run: |
+          VERSION=v1.18.2
+          curl -fsSL "https://github.com/kyverno/kyverno/releases/download/${VERSION}/kyverno-cli_${VERSION}_linux_x86_64.tar.gz" \
+            | tar -xz -C /tmp kyverno
+          sudo install -m 0755 /tmp/kyverno /usr/local/bin/kyverno
+          kyverno version
+
+      - name: Cache Helm charts
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/helm
+          key: helm-charts-${{ hashFiles('applicationsets/*.yaml') }}
+          restore-keys: |
+            helm-charts-
+
+      - name: Render the fleet and apply the Enforce-tier policies
+        run: ./scripts/check-policy-admission.py
+
   # ── ApplicationSet gate ──────────────────────────────────────────────
   # The render→scan path gates rendered/ output; it never schema-checks the
   # ApplicationSet generators themselves. This validates every ApplicationSet
@@ -386,7 +437,7 @@ jobs:
     name: PR Summary
     runs-on: ubuntu-latest
     if: always() && github.event_name == 'pull_request'
-    needs: [lint, dashboards, fork-safety, helm-render, appsets, appset-render, secrets, validate]
+    needs: [lint, dashboards, fork-safety, helm-render, policy-admission, appsets, appset-render, secrets, validate]
     permissions:
       pull-requests: write
     steps:
@@ -401,6 +452,7 @@ jobs:
               'Dashboard gate (live grafana.com ids + AMG-saveable)': '${{ needs.dashboards.result }}',
               'Fork-safety gate (no hardcoded org, blocking)': '${{ needs.fork-safety.result }}',
               'Helm-render (every addon × every env)': '${{ needs.helm-render.result }}',
+              'Policy-admission (Enforce-tier Kyverno vs the fleet)': '${{ needs.policy-admission.result }}',
               'ApplicationSet schema + sync waves': '${{ needs.appsets.result }}',
               'Appset render (Karpenter subnet selector)': '${{ needs.appset-render.result }}',
               'Secret scan (gitleaks)': '${{ needs.secrets.result }}',

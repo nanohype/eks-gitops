@@ -86,8 +86,13 @@ tasks:
     cmds:
       - go test ./...
 
+  validate:policy-admission:
+    desc: "Policy-admission gate — render the fleet and prove no addon is denied by the Enforce-tier Kyverno policies (+ exclusion-list parity)"
+    cmds:
+      - ./scripts/check-policy-admission.py
+
   validate:
-    desc: Run all validations (lint, build, helm-render, appset schema, sync waves, appset render, dashboard/fork-safety)
+    desc: Run all validations (lint, build, helm-render, appset schema, sync waves, appset render, policy admission, dashboard/fork-safety)
     deps:
       - lint:yaml
       - kustomize:build
@@ -95,6 +100,7 @@ tasks:
       - validate:appset-schema
       - validate:sync-waves
       - validate:appset-render
+      - validate:policy-admission
       - validate:dashboards
       - validate:fork-safety
     cmds:

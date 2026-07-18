@@ -38,6 +38,10 @@ Thumbs.db
 *.swo
 
 
+# Python bytecode (validation scripts under scripts/)
+__pycache__/
+*.pyc
+
 # Rendered output
 rendered/
 
