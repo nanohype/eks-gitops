@@ -27,7 +27,7 @@ catalog/               → Platform-specific workloads (Druid)
 ## Key Conventions
 
 ### Sync Waves
-Components deploy in order: bootstrap (0, 2) → networking (1) → karpenter (5) → accelerators (6-7) → security (10-12) → policies (20-22) → observability (30-33) → operations (40-44) / ai-platform (40-42) → argo-platform (50-52).
+Components deploy in order: bootstrap (0, 2) → networking (1) → karpenter (5) → accelerators (6-7) → security (10-12) → policies (20-23) → observability (30-33) → operations (40-44) / ai-platform (40-42) → argo-platform (50-52).
 
 ### Helm Values Pattern
 Helm addons use a flat directory with ArgoCD multi-source. Each addon has `values.yaml` (base) plus `values-{env}.yaml` (delta only). ApplicationSets reference them via:

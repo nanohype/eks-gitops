@@ -1,0 +1,54 @@
+# Adopt-mode cases for inject-adopt-lb-subnets. Run (with every other test in this
+# tree) by `kyverno test policies/kyverno/tests`. The kube-system/network-config
+# ConfigMap state is supplied via values.yaml.
+#
+#   (a) plain Ingress          → private-subnet CSV (internal is the default)
+#   (b) internet-facing Ingress→ public-subnet CSV
+#   (c) plain LB Service       → private-subnet CSV
+#   (d) internet-facing Service→ public-subnet CSV
+#   (f) Ingress with an explicit subnets annotation → untouched (skip)
+#   (+) ClusterIP Service      → untouched, proving the type precondition (skip)
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: inject-adopt-lb-subnets-adopt
+policies:
+  - ../../networking/base/inject-adopt-lb-subnets.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+results:
+  - policy: inject-adopt-lb-subnets
+    rule: ingress-internal-subnets
+    kind: Ingress
+    resources: [ing-plain]
+    patchedResources: patched/ing-plain.yaml
+    result: pass
+  - policy: inject-adopt-lb-subnets
+    rule: ingress-internet-facing-subnets
+    kind: Ingress
+    resources: [ing-internet]
+    patchedResources: patched/ing-internet.yaml
+    result: pass
+  - policy: inject-adopt-lb-subnets
+    rule: service-internal-subnets
+    kind: Service
+    resources: [svc-plain]
+    patchedResources: patched/svc-plain.yaml
+    result: pass
+  - policy: inject-adopt-lb-subnets
+    rule: service-internet-facing-subnets
+    kind: Service
+    resources: [svc-internet]
+    patchedResources: patched/svc-internet.yaml
+    result: pass
+  - policy: inject-adopt-lb-subnets
+    rule: ingress-internal-subnets
+    kind: Ingress
+    resources: [ing-explicit]
+    result: skip
+  - policy: inject-adopt-lb-subnets
+    rule: service-internal-subnets
+    kind: Service
+    resources: [svc-clusterip]
+    result: skip

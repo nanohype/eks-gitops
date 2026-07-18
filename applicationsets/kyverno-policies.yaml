@@ -32,6 +32,14 @@ spec:
                 - appName: kyverno-supply-chain
                   path: policies/kyverno/supply-chain
                   syncWave: "22"
+                # Injects load balancer subnet annotations on adopt-mode clusters.
+                # One wave past the validate policies so it admission-mutates before
+                # any workload that creates an Ingress or LoadBalancer Service — the
+                # catalog's own LB-capable addons all sit at wave 40+, and tenant
+                # workloads at 50+, all comfortably after this.
+                - appName: kyverno-networking
+                  path: policies/kyverno/networking
+                  syncWave: "23"
   template:
     metadata:
       name: '{{ .appName }}'

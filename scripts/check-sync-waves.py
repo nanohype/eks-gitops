@@ -57,7 +57,7 @@ BANDS = {
     "networking": (1, 1),
     "accelerators": (6, 7),
     "security": (10, 12),
-    "policies": (20, 22),
+    "policies": (20, 23),
     "observability": (29, 34),
     "gateway-crds": (30, 30),
     "operations": (40, 44),

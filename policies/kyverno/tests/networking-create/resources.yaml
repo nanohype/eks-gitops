@@ -1,0 +1,21 @@
+# Create-mode fixtures: a create cluster owns its VPC and its ELB role tags, so the
+# subnet CSVs are empty and no injection should happen for either object kind.
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ing-create
+  namespace: workloads
+spec:
+  rules:
+    - host: a.example.com
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-create
+  namespace: workloads
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 80

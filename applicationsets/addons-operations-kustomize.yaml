@@ -50,6 +50,19 @@ spec:
         # role and discovery scope instead of colliding on the overlay default —
         # the same per-cluster patch-from-label seam secret-stores uses for its
         # region.
+        #
+        # The subnet selector is network-mode-aware. A create cluster owns its VPC
+        # and stamps its own ownership tag on the shared subnets, so it selects by
+        # tag (cluster in the KEY, so co-located siblings coexist). An adopt cluster
+        # participates in a VPC shared over AWS RAM and cannot see or write those
+        # tags, so it selects the private subnets by explicit id from the
+        # network/private-subnet-ids annotation cluster-bootstrap stamps in adopt
+        # mode. network_mode is read with `index ... | default "create"`, not `dig`
+        # or a bare `index`: `index` on an absent key returns "" without tripping
+        # missingkey=error and works whether the generator hands labels back as a
+        # string map or an interface map, so a cluster with no network_mode label
+        # yet still renders as create. Role and SG selectors are per-cluster in both
+        # modes and unaffected.
         kustomize:
           patches:
             - target:
@@ -62,9 +75,15 @@ spec:
                 - op: replace
                   path: /spec/subnetSelectorTerms
                   value:
+                {{- if eq (index .metadata.labels "network_mode" | default "create") "adopt" }}
+                {{- range splitList "," (index .metadata.annotations "network/private-subnet-ids") }}
+                    - id: {{ . }}
+                {{- end }}
+                {{- else }}
                     - tags:
                         kubernetes.io/role/internal-elb: "1"
                         kubernetes.io/cluster/{{ index .metadata.labels "cluster_name" }}: shared
+                {{- end }}
                 - op: replace
                   path: /spec/securityGroupSelectorTerms
                   value:

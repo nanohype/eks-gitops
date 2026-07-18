@@ -1,0 +1,11 @@
+# The kube-system/network-config ConfigMap as cluster-bootstrap writes it in create
+# mode: mode create, both subnet CSVs empty. network_mode != adopt fails every
+# rule's precondition, so nothing is mutated.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Values
+metadata:
+  name: values
+globalValues:
+  networkconfig.data.network_mode: create
+  networkconfig.data.private_subnet_ids: ""
+  networkconfig.data.public_subnet_ids: ""

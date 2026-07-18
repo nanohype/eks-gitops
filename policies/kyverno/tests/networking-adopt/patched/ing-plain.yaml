@@ -1,0 +1,10 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ing-plain
+  namespace: workloads
+  annotations:
+    alb.ingress.kubernetes.io/subnets: subnet-priv-a,subnet-priv-b
+spec:
+  rules:
+    - host: a.example.com

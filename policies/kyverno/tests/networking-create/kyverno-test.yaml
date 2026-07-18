@@ -1,0 +1,24 @@
+# Create-mode case (e) for inject-adopt-lb-subnets: on a create cluster neither an
+# Ingress nor a LoadBalancer Service gets a subnet annotation added — the
+# network_mode == adopt precondition fails, so the internal rules (the ones that
+# would fire in adopt mode) skip.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: inject-adopt-lb-subnets-create
+policies:
+  - ../../networking/base/inject-adopt-lb-subnets.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+results:
+  - policy: inject-adopt-lb-subnets
+    rule: ingress-internal-subnets
+    kind: Ingress
+    resources: [ing-create]
+    result: skip
+  - policy: inject-adopt-lb-subnets
+    rule: service-internal-subnets
+    kind: Service
+    resources: [svc-create]
+    result: skip

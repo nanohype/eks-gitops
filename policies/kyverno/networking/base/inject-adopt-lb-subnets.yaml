@@ -1,0 +1,178 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: inject-adopt-lb-subnets
+  annotations:
+    policies.kyverno.io/title: Inject Adopt-Mode Load Balancer Subnets
+    policies.kyverno.io/category: Networking
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Ingress, Service
+    policies.kyverno.io/description: >-
+      On an adopt-mode cluster — one participating in a VPC it does not own,
+      shared in over AWS RAM — the AWS Load Balancer Controller cannot discover
+      subnets by the kubernetes.io/role/{elb,internal-elb} tags it relies on: RAM
+      does not surface the owner account's subnet tags to a participant, so tag
+      auto-discovery finds nothing. This policy supplies the subnets explicitly.
+      It reads the cluster-local network-config ConfigMap (written by
+      cluster-bootstrap in every mode) and, only when that record says the cluster
+      is in adopt mode, injects the subnet-id annotation the controller reads. It
+      is scheme-aware: an internal load balancer (the controller's default when no
+      scheme is set) lands on the private subnets, an internet-facing one on the
+      public subnets. The subnet annotation is added only if absent, so a tenant
+      that pins its own subnets is never overridden. A create-mode cluster owns its
+      VPC and its own ELB role tags, so the ConfigMap reports create, every rule's
+      precondition fails, and nothing is mutated.
+spec:
+  admission: true
+  emitWarning: false
+  background: false
+  # Fail open. This policy only ever ADDS a subnet annotation; it never rejects.
+  # A subnet-injection mutation must not be able to block Ingress/Service
+  # admission fleet-wide — if Kyverno cannot evaluate it (an outage, a context it
+  # cannot read), the object is still admitted. The worst case is an adopt-mode
+  # load balancer that comes up without subnets and fails to provision — visible
+  # and debuggable on that one object — never a cluster-wide admission outage. On
+  # a create cluster the mutation is a no-op anyway (auto-discovery works there).
+  failurePolicy: Ignore
+  rules:
+    # ── Ingress, internal scheme (the default) → private subnets ──────────────
+    - name: ingress-internal-subnets
+      skipBackgroundRequests: true
+      match:
+        any:
+          - resources:
+              kinds:
+                - Ingress
+      context:
+        - name: networkconfig
+          configMap:
+            name: network-config
+            namespace: kube-system
+        # The object's own scheme, defaulted to internal to match the AWS Load
+        # Balancer Controller's default when the annotation is absent.
+        - name: scheme
+          variable:
+            jmesPath: 'request.object.metadata.annotations."alb.ingress.kubernetes.io/scheme"'
+            default: internal
+      preconditions:
+        all:
+          - key: "{{ networkconfig.data.network_mode }}"
+            operator: Equals
+            value: adopt
+          - key: "{{ scheme }}"
+            operator: Equals
+            value: internal
+          - key: "{{ networkconfig.data.private_subnet_ids }}"
+            operator: NotEquals
+            value: ""
+      mutate:
+        patchStrategicMerge:
+          metadata:
+            annotations:
+              # Add-if-absent anchor: never clobber a tenant's explicit subnets.
+              +(alb.ingress.kubernetes.io/subnets): "{{ networkconfig.data.private_subnet_ids }}"
+    # ── Ingress, internet-facing scheme → public subnets ──────────────────────
+    - name: ingress-internet-facing-subnets
+      skipBackgroundRequests: true
+      match:
+        any:
+          - resources:
+              kinds:
+                - Ingress
+      context:
+        - name: networkconfig
+          configMap:
+            name: network-config
+            namespace: kube-system
+        - name: scheme
+          variable:
+            jmesPath: 'request.object.metadata.annotations."alb.ingress.kubernetes.io/scheme"'
+            default: internal
+      preconditions:
+        all:
+          - key: "{{ networkconfig.data.network_mode }}"
+            operator: Equals
+            value: adopt
+          - key: "{{ scheme }}"
+            operator: Equals
+            value: internet-facing
+          - key: "{{ networkconfig.data.public_subnet_ids }}"
+            operator: NotEquals
+            value: ""
+      mutate:
+        patchStrategicMerge:
+          metadata:
+            annotations:
+              +(alb.ingress.kubernetes.io/subnets): "{{ networkconfig.data.public_subnet_ids }}"
+    # ── Service type=LoadBalancer, internal scheme (the default) → private ────
+    - name: service-internal-subnets
+      skipBackgroundRequests: true
+      match:
+        any:
+          - resources:
+              kinds:
+                - Service
+      context:
+        - name: networkconfig
+          configMap:
+            name: network-config
+            namespace: kube-system
+        - name: scheme
+          variable:
+            jmesPath: 'request.object.metadata.annotations."service.beta.kubernetes.io/aws-load-balancer-scheme"'
+            default: internal
+      preconditions:
+        all:
+          - key: "{{ request.object.spec.type }}"
+            operator: Equals
+            value: LoadBalancer
+          - key: "{{ networkconfig.data.network_mode }}"
+            operator: Equals
+            value: adopt
+          - key: "{{ scheme }}"
+            operator: Equals
+            value: internal
+          - key: "{{ networkconfig.data.private_subnet_ids }}"
+            operator: NotEquals
+            value: ""
+      mutate:
+        patchStrategicMerge:
+          metadata:
+            annotations:
+              +(service.beta.kubernetes.io/aws-load-balancer-subnets): "{{ networkconfig.data.private_subnet_ids }}"
+    # ── Service type=LoadBalancer, internet-facing scheme → public subnets ────
+    - name: service-internet-facing-subnets
+      skipBackgroundRequests: true
+      match:
+        any:
+          - resources:
+              kinds:
+                - Service
+      context:
+        - name: networkconfig
+          configMap:
+            name: network-config
+            namespace: kube-system
+        - name: scheme
+          variable:
+            jmesPath: 'request.object.metadata.annotations."service.beta.kubernetes.io/aws-load-balancer-scheme"'
+            default: internal
+      preconditions:
+        all:
+          - key: "{{ request.object.spec.type }}"
+            operator: Equals
+            value: LoadBalancer
+          - key: "{{ networkconfig.data.network_mode }}"
+            operator: Equals
+            value: adopt
+          - key: "{{ scheme }}"
+            operator: Equals
+            value: internet-facing
+          - key: "{{ networkconfig.data.public_subnet_ids }}"
+            operator: NotEquals
+            value: ""
+      mutate:
+        patchStrategicMerge:
+          metadata:
+            annotations:
+              +(service.beta.kubernetes.io/aws-load-balancer-subnets): "{{ networkconfig.data.public_subnet_ids }}"

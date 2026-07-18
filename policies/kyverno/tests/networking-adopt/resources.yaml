@@ -1,0 +1,74 @@
+# Fixtures for the adopt-mode subnet-injection cases. All Ingress/Service objects
+# live in a workload namespace (the policy matches every namespace). The
+# network-config ConfigMap state is supplied to the CLI as context via values.yaml.
+---
+# Plain Ingress, no scheme annotation → defaults to internal → private subnets.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ing-plain
+  namespace: workloads
+spec:
+  rules:
+    - host: a.example.com
+---
+# Ingress explicitly internet-facing → public subnets.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ing-internet
+  namespace: workloads
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+spec:
+  rules:
+    - host: b.example.com
+---
+# Ingress that already pins its own subnets → the add-if-absent anchor must leave
+# it untouched.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ing-explicit
+  namespace: workloads
+  annotations:
+    alb.ingress.kubernetes.io/subnets: subnet-tenant-1,subnet-tenant-2
+spec:
+  rules:
+    - host: c.example.com
+---
+# Plain LoadBalancer Service, no scheme annotation → internal → private subnets.
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-plain
+  namespace: workloads
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 80
+---
+# LoadBalancer Service explicitly internet-facing → public subnets.
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-internet
+  namespace: workloads
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 80
+---
+# A ClusterIP Service is not a load balancer → the spec.type precondition skips it,
+# proving the mutation does not touch non-LoadBalancer Services.
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-clusterip
+  namespace: workloads
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
