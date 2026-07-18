@@ -91,7 +91,11 @@ providers:
   default: openAI # the key name is fixed by the chart; the provider below is what counts
   openAI:
     provider: Bedrock
-    model: us.anthropic.claude-sonnet-5
+    # Aligned with the org llm-policy default and the agent-platform allowlist
+    # (agent-platform/base/platform.yaml) so the stub carries a real, current model
+    # id rather than a divergent one. It is still a stub no agent uses — real agents
+    # are declared as AgentFleets and the operator composes their ModelConfig.
+    model: global.anthropic.claude-sonnet-4-6
     apiKeySecretRef: ""
     apiKeySecretKey: ""
 

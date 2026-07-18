@@ -9,13 +9,31 @@ on:
 permissions:
   contents: read
 
+# CLI tools this workflow downloads as release tarballs (not GitHub Actions, which
+# dependabot owns) or installs through a setup action. Pinned in one place so a
+# Renovate custom manager can watch each `# renovate:`-annotated line and open a
+# currency PR that runs the render/schema/policy gates before merge. A bump also
+# invalidates the hardcoded SHA256 below it, so a human confirms the new checksum.
+env:
+  # renovate: datasource=github-releases depName=kyverno/kyverno
+  KYVERNO_VERSION: v1.18.2
+  KYVERNO_SHA256: cb2feb8356149fd2fe774c894ccf0969f4a60a83867dd913af724f74ffbbc18b
+  # renovate: datasource=github-releases depName=gitleaks/gitleaks
+  GITLEAKS_VERSION: 8.30.1
+  GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+  # renovate: datasource=github-releases depName=yannh/kubeconform
+  KUBECONFORM_VERSION: v0.8.0
+  KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
+  # renovate: datasource=github-releases depName=aquasecurity/trivy
+  TRIVY_VERSION: v0.72.0
+
 jobs:
   placeholders:
     name: Zero-placeholder gate
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: No unfilled placeholders in deploy config
         run: ./scripts/no-placeholders.sh
@@ -25,7 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Install yamllint
         run: pip install yamllint
@@ -46,7 +64,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Dead ids + AMG-unsaveable legacy alerts
         run: ./scripts/validate-dashboards.py
@@ -63,13 +81,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Install Kyverno CLI
         run: |
-          VERSION=v1.18.2
-          curl -fsSL "https://github.com/kyverno/kyverno/releases/download/${VERSION}/kyverno-cli_${VERSION}_linux_x86_64.tar.gz" \
-            | tar -xz -C /tmp kyverno
+          curl -fsSL -o /tmp/kyverno.tar.gz "https://github.com/kyverno/kyverno/releases/download/${KYVERNO_VERSION}/kyverno-cli_${KYVERNO_VERSION}_linux_x86_64.tar.gz"
+          echo "${KYVERNO_SHA256}  /tmp/kyverno.tar.gz" | sha256sum -c -
+          tar -xz -C /tmp -f /tmp/kyverno.tar.gz kyverno
           sudo install -m 0755 /tmp/kyverno /usr/local/bin/kyverno
           kyverno version
 
@@ -124,7 +142,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: No hardcoded catalog repoURL in applied ApplicationSets
         run: ./scripts/check-hardcoded-org.py --blocking
@@ -145,16 +163,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Install Helm
-        uses: azure/setup-helm@v5
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
 
       - name: Install PyYAML
         run: pip install --quiet pyyaml
 
       - name: Cache Helm charts
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/helm
           key: helm-charts-${{ hashFiles('applicationsets/*.yaml') }}
@@ -185,27 +203,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Install Helm
-        uses: azure/setup-helm@v5
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
 
       - name: Install kustomize
-        uses: imranismail/setup-kustomize@v3
+        uses: imranismail/setup-kustomize@53f941b41dca13ed61874bbc6b4b6e1562877530 # v3
 
       - name: Install PyYAML
         run: pip install --quiet pyyaml
 
       - name: Install Kyverno CLI
         run: |
-          VERSION=v1.18.2
-          curl -fsSL "https://github.com/kyverno/kyverno/releases/download/${VERSION}/kyverno-cli_${VERSION}_linux_x86_64.tar.gz" \
-            | tar -xz -C /tmp kyverno
+          curl -fsSL -o /tmp/kyverno.tar.gz "https://github.com/kyverno/kyverno/releases/download/${KYVERNO_VERSION}/kyverno-cli_${KYVERNO_VERSION}_linux_x86_64.tar.gz"
+          echo "${KYVERNO_SHA256}  /tmp/kyverno.tar.gz" | sha256sum -c -
+          tar -xz -C /tmp -f /tmp/kyverno.tar.gz kyverno
           sudo install -m 0755 /tmp/kyverno /usr/local/bin/kyverno
           kyverno version
 
       - name: Cache Helm charts
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/helm
           key: helm-charts-${{ hashFiles('applicationsets/*.yaml') }}
@@ -227,27 +245,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Install PyYAML
         run: pip install --quiet pyyaml
 
       - name: Cache kubeconform + schemas
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.local/bin/kubeconform
             ~/.cache/kubeconform
-          key: kubeconform-v0.8.0-${{ github.run_id }}
+          key: kubeconform-${{ env.KUBECONFORM_VERSION }}-${{ github.run_id }}
           restore-keys: |
-            kubeconform-v0.8.0-
+            kubeconform-${{ env.KUBECONFORM_VERSION }}-
 
       - name: Install kubeconform
         run: |
           if [ ! -x "$HOME/.local/bin/kubeconform" ]; then
             mkdir -p "$HOME/.local/bin"
-            curl -fsSL https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz \
-              | tar -xz -C "$HOME/.local/bin" kubeconform
+            curl -fsSL -o /tmp/kubeconform.tar.gz "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+            echo "${KUBECONFORM_SHA256}  /tmp/kubeconform.tar.gz" | sha256sum -c -
+            tar -xz -C "$HOME/.local/bin" -f /tmp/kubeconform.tar.gz kubeconform
           fi
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
@@ -277,10 +296,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Install Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: applicationsets/rendertest/go.mod
           cache-dependency-path: applicationsets/rendertest/go.sum
@@ -301,13 +320,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Install gitleaks
         run: |
-          VERSION=8.30.1
-          curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" \
-            | tar -xz -C /tmp gitleaks
+          curl -fsSL -o /tmp/gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tar.gz" | sha256sum -c -
+          tar -xz -C /tmp -f /tmp/gitleaks.tar.gz gitleaks
           sudo install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks
           gitleaks version
 
@@ -324,13 +343,13 @@ jobs:
         environment: [development, staging, production, hub]
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Install kustomize
-        uses: imranismail/setup-kustomize@v3
+        uses: imranismail/setup-kustomize@53f941b41dca13ed61874bbc6b4b6e1562877530 # v3
 
       - name: Install Helm
-        uses: azure/setup-helm@v5
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
 
       - name: Render manifests
         run: |
@@ -395,21 +414,22 @@ jobs:
       # The binary and downloaded schemas are cached; restore-keys lets each run
       # reuse the newest cache while still persisting newly fetched schemas.
       - name: Cache kubeconform + schemas
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.local/bin/kubeconform
             ~/.cache/kubeconform
-          key: kubeconform-v0.8.0-${{ github.run_id }}
+          key: kubeconform-${{ env.KUBECONFORM_VERSION }}-${{ github.run_id }}
           restore-keys: |
-            kubeconform-v0.8.0-
+            kubeconform-${{ env.KUBECONFORM_VERSION }}-
 
       - name: Install kubeconform
         run: |
           if [ ! -x "$HOME/.local/bin/kubeconform" ]; then
             mkdir -p "$HOME/.local/bin"
-            curl -fsSL https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz \
-              | tar -xz -C "$HOME/.local/bin" kubeconform
+            curl -fsSL -o /tmp/kubeconform.tar.gz "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+            echo "${KUBECONFORM_SHA256}  /tmp/kubeconform.tar.gz" | sha256sum -c -
+            tar -xz -C "$HOME/.local/bin" -f /tmp/kubeconform.tar.gz kubeconform
           fi
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
@@ -425,9 +445,9 @@ jobs:
       # justified exceptions (device-plugin root/hostPath, druid's
       # k8s-extensions Role, env-indirected config keys).
       - name: Install trivy
-        uses: aquasecurity/setup-trivy@v0.3.1
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
         with:
-          version: v0.72.0
+          version: ${{ env.TRIVY_VERSION }}
           cache: true
 
       - name: Misconfiguration gate (trivy config)
@@ -441,19 +461,21 @@ jobs:
     name: PR Summary
     runs-on: ubuntu-latest
     if: always() && github.event_name == 'pull_request'
-    needs: [lint, dashboards, fork-safety, helm-render, policy-admission, appsets, appset-render, secrets, validate]
+    needs: [placeholders, lint, dashboards, kyverno, fork-safety, helm-render, policy-admission, appsets, appset-render, secrets, validate]
     permissions:
       pull-requests: write
     steps:
       - name: Comment on PR
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
             const icon = r => r === 'success' ? ':white_check_mark:'
               : r === 'skipped' ? ':fast_forward:' : ':x:';
             const results = {
+              'Zero-placeholder gate': '${{ needs.placeholders.result }}',
               'YAML Lint': '${{ needs.lint.result }}',
               'Dashboard gate (live grafana.com ids + AMG-saveable)': '${{ needs.dashboards.result }}',
+              'Kyverno policy tests (+ verify-images contract)': '${{ needs.kyverno.result }}',
               'Fork-safety gate (no hardcoded org, blocking)': '${{ needs.fork-safety.result }}',
               'Helm-render (every addon × every env)': '${{ needs.helm-render.result }}',
               'Policy-admission (Enforce-tier Kyverno vs the fleet)': '${{ needs.policy-admission.result }}',

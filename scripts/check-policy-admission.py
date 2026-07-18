@@ -129,8 +129,14 @@ def check_exclusion_parity() -> bool:
         doc = yaml.safe_load((POLICY_DIR / group / "base" / fname).read_text())
         for rule in doc["spec"]["rules"]:
             key = f"{doc['metadata']['name']}/{rule['name']}"
-            excl = rule["exclude"]["any"][0]["resources"]["namespaces"]
-            lists[key] = sorted(excl)
+            # A rule's exclusion is the union of every `exclude.any` entry's
+            # namespaces (Kyverno ORs them), not just the first — reading only
+            # any[0] would silently drop a second entry's namespaces from the
+            # parity comparison.
+            excl: list[str] = []
+            for entry in rule["exclude"]["any"]:
+                excl.extend(entry.get("resources", {}).get("namespaces", []) or [])
+            lists[key] = sorted(set(excl))
 
     baseline_key, baseline = next(iter(lists.items()))
     ok = True
@@ -288,9 +294,19 @@ def main() -> int:
         summary = next((l for l in audit.stdout.splitlines()
                         if l.startswith("pass:")), "")
         print(f"  {summary or 'audit run complete'}")
-        print("  ok    Audit overlay builds; violations warn (not deny) on dev\n")
+        # --audit-warn downgrades Audit-mode violations to warnings, so a healthy
+        # run still exits 0; a non-zero exit here is a genuine error (a policy that
+        # failed to build, a resource kyverno could not load), not a policy warn.
+        # Verify the Audit overlay actually ran clean rather than trusting it.
+        audit_ok = audit.returncode == 0
+        if audit_ok:
+            print("  ok    Audit overlay builds; violations warn (not deny) on dev\n")
+        else:
+            print(f"  FAIL  Audit overlay run errored (exit {audit.returncode}):")
+            print((audit.stderr or audit.stdout).strip())
+            print()
 
-    if parity_ok and enforce_ok:
+    if parity_ok and enforce_ok and audit_ok:
         print("Policy-admission gate PASSED.")
         return 0
     print("Policy-admission gate FAILED.")

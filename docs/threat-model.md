@@ -133,10 +133,10 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
   wired to an admin token. Both are **refused**: `kagent-tools: enabled: false` and
   `grafana-mcp: enabled: false` (kagent/values.yaml:32,170-171). Model access is an
   explicit `allowedModels` allowlist, not a family wildcard
-  (platform.yaml:25-27), and operator sessions cap at 1h (:31).
+  (platform.yaml:35-37), and operator sessions cap at 1h (:41).
 - **Denial of service (runaway spend)** — a two-tier budget with
   `killSwitchEnabled: true` and `alertThresholdsPercent: [50,80,100]`
-  (platform.yaml:39-42). Grafana **paging** alerts fire the instant the kill-switch
+  (platform.yaml:50-52). Grafana **paging** alerts fire the instant the kill-switch
   stamps (agent-platform.yaml:49-70), when a budget crosses its cap (:108,165), and
   when evals regress or go stale (:224,284), each linking the recovery runbook
   (docs/runbooks/ai-platform-budget-killswitch.md).

@@ -1,5 +1,2 @@
 # Argo Workflows - Staging overrides
-
-artifactRepository:
-  s3:
-    bucket: aws-eks-staging-argo-artifacts
+# No per-env delta (artifact repository is unconfigured; see base values.yaml).

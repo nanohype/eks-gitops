@@ -8,20 +8,12 @@
 #   workspace.
 
 alloy:
-  # AMP_REMOTE_WRITE_URL resolves from the managed-monitoring-endpoints Secret
-  # (synced from Secrets Manager by External Secrets Operator). CLUSTER_NAME is
-  # the per-environment external label, set in values-{env}.yaml. Helm replaces
-  # the whole list, so each per-env file repeats these entries.
-  extraEnv:
-    - name: AMP_REMOTE_WRITE_URL
-      valueFrom:
-        secretKeyRef:
-          name: managed-monitoring-endpoints
-          key: AMP_REMOTE_WRITE_URL
-    - name: AWS_REGION
-      value: "us-west-2"
-    - name: CLUSTER_NAME
-      value: ""  # override per env
+  # extraEnv (AMP_REMOTE_WRITE_URL, AWS_REGION, CLUSTER_NAME) is injected per
+  # cluster by the addons-alloy ApplicationSet's valuesObject, not set here: Helm
+  # replaces the whole list rather than merging it, so any entry here would be
+  # overwritten anyway. AWS_REGION (SigV4 remote-write signing) and CLUSTER_NAME
+  # (metrics external label) come from the cluster's `region` / `cluster_name`
+  # labels, so a cluster in any region signs against its own AMP workspace.
   # Expose the OTLP receiver ports on the Alloy Service so tenant apps in other
   # namespaces can push to alloy.monitoring.svc:4317/4318.
   extraPorts:

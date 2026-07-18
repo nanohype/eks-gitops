@@ -1,9 +1,5 @@
 # Argo Workflows - Development overrides
-# Single replica, development artifact bucket
+# Single replica; no artifact repository (see base values.yaml).
 
 server:
   replicas: 1
-
-artifactRepository:
-  s3:
-    bucket: aws-eks-development-argo-artifacts

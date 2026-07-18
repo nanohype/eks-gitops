@@ -8,7 +8,6 @@ metadata:
 data:
   # Cluster identification
   environment: "production"
-  provider: "aws"
   cluster_name: "production-platform"
 
   # AWS configuration
