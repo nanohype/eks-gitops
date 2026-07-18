@@ -1,0 +1,16 @@
+# Fixture: an ArgoCD cluster Secret written before the network_mode label existed —
+# no network_mode label, no network annotations. The template must default it to
+# create (index on an absent key returns "" without tripping missingkey=error), not
+# break the render. Only the labels and annotations are read by the render test.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cluster-nolabel
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: cluster
+    environment: production
+    cluster_name: charlie
+  annotations:
+    gitops/repo-url: https://github.com/example/gitops
+type: Opaque

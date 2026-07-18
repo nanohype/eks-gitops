@@ -33,7 +33,13 @@ spec:
   # load balancer that comes up without subnets and fails to provision — visible
   # and debuggable on that one object — never a cluster-wide admission outage. On
   # a create cluster the mutation is a no-op anyway (auto-discovery works there).
-  failurePolicy: Ignore
+  #
+  # Set under webhookConfiguration — the field GetFailurePolicy() consults first.
+  # The top-level spec.failurePolicy is deprecated, and when the webhookConfiguration
+  # path is unset the effective policy defaults to Fail: the exact fleet-wide
+  # Ingress/Service admission block this fail-open design must never become.
+  webhookConfiguration:
+    failurePolicy: Ignore
   rules:
     # ── Ingress, internal scheme (the default) → private subnets ──────────────
     - name: ingress-internal-subnets

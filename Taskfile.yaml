@@ -80,14 +80,21 @@ tasks:
     cmds:
       - ./scripts/check-sync-waves.py
 
+  validate:appset-render:
+    desc: "Appset render gate — render the Karpenter EC2NodeClass patch template against fixture cluster Secrets"
+    dir: applicationsets/rendertest
+    cmds:
+      - go test ./...
+
   validate:
-    desc: Run all validations (lint, build, helm-render, appset schema, sync waves, dashboard/fork-safety)
+    desc: Run all validations (lint, build, helm-render, appset schema, sync waves, appset render, dashboard/fork-safety)
     deps:
       - lint:yaml
       - kustomize:build
       - validate:helm-render
       - validate:appset-schema
       - validate:sync-waves
+      - validate:appset-render
       - validate:dashboards
       - validate:fork-safety
     cmds:

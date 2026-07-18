@@ -1,0 +1,16 @@
+# Fixture: an ArgoCD cluster Secret for a create-mode cluster — it owns its VPC and
+# stamps its own ownership tag on the shared subnets, so Karpenter selects by tag.
+# Only the labels and annotations are read by the render test.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cluster-create
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: cluster
+    environment: development
+    cluster_name: alpha
+    network_mode: create
+  annotations:
+    gitops/repo-url: https://github.com/example/gitops
+type: Opaque
