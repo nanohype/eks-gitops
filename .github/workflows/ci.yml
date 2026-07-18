@@ -209,6 +209,35 @@ jobs:
       - name: Sync-wave ordering gate
         run: ./scripts/check-sync-waves.py
 
+  # ── Appset render gate ───────────────────────────────────────────────
+  # The Karpenter EC2NodeClass patch carries if/range control flow inside a
+  # `patch: |-` string block. Every other gate treats that string as opaque —
+  # the appset schema gate validates its YAML shape, kustomize builds the
+  # overlays without ever rendering the per-cluster patch, so a control-flow
+  # edit that breaks the render (a bare index that trips missingkey=error, or a
+  # dig that panics on the string label map the cluster generator hands back)
+  # ships green and only breaks at sync, on every cluster the generator
+  # produces. This job renders the committed template the way the ArgoCD
+  # ApplicationSet controller does (Go text/template + sprig,
+  # Option("missingkey=error")) against fixture create/adopt/legacy cluster
+  # Secrets and asserts the subnetSelectorTerms shape for each.
+  appset-render:
+    name: Appset render (Karpenter subnet selector)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: applicationsets/rendertest/go.mod
+          cache-dependency-path: applicationsets/rendertest/go.sum
+
+      - name: Render Karpenter patch template against fixture cluster Secrets
+        working-directory: applicationsets/rendertest
+        run: go test ./...
+
   # ── Secret scan ──────────────────────────────────────────────────────
   # gitleaks over the working tree. The catalog keeps secrets out by
   # construction (External Secrets + Pod Identity, no static keys in values), but
@@ -357,7 +386,7 @@ jobs:
     name: PR Summary
     runs-on: ubuntu-latest
     if: always() && github.event_name == 'pull_request'
-    needs: [lint, dashboards, fork-safety, helm-render, appsets, secrets, validate]
+    needs: [lint, dashboards, fork-safety, helm-render, appsets, appset-render, secrets, validate]
     permissions:
       pull-requests: write
     steps:
@@ -373,6 +402,7 @@ jobs:
               'Fork-safety gate (no hardcoded org, blocking)': '${{ needs.fork-safety.result }}',
               'Helm-render (every addon × every env)': '${{ needs.helm-render.result }}',
               'ApplicationSet schema + sync waves': '${{ needs.appsets.result }}',
+              'Appset render (Karpenter subnet selector)': '${{ needs.appset-render.result }}',
               'Secret scan (gitleaks)': '${{ needs.secrets.result }}',
               'Render + assert + schema + misconfig (all environments)': '${{ needs.validate.result }}',
             };

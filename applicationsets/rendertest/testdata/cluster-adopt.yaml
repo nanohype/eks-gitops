@@ -1,0 +1,19 @@
+# Fixture: an ArgoCD cluster Secret for an adopt-mode cluster — it participates in a
+# VPC shared over AWS RAM and cannot see or write the owner's subnet tags, so
+# cluster-bootstrap stamps the private subnet ids as an annotation and Karpenter
+# selects those by id. Only the labels and annotations are read by the render test.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cluster-adopt
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: cluster
+    environment: staging
+    cluster_name: bravo
+    network_mode: adopt
+  annotations:
+    gitops/repo-url: https://github.com/example/gitops
+    network/private-subnet-ids: subnet-priv-a,subnet-priv-b,subnet-priv-c
+    network/public-subnet-ids: subnet-pub-a,subnet-pub-b,subnet-pub-c
+type: Opaque
