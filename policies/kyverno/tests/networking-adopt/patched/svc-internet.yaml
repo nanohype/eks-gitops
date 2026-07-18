@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-internet
+  namespace: workloads
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+    service.beta.kubernetes.io/aws-load-balancer-subnets: subnet-pub-a,subnet-pub-b
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 80

@@ -1,0 +1,14 @@
+# Supplies the kube-system/network-config ConfigMap context to the Kyverno CLI in
+# adopt mode. Offline, the CLI cannot reach a cluster to read the ConfigMap, so its
+# data keys are provided as the context variables the policy references. On a live
+# cluster cluster-bootstrap writes this ConfigMap and Kyverno reads it directly (the
+# admission and background controllers already carry cluster-wide configmap
+# get/list/watch in the chart's core ClusterRoles).
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Values
+metadata:
+  name: values
+globalValues:
+  networkconfig.data.network_mode: adopt
+  networkconfig.data.private_subnet_ids: subnet-priv-a,subnet-priv-b
+  networkconfig.data.public_subnet_ids: subnet-pub-a,subnet-pub-b
