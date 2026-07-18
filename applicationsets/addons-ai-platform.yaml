@@ -15,12 +15,15 @@ spec:
               selector:
                 matchLabels:
                   argocd.argoproj.io/secret-type: cluster
-                matchExpressions:
-                  # Exclude the hub - it runs only observability + dashboards + bootstrap deps.
-                  - key: environment
-                    operator: NotIn
-                    values:
-                      - hub
+                  # Gated on the SAME opt-in label the operator appset uses
+                  # (addons-agent-operator.yaml). kagent + agentgateway are the
+                  # runtime the operator's ModelGateway/AgentFleet reconcile INTO
+                  # (agent-platform.yaml), so the whole AI-platform stack — operator,
+                  # runtime, and CRs — deploys together on an opted-in cluster and
+                  # nowhere else. The hub is never opted in (it runs observability +
+                  # dashboards + bootstrap deps only), so this label subsumes the
+                  # previous hub exclusion.
+                  eks-agent-platform/enabled: "true"
           - list:
               elements:
                 # CRDs first (wave 40), then the controllers (wave 42).

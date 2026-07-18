@@ -40,14 +40,14 @@ The `environment` label on the cluster secret is what ApplicationSets use to sel
 | Kyverno Admission | 1 | 3 | 3 |
 | Kyverno Background | 1 | 2 | 2 |
 | Kyverno Reports | 1 | 2 | 2 |
-| Loki | 1 | 3 | 3 |
+| Loki | 1 | 1 | 1 |
 | Goldilocks Dashboard | 1 | 2 | 2 |
 
 ### Retention and Storage
 
 | Component | Development | Staging | Production |
 |-----------|-----|---------|------------|
-| Loki Retention | 7 days | 14 days | 90 days |
+| Loki Retention | 7 days | 30 days | 90 days |
 | Loki Storage | 10Gi | 50Gi | 100Gi |
 | Tempo Retention | 3 days | 7 days | 30 days |
 | Tempo Storage | 10Gi | 50Gi | 100Gi |

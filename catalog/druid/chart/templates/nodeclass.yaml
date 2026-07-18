@@ -25,7 +25,24 @@ spec:
   securityGroupSelectorTerms:
     - tags:
         "karpenter.sh/discovery": "{{ .Values.hostedId }}-platform"
+  # The org resource-tagging standard's required AWS tier, rendered as PascalCase
+  # keys and propagated onto every EC2 instance Karpenter launches for druid — the
+  # same tier the fleet karpenter base carries
+  # (addons/operations/karpenter-resources/base/ec2nodeclass.yaml). Values mirror the
+  # chart's common.labels taxonomy so the k8s labels and the cloud tags agree.
+  # ManagedBy is karpenter (what provisions the instance); Component is the node role.
   tags:
+    ManagedBy: karpenter
+    Environment: "{{ .Values.environment }}"
+    Project: "{{ .Values.project }}"
+    Repository: "{{ .Values.repository }}"
+    Team: "{{ .Values.team }}"
+    CostCenter: "{{ .Values.costCenter }}"
+    BusinessUnit: "{{ .Values.businessUnit }}"
+    DataClassification: "{{ .Values.dataClassification }}"
+    Compliance: "{{ .Values.compliance }}"
+    Component: druid-node
+    # Druid-specific descriptive tags (domain-prefixed), kept alongside the required tier.
     "{{ .Values.domain }}:resource-type": dynamic-instance
     "{{ .Values.domain }}:category": analytics
     "{{ .Values.domain }}:type": druid

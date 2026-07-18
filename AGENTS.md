@@ -35,7 +35,7 @@ Every addon:
 Every tenant workload (a protohype app, an AgentFleet, etc.):
 
 - Has its own `<app>/gitops/applicationset-entry.yaml` in the application's source repo
-- The entry registers into `applicationsets/apps-tenants.yaml` here via a `git` source pointing at the app's repo
+- The entry registers into `applicationsets/opt-in/apps-tenants.yaml` here via a `git` source pointing at the app's repo. This appset lives under `opt-in/` — a default install never applies it (app-of-apps sources `path: applicationsets` without `directory.recurse`), so enabling tenant workloads is a deliberate repoint-and-wire step (see [`applicationsets/opt-in/README.md`](applicationsets/opt-in/README.md)).
 - The matrix generator scales over `clusters × [<app>]` so the same entry deploys to every cluster carrying the matching environment label
 
 ## Add a new addon
@@ -56,7 +56,7 @@ Every tenant workload (a protohype app, an AgentFleet, etc.):
 
 The workload's source repo owns the ApplicationSet entry — typically `<app>/gitops/applicationset-entry.yaml`. From this repo's side, you only need to:
 
-1. Add the workload's matrix generator entry to `applicationsets/apps-tenants.yaml` (cluster label selector + workload list).
+1. Add the workload's matrix generator entry to `applicationsets/opt-in/apps-tenants.yaml` (cluster label selector + workload list). This is an **opt-in** appset — a default install does not apply it, so a fork enabling tenant workloads repoints its org-specific URLs first (see [`applicationsets/opt-in/README.md`](applicationsets/opt-in/README.md)).
 2. The matrix scales `clusters × [workload]`. Sync waves: apps default to wave `100` (after all platform addons).
 3. Confirm the app's chart conforms to the [platform-tenant-contract](https://github.com/nanohype/nanohype/blob/main/standards/platform-tenant-contract.json).
 

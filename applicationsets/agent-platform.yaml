@@ -24,13 +24,15 @@ spec:
               selector:
                 matchLabels:
                   argocd.argoproj.io/secret-type: cluster
-                matchExpressions:
-                  # The hub runs observability + bootstrap only; agent platforms are
-                  # a workload-cluster concern.
-                  - key: environment
-                    operator: NotIn
-                    values:
-                      - hub
+                  # Gated on the SAME opt-in label the operator appset uses
+                  # (addons-agent-operator.yaml). The operator provides the CRDs
+                  # these CRs instantiate — Tenant, Platform, BudgetPolicy,
+                  # ModelGateway, AgentFleet, EvalSuite — so a cluster without the
+                  # operator would receive these manifests with no CRDs and no
+                  # controller, and the Application would fail to sync. The hub is
+                  # never opted in (it runs observability + bootstrap only), so this
+                  # label subsumes the previous hub exclusion.
+                  eks-agent-platform/enabled: "true"
           - list:
               elements:
                 - appName: agent-platform
