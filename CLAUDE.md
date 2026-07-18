@@ -20,14 +20,14 @@ addons/                → Addon configurations
     overlays/{development,staging,production}/
                            → Environment-specific kustomization.yaml
 policies/              → Kyverno ClusterPolicy manifests (pure Kustomize, base/overlays)
-environments/          → Cluster-config ConfigMaps per environment (includes provider field)
+environments/          → Cluster-config ConfigMaps per environment
 catalog/               → Platform-specific workloads (Druid)
 ```
 
 ## Key Conventions
 
 ### Sync Waves
-Components deploy in order: bootstrap (0, 2) → networking (1) → karpenter (5) → accelerators (6-7) → security (10-12) → policies (20-23) → observability (30-33) → operations (40-44) / ai-platform (40-42) → argo-platform (50-52).
+Components deploy in order: bootstrap (0, 2) → networking (1) → karpenter (5) → accelerators (6-7) → security (10-12) → policies (20-23) → observability (29-34) → operations (40-44) / ai-platform (40-42) → argo-platform (50-52).
 
 ### Helm Values Pattern
 Helm addons use a flat directory with ArgoCD multi-source. Each addon has `values.yaml` (base) plus `values-{env}.yaml` (delta only). ApplicationSets reference them via:
@@ -76,6 +76,24 @@ task validate:sync-waves    # Assert the documented sync-wave category ordering
 task render                 # Render manifests to rendered/ (incl. druid chart)
 task scan                   # kubeconform + trivy config gates over rendered/
 ```
+
+### Local `task validate` is a subset of CI
+
+`task validate` runs the structural gates (lint, kustomize build, helm-render,
+ApplicationSet schema, sync-wave ordering, appset render, policy-admission,
+dashboards, fork-safety). CI runs those plus several gates that have **no local
+`task` target**, so a clean `task validate` is necessary but not sufficient:
+
+- **Zero-placeholder gate** — `scripts/no-placeholders.sh` (CI job `placeholders`)
+- **Kyverno unit tests + verify-images signing-identity contract** —
+  `kyverno test policies/kyverno/tests` and `scripts/check-image-verification.py`
+  (CI job `kyverno`)
+- **Secret scan** — gitleaks over the working tree (CI job `secrets`)
+- **Render → render-assert → kubeconform → `trivy config`** (CI job `validate`);
+  locally this is `task render` then `task scan`, not part of `task validate`
+
+Fork-safety runs in both places but differently — the same split the Taskfile
+documents: `task validate` runs it report-only, CI runs it `--blocking`.
 
 ## Relationship to Parent Repo
 

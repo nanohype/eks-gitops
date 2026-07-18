@@ -40,4 +40,6 @@ spec:
       prometheusType: Prometheus
       sigV4Auth: true
       sigV4AuthType: ec2_iam_role
+      # Committed default; the dashboards ApplicationSet patches this per cluster
+      # from the `region` label so a cluster outside us-west-2 signs its own region.
       sigV4Region: us-west-2

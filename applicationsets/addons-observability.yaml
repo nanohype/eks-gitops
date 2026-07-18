@@ -38,13 +38,10 @@ spec:
                   chartVersion: 1.24.4
                   path: addons/observability/tempo
                   syncWave: "31"
-                - appName: alloy
-                  namespace: monitoring
-                  chartRepo: https://grafana.github.io/helm-charts
-                  chart: alloy
-                  chartVersion: 1.10.0
-                  path: addons/observability/alloy
-                  syncWave: "32"
+                # alloy lives in its own addons-alloy ApplicationSet (also wave
+                # 32): it needs a per-cluster valuesObject (SigV4 region + cluster
+                # external label) that this shared appset can't carry without
+                # leaking an unknown `alloy` values key onto the other charts.
                 - appName: grafana-operator
                   namespace: grafana-operator
                   chartRepo: https://grafana.github.io/helm-charts
@@ -72,8 +69,9 @@ spec:
           helm:
             releaseName: '{{ .appName }}'
             # No clusterName/vpcId parameters: kube-state-metrics, loki, tempo,
-            # alloy and grafana-operator read neither, and passing unknown --set
-            # values risks failing a chart whose schema rejects them.
+            # and grafana-operator read neither, and passing unknown --set values
+            # risks failing a chart whose schema rejects them. (alloy needs a
+            # per-cluster valuesObject and lives in its own addons-alloy appset.)
             valueFiles:
               - $values/{{ .path }}/values.yaml
               - $values/{{ .path }}/values-{{ index .metadata.labels "environment" }}.yaml

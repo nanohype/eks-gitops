@@ -6,11 +6,11 @@ You're an AI client (or the author of one) about to add a cluster-level addon, r
 
 ArgoCD App-of-Apps catalog for EKS clusters. Eight addon categories, plus ApplicationSets that bind workloads to clusters via labels (listed in deploy order):
 
-- **`addons/bootstrap/`** — cert-manager, external-secrets, metrics-server, prometheus-operator-crds, reloader, storage-classes, priority-classes
+- **`addons/bootstrap/`** — cert-manager, external-secrets, secret-stores, metrics-server, prometheus-operator-crds, reloader, storage-classes, priority-classes, portal-reader
 - **`addons/networking/`** — cilium, aws-load-balancer-controller, external-dns, mcp-tunnel
 - **`addons/accelerators/`** — gpu-operator, nvidia-dra-driver (Helm), aws-neuron-device-plugin (Kustomize) — GPU/Neuron device plugins, gated on the dedicated `eks-agent-platform/accelerators` cluster label, at waves 6-7 (early, alongside karpenter)
 - **`addons/security/`** — kyverno, falco, trivy-operator
-- **`addons/observability/`** — alloy, grafana-operator, loki, tempo, opencost
+- **`addons/observability/`** — alloy, grafana-operator, loki, tempo, kube-state-metrics, opencost
 - **`addons/operations/`** — karpenter, karpenter-resources, keda, descheduler, goldilocks, vpa, velero
 - **`addons/ai-platform/`** — kagent, agentgateway, the eks-agent-platform operator (plus their CRDs)
 - **`addons/argo-platform/`** — Argo Workflows, Argo Rollouts, Argo Events

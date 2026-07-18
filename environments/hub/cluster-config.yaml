@@ -8,7 +8,6 @@ metadata:
 data:
   # Cluster identification
   environment: "hub"
-  provider: "aws"
   cluster_name: "hub-fleet"
 
   # AWS configuration

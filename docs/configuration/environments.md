@@ -23,12 +23,11 @@ metadata:
     environment: development  # Used by ApplicationSet generators
 data:
   environment: "development"
-  provider: "aws"
   cluster_name: "development-platform"
   region: "us-west-2"
 ```
 
-The `environment` label on the cluster secret is what ApplicationSets use to select the correct values files or overlay paths. The `provider` field identifies this as an EKS (AWS) cluster.
+The `environment` label on the cluster secret is what ApplicationSets use to select the correct values files or overlay paths.
 
 ## Environment Differences
 
@@ -79,7 +78,7 @@ label) as a Helm value. Development runs no Velero — the ApplicationSet select
 
 ## Adding a New Environment
 
-1. Create `environments/<name>/cluster-config.yaml` with appropriate `provider`, `cluster_name`, and `region`
+1. Create `environments/<name>/cluster-config.yaml` with appropriate `cluster_name` and `region`
 2. For Helm addons: create `values-<name>.yaml` (delta only) in each addon directory under `addons/<category>/<addon>/`
 3. For Kustomize addons (storage-classes, priority-classes, karpenter-resources): create `overlays/<name>/kustomization.yaml` referencing `../../base`
 4. For policies: create overlay with appropriate enforcement mode patches

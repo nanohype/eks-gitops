@@ -8,7 +8,6 @@ metadata:
 data:
   # Cluster identification
   environment: "development"
-  provider: "aws"
   cluster_name: "development-platform"
 
   # AWS configuration

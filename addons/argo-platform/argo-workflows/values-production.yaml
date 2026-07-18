@@ -1,5 +1,2 @@
 # Argo Workflows - Production overrides
-
-artifactRepository:
-  s3:
-    bucket: aws-eks-production-argo-artifacts
+# No per-env delta (artifact repository is unconfigured; see base values.yaml).

@@ -40,15 +40,14 @@ controller:
         secondsAfterSuccess: 43200
         secondsAfterFailure: 172800
 
-useDefaultArtifactRepo: true
-artifactRepository:
-  s3:
-    endpoint: s3.amazonaws.com
-    useSDKCreds: true
-    insecure: false
-    accessKeySecret:
-      name: argo-workflows-s3
-      key: accessKey
-    secretKeySecret:
-      name: argo-workflows-s3
-      key: secretKey
+# No default artifact repository is configured. The S3 artifact bucket is
+# per-cluster and account-specific (landing-zone builds it as
+# `${cluster_name}-${account_id}-${region}-argo-workflows`), so it can never be
+# committed here — same constraint as the Velero backup bucket. Wiring artifact
+# passing means injecting that bucket per cluster through the annotation seam the
+# addons-velero ApplicationSet uses (cluster-bootstrap stamps the finished bucket
+# name onto the cluster Secret, the appset injects it as a Helm value, and
+# credentials come from the argo-workflows Pod Identity association — never a
+# static-key Secret). Until that cross-repo wiring lands, workflows run without an
+# artifact store rather than pointing at a bucket that does not exist. Tracked in
+# nanohype/eks-gitops#140.

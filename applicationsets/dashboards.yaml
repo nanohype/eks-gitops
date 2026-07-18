@@ -96,6 +96,25 @@ spec:
                               env:
                                 - name: SECRET_ID
                                   value: '{{ index .metadata.labels "cluster_name" }}-grafana-token'
+            # The datasource signing/query region is per-cluster — patch it from
+            # the `region` label (the same seam velero/opencost/secret-stores use)
+            # so a datasource on a cluster outside us-west-2 signs (Prometheus
+            # SigV4) and queries (CloudWatch) against its own region. The bases
+            # carry us-west-2 as the committed default.
+            - target:
+                kind: GrafanaDatasource
+                name: managed-prometheus
+              patch: |-
+                - op: replace
+                  path: /spec/datasource/jsonData/sigV4Region
+                  value: '{{ index .metadata.labels "region" }}'
+            - target:
+                kind: GrafanaDatasource
+                name: cloudwatch
+              patch: |-
+                - op: replace
+                  path: /spec/datasource/jsonData/defaultRegion
+                  value: '{{ index .metadata.labels "region" }}'
       destination:
         server: https://kubernetes.default.svc
         namespace: '{{ .namespace }}'

@@ -8,7 +8,6 @@ metadata:
 data:
   # Cluster identification
   environment: "staging"
-  provider: "aws"
   cluster_name: "staging-platform"
 
   # AWS configuration

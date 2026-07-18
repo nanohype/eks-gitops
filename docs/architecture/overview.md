@@ -67,7 +67,7 @@ graph LR
     B --> C[Wave 5: Karpenter]
     C --> D[Wave 10-12: Security]
     D --> E[Wave 20-22: Policies]
-    E --> F[Wave 30-33: Observability]
+    E --> F[Wave 29-34: Observability]
     F --> G[Wave 40-44: Operations]
     G --> H[Wave 50-52: Argo Platform]
 ```
@@ -80,7 +80,7 @@ graph LR
 | 5 | Karpenter | Karpenter (nodes ready before workloads) |
 | 10-12 | Security | Kyverno, Trivy Operator, Falco |
 | 20-22 | Policies | Kyverno PSS, Best Practices, Supply Chain |
-| 30-33 | Observability | Loki, Tempo, Alloy, OpenCost |
+| 29-34 | Observability | kube-state-metrics, Loki, Tempo, Alloy, OpenCost, grafana-operator |
 | 40-44 | Operations | Velero, VPA, Goldilocks, Descheduler, Karpenter Resources, KEDA |
 | 50-52 | Argo Platform | Argo Rollouts, Argo Events, Argo Workflows |
 
