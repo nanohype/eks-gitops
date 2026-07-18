@@ -165,7 +165,11 @@ def _prepare(rendered: str, namespace: str) -> str:
     """
     docs = []
     for doc in yaml.safe_load_all(rendered):
-        if not isinstance(doc, dict):
+        # Skip anything that is not a Kubernetes object. helm v4 prints OCI pull
+        # progress (`Pulled: …`, `Digest: …`) to stdout ahead of the manifests on
+        # a fresh pull; those parse as kind-less mappings and would otherwise be
+        # written back and rejected by kyverno ("Object 'Kind' is missing").
+        if not isinstance(doc, dict) or not doc.get("kind"):
             continue
         anns = (doc.get("metadata") or {}).get("annotations") or {}
         if "test" in str(anns.get("helm.sh/hook", "")):
