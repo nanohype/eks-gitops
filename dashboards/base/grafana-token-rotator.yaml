@@ -131,6 +131,11 @@ spec:
                   cpu: 50m
                   memory: 64Mi
                 limits:
+                  # A CPU ceiling as well as memory — this is a workload the
+                  # catalog authors, so it meets the org require-cpu-limit bar
+                  # even though the grafana-operator namespace is policy-excluded
+                  # (an every-30-days AWS-CLI burst never approaches this).
+                  cpu: 200m
                   memory: 128Mi
               volumeMounts:
                 - name: tmp

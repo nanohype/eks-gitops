@@ -77,6 +77,7 @@ class Unit:
     repo: str  # https helm repo URL or oci:// chart ref base
     path: str  # addon dir relative to repo root, e.g. addons/operations/velero
     params: list[tuple[str, str]] = field(default_factory=list)
+    namespace: str = ""  # ArgoCD destination namespace the addon syncs into
 
     @property
     def is_oci(self) -> bool:
@@ -160,6 +161,7 @@ def discover() -> list[Unit]:
                         repo=str(el["chartRepo"]),
                         path=str(el["path"]),
                         params=params,
+                        namespace=str(el.get("namespace", "")),
                     )
                 )
         else:
@@ -167,6 +169,7 @@ def discover() -> list[Unit]:
             path = _path_from_valuefiles(helm)
             if path is None:
                 continue
+            dest = (spec.get("template", {}).get("spec", {}) or {}).get("destination", {}) or {}
             units.append(
                 Unit(
                     appset=name,
@@ -175,6 +178,7 @@ def discover() -> list[Unit]:
                     repo=str(chart_src["repoURL"]),
                     path=path,
                     params=params,
+                    namespace=str(dest.get("namespace", "")),
                 )
             )
     return units

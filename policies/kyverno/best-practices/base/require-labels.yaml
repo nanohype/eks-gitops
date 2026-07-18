@@ -31,24 +31,55 @@ spec:
       exclude:
         any:
           - resources:
+              # Platform-managed namespaces — control plane, addons, and system
+              # infrastructure. These best-practice / pod-security policies govern
+              # TENANT workloads. The addon fleet cannot satisfy them and should
+              # not have to: upstream charts never carry the org
+              # platform.nanohype.dev/* label tier, device plugins and security
+              # agents need root / host access, and batch jobs have no
+              # service-style probes. All four policies (require-labels,
+              # require-probes, require-run-as-non-root, require-resource-limits)
+              # exclude the SAME set so the lists cannot silently drift apart —
+              # scripts/check-policy-admission.py asserts that equality AND renders
+              # the whole fleet through these policies in Enforce mode, so an addon
+              # landing in a non-excluded namespace fails CI instead of being
+              # denied at admission on a vended enforce-tier cluster.
               namespaces:
+                # Kubernetes + Argo control plane
                 - kube-system
                 - kube-public
                 - kube-node-lease
                 - argocd
-                - kyverno
-                - trivy-system
+                # bootstrap / networking / security infrastructure
                 - cert-manager
                 - external-secrets
+                - external-dns
+                - reloader
+                - kyverno
+                - trivy-system
+                - falco
+                # observability
                 - monitoring
+                - grafana-operator
+                - opencost
+                # operations
                 - velero
                 - goldilocks
-                - opencost
                 - vpa
                 - keda
+                - descheduler
+                # argo platform
                 - argo-rollouts
                 - argo-events
                 - argo-workflows
+                # ai platform
+                - kagent
+                - agentgateway
+                - eks-agent-platform
+                # accelerators — device plugins need privileged host access
+                - gpu-operator
+                - nvidia-dra-driver
+                - aws-neuron
       validate:
         allowExistingViolations: true
         message: >-

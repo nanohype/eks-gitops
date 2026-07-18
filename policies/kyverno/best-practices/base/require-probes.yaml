@@ -27,25 +27,46 @@ spec:
       exclude:
         any:
           - resources:
+              # Platform-managed namespaces — identical set across all four
+              # policies; see best-practices/base/require-labels.yaml for the full
+              # rationale and scripts/check-policy-admission.py for the drift +
+              # Enforce-admission gate that keeps them in sync.
               namespaces:
+                # Kubernetes + Argo control plane
                 - kube-system
                 - kube-public
                 - kube-node-lease
                 - argocd
-                - kyverno
-                - trivy-system
+                # bootstrap / networking / security infrastructure
                 - cert-manager
                 - external-secrets
+                - external-dns
+                - reloader
+                - kyverno
+                - trivy-system
+                - falco
+                # observability
                 - monitoring
+                - grafana-operator
+                - opencost
+                # operations
                 - velero
                 - goldilocks
-                - opencost
                 - vpa
-                - descheduler
                 - keda
+                - descheduler
+                # argo platform
                 - argo-rollouts
                 - argo-events
                 - argo-workflows
+                # ai platform
+                - kagent
+                - agentgateway
+                - eks-agent-platform
+                # accelerators — device plugins need privileged host access
+                - gpu-operator
+                - nvidia-dra-driver
+                - aws-neuron
       validate:
         allowExistingViolations: true
         message: "Readiness probe is required for all containers."
@@ -64,25 +85,46 @@ spec:
       exclude:
         any:
           - resources:
+              # Platform-managed namespaces — identical set across all four
+              # policies; see best-practices/base/require-labels.yaml for the full
+              # rationale and scripts/check-policy-admission.py for the drift +
+              # Enforce-admission gate that keeps them in sync.
               namespaces:
+                # Kubernetes + Argo control plane
                 - kube-system
                 - kube-public
                 - kube-node-lease
                 - argocd
-                - kyverno
-                - trivy-system
+                # bootstrap / networking / security infrastructure
                 - cert-manager
                 - external-secrets
+                - external-dns
+                - reloader
+                - kyverno
+                - trivy-system
+                - falco
+                # observability
                 - monitoring
+                - grafana-operator
+                - opencost
+                # operations
                 - velero
                 - goldilocks
-                - opencost
                 - vpa
-                - descheduler
                 - keda
+                - descheduler
+                # argo platform
                 - argo-rollouts
                 - argo-events
                 - argo-workflows
+                # ai platform
+                - kagent
+                - agentgateway
+                - eks-agent-platform
+                # accelerators — device plugins need privileged host access
+                - gpu-operator
+                - nvidia-dra-driver
+                - aws-neuron
       validate:
         allowExistingViolations: true
         message: "Liveness probe is required for all containers."

@@ -43,8 +43,9 @@ Every tenant workload (a protohype app, an AgentFleet, etc.):
 1. Create `addons/<category>/<name>/` with `values.yaml` + per-env deltas (`values-development.yaml` / `values-staging.yaml` / `values-production.yaml`).
 2. Reference the upstream chart by name + version in the values structure (varies per category — see existing addons for the shape).
 3. Add an entry to `applicationsets/addons-<category>.yaml` with a sync wave that respects ordering (bootstrap < networking < security < observability < operations < ai-platform < argo-platform < apps).
-4. Run `task validate` — helm-templates every addon against its appset-pinned chart with base + each env's values (an unknown key fails here, not fleet-wide at sync), schema-validates the ApplicationSets, and checks the documented sync-wave ordering, on top of YAML lint, kustomize build, and the dashboard/fork-safety gates.
-5. Open a PR. CI runs the same gates plus Kyverno policy tests, a gitleaks secret scan, and a per-environment render → schema → misconfiguration scan.
+4. If your addon lands in a **new namespace**, add it to the Kyverno exclusion lists in `policies/kyverno/best-practices/base/` and `policies/kyverno/pod-security-standards/base/` (all four policies share one identical set) — or make the addon's workloads satisfy the label/probe/limit/non-root policies. Otherwise a vended staging/production cluster runs those policies in Enforce mode and denies your Deployment at admission.
+5. Run `task validate` — helm-templates every addon against its appset-pinned chart with base + each env's values (an unknown key fails here, not fleet-wide at sync), renders the whole fleet through the Enforce-tier Kyverno policies (so a missing namespace exclusion fails here, not at admission on a real cluster), schema-validates the ApplicationSets, and checks the documented sync-wave ordering, on top of YAML lint, kustomize build, and the dashboard/fork-safety gates.
+6. Open a PR. CI runs the same gates plus Kyverno policy tests, a gitleaks secret scan, and a per-environment render → schema → misconfiguration scan.
 
 ## Add a Grafana dashboard
 
