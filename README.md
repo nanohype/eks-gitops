@@ -10,8 +10,8 @@ GitOps configuration for EKS cluster addons, managed by ArgoCD. The EKS ArgoCD a
 - **ArgoCD multi-source Helm values** — base values with flat environment-specific deltas
 - **Matrix generators** — environment selection from cluster secret labels
 - **Sync wave ordering** — deterministic deployment order across addon categories
-- **Three environments** — development, staging, production with appropriate sizing and policies
-- **CI validation** — automated YAML lint and Kustomize build on every PR
+- **Four environments** — development, staging, production (workload clusters), plus hub (the eks-fleet control plane, observability + bootstrap only), each with appropriate sizing and policies
+- **CI validation** — YAML lint, per-env render → schema → misconfiguration scan, helm-render, policy-admission, ApplicationSet schema, sync-wave, and secret-scan gates on every PR
 
 ## Companion Repository
 
@@ -52,64 +52,81 @@ repoURL: '{{ index .metadata.annotations "gitops/repo-url" }}'
 ┌─────────────────────────────────────────────────────────────────────┐
 │                    ApplicationSets                                  │
 ├─────────────────────────────────────────────────────────────────────┤
-│  ├── addons-bootstrap (cert-manager, external-secrets, ...)        │
+│  ├── addons-bootstrap (cert-manager, external-secrets, ...)         │
 │  ├── addons-bootstrap-kustomize (storage-classes, priority-classes) │
-│  ├── addons-networking (Cilium, ALB Controller, External DNS)      │
-│  ├── addons-security (Kyverno, Trivy, Falco)                      │
-│  ├── addons-observability (Loki, Tempo, Alloy, OpenCost)          │
-│  ├── addons-operations-helm (Velero, VPA, Goldilocks, ...)         │
-│  ├── addons-operations-kustomize (Karpenter Resources)             │
-│  ├── addons-accelerators-helm (gpu-operator, nvidia-dra)           │
-│  ├── addons-accelerators-kustomize (aws-neuron-device-plugin)      │
-│  ├── addons-argo-platform (Rollouts, Events, Workflows)            │
-│  ├── addons-ai-platform (kagent, agentgateway, operator)           │
-│  ├── kyverno-policies (PSS, Best Practices)                        │
-│  └── druid-tenants                                                 │
+│  ├── secret-stores (ClusterSecretStores)                            │
+│  ├── addons-networking (Cilium, ALB Controller)                     │
+│  ├── addons-external-dns (External DNS)                             │
+│  ├── addons-karpenter (Karpenter)                                   │
+│  ├── addons-accelerators-helm (gpu-operator, nvidia-dra-driver)     │
+│  ├── addons-accelerators-kustomize (aws-neuron-device-plugin)       │
+│  ├── addons-security (Kyverno, Trivy, Falco)                        │
+│  ├── kyverno-policies (PSS, best-practices, networking, ...)        │
+│  ├── addons-agent-operator (eks-agent-platform operator)            │
+│  ├── gateway-api-crds (Gateway API CRDs)                            │
+│  ├── addons-observability (kube-state-metrics, Loki, Tempo, Alloy)  │
+│  ├── addons-opencost (OpenCost)                                     │
+│  ├── addons-operations-helm (VPA, Goldilocks, Descheduler, KEDA)    │
+│  ├── addons-operations-kustomize (Karpenter Resources)              │
+│  ├── addons-velero (Velero)                                         │
+│  ├── addons-ai-platform (kagent, agentgateway + CRDs)               │
+│  ├── agent-platform (Tenant/Platform/Budget/ModelGateway CRs)       │
+│  ├── addons-argo-platform (Rollouts, Events, Workflows)             │
+│  ├── druid-tenants                                                  │
+│  └── dashboards (GrafanaDashboards)                                 │
 └─────────────────────────────────────────────────────────────────────┘
+
+Plus opt-in ApplicationSets under `applicationsets/opt-in/` (`apps-tenants`,
+`clusters-appset`, `portal-tenants`) — not applied by a default install; see
+[`applicationsets/opt-in/README.md`](applicationsets/opt-in/README.md).
 ```
 
 ## Directory Structure
 
 ```
 eks-gitops/
-├── applicationsets/                    # ArgoCD ApplicationSets
-│   ├── addons-bootstrap.yaml
-│   ├── addons-bootstrap-kustomize.yaml
-│   ├── addons-networking.yaml
-│   ├── addons-security.yaml
-│   ├── addons-observability.yaml
-│   ├── addons-operations-helm.yaml
-│   ├── addons-operations-kustomize.yaml
-│   ├── addons-accelerators-helm.yaml
-│   ├── addons-accelerators-kustomize.yaml
-│   ├── addons-argo-platform.yaml
-│   ├── addons-ai-platform.yaml
+├── applicationsets/                    # ArgoCD ApplicationSets (see Architecture above)
+│   ├── addons-*.yaml                    # one per addon group (bootstrap, networking,
+│   │                                    #   security, observability, operations, ...)
+│   ├── agent-platform.yaml              # eks-agent-platform CRs (Tenant/Platform/...)
 │   ├── kyverno-policies.yaml
-│   └── druid-tenants.yaml
+│   ├── gateway-api-crds.yaml
+│   ├── secret-stores.yaml
+│   ├── dashboards.yaml
+│   ├── druid-tenants.yaml
+│   └── opt-in/                          # NOT applied by default (apps/clusters/portal)
 │
 ├── addons/                             # Addon configurations
 │   ├── bootstrap/{cert-manager,external-secrets,metrics-server,
-│   │              prometheus-operator-crds,reloader,storage-classes,
-│   │              priority-classes}/
-│   ├── networking/{cilium,aws-load-balancer-controller,external-dns}/
+│   │              prometheus-operator-crds,reloader,secret-stores,
+│   │              storage-classes,priority-classes,portal-reader}/
+│   ├── networking/{cilium,aws-load-balancer-controller,external-dns,mcp-tunnel}/
 │   ├── security/{kyverno,trivy-operator,falco}/
-│   ├── observability/{loki,tempo,alloy,opencost}/
+│   ├── observability/{loki,tempo,alloy,grafana-operator,
+│   │                  kube-state-metrics,opencost}/
 │   ├── operations/{velero,vpa,goldilocks,descheduler,karpenter,
 │   │               karpenter-resources,keda}/
 │   ├── accelerators/{gpu-operator,nvidia-dra-driver,aws-neuron-device-plugin}/
 │   ├── argo-platform/{argo-rollouts,argo-events,argo-workflows}/
-│   └── ai-platform/{kagent,kagent-crds,agentgateway,agentgateway-crds,operator}/
+│   └── ai-platform/{agent-platform,kagent,kagent-crds,agentgateway,
+│                    agentgateway-crds,operator}/
 │
 ├── policies/                           # Kyverno policies (pure Kustomize)
-│   └── kyverno/{pod-security-standards,best-practices}/
+│   └── kyverno/{pod-security-standards,best-practices,networking,
+│                supply-chain,tests}/
 │
 ├── environments/                       # Cluster-config ConfigMaps
 │   ├── development/
 │   ├── staging/
-│   └── production/
+│   ├── production/
+│   └── hub/
 │
 ├── catalog/                            # Platform-specific workloads
 │   └── druid/
+│
+├── dashboards/                         # GrafanaDashboard CRs (grafana-operator)
+│
+├── scripts/                            # CI gate + validation scripts
 │
 └── docs/                               # Documentation
 ```
@@ -142,7 +159,7 @@ eks-gitops/
 | Kyverno Mode | Audit | Enforce | Enforce |
 | Velero | Disabled | Enabled | Enabled |
 | Karpenter CPU | 50 | 75 | 200 |
-| Loki Retention | 7d | 14d | 90d |
+| Loki Retention | 7d | 30d | 90d |
 | Falco Memory Limit | 1Gi | 2Gi | 4Gi |
 
 ## Prerequisites
@@ -187,4 +204,4 @@ task clean                    # Remove rendered output
 
 ## License
 
-[MIT](LICENSE)
+[Apache 2.0](LICENSE)

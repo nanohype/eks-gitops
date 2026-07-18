@@ -1,6 +1,6 @@
 Render Kustomize manifests for inspection.
 
-Ask the user which environment to render (development, staging, or production). Default to development if not specified via $ARGUMENTS.
+Ask the user which environment to render (development, staging, production, or hub). Default to development if not specified via $ARGUMENTS.
 
 Steps:
 1. Run `task clean` to remove any previous rendered output

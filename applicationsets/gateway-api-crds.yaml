@@ -21,7 +21,10 @@
 # every gateway on the cluster depends on, four months of soak beats two weeks of
 # novelty, and the v1 CRDs are backward compatible — v1.5.1 carries GatewayClass,
 # Gateway, HTTPRoute and GRPCRoute, which is everything the operator and agentgateway
-# use. Bump deliberately, not incidentally.
+# use. Bump deliberately, not incidentally. Renovate watches this git tag (a custom
+# manager in renovate.json, since it is a manifest directory, not a Helm chart) and
+# opens a currency PR when a newer release ships; the deliberate-bump judgment above
+# governs whether that PR merges.
 #
 # CHANNEL: standard, not experimental. Nothing here needs TCPRoute/UDPRoute.
 #

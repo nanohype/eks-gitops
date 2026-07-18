@@ -1,7 +1,7 @@
 Scaffold a new Kyverno ClusterPolicy with all required files.
 
 Gather the following from the user (or from $ARGUMENTS if provided):
-1. **Policy group**: existing group (pod-security-standards, best-practices) or new group name
+1. **Policy group**: existing group (pod-security-standards, best-practices, networking, supply-chain) or new group name
 2. **Policy name**: kebab-case (e.g., `require-readonly-rootfs`)
 3. **Title**: human-readable title for the annotation
 4. **Category**: Kyverno policy category (e.g., Pod Security Standards, Best Practices)

@@ -373,7 +373,11 @@ jobs:
       # RENDERED output too — catching a zero account id, placeholder token, or
       # account-less ARN that only appears after kustomize/helm templating.
       - name: Assert no unfilled sentinels in rendered output
-        uses: nanohype/nanohype/.github/actions/render-assert@main
+        # Pinned to a commit SHA, not a floating branch: this action runs in the
+        # merge path, so a pin keeps a change to nanohype/nanohype from silently
+        # altering this gate. nanohype/nanohype publishes no release tags, so the
+        # SHA is the immutable ref; dependabot (github-actions) bumps it.
+        uses: nanohype/nanohype/.github/actions/render-assert@d75fb5c26a1745df8e33d1a8c89f6f7de6c37b39 # nanohype/nanohype main
         with:
           manifests: rendered
           exclude: 'mcp-tunnel'

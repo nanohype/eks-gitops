@@ -3,7 +3,13 @@ kind: Tenant
 metadata:
   name: platform-ops
 spec:
-  aggregateMonthlyBudgetUsd: "100"
+  # Tenant ceiling across every Platform this tenant owns. platform-ops owns
+  # exactly one Platform (ops), so the ceiling equals that Platform's per-env
+  # BudgetPolicy cap — the aggregate must never sit below a Platform budget it
+  # aggregates or the stated ceiling is fiction. Each overlay sets this to its
+  # environment's cap alongside the BudgetPolicy patch (dev 50 / staging 200 /
+  # production 1000); this base value is the dev default.
+  aggregateMonthlyBudgetUsd: "50"
 ---
 apiVersion: platform.nanohype.dev/v1alpha1
 kind: Platform

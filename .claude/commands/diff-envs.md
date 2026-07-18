@@ -1,6 +1,6 @@
 Compare rendered manifests between two environments.
 
-Ask the user which two environments to compare (from: development, staging, production). Default to development vs staging if not specified via $ARGUMENTS.
+Ask the user which two environments to compare (from: development, staging, production, hub). Default to development vs staging if not specified via $ARGUMENTS.
 
 Steps:
 1. Create temporary directories for each environment's rendered output

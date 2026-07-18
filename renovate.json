@@ -1,7 +1,7 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended"],
-  "description": "Chart-pin currency for the ApplicationSet catalog. Renovate watches every Helm chart version pinned in applicationsets/ and opens a PR when a newer release ships — the helm-render + schema CI gates then validate each bump before merge. Restricted to chart managers so it never overlaps the github-actions updates dependabot owns.",
+  "description": "Chart-pin currency for the ApplicationSet catalog. Renovate watches every Helm chart version pinned in applicationsets/ (and the git-pinned Gateway API CRDs) and opens a PR when a newer release ships — the helm-render + schema CI gates then validate each bump before merge. Restricted to chart + git-tag managers so it never overlaps the github-actions updates dependabot owns.",
   "enabledManagers": ["argocd", "custom.regex"],
   "argocd": {
     "managerFilePatterns": ["/^applicationsets/[^/]+\\.ya?ml$/"]
@@ -24,11 +24,25 @@
         "chartRepo:\\s*oci://(?<packageName>[^\\s]+)\\s*\\n\\s*chart:[^\\n]*\\n\\s*chartVersion:\\s*\"?(?<currentValue>[^\"\\s]+)\"?"
       ],
       "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "Git-pinned Gateway API CRDs (gateway-api-crds.yaml). A plain manifest directory (config/crd/standard) sourced from a git tag, not a Helm chart, so neither the argocd manager nor the chart regex managers above can resolve it. Watched against the upstream GitHub release tags so a currency PR opens and runs the render + schema gates; the deliberate-bump rationale in the file still governs the merge decision.",
+      "managerFilePatterns": ["/^applicationsets/gateway-api-crds\\.ya?ml$/"],
+      "matchStrings": [
+        "repoURL:\\s*https://github\\.com/(?<depName>kubernetes-sigs/gateway-api)\\s*\\n\\s*targetRevision:\\s*(?<currentValue>v[0-9][^\\s]+)"
+      ],
+      "datasourceTemplate": "github-releases"
     }
   ],
   "packageRules": [
     {
       "matchDatasources": ["helm", "docker"],
+      "labels": ["dependencies", "charts"]
+    },
+    {
+      "matchDatasources": ["github-releases"],
+      "matchPackageNames": ["kubernetes-sigs/gateway-api"],
       "labels": ["dependencies", "charts"]
     }
   ]

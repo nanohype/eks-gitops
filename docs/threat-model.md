@@ -45,10 +45,10 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
 
 - **Tampering** — a merged manifest deploys fleet-wide with no further review.
   Mitigated at PR time by a render→validate→scan gate: kustomize/helm render every
-  overlay (ci.yml:150-185), `kubeconform -strict` with **no** `-ignore-missing-schemas`
-  (ci.yml:251-259), and `trivy config` hard-failing on **MEDIUM+** against the
-  *rendered* output (ci.yml:273-278). The workflow itself is least-privilege
-  (`permissions: contents: read`, ci.yml:9-11).
+  overlay (ci.yml:335-370), `kubeconform -strict` with **no** `-ignore-missing-schemas`
+  (ci.yml:416-419), and `trivy config` hard-failing on **MEDIUM+** against the
+  *rendered* output (ci.yml:433-438). The workflow itself is least-privilege
+  (`permissions: contents: read`, ci.yml:9-10).
 - **Denial of service / drift** — ApplicationSet `syncPolicy` runs `selfHeal` +
   `prune` with a bounded retry/backoff (druid-tenants.yaml:58-70), so manual drift
   is reverted and a transient sync failure retries rather than wedging.
@@ -57,7 +57,8 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
   the control that a malicious-but-valid change must pass, and that lives in GitHub
   settings, not this repo. CI has no cluster, so first-party CRDs
   (Platform/Tenant/ModelGateway/BudgetPolicy, Grafana) are schema-skipped
-  (ci.yml:258) and validated only against the real webhook out-of-band.
+  (the skip list in scripts/kubeconform-scan.sh) and validated only against the
+  real webhook out-of-band.
 
 ## 3. Image supply chain  (`policies/kyverno/supply-chain/`, `scripts/check-image-verification.py`)
 
@@ -92,7 +93,12 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
   `pod-security-standards/overlays/production/kustomization.yaml:8-14`
   (require-non-root, require-resource-limits).
   `kyverno test` proves each rule passes a compliant and fails a violating resource
-  (ci.yml:76-77), and `trivy config` MEDIUM+ backstops the rendered manifests.
+  (ci.yml:76-77), and `trivy config` MEDIUM+ backstops the rendered manifests. The
+  **policy-admission** gate (ci.yml:183-216) renders the whole addon fleet into its
+  real destination namespaces and runs `kyverno apply` against the Enforce overlay,
+  so an addon landing in a namespace the policies neither exclude nor let it satisfy
+  fails at PR time instead of being denied at admission on a vended Enforce cluster;
+  it also asserts all four exclusion lists stay identical.
 - **Residual** — the policies carry a fixed exclude list of platform/system
   namespaces (argocd, kyverno, cert-manager, monitoring, …) and set
   `allowExistingViolations: true`, so pre-existing violators and every excluded
