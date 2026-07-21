@@ -1,0 +1,106 @@
+# Argo Workflows is split out of addons-argo-platform because it needs an
+# argo-workflows-specific default S3 artifact repository injected per cluster —
+# the bucket name and the region — that would otherwise leak onto the
+# argo-rollouts and argo-events charts in the shared matrix (neither accepts an
+# `artifactRepository` key). The bucket is per cluster and account-specific
+# (landing-zone builds it as
+# `${cluster_name}-${account_id}-${region}-argo-workflows`), so it can never be
+# committed here — the same constraint the Velero backup bucket has.
+# cluster-bootstrap stamps the finished bucket name onto the cluster Secret as the
+# `argo-workflows/artifact-bucket` annotation (gated on the landing-zone opt-in
+# `enable_argo_workflows` variable), this ApplicationSet injects it as the default
+# S3 artifact repository, and credentials resolve from the ambient chain via the
+# argo-workflows Pod Identity association (`s3.useSDKCreds: true`,
+# `useStaticCredentials: false` — no static-key Secret). The account ID never
+# lands in this (public) repo.
+#
+# The injection is inline `helm.values` with an `{{ if }}` guard rather than a
+# `valuesObject`, because the annotation is present only on clusters where the
+# bucket is enabled (production today) and absent everywhere else. A structured
+# valuesObject would always render a non-empty `artifactRepository.s3` map — an
+# empty-bucket default repo, which the controller would treat as its artifact
+# store — on the clusters that lack the annotation. The guard renders the artifact
+# repository only where the annotation exists and leaves every other cluster
+# running Argo Workflows with no default artifact store (workflows run fine
+# without one). `index` on an absent annotation returns "" without tripping
+# `missingkey=error`, so the guard is false and the block is skipped. Every
+# non-hub cluster still gets Argo Workflows; only the artifact repository is
+# per-cluster. The render is exercised both ways by
+# applicationsets/rendertest/argo_workflows_render_test.go.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: addons-argo-workflows
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "52"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            argocd.argoproj.io/secret-type: cluster
+          matchExpressions:
+            # Exclude the hub - it runs only observability + dashboards + bootstrap deps.
+            - key: environment
+              operator: NotIn
+              values:
+                - hub
+  template:
+    metadata:
+      name: argo-workflows
+      labels:
+        app.kubernetes.io/managed-by: argocd
+        app.kubernetes.io/component: argo-workflows
+        platform.nanohype.dev/environment: '{{ index .metadata.labels "environment" }}'
+        platform.nanohype.dev/repository: nanohype/eks-gitops
+        platform.nanohype.dev/team: platform-engineering
+      annotations:
+        argocd.argoproj.io/sync-wave: "52"
+    spec:
+      project: platform
+      sources:
+        - repoURL: https://argoproj.github.io/argo-helm
+          chart: argo-workflows
+          targetRevision: 1.0.14
+          helm:
+            releaseName: argo-workflows
+            # Default S3 artifact repository, injected only on clusters carrying
+            # the `argo-workflows/artifact-bucket` annotation (bucket) plus a
+            # `region` label. useStaticCredentials:false + s3.useSDKCreds:true bind
+            # the controller to the argo-workflows Pod Identity association instead
+            # of a static-key Secret. Rendered as inline values with an if-guard so
+            # clusters without the annotation get no (empty-bucket) artifact repo.
+            values: |
+              {{- if index .metadata.annotations "argo-workflows/artifact-bucket" }}
+              useStaticCredentials: false
+              artifactRepository:
+                s3:
+                  bucket: {{ index .metadata.annotations "argo-workflows/artifact-bucket" }}
+                  region: {{ index .metadata.labels "region" }}
+                  useSDKCreds: true
+              {{- end }}
+            valueFiles:
+              - $values/addons/argo-platform/argo-workflows/values.yaml
+              - $values/addons/argo-platform/argo-workflows/values-{{ index .metadata.labels "environment" }}.yaml
+        - repoURL: '{{ index .metadata.annotations "gitops/repo-url" }}'
+          targetRevision: main
+          ref: values
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: argo-workflows
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m

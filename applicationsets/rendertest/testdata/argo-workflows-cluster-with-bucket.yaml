@@ -1,0 +1,19 @@
+# Fixture: an ArgoCD cluster Secret for a cluster running Argo Workflows with the
+# artifact bucket enabled (landing-zone enable_argo_workflows=true) — cluster-bootstrap
+# stamped the bucket name as the argo-workflows/artifact-bucket annotation. The
+# 111111111111 account id is the org's fake-account placeholder. Only the labels and
+# annotations are read by the render test.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cluster-with-bucket
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: cluster
+    environment: production
+    cluster_name: alpha
+    region: us-west-2
+  annotations:
+    gitops/repo-url: https://github.com/example/gitops
+    argo-workflows/artifact-bucket: alpha-111111111111-us-west-2-argo-workflows
+type: Opaque
