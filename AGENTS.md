@@ -32,7 +32,7 @@ Every addon:
 - Is referenced by an ApplicationSet in `applicationsets/addons-<category>.yaml` with a sync wave
 - Sync waves run in order — bootstrap before security before observability before tenant workloads
 
-Every tenant workload (a protohype app, an AgentFleet, etc.):
+Every tenant workload (an application chart, an AgentFleet, etc.):
 
 - Has its own `<app>/gitops/applicationset-entry.yaml` in the application's source repo
 - The entry registers into `applicationsets/opt-in/apps-tenants.yaml` here via a `git` source pointing at the app's repo. This appset lives under `opt-in/` — a default install never applies it (app-of-apps sources `path: applicationsets` without `directory.recurse`), so enabling tenant workloads is a deliberate repoint-and-wire step (see [`applicationsets/opt-in/README.md`](applicationsets/opt-in/README.md)).

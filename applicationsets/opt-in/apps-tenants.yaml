@@ -23,8 +23,8 @@ spec:
                       - hub
           - list:
               elements:
-                # protohype-team apps promoted to their own repos.
-                # Add one element per app; each carries its own source repo.
+                # One element per tenant application. Each app owns its own
+                # repo, so the element names the repo and chart path to sync.
                 - app: slack-knowledge-bot
                   repoURL: https://github.com/nanohype/slack-knowledge-bot.git
                   path: chart
