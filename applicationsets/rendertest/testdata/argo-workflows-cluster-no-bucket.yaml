@@ -1,0 +1,19 @@
+# Fixture: an ArgoCD cluster Secret for a cluster running Argo Workflows without the
+# artifact bucket (landing-zone enable_argo_workflows=false, the default) — no
+# argo-workflows/artifact-bucket annotation. The appset must inject no artifact
+# repository (an empty-bucket default repo would silently misconfigure the
+# controller) and must not trip missingkey=error. Only the labels and annotations
+# are read by the render test.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cluster-no-bucket
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: cluster
+    environment: development
+    cluster_name: bravo
+    region: us-west-2
+  annotations:
+    gitops/repo-url: https://github.com/example/gitops
+type: Opaque

@@ -37,13 +37,6 @@ spec:
                   chartVersion: "2.4.21"
                   path: addons/argo-platform/argo-events
                   syncWave: "51"
-                - appName: argo-workflows
-                  namespace: argo-workflows
-                  chartRepo: https://argoproj.github.io/argo-helm
-                  chart: argo-workflows
-                  chartVersion: "1.0.14"
-                  path: addons/argo-platform/argo-workflows
-                  syncWave: "52"
   template:
     metadata:
       name: '{{ .appName }}'
@@ -63,9 +56,10 @@ spec:
           targetRevision: '{{ .chartVersion }}'
           helm:
             releaseName: '{{ .appName }}'
-            # No clusterName/vpcId parameters: argo-rollouts, argo-events and
-            # argo-workflows read neither, and passing unknown --set values risks
-            # failing a chart whose schema rejects them.
+            # No clusterName/vpcId parameters: argo-rollouts and argo-events read
+            # neither, and passing unknown --set values risks failing a chart whose
+            # schema rejects them. argo-workflows is split into addons-argo-workflows
+            # because it needs a per-cluster S3 artifact repository injected.
             valueFiles:
               - $values/{{ .path }}/values.yaml
               - $values/{{ .path }}/values-{{ index .metadata.labels "environment" }}.yaml
