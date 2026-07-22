@@ -4,30 +4,6 @@
 # finding anywhere else still fails the gate until it is fixed or added here
 # with a statement.
 misconfigurations:
-  # ── aws-neuron-device-plugin ──────────────────────────────────────────
-  # Kubernetes device plugin: root and hostPath are the device-plugin
-  # contract, not a misconfiguration.
-  - id: KSV-0012
-    paths:
-      - "*aws-neuron-device-plugin*"
-    statement: >-
-      The device plugin runs as root to open /dev/neuron* devices and
-      register over the kubelet's device-plugins socket.
-  - id: KSV-0023
-    paths:
-      - "*aws-neuron-device-plugin*"
-    statement: >-
-      hostPath mounts of the kubelet device-plugins directory (and the
-      Neuron driver paths) are how a device plugin talks to the kubelet;
-      there is no volume type that replaces them.
-  - id: KSV-0125
-    paths:
-      - "*aws-neuron-device-plugin*"
-    statement: >-
-      Registry-allowlist check; the image ships from AWS's public Neuron
-      registry. Image provenance is enforced cluster-side by the Kyverno
-      verify-images policy (policies/kyverno/supply-chain).
-
   # ── grafana-token-rotator (dashboards/base) ───────────────────────────
   - id: KSV-0125
     paths:
@@ -39,7 +15,7 @@ misconfigurations:
       Karpenter churns, and Docker Hub's anonymous pull limits are the exact
       problem public.ecr.aws exists to solve. Image provenance is enforced
       cluster-side by the Kyverno verify-images policy
-      (policies/kyverno/supply-chain), same as aws-neuron-device-plugin above.
+      (policies/kyverno/supply-chain).
       The rotator is the only container in this rendered root — every other
       resource in dashboards/base is a CR or an ExternalSecret — so this
       exception cannot silently cover a second image.

@@ -31,9 +31,9 @@ WHAT IT DOES
     2. FUNCTIONAL — discovers every Helm addon from the ApplicationSets (the same
        discovery scripts/render-addons.py uses — the single source of truth),
        renders each into its real ArgoCD destination namespace with base + each
-       Enforce environment's values, adds the two Kustomize-sourced workloads that
-       land pods (the aws-neuron device plugin and the grafana dashboards' token
-       rotator), then runs `kyverno apply` against the Enforce overlay of the
+       Enforce environment's values, adds the Kustomize-sourced workload that
+       lands pods (the grafana dashboards' token rotator), then runs
+       `kyverno apply` against the Enforce overlay of the
        best-practices + pod-security policies. Any denial fails the build. It also
        runs the Audit overlay (development) with --audit-warn to prove the Audit
        variant is well-formed and matches — a warn on dev, a deny on staging/prod.
@@ -112,7 +112,6 @@ WORKLOAD_KINDS = {
 # discover() (chart-keyed) never sees them: (kustomize root relative to repo,
 # destination namespace, per-env overlays or None for an env-agnostic root).
 KUSTOMIZE_WORKLOADS = [
-    ("addons/accelerators/aws-neuron-device-plugin", "aws-neuron", True),
     ("dashboards/base", "grafana-operator", False),
 ]
 

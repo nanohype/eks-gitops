@@ -18,7 +18,7 @@ argocd app get <app-name>            # confirm the deployed chart version
 argocd app history <app-name>        # deploy timeline
 ```
 
-Chart versions for upstream Helm addons are pinned in the ApplicationSet list elements (`chartVersion` in `applicationsets/addons-*.yaml`), not in the addon directory. Values changes live in `addons/<category>/<addon>/values.yaml` (base) or `values-{env}.yaml` (per-env delta). Kustomize addons (storage-classes, priority-classes, karpenter-resources, neuron device plugin, portal-reader) pin everything in `base/` + overlays. The druid catalog chart is versioned by this repo itself — rolling it back means reverting the chart templates/values, there is no upstream pin.
+Chart versions for upstream Helm addons are pinned in the ApplicationSet list elements (`chartVersion` in `applicationsets/addons-*.yaml`), not in the addon directory. Values changes live in `addons/<category>/<addon>/values.yaml` (base) or `values-{env}.yaml` (per-env delta). Kustomize addons (storage-classes, priority-classes, karpenter-resources, portal-reader) pin everything in `base/` + overlays. The druid catalog chart is versioned by this repo itself — rolling it back means reverting the chart templates/values, there is no upstream pin.
 
 Before rolling back, check the failure isn't environment-scoped: a bad `values-staging.yaml` delta needs a one-file revert, not a chart-pin revert across all environments.
 

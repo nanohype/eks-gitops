@@ -59,7 +59,6 @@ repoURL: '{{ index .metadata.annotations "gitops/repo-url" }}'
 │  ├── addons-external-dns (External DNS)                             │
 │  ├── addons-karpenter (Karpenter)                                   │
 │  ├── addons-accelerators-helm (gpu-operator, nvidia-dra-driver)     │
-│  ├── addons-accelerators-kustomize (aws-neuron-device-plugin)       │
 │  ├── addons-security (Kyverno, Trivy, Falco)                        │
 │  ├── kyverno-policies (PSS, best-practices, networking, ...)        │
 │  ├── addons-agent-operator (eks-agent-platform operator)            │
@@ -106,7 +105,7 @@ eks-gitops/
 │   │                  kube-state-metrics,opencost}/
 │   ├── operations/{velero,vpa,goldilocks,descheduler,karpenter,
 │   │               karpenter-resources,keda}/
-│   ├── accelerators/{gpu-operator,nvidia-dra-driver,aws-neuron-device-plugin}/
+│   ├── accelerators/{gpu-operator,nvidia-dra-driver}/
 │   ├── argo-platform/{argo-rollouts,argo-events,argo-workflows}/
 │   └── ai-platform/{agent-platform,kagent,kagent-crds,agentgateway,
 │                    agentgateway-crds,operator}/
@@ -140,7 +139,7 @@ eks-gitops/
 | 1 | Networking (Cilium, ALB Controller, External DNS); Secret Stores (ClusterSecretStores) | CNI/ingress + secret backends |
 | 2 | Bootstrap continued (metrics-server, reloader, storage-classes, priority-classes) | Cluster essentials |
 | 5 | Karpenter | Nodes must be ready before workloads |
-| 6 | Accelerators (gpu-operator, aws-neuron-device-plugin, nvidia-dra-driver) | GPU/Neuron device plugins advertised before workloads |
+| 6 | Accelerators (gpu-operator, nvidia-dra-driver) | GPU device plugins advertised before workloads |
 | 10 | Security (Kyverno, Trivy, Falco) | Policy engine before policies |
 | 20 | Kyverno Policies | After Kyverno is ready |
 | 21 | Agent Operator (eks-agent-platform) | Operator + CRDs before the agent platform consumes them |

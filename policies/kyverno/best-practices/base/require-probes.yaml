@@ -66,7 +66,6 @@ spec:
                 # accelerators — device plugins need privileged host access
                 - gpu-operator
                 - nvidia-dra-driver
-                - aws-neuron
       validate:
         allowExistingViolations: true
         message: "Readiness probe is required for all containers."
@@ -124,7 +123,6 @@ spec:
                 # accelerators — device plugins need privileged host access
                 - gpu-operator
                 - nvidia-dra-driver
-                - aws-neuron
       validate:
         allowExistingViolations: true
         message: "Liveness probe is required for all containers."
