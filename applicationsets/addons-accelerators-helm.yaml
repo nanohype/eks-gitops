@@ -11,7 +11,7 @@ spec:
   generators:
     - matrix:
         generators:
-          # Accelerators are opt-in: only clusters that carry GPU/Neuron node
+          # Accelerators are opt-in: only clusters that carry GPU node
           # pools (labeled eks-agent-platform/enabled by cluster-bootstrap) get
           # the device plugins. They land at waves 6-7 — after the CNI (1) and
           # karpenter (5), before security (10) and workloads — so accelerators

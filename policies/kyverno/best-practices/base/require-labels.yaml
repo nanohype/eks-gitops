@@ -79,7 +79,6 @@ spec:
                 # accelerators — device plugins need privileged host access
                 - gpu-operator
                 - nvidia-dra-driver
-                - aws-neuron
       validate:
         allowExistingViolations: true
         message: >-

@@ -212,7 +212,7 @@ serviceAccount:
   name: alloy
 
 # DaemonSet on every node — tolerate all taints so the collector also lands on
-# tainted (GPU / Neuron / system) nodes.
+# tainted (GPU / system) nodes.
 controller:
   tolerations:
     - operator: Exists

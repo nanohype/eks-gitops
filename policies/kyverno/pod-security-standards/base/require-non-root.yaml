@@ -65,7 +65,6 @@ spec:
                 # accelerators — device plugins need privileged host access
                 - gpu-operator
                 - nvidia-dra-driver
-                - aws-neuron
       validate:
         allowExistingViolations: true
         message: "Running as root is not allowed. Set spec.securityContext.runAsNonRoot to true."
