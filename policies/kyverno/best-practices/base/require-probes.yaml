@@ -49,6 +49,7 @@ spec:
                 - monitoring
                 - grafana-operator
                 - opencost
+                - amazon-cloudwatch
                 # operations
                 - velero
                 - goldilocks
@@ -106,6 +107,7 @@ spec:
                 - monitoring
                 - grafana-operator
                 - opencost
+                - amazon-cloudwatch
                 # operations
                 - velero
                 - goldilocks
