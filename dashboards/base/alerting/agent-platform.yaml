@@ -340,11 +340,15 @@ spec:
     #    inert here: this stack runs no Prometheus ruler, so that rule only fires
     #    on the local kx cluster. This is the production path.
     #
-    #    derived_from: operators/internal/controller/metrics.go — the counter is
-    #      operator-emitted (agents_slo_hold_unobserved_total), reaching AMP via
-    #      the operator pod's prometheus.io/scrape annotation, not a KSM
-    #      projection. The [1h] window comfortably spans the 5m SLO tick, so the
-    #      alert stays lit through the fault.
+    #    Reads the KSM projection of SLOPolicy.status, NOT the operator's own
+    #    agents_slo_* gauges. The operator chart gates its pod-scrape annotations
+    #    on metrics.secure being false and that defaults true, so nothing scrapes
+    #    the operator on this stack and an alert on its gauges would sit in
+    #    NoData — silently green, because noDataState is OK.
+    #
+    #    derived_from: addons/observability/kube-state-metrics/values.yaml —
+    #      the SLOPolicy holdEngagedAt / holdObservedAt projections, both
+    #      nilIsZero so an unset timestamp reads 0.
     - uid: agent-platform-slo-hold-unobserved
       title: AgentSLOHoldUnobserved
       condition: B
@@ -357,14 +361,14 @@ spec:
         service: eks-agent-platform
         component: slo
       annotations:
-        summary: a burn-rate rollout hold was engaged but never reached the tenant's AppProject
+        summary: a burn-rate rollout hold was engaged but has never been observed on the tenant's AppProject
         description: >
-          A page-tier error-budget burn engaged a rollout hold on a tenant, but
-          the deny sync window has not appeared on that tenant's ArgoCD
-          AppProject after the grace window. The tenant is still auto-syncing
-          into a burning SLO — the control loop decided, and nothing acted.
-          Check whether the Platform reconciler is running, and whether the
-          tenant has an AppProject at all.
+          A page-tier error-budget burn engaged a rollout hold on a tenant
+          (status.holdEngagedAt is set) but the deny sync window has never been
+          observed on that tenant's ArgoCD AppProject (status.holdObservedAt is
+          still unset). The tenant is still auto-syncing into a burning SLO — the
+          control loop decided, and nothing acted. Check whether the Platform
+          reconciler is running, and whether the tenant has an AppProject at all.
         runbook_url: https://github.com/nanohype/eks-agent-platform/blob/main/docs/runbooks/slo-burn-rate-hold.md
       data:
         - refId: A
@@ -378,7 +382,7 @@ spec:
             range: false
             intervalMs: 1000
             maxDataPoints: 43200
-            expr: "increase(agents_slo_hold_unobserved_total[1h]) > 0"
+            expr: "(kube_customresource_status_field{customresource_kind=\"SLOPolicy\",field=\"holdEngagedAt\"} > 0) and ignoring(field) (kube_customresource_status_field{customresource_kind=\"SLOPolicy\",field=\"holdObservedAt\"} == 0)"
         - refId: B
           datasourceUid: __expr__
           relativeTimeRange: {from: 3600, to: 0}
@@ -404,8 +408,14 @@ spec:
     #    kill-switch bus to the critical SNS topic, and a second page off the
     #    same signal would double-page the same incident.
     #
-    #    derived_from: operators/internal/controller/metrics.go — agents_slo_burn_rate
-    #      is set on every evaluated tick, so absence over 30m is ~6 missed ticks.
+    #    Reads status.lastEvaluated, NOT status.lastReconciled: the latter
+    #    advances on every tick whether or not a reading was obtained, so a
+    #    reconciler that ticks and fails every AMP query keeps it fresh forever
+    #    and a staleness alert on it can never fire.
+    #
+    #    derived_from: addons/observability/kube-state-metrics/values.yaml —
+    #      the SLOPolicy lastEvaluated projection (nilIsZero, so a policy that
+    #      has never evaluated reads 0 and trips immediately, which is correct).
     - uid: agent-platform-slo-evaluation-stale
       title: AgentSLOEvaluationStale
       condition: B
@@ -420,8 +430,8 @@ spec:
       annotations:
         summary: an SLOPolicy has not been evaluated for 30 minutes
         description: >
-          agents_slo_burn_rate has not been updated for this SLOPolicy in 30
-          minutes (about six missed ticks). The objective is not being measured,
+          SLOPolicy.status.lastEvaluated has not advanced in 30 minutes (about
+          six missed ticks). The objective is not being measured,
           so neither the page nor the rollout hold can fire on it. Check the
           SLOPolicy's SLOEvaluated condition — MetricStoreUnavailable means no
           AMP endpoint is wired, NoData means the SLI names series the metric
@@ -439,7 +449,7 @@ spec:
             range: false
             intervalMs: 1000
             maxDataPoints: 43200
-            expr: "time() - max by (namespace, slopolicy) (timestamp(agents_slo_burn_rate))"
+            expr: "time() - max by (namespace, name) (kube_customresource_status_field{customresource_kind=\"SLOPolicy\",field=\"lastEvaluated\"})"
         - refId: B
           datasourceUid: __expr__
           relativeTimeRange: {from: 3600, to: 0}

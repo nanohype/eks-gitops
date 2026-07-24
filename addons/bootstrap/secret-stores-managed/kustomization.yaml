@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# The AMP endpoint sync, split out of secret-stores because it is full-tier only.
+#
+# Its remoteRef resolves to <cluster>-managed-monitoring-endpoints, a Secrets
+# Manager entry the managed-monitoring component creates — and a floor cluster
+# does not run managed-monitoring. Delivered cluster-wide, this ExternalSecret
+# sits SecretSyncedError forever on every floor cluster, which ArgoCD's built-in
+# ExternalSecret health check reports as Degraded: a wave-1 Application
+# permanently unhealthy on a cluster behaving exactly as designed.
+#
+# The ClusterSecretStore stays in secret-stores and stays ungated — a floor
+# cluster still needs it for tenant ExternalSecrets.
+resources:
+  - monitoring-endpoints.yaml

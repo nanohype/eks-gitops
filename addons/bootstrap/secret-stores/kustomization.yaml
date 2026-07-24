@@ -1,10 +1,14 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-# External Secrets wiring delivered cluster-wide: the AWS Secrets Manager store
-# (cluster-scoped) and the monitoring-namespace endpoint sync that depends on it
-# (namespaced — it carries its own metadata.namespace). No namespace transform,
-# so the ClusterSecretStore stays cluster-scoped.
+# External Secrets wiring delivered cluster-wide: the AWS Secrets Manager store,
+# and only that. No namespace transform, so the ClusterSecretStore stays
+# cluster-scoped.
+#
+# The AMP endpoint sync used to ride here too. It is full-tier only — its
+# remoteRef resolves to a Secrets Manager entry only managed-monitoring creates —
+# so it lives in secret-stores-managed and is delivered by a tier-gated
+# generator. Cluster-wide, it left every floor cluster with a permanently
+# Degraded wave-1 Application.
 resources:
   - cluster-secret-store.yaml
-  - monitoring-endpoints.yaml
