@@ -328,3 +328,129 @@ spec:
                 operator: {type: and}
                 query: {params: [A]}
                 reducer: {type: last, params: []}
+    # 5. Rollout hold engaged but never applied — PAGE.
+    #    The SLO reconciler decides a burn-rate hold and records it on
+    #    SLOPolicy.status; the Platform reconciler renders the deny sync window
+    #    onto the tenant's AppProject. Splitting the decision from the write is
+    #    what keeps the AppProject single-writer, but it means the decision can
+    #    land while the write does not — and a tenant that is supposed to be held
+    #    and isn't keeps auto-syncing into a burning error budget.
+    #
+    #    The operator chart ships the same alert as a PrometheusRule, which is
+    #    inert here: this stack runs no Prometheus ruler, so that rule only fires
+    #    on the local kx cluster. This is the production path.
+    #
+    #    derived_from: operators/internal/controller/metrics.go — the counter is
+    #      operator-emitted (agents_slo_hold_unobserved_total), reaching AMP via
+    #      the operator pod's prometheus.io/scrape annotation, not a KSM
+    #      projection. The [1h] window comfortably spans the 5m SLO tick, so the
+    #      alert stays lit through the fault.
+    - uid: agent-platform-slo-hold-unobserved
+      title: AgentSLOHoldUnobserved
+      condition: B
+      for: 5m
+      noDataState: OK
+      execErrState: Error
+      isPaused: false
+      labels:
+        severity: page
+        service: eks-agent-platform
+        component: slo
+      annotations:
+        summary: a burn-rate rollout hold was engaged but never reached the tenant's AppProject
+        description: >
+          A page-tier error-budget burn engaged a rollout hold on a tenant, but
+          the deny sync window has not appeared on that tenant's ArgoCD
+          AppProject after the grace window. The tenant is still auto-syncing
+          into a burning SLO — the control loop decided, and nothing acted.
+          Check whether the Platform reconciler is running, and whether the
+          tenant has an AppProject at all.
+        runbook_url: https://github.com/nanohype/eks-agent-platform/blob/main/docs/runbooks/slo-burn-rate-hold.md
+      data:
+        - refId: A
+          datasourceUid: managed-prometheus
+          relativeTimeRange: {from: 3600, to: 0}
+          model:
+            refId: A
+            datasource: {type: prometheus, uid: managed-prometheus}
+            editorMode: code
+            instant: true
+            range: false
+            intervalMs: 1000
+            maxDataPoints: 43200
+            expr: "increase(agents_slo_hold_unobserved_total[1h]) > 0"
+        - refId: B
+          datasourceUid: __expr__
+          relativeTimeRange: {from: 3600, to: 0}
+          model:
+            refId: B
+            type: threshold
+            datasource: {type: __expr__, uid: __expr__}
+            expression: A
+            conditions:
+              - type: query
+                evaluator: {type: gt, params: [0]}
+                operator: {type: and}
+                query: {params: [A]}
+                reducer: {type: last, params: []}
+    # 6. SLO evaluation has gone stale — TICKET.
+    #    The reconciler ticks every 5m and sets the tier gauges each time. A
+    #    series that stops updating means the objective is no longer being
+    #    evaluated: AMP is unreachable, the SLI's series vanished, or the
+    #    reconciler is wedged. Nothing pages, because a stale evaluation is not
+    #    itself an outage — but an SLO nobody is measuring is an SLO nobody has.
+    #
+    #    Deliberately NOT a burn-rate page: a breach already routes through the
+    #    kill-switch bus to the critical SNS topic, and a second page off the
+    #    same signal would double-page the same incident.
+    #
+    #    derived_from: operators/internal/controller/metrics.go — agents_slo_burn_rate
+    #      is set on every evaluated tick, so absence over 30m is ~6 missed ticks.
+    - uid: agent-platform-slo-evaluation-stale
+      title: AgentSLOEvaluationStale
+      condition: B
+      for: 15m
+      noDataState: OK
+      execErrState: Error
+      isPaused: false
+      labels:
+        severity: ticket
+        service: eks-agent-platform
+        component: slo
+      annotations:
+        summary: an SLOPolicy has not been evaluated for 30 minutes
+        description: >
+          agents_slo_burn_rate has not been updated for this SLOPolicy in 30
+          minutes (about six missed ticks). The objective is not being measured,
+          so neither the page nor the rollout hold can fire on it. Check the
+          SLOPolicy's SLOEvaluated condition — MetricStoreUnavailable means no
+          AMP endpoint is wired, NoData means the SLI names series the metric
+          store does not have.
+        runbook_url: https://github.com/nanohype/eks-agent-platform/blob/main/docs/runbooks/slo-burn-rate-hold.md
+      data:
+        - refId: A
+          datasourceUid: managed-prometheus
+          relativeTimeRange: {from: 3600, to: 0}
+          model:
+            refId: A
+            datasource: {type: prometheus, uid: managed-prometheus}
+            editorMode: code
+            instant: true
+            range: false
+            intervalMs: 1000
+            maxDataPoints: 43200
+            expr: "time() - max by (namespace, slopolicy) (timestamp(agents_slo_burn_rate))"
+        - refId: B
+          datasourceUid: __expr__
+          relativeTimeRange: {from: 3600, to: 0}
+          model:
+            refId: B
+            type: threshold
+            datasource: {type: __expr__, uid: __expr__}
+            expression: A
+            conditions:
+              - type: query
+                evaluator: {type: gt, params: [1800]}
+                operator: {type: and}
+                query: {params: [A]}
+                reducer: {type: last, params: []}
