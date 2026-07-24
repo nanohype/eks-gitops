@@ -87,6 +87,13 @@ config:
       # attributes out of the dimension set keeps pod-level churn from becoming
       # custom-metric cardinality. Start narrow: widening later is a config
       # change, while a cardinality bill is not refundable.
+      #
+      # No gate can check this — nothing in CI parses collector config, and the
+      # cost depends on the workloads actually running rather than on the config.
+      # docs/runbooks/observability-tier.md step 4 is the measurement, and it is
+      # a required step when the first floor cluster comes up. If it comes back
+      # high, `metric_declarations` is the lever: pin an explicit dimension set
+      # per selector instead of accepting whatever a datapoint carries.
       dimension_rollup_option: NoDimensionRollup
       resource_to_telemetry_conversion:
         enabled: false
@@ -94,18 +101,14 @@ config:
       region: ${env:AWS_REGION}
       log_group_name: /aws/otel/${env:CLUSTER_NAME}/logs
       log_stream_name: otel-gateway
-    # Traces are accepted and discarded. A floor cluster has no trace backend, and
-    # the alternative — omitting the traces pipeline — makes the OTLP receiver
-    # answer UNIMPLEMENTED, so every tenant SDK on the cluster logs export errors
-    # forever for a condition that is by design. `debug` at basic verbosity emits
-    # one summary line per batch, which is bounded and doubles as proof that
-    # traces are arriving.
-    #
-    # AWS X-Ray is the natural upgrade here and contrib ships an awsxray
-    # exporter; it is deliberately not wired in this change because it needs its
-    # own IAM grant and its own sampling decision.
-    debug:
-      verbosity: basic
+    # Traces to X-Ray — the provider-native trace store, so the floor tier drops
+    # no signal. Sampling is left to the SDKs and to X-Ray's own centrally
+    # managed sampling rules, which the exporter fetches with the Get* grants on
+    # its role; deciding it here would override a fleet-wide policy from inside
+    # one cluster.
+    awsxray:
+      region: ${env:AWS_REGION}
+      index_all_attributes: false
   service:
     pipelines:
       metrics:
@@ -119,7 +122,7 @@ config:
       traces:
         receivers: [otlp]
         processors: [memory_limiter, k8s_attributes, batch]
-        exporters: [debug]
+        exporters: [awsxray]
 
 # Stable tenant-facing OTLP endpoint, decoupled from the release name. Byte-
 # identical to the full tier's alias Service — this IS the
