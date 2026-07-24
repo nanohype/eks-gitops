@@ -1,0 +1,148 @@
+# OpenTelemetry Collector — gateway (Deployment).
+#
+# The single egress point for the cluster's telemetry. It receives OTLP from the
+# node agents and directly from tenant workloads, enriches and batches, then owns
+# every backend export: metrics → Amazon Managed Prometheus (SigV4 remote-write),
+# logs → Loki (OTLP), traces → Tempo (OTLP). Concentrating export here is what
+# lets a future adopt mode swap all three exporters for one OTLP hop onward
+# without touching agents or tenants.
+#
+# Tenants push OTLP to the stable `telemetry.monitoring.svc` Service (the alias in
+# extraManifests below), a name decoupled from this workload so the contract holds
+# even if the collector implementation changes.
+
+mode: deployment
+
+image:
+  repository: otel/opentelemetry-collector-contrib
+  tag: "0.157.0"
+
+# Stable object names — the Service the agents forward to (otel-gateway) and the
+# SA the AMP Pod Identity association binds must not shift on an ArgoCD rename.
+fullnameOverride: otel-gateway
+
+# Enriches tenant direct-to-gateway OTLP with k8s.* resource attributes (agent-
+# forwarded telemetry is already enriched at the agent). Also auto-creates its
+# ClusterRole.
+presets:
+  kubernetesAttributes:
+    enabled: true
+
+# The EKS Pod Identity association granting aps:RemoteWrite binds this SA — no
+# IRSA annotation; the credential chain is satisfied by the Pod Identity agent.
+serviceAccount:
+  create: true
+  name: otel-gateway
+
+# AMP_REMOTE_WRITE_URL (secretKeyRef), AWS_REGION and CLUSTER_NAME are injected
+# per cluster by the addons-otel-gateway ApplicationSet's valuesObject — Helm
+# replaces the whole extraEnvs list rather than merging it, so none are set here.
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+  limits:
+    # The prometheus_remote_write exporter buffers in a sending queue, not a WAL —
+    # an OOM drops queued samples. Size memory with headroom.
+    cpu: "1"
+    memory: 1Gi
+
+# OTLP (4317/4318) stays on the chart Service for agent + tenant ingest; drop the
+# legacy jaeger/zipkin ingest ports.
+ports:
+  jaeger-compact:
+    enabled: false
+  jaeger-thrift:
+    enabled: false
+  jaeger-grpc:
+    enabled: false
+  zipkin:
+    enabled: false
+
+config:
+  extensions:
+    # SigV4-signs each AMP remote-write. service must be "aps"; region is set
+    # explicitly for parity though sigv4auth can also infer it from the endpoint.
+    sigv4auth:
+      service: "aps"
+      region: ${env:AWS_REGION}
+  processors:
+    batch: {}
+    memory_limiter:
+      check_interval: 5s
+      limit_percentage: 80
+      spike_limit_percentage: 25
+  exporters:
+    prometheus_remote_write:
+      endpoint: ${env:AMP_REMOTE_WRITE_URL}
+      auth:
+        authenticator: sigv4auth
+      external_labels:
+        cluster: ${env:CLUSTER_NAME}
+      # Parity: the previous collector emitted no target_info series.
+      target_info:
+        enabled: false
+    # Loki's native OTLP endpoint. The exporter appends /v1/logs, so the endpoint
+    # stops at /otlp. (The classic loki exporter was removed from contrib in
+    # v0.131.0; OTLP is the supported path. Log labels normalize to OTel attribute
+    # names — k8s_namespace_name / k8s_pod_name / k8s_container_name.)
+    otlphttp/loki:
+      endpoint: http://loki-gateway.monitoring.svc.cluster.local/otlp
+    otlp/tempo:
+      endpoint: tempo.monitoring.svc.cluster.local:4317
+      tls:
+        insecure: true
+  service:
+    # sigv4auth must join the default health_check extension (probes), not replace
+    # it.
+    extensions: [health_check, sigv4auth]
+    pipelines:
+      # Agent metrics arrive pre-labeled; the cluster label is added by the
+      # exporter's external_labels. The kubernetesAttributes preset injects
+      # k8s_attributes into every pipeline, so list it explicitly to keep
+      # memory_limiter first — its enrichment is a no-op on the exported series
+      # (target_info is off).
+      metrics:
+        receivers: [otlp]
+        processors: [memory_limiter, k8s_attributes, batch]
+        exporters: [prometheus_remote_write]
+      logs:
+        receivers: [otlp]
+        processors: [memory_limiter, k8s_attributes, batch]
+        exporters: [otlphttp/loki]
+      # Traces pass through at 100% — parity with the previous collector. Tail
+      # sampling is a deliberate follow-on, not part of the swap.
+      traces:
+        receivers: [otlp]
+        processors: [memory_limiter, k8s_attributes, batch]
+        exporters: [otlp/tempo]
+
+# Stable tenant-facing OTLP endpoint, decoupled from the release name. Selects the
+# gateway pods; this is the `telemetry.monitoring.svc` contract tenant charts wire
+# against.
+extraManifests:
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: telemetry
+      namespace: monitoring
+      labels:
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/component: otel-gateway-alias
+    spec:
+      type: ClusterIP
+      selector:
+        app.kubernetes.io/name: opentelemetry-collector
+        app.kubernetes.io/instance: '{{ .Release.Name }}'
+        component: standalone-collector
+      ports:
+        - name: otlp
+          port: 4317
+          targetPort: 4317
+          protocol: TCP
+          appProtocol: grpc
+        - name: otlp-http
+          port: 4318
+          targetPort: 4318
+          protocol: TCP

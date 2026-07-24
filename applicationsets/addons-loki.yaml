@@ -5,7 +5,7 @@
 # live in the shared observability appset — its other charts would reject an
 # unknown top-level `loki` S3 key, and a cluster without the annotation must keep
 # the filesystem default rather than get an empty-bucket S3 config. Same split
-# alloy already needs for its per-cluster AMP SigV4 region.
+# the OTel gateway needs for its per-cluster AMP SigV4 region.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:

@@ -1,0 +1,211 @@
+# OpenTelemetry Collector — node agent (DaemonSet).
+#
+# One collector per node. It scrapes node-local metrics (annotation-gated pods,
+# cAdvisor via the local kubelet, kube-state-metrics, Hubble L7) and tails pod
+# logs, then forwards every signal over OTLP to the otel-gateway, which owns all
+# backend export. The agent carries no AWS identity — remote-write to AMP happens
+# at the gateway, so this SA needs only in-cluster RBAC.
+#
+# Every scrape job is scoped to the collector's own node (spec.nodeName field
+# selector + a belt-and-braces relabel keep), so kube-state-metrics and Hubble are
+# collected exactly once cluster-wide — not once per node, which is what an
+# unscoped DaemonSet scrape would do.
+
+mode: daemonset
+
+# The contrib distro carries the prometheus_remote_write exporter + sigv4auth
+# extension the gateway needs; both tiers share one image so the fleet pulls one
+# artifact. image.repository is mandatory — chart >=0.110 ships no default.
+image:
+  repository: otel/opentelemetry-collector-contrib
+  tag: "0.157.0"
+
+# Stable object names (DaemonSet/ConfigMap/ClusterRole) independent of the ArgoCD
+# release name, so the gateway address and RBAC bindings don't shift on a rename.
+fullnameOverride: otel-agent
+
+# logsCollection injects the filelog receiver that tails /var/log/pods and the
+# container parser; kubernetesAttributes injects the k8s_attributes processor
+# (plus its ClusterRole and the node-scoped informer keyed on K8S_NODE_NAME) so
+# log records carry k8s.* resource attributes. Both feed the explicit pipelines
+# in config.service below.
+presets:
+  logsCollection:
+    enabled: true
+    includeCollectorLogs: false
+  kubernetesAttributes:
+    enabled: true
+
+serviceAccount:
+  create: true
+  name: otel-agent
+
+# The prometheus receiver discovers pods/nodes/endpoints and scrapes the kubelet
+# directly — access the kubernetesAttributes preset's ClusterRole does not grant.
+# These rules merge into that preset-created role.
+clusterRole:
+  create: true
+  rules:
+    - apiGroups: [""]
+      resources: ["nodes", "nodes/metrics", "nodes/proxy", "services", "endpoints", "pods"]
+      verbs: ["get", "list", "watch"]
+    - nonResourceURLs: ["/metrics", "/metrics/cadvisor"]
+      verbs: ["get"]
+
+# Own-node scoping needs the node name; the downward API supplies it. (The chart
+# also injects OTEL_K8S_NODE_NAME, but an explicitly-owned var keeps the scrape
+# config self-documenting.)
+extraEnvs:
+  - name: K8S_NODE_NAME
+    valueFrom:
+      fieldRef:
+        fieldPath: spec.nodeName
+
+# DaemonSet on every node — tolerate all taints so tainted (GPU / system) nodes
+# are collected too. Parity with the collector this replaces.
+tolerations:
+  - operator: Exists
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    # GOMEMLIMIT tracks limits.memory (80%); the memory_limiter processor keys off
+    # the same value. Headroom for scrape buffering + OTLP batch export.
+    cpu: 500m
+    memory: 512Mi
+
+# Tenants push OTLP to the gateway Service, never to node-local agents. Disable
+# every DaemonSet ingest port so no hostPort is bound on any node.
+ports:
+  otlp:
+    enabled: false
+  otlp-http:
+    enabled: false
+  jaeger-compact:
+    enabled: false
+  jaeger-thrift:
+    enabled: false
+  jaeger-grpc:
+    enabled: false
+  zipkin:
+    enabled: false
+
+config:
+  receivers:
+    prometheus:
+      config:
+        scrape_configs:
+          # Annotation-gated pod scrape, this node only. Honors
+          # prometheus.io/scrape|path|port exactly as the previous collector did.
+          - job_name: kubernetes-pods
+            kubernetes_sd_configs:
+              - role: pod
+                selectors:
+                  - role: pod
+                    field: spec.nodeName=${env:K8S_NODE_NAME}
+            relabel_configs:
+              - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+                regex: "true"
+                action: keep
+              - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+                regex: (.+)
+                target_label: __metrics_path__
+              # $$ escapes the literal $ — collector env expansion runs over this
+              # embedded Prometheus config and would otherwise eat a single $.
+              - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+                regex: ([^:]+)(?::\d+)?;(\d+)
+                replacement: $$1:$$2
+                target_label: __address__
+              - source_labels: [__meta_kubernetes_namespace]
+                target_label: namespace
+              - source_labels: [__meta_kubernetes_pod_name]
+                target_label: pod
+              - source_labels: [__meta_kubernetes_pod_container_name]
+                target_label: container
+          # cAdvisor via the local kubelet only (node field selector → own node).
+          - job_name: cadvisor
+            scheme: https
+            metrics_path: /metrics/cadvisor
+            bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+            tls_config:
+              ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+              insecure_skip_verify: true
+            kubernetes_sd_configs:
+              - role: node
+                selectors:
+                  - role: node
+                    field: metadata.name=${env:K8S_NODE_NAME}
+            relabel_configs:
+              - source_labels: [__meta_kubernetes_node_name]
+                regex: ${env:K8S_NODE_NAME}
+                action: keep
+          # kube-state-metrics: single pod in kube-system. Endpoints discovery +
+          # own-node keep means only the agent co-located with the KSM pod scrapes
+          # it — exactly once cluster-wide.
+          - job_name: kube-state-metrics
+            kubernetes_sd_configs:
+              - role: endpoints
+                namespaces:
+                  names: [kube-system]
+            relabel_configs:
+              - source_labels: [__meta_kubernetes_service_name]
+                regex: kube-state-metrics
+                action: keep
+              - source_labels: [__meta_kubernetes_pod_node_name]
+                regex: ${env:K8S_NODE_NAME}
+                action: keep
+          # Hubble L7 metrics: per-node cilium-agent pods behind the headless
+          # hubble-metrics Service. Own-node keep gives exactly-once per node.
+          - job_name: hubble
+            kubernetes_sd_configs:
+              - role: endpoints
+                namespaces:
+                  names: [kube-system]
+            relabel_configs:
+              - source_labels: [__meta_kubernetes_service_name]
+                regex: hubble-metrics
+                action: keep
+              - source_labels: [__meta_kubernetes_pod_node_name]
+                regex: ${env:K8S_NODE_NAME}
+                action: keep
+              - source_labels: [__meta_kubernetes_namespace]
+                target_label: namespace
+              - source_labels: [__meta_kubernetes_pod_name]
+                target_label: pod
+  processors:
+    batch: {}
+    memory_limiter:
+      check_interval: 5s
+      limit_percentage: 80
+      spike_limit_percentage: 25
+  exporters:
+    otlp:
+      endpoint: otel-gateway.monitoring.svc.cluster.local:4317
+      tls:
+        insecure: true
+  service:
+    pipelines:
+      # Scraped metrics already carry namespace/pod/container labels from the
+      # relabels above. The kubernetesAttributes preset injects k8s_attributes
+      # into every pipeline regardless, so list it explicitly here to keep
+      # memory_limiter first; its enrichment is a no-op on the exported series
+      # (target_info is off and resource attrs aren't converted to labels).
+      metrics:
+        receivers: [prometheus]
+        processors: [memory_limiter, k8s_attributes, batch]
+        exporters: [otlp]
+      # filelog needs k8s_attributes here — it enriches from the log path's pod
+      # context, which is lost once forwarded to the gateway.
+      logs:
+        receivers: [filelog]
+        processors: [memory_limiter, k8s_attributes, batch]
+        exporters: [otlp]
+      # The chart's default OTLP receiver stays bound inside the pod (its ports
+      # are unexposed above). Route anything it receives to the gateway rather
+      # than the default debug exporter.
+      traces:
+        receivers: [otlp]
+        processors: [memory_limiter, batch]
+        exporters: [otlp]

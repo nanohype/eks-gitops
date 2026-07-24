@@ -63,7 +63,7 @@ repoURL: '{{ index .metadata.annotations "gitops/repo-url" }}'
 │  ├── kyverno-policies (PSS, best-practices, networking, ...)        │
 │  ├── addons-agent-operator (eks-agent-platform operator)            │
 │  ├── gateway-api-crds (Gateway API CRDs)                            │
-│  ├── addons-observability (kube-state-metrics, Loki, Tempo, Alloy)  │
+│  ├── addons-observability (kube-state-metrics, Loki, Tempo, OTel)   │
 │  ├── addons-opencost (OpenCost)                                     │
 │  ├── addons-operations-helm (VPA, Goldilocks, Descheduler, KEDA)    │
 │  ├── addons-operations-kustomize (Karpenter Resources)              │
@@ -101,7 +101,7 @@ eks-gitops/
 │   │              storage-classes,priority-classes,portal-reader}/
 │   ├── networking/{cilium,aws-load-balancer-controller,external-dns,mcp-tunnel}/
 │   ├── security/{kyverno,trivy-operator,falco}/
-│   ├── observability/{loki,tempo,alloy,grafana-operator,
+│   ├── observability/{loki,tempo,otel-agent,otel-gateway,grafana-operator,
 │   │                  kube-state-metrics,opencost}/
 │   ├── operations/{velero,vpa,goldilocks,descheduler,karpenter,
 │   │               karpenter-resources,keda}/
@@ -143,7 +143,7 @@ eks-gitops/
 | 10 | Security (Kyverno, Trivy, Falco) | Policy engine before policies |
 | 20 | Kyverno Policies | After Kyverno is ready |
 | 21 | Agent Operator (eks-agent-platform) | Operator + CRDs before the agent platform consumes them |
-| 29-34 | Observability (kube-state-metrics 29, Loki, Tempo, Alloy, OpenCost 33, grafana-operator 34), Gateway API CRDs (30) | After security |
+| 29-34 | Observability (kube-state-metrics 29, Loki, Tempo, OTel collector 32, OpenCost 33, grafana-operator 34), Gateway API CRDs (30) | After security |
 | 40 | AI Platform (kagent, agentgateway); Operations (Velero, VPA, Goldilocks, Descheduler, KEDA) | After operator + observability |
 | 42 | Operations kustomize (Karpenter Resources) | After operations Helm |
 | 44 | Agent Platform CRs | After the AI-platform runtime is up |

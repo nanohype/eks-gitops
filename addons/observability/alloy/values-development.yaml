@@ -1,3 +1,0 @@
-# Grafana Alloy - Development overrides
-# extraEnv (incl. AWS_REGION + CLUSTER_NAME) is injected per cluster by the
-# addons-alloy ApplicationSet; no per-env delta beyond the base defaults here.

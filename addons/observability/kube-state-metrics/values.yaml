@@ -1,8 +1,8 @@
 # -- kube-state-metrics: cluster-state metrics (kube_*) + the eks-agent-platform
 # operator's custom-resource-state metrics (kube_customresource_*).
 #
-# Runs in kube-system as the service `kube-state-metrics` so the Alloy
-# static scrape (kube-state-metrics.kube-system.svc:8080) finds it — without this
+# Runs in kube-system as the service `kube-state-metrics` so the OpenTelemetry
+# Collector agent's endpoints-discovery scrape finds its pod — without this
 # addon that scrape hit nothing and every kube_* / kube_customresource_* panel
 # silently no-data'd (the cilium/cert-manager/eso dashboards and, via the
 # customResourceState config below, the seven agent persona dashboards + the
@@ -34,8 +34,8 @@ rbac:
       resources: ["agentfleets", "agentsandboxes", "sandboxpools", "modelgateways", "batchjobs"]
       verbs: ["list", "watch"]
 
-# Scraped by the Alloy static target, but annotate too so the
-# annotation-based discovery picks it up regardless.
+# Scraped by the collector agent's kube-state-metrics endpoints job (keyed on the
+# service name), independent of the pod-annotation discovery.
 selfMonitor:
   enabled: false
 
