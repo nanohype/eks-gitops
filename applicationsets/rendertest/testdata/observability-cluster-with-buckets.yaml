@@ -1,0 +1,20 @@
+# Fixture: an ArgoCD cluster Secret for a managed-monitoring cluster — cluster-bootstrap
+# stamped the Loki and Tempo bucket names as the observability/loki-bucket and
+# observability/tempo-bucket annotations (landing-zone enable_managed_monitoring=true). The
+# 111111111111 account id is the org's fake-account placeholder. Only the labels and
+# annotations are read by the render test.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cluster-with-buckets
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: cluster
+    environment: production
+    cluster_name: alpha
+    region: us-west-2
+  annotations:
+    gitops/repo-url: https://github.com/example/gitops
+    observability/loki-bucket: alpha-111111111111-us-west-2-loki
+    observability/tempo-bucket: alpha-111111111111-us-west-2-tempo
+type: Opaque

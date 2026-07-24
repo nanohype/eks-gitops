@@ -1,0 +1,17 @@
+# Fixture: an ArgoCD cluster Secret for a cluster without the managed-monitoring stack —
+# cluster-bootstrap stamped no observability/*-bucket annotations, so Loki and Tempo must
+# keep their base filesystem/local storage. Only the labels and annotations are read by the
+# render test.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cluster-no-buckets
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: cluster
+    environment: development
+    cluster_name: beta
+    region: us-west-2
+  annotations:
+    gitops/repo-url: https://github.com/example/gitops
+type: Opaque
