@@ -69,6 +69,30 @@ ports:
 config:
   processors:
     batch: {}
+    # Promote a bounded identity set onto the datapoints, because awsemf reads
+    # DATAPOINT attributes and everything the k8s_attributes processor adds is a
+    # RESOURCE attribute. Without this the entire enrichment is discarded at the
+    # exporter and every workload's metrics collapse into one dimensionless
+    # series in a fixed, account-wide CloudWatch namespace — two tenants emitting
+    # the same metric name become indistinguishable.
+    #
+    # This is the floor tier's equivalent of the full tier's
+    # `external_labels: {cluster: ...}` on prometheus_remote_write, plus the
+    # service identity remote-write derives on its own.
+    #
+    # Deliberately four attributes, not resource_to_telemetry_conversion. That
+    # flag promotes EVERYTHING, including pod name and pod UID, which is
+    # unbounded cardinality billed per series. Cluster, service and namespace are
+    # bounded by how many services a cluster runs.
+    transform/emf-dimensions:
+      error_mode: ignore
+      metric_statements:
+        - context: datapoint
+          statements:
+            - set(attributes["ClusterName"], "${env:CLUSTER_NAME}")
+            - set(attributes["ServiceName"], resource.attributes["service.name"])
+            - set(attributes["ServiceNamespace"], resource.attributes["service.namespace"])
+            - set(attributes["K8sNamespace"], resource.attributes["k8s.namespace.name"])
     memory_limiter:
       check_interval: 5s
       limit_percentage: 80
@@ -82,6 +106,12 @@ config:
       log_group_name: /aws/otel/${env:CLUSTER_NAME}/metrics
       log_stream_name: otel-gateway
       namespace: Platform/OTel
+      # Both CloudWatch exporters auto-create their log group on first write, and
+      # both default to Never Expire. On the tier whose entire premise is cost
+      # that is the wrong default twice over — the log path especially, since it
+      # carries every pod log on the cluster. The role already holds
+      # logs:PutRetentionPolicy for exactly this.
+      log_retention: 90
       # Cost control, both of them. NoDimensionRollup stops CloudWatch minting a
       # series for every subset of an entry's dimensions, and leaving resource
       # attributes out of the dimension set keeps pod-level churn from becoming
@@ -101,6 +131,7 @@ config:
       region: ${env:AWS_REGION}
       log_group_name: /aws/otel/${env:CLUSTER_NAME}/logs
       log_stream_name: otel-gateway
+      log_retention: 30
     # Traces to X-Ray — the provider-native trace store, so the floor tier drops
     # no signal. Sampling is left to the SDKs and to X-Ray's own centrally
     # managed sampling rules, which the exporter fetches with the Get* grants on
@@ -113,7 +144,7 @@ config:
     pipelines:
       metrics:
         receivers: [otlp]
-        processors: [memory_limiter, k8s_attributes, batch]
+        processors: [memory_limiter, k8s_attributes, transform/emf-dimensions, batch]
         exporters: [awsemf]
       logs:
         receivers: [otlp]

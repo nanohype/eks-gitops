@@ -33,10 +33,17 @@ Every cluster must show `floor` or `full`. A blank means the Secret predates the
 ### 2. Confirm the right gateway, and only one
 
 ```bash
-kubectl get application -n argocd | grep otel
+kubectl get application -n argocd otel-gateway \
+  -o jsonpath='{.metadata.labels.app\.kubernetes\.io/component}{"\n"}'
 ```
 
-Exactly one of `otel-gateway` / `otel-gateway-floor` per cluster. Both would be a selector bug — they share `fullnameOverride: otel-gateway` and would fight over the same objects.
+That prints `otel-gateway` on a full cluster and `otel-gateway-floor` on a floor one. There is only ever **one** Application named `otel-gateway` — both ApplicationSets template the same name deliberately, so the node agent and the alias Service stay tier-blind — so do not look for a second Application called `otel-gateway-floor`; it does not exist.
+
+The floor-only confirmation is the service account, which the two tiers do not share:
+
+```bash
+kubectl get sa -n monitoring otel-gateway-cw
+```
 
 ```bash
 kubectl get svc -n monitoring telemetry
@@ -92,10 +99,13 @@ Procedure:
 
 1. **Full → floor only**: confirm nothing depends on the trace or log query paths you are about to remove. Loki and Tempo are pruned; anything stored in them is gone with their buckets' retention.
 2. Change `observability_tier` in the cluster's `cluster-bootstrap` leaf (or `spec.observabilityTier` on the `Cluster` CR for a vended one) and apply. The label moves.
-3. Watch the two gateways swap. They share `fullnameOverride: otel-gateway`, so ordering matters — ArgoCD prunes the old Application and creates the new one, and for a short window the `telemetry` Service has no endpoints. **Tenant OTLP exports fail during that window.** SDKs retry, so a short gap is absorbed; do it outside a deploy.
+3. Watch the gateway swap. Both ApplicationSets template the same Application name, so this is an **ownership handoff between two independently-reconciling controllers**, not a create-then-delete: the incoming ApplicationSet cannot adopt an Application the outgoing one still controller-owns (it gets `AlreadyOwnedError` and retries), so it waits for the outgoing appset to finish deleting. Nothing supervises that ordering — if the outgoing delete stalls, the cluster runs with no gateway and the appset just logs and retries.
+
+   For a short window the `telemetry` Service has no endpoints. **Tenant OTLP exports fail during that window.** SDKs retry, so a short gap is absorbed; do it outside a deploy, and watch it rather than assuming:
 
    ```bash
    kubectl get endpoints -n monitoring telemetry -w
+   kubectl get application -n argocd otel-gateway -w
    ```
 
 4. Confirm the new gateway is exporting, using the checks in step 3 and 4 above.

@@ -28,7 +28,7 @@ rbac:
       resources: ["platforms", "tenants"]
       verbs: ["list", "watch"]
     - apiGroups: ["governance.nanohype.dev"]
-      resources: ["budgetpolicies", "evalsuites"]
+      resources: ["budgetpolicies", "evalsuites", "slopolicies"]
       verbs: ["list", "watch"]
     - apiGroups: ["agents.nanohype.dev"]
       resources: ["agentfleets", "agentsandboxes", "sandboxpools", "modelgateways", "batchjobs"]
@@ -383,6 +383,108 @@ customResourceState:
                   valueFrom: [status]
               commonLabels:
                 customresource_kind: EvalSuite
+
+        # SLOPolicy — the reliability control loop's evaluation, projected so the
+        # pager reads the number the operator decided on rather than re-deriving
+        # the same PromQL against the same data. That is the design's whole
+        # premise: one evaluator, two consumers.
+        #
+        # Load-bearing rather than a nicety: the operator's own /metrics endpoint
+        # is not scraped on this stack (the chart gates its pod-scrape
+        # annotations on metrics.secure being false, and it defaults true), so
+        # agents_slo_* never reaches the metric store. Without this projection an
+        # alert on the burn-rate loop has nothing to read and — with
+        # noDataState: OK — sits silently green forever.
+        - groupVersionKind:
+            group: governance.nanohype.dev
+            version: v1alpha1
+            kind: SLOPolicy
+          labelsFromPath:
+            name: [metadata, name]
+            namespace: [metadata, namespace]
+          metricNamePrefix: kube_customresource
+          metrics:
+            # The two normalized breach ratios: >= 1 means that tier is over its
+            # factor. Normalized precisely so one threshold covers window pairs
+            # with different factors. Absent (not zero) when the tier did not
+            # resolve — nilIsZero is deliberately OFF here, because a zero for an
+            # unevaluated tier is the fabricated-healthy reading this whole
+            # projection exists to avoid.
+            - name: status_field
+              help: "SLOPolicy.status.pageTierBreachRatio — >= 1 is a page-tier burn-rate breach"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, pageTierBreachRatio]
+              commonLabels:
+                customresource_kind: SLOPolicy
+                field: pageTierBreachRatio
+            - name: status_field
+              help: "SLOPolicy.status.ticketTierBreachRatio — >= 1 is a ticket-tier burn-rate breach"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, ticketTierBreachRatio]
+              commonLabels:
+                customresource_kind: SLOPolicy
+                field: ticketTierBreachRatio
+            - name: status_field
+              help: "SLOPolicy.status.errorBudgetRemaining — unspent fraction of the 30d budget"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, errorBudgetRemaining]
+              commonLabels:
+                customresource_kind: SLOPolicy
+                field: errorBudgetRemaining
+            # The hold's decision and its effect, as two timestamps. Engaged
+            # without observed is a hold that was decided and never landed —
+            # the tenant is still auto-syncing into a burning objective.
+            - name: status_field
+              help: "SLOPolicy.status.holdEngagedAt as a unix-ts gauge (0 when no hold is engaged)"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, holdEngagedAt]
+                  nilIsZero: true
+              commonLabels:
+                customresource_kind: SLOPolicy
+                field: holdEngagedAt
+            - name: status_field
+              help: "SLOPolicy.status.holdObservedAt as a unix-ts gauge (0 until the deny window is seen on the AppProject)"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, holdObservedAt]
+                  nilIsZero: true
+              commonLabels:
+                customresource_kind: SLOPolicy
+                field: holdObservedAt
+            # lastEvaluated, NOT lastReconciled: the latter advances on every
+            # tick whether or not a reading was obtained, so a staleness alert
+            # built on it can never fire.
+            - name: status_field
+              help: "SLOPolicy.status.lastEvaluated as a unix-ts gauge — the last tick that actually measured the objective"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, lastEvaluated]
+                  nilIsZero: true
+              commonLabels:
+                customresource_kind: SLOPolicy
+                field: lastEvaluated
+            - name: condition
+              help: "SLOPolicy status conditions (SLOEvaluated, BurnRateBreach, RolloutHeld)"
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, conditions]
+                  labelsFromPath:
+                    condition_type: [type]
+                    condition_status: [status]
+                  valueFrom: [status]
+              commonLabels:
+                customresource_kind: SLOPolicy
 
         # ModelGateway — every agent's Bedrock egress flows through it; a broken
         # Route can be condition=False while phase stays Ready.
