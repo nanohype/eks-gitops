@@ -1,5 +1,5 @@
-# Alloy (monitoring namespace) reads the AMP remote-write URL from this
-# Secret via an env var. Synced from the Secrets Manager secret the landing-zone
+# The OpenTelemetry Collector gateway (monitoring namespace) reads the AMP
+# remote-write URL from this Secret via an env var. Synced from the Secrets Manager secret the landing-zone
 # managed-monitoring component publishes. The grafana-operator namespace gets its
 # own copy from dashboards/base (for the data source url); a plain ExternalSecret
 # per namespace keeps both on the same external-secrets.io/v1 shape the Grafana

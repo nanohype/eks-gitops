@@ -1,0 +1,82 @@
+# The OpenTelemetry Collector gateway is split out of addons-observability for the
+# same reason Loki and Tempo are: it needs a per-cluster valuesObject the shared
+# appset can't carry without leaking an unknown key onto the other charts. The
+# gateway signs AMP remote-writes with SigV4, so it needs this cluster's AMP
+# endpoint (from the managed-monitoring-endpoints Secret), its region (the `region`
+# label) and its name (the `cluster_name` label) — the same per-cluster seam the
+# node agent's metrics external label rides. The node agent itself carries no
+# per-cluster input and lives in addons-observability.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: addons-otel-gateway
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "32"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            argocd.argoproj.io/secret-type: cluster
+  template:
+    metadata:
+      name: otel-gateway
+      labels:
+        app.kubernetes.io/managed-by: argocd
+        app.kubernetes.io/component: otel-gateway
+        platform.nanohype.dev/environment: '{{ index .metadata.labels "environment" }}'
+        platform.nanohype.dev/repository: nanohype/eks-gitops
+        platform.nanohype.dev/team: platform-engineering
+      annotations:
+        argocd.argoproj.io/sync-wave: "32"
+    spec:
+      project: platform
+      sources:
+        - repoURL: https://open-telemetry.github.io/opentelemetry-helm-charts
+          chart: opentelemetry-collector
+          targetRevision: 0.165.0
+          helm:
+            releaseName: otel-gateway
+            # extraEnvs is a list, so Helm replaces it wholesale — valuesObject
+            # owns the full set here and the static values files carry none of it.
+            # AMP_REMOTE_WRITE_URL is the cluster's AMP remote-write endpoint;
+            # AWS_REGION signs the SigV4 remote-write; CLUSTER_NAME is the metrics
+            # external label. All three are per-cluster, read from the cluster
+            # Secret (the URL via the ESO-synced managed-monitoring-endpoints
+            # Secret, region and name from labels).
+            valuesObject:
+              extraEnvs:
+                - name: AMP_REMOTE_WRITE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: managed-monitoring-endpoints
+                      key: AMP_REMOTE_WRITE_URL
+                - name: AWS_REGION
+                  value: '{{ index .metadata.labels "region" }}'
+                - name: CLUSTER_NAME
+                  value: '{{ index .metadata.labels "cluster_name" }}'
+            valueFiles:
+              - $values/addons/observability/otel-gateway/values.yaml
+              - $values/addons/observability/otel-gateway/values-{{ index .metadata.labels "environment" }}.yaml
+        - repoURL: '{{ index .metadata.annotations "gitops/repo-url" }}'
+          targetRevision: main
+          ref: values
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: monitoring
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m

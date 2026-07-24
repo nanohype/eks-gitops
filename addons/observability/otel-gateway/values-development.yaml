@@ -1,0 +1,4 @@
+# OpenTelemetry Collector gateway — Development overrides.
+# Per-cluster env (AMP_REMOTE_WRITE_URL / AWS_REGION / CLUSTER_NAME) is injected by
+# the addons-otel-gateway ApplicationSet; no per-environment delta. Base defaults
+# stand.
