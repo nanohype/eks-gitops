@@ -15,6 +15,15 @@ spec:
               selector:
                 matchLabels:
                   argocd.argoproj.io/secret-type: cluster
+                  # Full tier only, and load-bearing rather than tidy: this
+                  # Application carries 45 grafana.integreatly.org CRs plus the
+                  # ExternalSecrets feeding Amazon Managed Grafana. On a floor
+                  # cluster the grafana-operator CRDs do not exist, so every one
+                  # of those objects fails to apply — the Application sits
+                  # permanently degraded on a cluster that is working exactly as
+                  # designed. A floor cluster's dashboard is the CloudWatch one
+                  # landing-zone's observability component already builds.
+                  observability/tier: full
           - list:
               elements:
                 - appName: dashboards

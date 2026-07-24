@@ -1,0 +1,4 @@
+# OpenTelemetry Collector gateway, floor tier — hub overrides.
+# Per-cluster env (AWS_REGION / CLUSTER_NAME) is injected by the
+# addons-otel-gateway-floor ApplicationSet; no per-environment delta. Base
+# defaults stand.
