@@ -1,0 +1,75 @@
+# Tempo is split out of addons-observability for the same reason as loki: its
+# trace bucket (per cluster, account-specific) crosses the seam as the
+# observability/tempo-bucket cluster-Secret annotation cluster-bootstrap stamps on
+# managed-monitoring clusters, and the region as the `region` label — a per-cluster
+# valuesObject the shared observability appset can't carry.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: addons-tempo
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "31"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            argocd.argoproj.io/secret-type: cluster
+  template:
+    metadata:
+      name: tempo
+      labels:
+        app.kubernetes.io/managed-by: argocd
+        app.kubernetes.io/component: tempo
+        platform.nanohype.dev/environment: '{{ index .metadata.labels "environment" }}'
+        platform.nanohype.dev/repository: nanohype/eks-gitops
+        platform.nanohype.dev/team: platform-engineering
+      annotations:
+        argocd.argoproj.io/sync-wave: "31"
+    spec:
+      project: platform
+      sources:
+        - repoURL: https://grafana.github.io/helm-charts
+          chart: tempo
+          targetRevision: 1.24.4
+          helm:
+            releaseName: tempo
+            # S3 trace storage, injected only on clusters carrying the observability/tempo-bucket
+            # annotation cluster-bootstrap stamps. Credentials resolve from the tempo Pod Identity
+            # association — no static keys. Without the annotation the block renders empty and the
+            # base values' local backend stands. `index` yields "" for the missing key under
+            # missingkey=error.
+            values: |
+              {{- if index .metadata.annotations "observability/tempo-bucket" }}
+              tempo:
+                storage:
+                  trace:
+                    backend: s3
+                    s3:
+                      bucket: {{ index .metadata.annotations "observability/tempo-bucket" }}
+                      region: {{ index .metadata.labels "region" }}
+              {{- end }}
+            valueFiles:
+              - $values/addons/observability/tempo/values.yaml
+              - $values/addons/observability/tempo/values-{{ index .metadata.labels "environment" }}.yaml
+        - repoURL: '{{ index .metadata.annotations "gitops/repo-url" }}'
+          targetRevision: main
+          ref: values
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: monitoring
+      ignoreDifferences:
+        - group: apps
+          kind: StatefulSet
+          jqPathExpressions:
+            - .spec.volumeClaimTemplates
+            - .spec.persistentVolumeClaimRetentionPolicy
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true

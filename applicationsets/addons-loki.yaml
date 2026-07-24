@@ -1,0 +1,90 @@
+# Loki is split out of addons-observability because it needs a per-cluster S3
+# valuesObject: the log bucket (per cluster, account-specific) crosses the seam as
+# the observability/loki-bucket cluster-Secret annotation cluster-bootstrap stamps
+# on managed-monitoring clusters, and the region as the `region` label. They can't
+# live in the shared observability appset — its other charts would reject an
+# unknown top-level `loki` S3 key, and a cluster without the annotation must keep
+# the filesystem default rather than get an empty-bucket S3 config. Same split
+# alloy already needs for its per-cluster AMP SigV4 region.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: addons-loki
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "30"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            argocd.argoproj.io/secret-type: cluster
+  template:
+    metadata:
+      name: loki
+      labels:
+        app.kubernetes.io/managed-by: argocd
+        app.kubernetes.io/component: loki
+        platform.nanohype.dev/environment: '{{ index .metadata.labels "environment" }}'
+        platform.nanohype.dev/repository: nanohype/eks-gitops
+        platform.nanohype.dev/team: platform-engineering
+      annotations:
+        argocd.argoproj.io/sync-wave: "30"
+    spec:
+      project: platform
+      sources:
+        - repoURL: https://grafana.github.io/helm-charts
+          chart: loki
+          targetRevision: 7.0.0
+          helm:
+            releaseName: loki
+            # S3 log storage, injected only on clusters carrying the observability/loki-bucket
+            # annotation cluster-bootstrap stamps (managed-monitoring clusters). Credentials
+            # resolve from the loki Pod Identity association — no static keys. Without the
+            # annotation the block renders empty and the base values' filesystem storage stands,
+            # so a cluster without the monitoring stack keeps in-cluster logs. `index` (not a
+            # bare field access) yields "" for the missing key under missingkey=error.
+            values: |
+              {{- if index .metadata.annotations "observability/loki-bucket" }}
+              loki:
+                storage:
+                  type: s3
+                  bucketNames:
+                    chunks: {{ index .metadata.annotations "observability/loki-bucket" }}
+                    ruler: {{ index .metadata.annotations "observability/loki-bucket" }}
+                    admin: {{ index .metadata.annotations "observability/loki-bucket" }}
+                  s3:
+                    region: {{ index .metadata.labels "region" }}
+                schemaConfig:
+                  configs:
+                    - from: "2024-01-01"
+                      store: tsdb
+                      object_store: s3
+                      schema: v13
+                      index:
+                        prefix: loki_index_
+                        period: 24h
+              {{- end }}
+            valueFiles:
+              - $values/addons/observability/loki/values.yaml
+              - $values/addons/observability/loki/values-{{ index .metadata.labels "environment" }}.yaml
+        - repoURL: '{{ index .metadata.annotations "gitops/repo-url" }}'
+          targetRevision: main
+          ref: values
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: monitoring
+      ignoreDifferences:
+        - group: apps
+          kind: StatefulSet
+          jqPathExpressions:
+            - .spec.volumeClaimTemplates
+            - .spec.persistentVolumeClaimRetentionPolicy
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
