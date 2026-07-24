@@ -15,6 +15,12 @@ spec:
               selector:
                 matchLabels:
                   argocd.argoproj.io/secret-type: cluster
+                  # Full tier only. kube-state-metrics feeds Prometheus and the
+                  # grafana-operator reconciles CRs onto Amazon Managed Grafana —
+                  # neither has a consumer on a cluster whose only backend is
+                  # CloudWatch. The node agent, which runs at both tiers, is in
+                  # addons-otel-agent.
+                  observability/tier: full
           - list:
               elements:
                 - appName: kube-state-metrics
@@ -24,23 +30,14 @@ spec:
                   chartVersion: 7.5.2
                   path: addons/observability/kube-state-metrics
                   syncWave: "29"
-                # The OpenTelemetry Collector node agent (DaemonSet) carries no
-                # per-cluster input — it scrapes node-local and forwards OTLP to the
-                # gateway — so it rides this shared appset. The gateway needs a
-                # per-cluster SigV4 valuesObject and lives in addons-otel-gateway.
-                - appName: otel-agent
-                  namespace: monitoring
-                  chartRepo: https://open-telemetry.github.io/opentelemetry-helm-charts
-                  chart: opentelemetry-collector
-                  chartVersion: 0.165.0
-                  path: addons/observability/otel-agent
-                  syncWave: "32"
                 # loki and tempo live in their own addons-loki / addons-tempo
                 # ApplicationSets (waves 30 / 31): each needs a per-cluster S3
                 # valuesObject (its log/trace bucket + region) that this shared
                 # appset can't carry without leaking an unknown storage key onto the
                 # other charts. The gateway is split out for the same reason (its
-                # per-cluster SigV4 region), in addons-otel-gateway at wave 32.
+                # per-cluster SigV4 region), in addons-otel-gateway at wave 32. The
+                # node agent is split out for a different one: it runs at both
+                # observability tiers, and this appset does not.
                 - appName: grafana-operator
                   namespace: grafana-operator
                   chartRepo: https://grafana.github.io/helm-charts

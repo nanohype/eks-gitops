@@ -1,0 +1,67 @@
+# The OpenTelemetry Collector node agent (DaemonSet).
+#
+# Split out of addons-observability because it is the one observability addon
+# that runs at BOTH tiers. Collection is tier-independent by design: the agent
+# scrapes node-local signals and forwards OTLP to whichever gateway the cluster
+# runs, and only the gateway's exporters know where telemetry ends up. That is
+# what makes floor and full the same pipeline with different destinations, and
+# what keeps a tenant chart byte-identical across them.
+#
+# It carries no per-cluster input, so unlike loki, tempo and the gateway it needs
+# no valuesObject.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: addons-otel-agent
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "32"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            argocd.argoproj.io/secret-type: cluster
+  template:
+    metadata:
+      name: otel-agent
+      labels:
+        app.kubernetes.io/managed-by: argocd
+        app.kubernetes.io/component: otel-agent
+        platform.nanohype.dev/environment: '{{ index .metadata.labels "environment" }}'
+        platform.nanohype.dev/repository: nanohype/eks-gitops
+        platform.nanohype.dev/team: platform-engineering
+      annotations:
+        argocd.argoproj.io/sync-wave: "32"
+    spec:
+      project: platform
+      sources:
+        - repoURL: https://open-telemetry.github.io/opentelemetry-helm-charts
+          chart: opentelemetry-collector
+          targetRevision: 0.165.0
+          helm:
+            releaseName: otel-agent
+            valueFiles:
+              - $values/addons/observability/otel-agent/values.yaml
+              - $values/addons/observability/otel-agent/values-{{ index .metadata.labels "environment" }}.yaml
+        - repoURL: '{{ index .metadata.annotations "gitops/repo-url" }}'
+          targetRevision: main
+          ref: values
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: monitoring
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m

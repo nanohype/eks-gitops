@@ -1,0 +1,151 @@
+# OpenTelemetry Collector — gateway, floor tier (Deployment).
+#
+# The same role and the same tenant contract as addons/observability/otel-gateway:
+# the single egress point for the cluster's telemetry, reachable at the stable
+# telemetry.monitoring.svc:4317/4318 alias. Only the destinations differ. A floor
+# cluster has no AMP, no Loki and no Tempo, so metrics leave as CloudWatch EMF and
+# logs as CloudWatch Logs.
+#
+# That is the whole point of having built a neutral waist: a tenant chart is
+# byte-identical across tiers, and the tier is a property of the cluster rather
+# than something every application has to know about.
+#
+# The two gateways never coexist — their ApplicationSets select mutually
+# exclusive observability/tier values.
+
+mode: deployment
+
+image:
+  repository: otel/opentelemetry-collector-contrib
+  tag: '0.157.0'
+
+# Identical object names to the full tier, deliberately: the node agent forwards
+# to otel-gateway.monitoring.svc.cluster.local:4317 and the telemetry alias
+# Service selects on the release, so both stay tier-blind.
+fullnameOverride: otel-gateway
+
+# Enriches tenant direct-to-gateway OTLP with k8s.* resource attributes (agent-
+# forwarded telemetry is already enriched at the agent). Also auto-creates its
+# ClusterRole.
+presets:
+  kubernetesAttributes:
+    enabled: true
+
+# Distinct from the full tier's `otel-gateway` SA. EKS permits one Pod Identity
+# association per (namespace, service account), and landing-zone's
+# managed-monitoring already binds (monitoring, otel-gateway) to the AMP
+# remote-write role wherever it runs. This account is bound to the scoped
+# CloudWatch Logs role the cluster component mints.
+serviceAccount:
+  create: true
+  name: otel-gateway-cw
+
+# AWS_REGION and CLUSTER_NAME are injected per cluster by the
+# addons-otel-gateway-floor ApplicationSet's valuesObject — Helm replaces the
+# whole extraEnvs list rather than merging it, so neither is set here. There is
+# no secretKeyRef: a floor cluster has no managed-monitoring-endpoints Secret,
+# which is exactly why the full tier's values cannot simply be overridden.
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+  limits:
+    cpu: '1'
+    memory: 1Gi
+
+# OTLP (4317/4318) stays on the chart Service for agent + tenant ingest; drop the
+# legacy jaeger/zipkin ingest ports.
+ports:
+  jaeger-compact:
+    enabled: false
+  jaeger-thrift:
+    enabled: false
+  jaeger-grpc:
+    enabled: false
+  zipkin:
+    enabled: false
+
+config:
+  processors:
+    batch: {}
+    memory_limiter:
+      check_interval: 5s
+      limit_percentage: 80
+      spike_limit_percentage: 25
+  exporters:
+    # Metrics as embedded metric format: CloudWatch extracts metrics from
+    # structured log records, so this is a CloudWatch Logs write, which is why
+    # the role is scoped to log groups rather than PutMetricData.
+    awsemf:
+      region: ${env:AWS_REGION}
+      log_group_name: /aws/otel/${env:CLUSTER_NAME}/metrics
+      log_stream_name: otel-gateway
+      namespace: Platform/OTel
+      # Cost control, both of them. NoDimensionRollup stops CloudWatch minting a
+      # series for every subset of an entry's dimensions, and leaving resource
+      # attributes out of the dimension set keeps pod-level churn from becoming
+      # custom-metric cardinality. Start narrow: widening later is a config
+      # change, while a cardinality bill is not refundable.
+      dimension_rollup_option: NoDimensionRollup
+      resource_to_telemetry_conversion:
+        enabled: false
+    awscloudwatchlogs:
+      region: ${env:AWS_REGION}
+      log_group_name: /aws/otel/${env:CLUSTER_NAME}/logs
+      log_stream_name: otel-gateway
+    # Traces are accepted and discarded. A floor cluster has no trace backend, and
+    # the alternative — omitting the traces pipeline — makes the OTLP receiver
+    # answer UNIMPLEMENTED, so every tenant SDK on the cluster logs export errors
+    # forever for a condition that is by design. `debug` at basic verbosity emits
+    # one summary line per batch, which is bounded and doubles as proof that
+    # traces are arriving.
+    #
+    # AWS X-Ray is the natural upgrade here and contrib ships an awsxray
+    # exporter; it is deliberately not wired in this change because it needs its
+    # own IAM grant and its own sampling decision.
+    debug:
+      verbosity: basic
+  service:
+    pipelines:
+      metrics:
+        receivers: [otlp]
+        processors: [memory_limiter, k8s_attributes, batch]
+        exporters: [awsemf]
+      logs:
+        receivers: [otlp]
+        processors: [memory_limiter, k8s_attributes, batch]
+        exporters: [awscloudwatchlogs]
+      traces:
+        receivers: [otlp]
+        processors: [memory_limiter, k8s_attributes, batch]
+        exporters: [debug]
+
+# Stable tenant-facing OTLP endpoint, decoupled from the release name. Byte-
+# identical to the full tier's alias Service — this IS the
+# telemetry.monitoring.svc contract, and it must not vary by tier.
+extraManifests:
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: telemetry
+      namespace: monitoring
+      labels:
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/component: otel-gateway-alias
+    spec:
+      type: ClusterIP
+      selector:
+        app.kubernetes.io/name: opentelemetry-collector
+        app.kubernetes.io/instance: '{{ .Release.Name }}'
+        component: standalone-collector
+      ports:
+        - name: otlp
+          port: 4317
+          targetPort: 4317
+          protocol: TCP
+          appProtocol: grpc
+        - name: otlp-http
+          port: 4318
+          targetPort: 4318
+          protocol: TCP

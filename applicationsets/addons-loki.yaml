@@ -21,6 +21,9 @@ spec:
         selector:
           matchLabels:
             argocd.argoproj.io/secret-type: cluster
+            # Full tier only — a floor cluster's logs go to CloudWatch Logs
+            # straight from the collector gateway, so there is no Loki to write to.
+            observability/tier: full
   template:
     metadata:
       name: loki

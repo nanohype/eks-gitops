@@ -58,6 +58,25 @@ spec:
           targetRevision: main
           path: '{{ .path }}'
           helm:
+            # Tenant charts default grafanaDashboard.enabled true, which renders a
+            # GrafanaDashboard CR. On a floor cluster the grafana-operator is not
+            # installed and that CRD does not exist, so the CR fails to apply and
+            # the tenant's Application sits permanently degraded on a cluster that
+            # is working exactly as designed.
+            #
+            # Derived from the cluster's tier here rather than flipped in the four
+            # tenant charts, because the charts staying byte-identical across tiers
+            # is the property this whole tiering exists to preserve — and because
+            # the local kx cluster does run a grafana-operator, so a chart-level
+            # default change would silently break it.
+            #
+            # `index` rather than a bare field access is mandatory under
+            # missingkey=error; it yields "" for an absent key, so eq renders
+            # false — a cluster registered before the label existed simply skips
+            # the dashboard, which is the safe direction.
+            parameters:
+              - name: grafanaDashboard.enabled
+                value: '{{ eq (index .metadata.labels "observability/tier") "full" }}'
             valueFiles:
               - $values/{{ .path }}/values.yaml
               - $values/{{ .path }}/values-{{ index .metadata.labels "environment" }}.yaml
