@@ -20,7 +20,6 @@ addons/                → Addon configurations
     overlays/{development,staging,production}/
                            → Environment-specific kustomization.yaml
 policies/              → Kyverno ClusterPolicy manifests (pure Kustomize, base/overlays)
-environments/          → Cluster-config ConfigMaps per environment
 catalog/               → Platform-specific workloads (Druid)
 ```
 

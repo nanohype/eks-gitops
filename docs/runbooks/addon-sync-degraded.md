@@ -29,7 +29,7 @@ kubectl get secret <cluster-secret> -n argocd -o jsonpath='{.metadata.labels}' |
 kubectl logs -n argocd -l app.kubernetes.io/component=applicationset-controller --tail=100
 ```
 
-The `environment` label is mandatory — it resolves `values-{env}.yaml` paths and overlay directories, and `goTemplateOptions: ["missingkey=error"]` means a missing label fails template rendering for that cluster instead of generating a broken app. Also check exclusions: the hub cluster is deliberately excluded from workload ApplicationSets (e.g. `druid-tenants` matches `environment NotIn [hub]`).
+The `environment` label is mandatory — it resolves `values-{env}.yaml` paths and overlay directories, and `goTemplateOptions: ["missingkey=error"]` means a missing label fails template rendering for that cluster instead of generating a broken app. Also check exclusions: the hub cluster is deliberately excluded from most workload ApplicationSets (`environment NotIn [hub]`).
 
 **OutOfSync with sync errors** — read `operationState`. The recurring shapes:
 

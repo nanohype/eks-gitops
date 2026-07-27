@@ -10,8 +10,7 @@
 #   - the 111111111111 / 222222222222 fake AWS account ids
 #   - Azure subscription/tenant GUID placeholders (xxxxxxxx-…)
 # Excluded by path: docs (prose, not applied config — *.md isn't scanned),
-# examples, test fixtures, vendored copies, and the opt-in mcp-tunnel addon
-# (user-supplied Cloudflare IDs, off by default).
+# examples, test fixtures, and vendored copies.
 set -uo pipefail
 
 # "changeit" is the JVM keystore default password — a well-known credential,
@@ -24,7 +23,7 @@ hits=$(grep -rnE "$SENTINELS" . \
   --exclude='*.example' \
   --exclude-dir='.git' --exclude-dir='.terraform' --exclude-dir='.terragrunt-cache' \
   --exclude-dir='node_modules' --exclude-dir='examples' --exclude-dir='testdata' \
-  --exclude-dir='test' --exclude-dir='mcp-tunnel' --exclude-dir='vendor' \
+  --exclude-dir='test' --exclude-dir='vendor' \
   2>/dev/null)
 
 if [ -n "$hits" ]; then

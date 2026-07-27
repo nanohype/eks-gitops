@@ -362,17 +362,16 @@ jobs:
           # Env-agnostic kustomize roots — identical on every cluster (their
           # per-environment values resolve through External Secrets and the
           # cluster generator), so they carry no per-env overlays.
-          for dir in dashboards/base addons/bootstrap/secret-stores; do
+          for dir in dashboards/base addons/bootstrap/secret-stores addons/bootstrap/secret-stores-managed; do
             echo "Rendering $dir ..."
             kustomize build --enable-helm "$dir" > "rendered/$(echo "$dir" | tr '/' '_').yaml" || exit 1
           done
           echo "All ${{ matrix.environment }} manifests rendered successfully."
 
-      # The druid catalog chart deploys through the druid-tenants
-      # ApplicationSet (base values layered with per-tenant values), so the
-      # overlay loop above never touches it. Render it with synthetic tenant
-      # values so the chart's templates pass through the same render-assert,
-      # schema, and misconfiguration gates as every kustomize root.
+      # The druid catalog chart is a tenant-workload chart (not wired by a
+      # default ApplicationSet). Render it with synthetic tenant values so its
+      # templates still pass the same render-assert / schema / misconfiguration
+      # gates as every kustomize root.
       - name: Render druid catalog chart
         run: |
           helm template ci catalog/druid/chart -n druid-ci \
@@ -399,7 +398,7 @@ jobs:
         uses: nanohype/nanohype/.github/actions/render-assert@d75fb5c26a1745df8e33d1a8c89f6f7de6c37b39 # nanohype/nanohype main
         with:
           manifests: rendered
-          exclude: 'mcp-tunnel'
+          exclude: ''
 
       # ── Schema gate ────────────────────────────────────────────────────
       # kubeconform in strict mode over everything just rendered, via the shared

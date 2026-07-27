@@ -48,7 +48,6 @@ PRIMARY_ORDER = [
     ("operations", "addons-operations-helm.yaml"),
     ("ai-platform", "addons-ai-platform.yaml"),
     ("argo-platform", "addons-argo-platform.yaml"),
-    ("apps", "druid-tenants.yaml"),
 ]
 
 # Per-category wave bands (inclusive), from CLAUDE.md "Sync Waves".
@@ -79,7 +78,6 @@ FILE_CATEGORY = {
     "gateway-api-crds.yaml": "gateway-crds",
     "agent-platform.yaml": "ai-platform",
     "addons-agent-operator.yaml": "ai-platform",
-    "druid-tenants.yaml": "apps",
     "dashboards.yaml": "apps",
 }
 

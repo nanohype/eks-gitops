@@ -32,7 +32,7 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
   upstream and the fork's edits silently never take effect. Mitigated: every
   applied ApplicationSet resolves its source from
   `{{ index .metadata.annotations "gitops/repo-url" }}` off the ArgoCD cluster
-  Secret (druid-tenants.yaml:25,43,52), and `check-hardcoded-org.py:89` matches
+  Secret (e.g. addons-observability.yaml and siblings), and `check-hardcoded-org.py:89` matches
   any `repoURL:` pointing at the catalog repo, exiting non-zero under `--blocking`
   (:167) — wired as the CI **fork-safety** job (ci.yml:122-130). Expected count: 0.
 - **Residual** — the gate is deliberately catalog-only and non-recursive: it does
@@ -50,8 +50,9 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
   *rendered* output (ci.yml:433-438). The workflow itself is least-privilege
   (`permissions: contents: read`, ci.yml:9-10).
 - **Denial of service / drift** — ApplicationSet `syncPolicy` runs `selfHeal` +
-  `prune` with a bounded retry/backoff (druid-tenants.yaml:58-70), so manual drift
-  is reverted and a transient sync failure retries rather than wedging.
+  `prune` with a bounded retry/backoff (every default ApplicationSet's
+  syncPolicy, e.g. addons-observability.yaml), so manual drift is reverted and a
+  transient sync failure retries rather than wedging.
 - **Residual** — CI proves manifests *render, schema-validate, and scan clean*; it
   does not prove they are *correct policy*. Branch protection + human PR review is
   the control that a malicious-but-valid change must pass, and that lives in GitHub
@@ -146,17 +147,17 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
   separate repo). The alert PromQL is untestable in CI (KSM CRDs are schema-skipped)
   and correct only if each selector matches the series KSM emits.
 
-## 7. Multi-tenancy  (`applicationsets/druid-tenants.yaml`, `catalog/druid/chart/templates/role.yaml`)
+## 7. Multi-tenancy  (`catalog/druid/chart/templates/role.yaml`)
 
 - **Elevation of privilege / cross-tenant reach** — one tenant reaching another's
-  workloads. Mitigated: the druid ApplicationSet lands each tenant in its own
-  `druid-<name>` namespace (druid-tenants.yaml:55-57), and the tenant chart's Role
-  is namespace-scoped with **enumerated verbs, never `"*"`** so a new API verb does
-  not silently widen the grant (role.yaml:14-20). Kyverno admission (boundaries 3-4)
-  applies fleet-wide across tenant namespaces.
+  workloads. Mitigated: each tenant deploy is expected to land in its own
+  `druid-<name>` namespace, and the tenant chart's Role is namespace-scoped with
+  **enumerated verbs, never `"*"`** so a new API verb does not silently widen the
+  grant (role.yaml:14-20). Kyverno admission (boundaries 3-4) applies fleet-wide
+  across tenant namespaces.
 - **Residual** — namespace + RBAC scoping is soft isolation on shared nodes; it is
-  **not** a NetworkPolicy or node-level boundary. Per-tenant IAM isolation (IRSA /
-  Pod Identity, one role per tenant) is minted by **landing-zone**, not this repo —
+  **not** a NetworkPolicy or node-level boundary. Per-tenant IAM isolation
+  (Pod Identity, one role per tenant) is minted by **landing-zone**, not this repo —
   a cross-repo dependency a fork must keep intact.
 
 ## 8. Denial of service / availability  (`catalog/druid/`)
@@ -164,9 +165,8 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
 - **Denial of service** — a node drain or rolling upgrade taking a stateful role
   fully offline. Mitigated: one PodDisruptionBudget per long-running druid role
   (poddisruptionbudget.yaml:9-11) and soft topology spread across zones
-  (_helpers.tpl:481-492). ApplicationSet retry/backoff (druid-tenants.yaml:65-70)
-  absorbs transient sync failures, and the resource-limits ClusterPolicy
-  (boundary 4) caps noisy-neighbor consumption.
+  (_helpers.tpl:481-492). The resource-limits ClusterPolicy (boundary 4) caps
+  noisy-neighbor consumption.
 - **Residual** — HA is per-role and single-cluster: PDBs self-gate on `replicas>1`,
   topology spread is `ScheduleAnyway` (advisory, not hard), and there is no
   cross-region or cross-cluster failover in the catalog. Regional resilience is a

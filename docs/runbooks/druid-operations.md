@@ -1,6 +1,6 @@
 # Runbook — Druid Operations
 
-**Severity**: high for tenant-facing outages (query path down), medium for single-component degradation. **Scope**: the chart this repo owns outright — `catalog/druid/chart/` — deployed per tenant by the `druid-tenants` ApplicationSet (wave 50, one Application per `catalog/druid/tenants/<tenant>/` directory, namespace `druid-<tenant>`, never on the hub).
+**Severity**: high for tenant-facing outages (query path down), medium for single-component degradation. **Scope**: the chart this repo owns outright — `catalog/druid/chart/` (plus base `catalog/druid/values.yaml`). There is no default ApplicationSet wiring Druid onto the fleet; a tenant deploy is an opt-in (or out-of-band) Application that points at this chart. Namespace convention when wired: `druid-<tenant>`, never on the hub.
 
 The cluster is ZooKeeper-less (`druid.discovery.type=k8s` via druid-kubernetes-extensions, leader election over ConfigMaps) and TLS-only (`druid.enablePlaintextPort=false`). Components: coordinator, overlord, historical (StatefulSets), broker, router (Deployments); ingestion tasks run as Jobs launched by the overlord (druid-kubernetes-overlord-extensions). Each component gets its own Karpenter NodePool from the chart, backed by a shared EC2NodeClass.
 
