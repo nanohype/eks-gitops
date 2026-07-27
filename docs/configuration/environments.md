@@ -1,85 +1,77 @@
 # Environment Configuration
 
+## How environment is selected
+
+There is no `environments/` tree of ConfigMaps in this repo. Environment is a
+**label on the ArgoCD cluster Secret**, stamped by landing-zone
+`cluster-bootstrap` when the cluster is registered with the hub.
+
+| Label / annotation | Set by | Used for |
+| --- | --- | --- |
+| `environment: development\|staging\|production\|hub` | cluster-bootstrap | ApplicationSet value-file and overlay selection (`values-{{ environment }}.yaml`) |
+| `region` | cluster-bootstrap | Per-cluster Helm values (Loki/Tempo S3 region, etc.) |
+| `observability/tier: full\|floor` | cluster-bootstrap | Which observability appsets target the cluster |
+| `eks-agent-platform/enabled: "true"` | cluster-bootstrap | Operator + agent-platform appsets |
+| `eks-agent-platform/accelerators: "true"` | cluster-bootstrap | GPU device-plugin appsets |
+| `observability/loki-bucket`, `tempo-bucket`, `velero/backup-bucket`, … | cluster-bootstrap (opt-in) | Per-cluster S3 targets injected as Helm values |
+
+ApplicationSets read these with `{{ index .metadata.labels "environment" }}`
+(and the matching annotations). A cluster without the label is simply not
+selected.
+
 ## Environments
 
-| Environment | Purpose | Cluster Name | Kyverno Mode |
-|-------------|---------|--------------|--------------|
+| Environment | Purpose | Typical cluster name | Kyverno Mode |
+|-------------|---------|----------------------|--------------|
 | development | Development and testing | development-platform | Audit |
 | staging | Pre-production validation | staging-platform | Enforce |
 | production | Live workloads | production-platform | Enforce |
-| hub | The eks-fleet management/control plane (Crossplane + ArgoCD + portal). Runs the observability stack + bootstrap deps only — excluded from the workload catalog. | hub-fleet | n/a |
+| hub | eks-fleet management plane (Crossplane + ArgoCD + portal). Bootstrap + observability only — excluded from the workload catalog. | hub-fleet | n/a |
 
-## Cluster Config
+## Environment differences
 
-Each environment has a `cluster-config.yaml` ConfigMap in `environments/<env>/`:
+Per-env behaviour lives in **addon deltas**, not a central ConfigMap:
 
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: cluster-config
-  namespace: argocd
-  labels:
-    environment: development  # Used by ApplicationSet generators
-data:
-  environment: "development"
-  cluster_name: "development-platform"
-  region: "us-west-2"
-```
+- Helm addons: `addons/<category>/<addon>/values-<env>.yaml` (delta only)
+- Kustomize addons: `overlays/<env>/`
+- Kyverno: env overlays for Audit vs Enforce
 
-The `environment` label on the cluster secret is what ApplicationSets use to select the correct values files or overlay paths.
-
-## Environment Differences
-
-### Replica Counts
+### Replica counts (indicative)
 
 | Component | Development | Staging | Production |
-|-----------|-----|---------|------------|
-| Cilium Operator | 1 | default (from base) | default (from base) |
+|-----------|-------------|---------|------------|
+| Cilium Operator | 1 | default | default |
 | Kyverno Admission | 1 | 3 | 3 |
 | Kyverno Background | 1 | 2 | 2 |
 | Kyverno Reports | 1 | 2 | 2 |
 | Loki | 1 | 1 | 1 |
-| Goldilocks Dashboard | 1 | 2 | 2 |
 
-### Retention and Storage
+### Retention and storage
 
 | Component | Development | Staging | Production |
-|-----------|-----|---------|------------|
+|-----------|-------------|---------|------------|
 | Loki Retention | 7 days | 30 days | 90 days |
-| Loki Storage | 10Gi | 50Gi | 100Gi |
 | Tempo Retention | 3 days | 7 days | 30 days |
-| Tempo Storage | 10Gi | 50Gi | 100Gi |
 
-### Backup Configuration
-
-| Setting | Development | Staging | Production |
-|---------|-----|---------|------------|
-| Velero Enabled | No | Yes | Yes |
-| Backup Bucket | none | injected per cluster | injected per cluster |
-| Node Agent | No | Yes | Yes |
-| Daily Backups | Disabled | Enabled | Enabled |
-
-The backup bucket is not committed. landing-zone builds it per cluster as
-`${cluster_name}-${account_id}-${region}-velero`, and cluster-bootstrap publishes
-the finished name on the ArgoCD cluster Secret as the `velero/backup-bucket`
-annotation; the `addons-velero` ApplicationSet injects it (with the `region`
-label) as a Helm value. Development runs no Velero — the ApplicationSet selects
-`environment NotIn [hub, development]`.
-
-### Security
+### Backup
 
 | Setting | Development | Staging | Production |
-|---------|-----|---------|------------|
-| Trivy Severity | CRITICAL | HIGH,CRITICAL | HIGH,CRITICAL |
-| Scan Concurrency | 3 | 5 | 5 |
-| Falco Memory Limit | 1Gi | 2Gi | 4Gi |
-| Falco Priority | notice | warning | warning |
+|---------|-------------|---------|------------|
+| Velero | No | Yes | Yes |
+| Backup bucket | — | cluster-Secret annotation | cluster-Secret annotation |
 
-## Adding a New Environment
+The bucket name is not committed. landing-zone builds it per cluster;
+cluster-bootstrap publishes `velero/backup-bucket` on the Secret;
+`addons-velero` injects it. Development is `environment NotIn [hub, development]`.
 
-1. Create `environments/<name>/cluster-config.yaml` with appropriate `cluster_name` and `region`
-2. For Helm addons: create `values-<name>.yaml` (delta only) in each addon directory under `addons/<category>/<addon>/`
-3. For Kustomize addons (storage-classes, priority-classes, karpenter-resources): create `overlays/<name>/kustomization.yaml` referencing `../../base`
-4. For policies: create overlay with appropriate enforcement mode patches
-5. Ensure the ArgoCD cluster secret has label `environment: <name>`
+## Adding a new environment
+
+1. **landing-zone**: vend the cluster and ensure cluster-bootstrap stamps
+   `environment: <name>` (and the other labels/annotations the appsets need)
+   on the ArgoCD cluster Secret.
+2. For Helm addons: add `values-<name>.yaml` deltas under each addon that
+   differs from base.
+3. For Kustomize addons: add `overlays/<name>/`.
+4. For policies: Audit vs Enforce overlay as appropriate.
+5. Confirm ApplicationSets select the new cluster
+   (`kubectl get applications -n argocd` on the hub).

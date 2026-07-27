@@ -7,7 +7,7 @@ You're an AI client (or the author of one) about to add a cluster-level addon, r
 ArgoCD App-of-Apps catalog for EKS clusters. Eight addon categories, plus ApplicationSets that bind workloads to clusters via labels (listed in deploy order):
 
 - **`addons/bootstrap/`** — cert-manager, external-secrets, secret-stores, metrics-server, prometheus-operator-crds, reloader, storage-classes, priority-classes, portal-reader
-- **`addons/networking/`** — cilium, aws-load-balancer-controller, external-dns, mcp-tunnel
+- **`addons/networking/`** — cilium, aws-load-balancer-controller, external-dns
 - **`addons/accelerators/`** — gpu-operator, nvidia-dra-driver (Helm) — NVIDIA GPU device plugins, gated on the dedicated `eks-agent-platform/accelerators` cluster label, at waves 6-7 (early, alongside karpenter)
 - **`addons/security/`** — kyverno, falco, trivy-operator
 - **`addons/observability/`** — otel-agent, otel-gateway, grafana-operator, loki, tempo, kube-state-metrics, opencost
@@ -19,7 +19,6 @@ Plus:
 
 - **`applicationsets/`** — ApplicationSet generators that fan addons + tenant workloads out across clusters by label
 - **`catalog/`** — platform-specific tenant workloads (currently Druid)
-- **`environments/`** — per-cluster overlays (development / staging / production / hub)
 - **`dashboards/`** — `GrafanaDashboard` CRs that grafana-operator reconciles into the external Amazon Managed Grafana workspace
 - **`policies/`** — Kyverno policies (best-practices, pod-security-standards) enforced cluster-wide
 

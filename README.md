@@ -71,7 +71,6 @@ repoURL: '{{ index .metadata.annotations "gitops/repo-url" }}'
 │  ├── addons-ai-platform (kagent, agentgateway + CRDs)               │
 │  ├── agent-platform (Tenant/Platform/Budget/ModelGateway CRs)       │
 │  ├── addons-argo-platform (Rollouts, Events, Workflows)             │
-│  ├── druid-tenants                                                  │
 │  └── dashboards (GrafanaDashboards)                                 │
 └─────────────────────────────────────────────────────────────────────┘
 
@@ -92,14 +91,14 @@ eks-gitops/
 │   ├── gateway-api-crds.yaml
 │   ├── secret-stores.yaml
 │   ├── dashboards.yaml
-│   ├── druid-tenants.yaml
 │   └── opt-in/                          # NOT applied by default (apps/clusters/portal)
 │
 ├── addons/                             # Addon configurations
 │   ├── bootstrap/{cert-manager,external-secrets,metrics-server,
 │   │              prometheus-operator-crds,reloader,secret-stores,
-│   │              storage-classes,priority-classes,portal-reader}/
-│   ├── networking/{cilium,aws-load-balancer-controller,external-dns,mcp-tunnel}/
+│   │              secret-stores-managed,storage-classes,priority-classes,
+│   │              portal-reader}/
+│   ├── networking/{cilium,aws-load-balancer-controller,external-dns}/
 │   ├── security/{kyverno,trivy-operator,falco}/
 │   ├── observability/{loki,tempo,otel-agent,otel-gateway,grafana-operator,
 │   │                  kube-state-metrics,opencost}/
@@ -114,13 +113,7 @@ eks-gitops/
 │   └── kyverno/{pod-security-standards,best-practices,networking,
 │                supply-chain,tests}/
 │
-├── environments/                       # Cluster-config ConfigMaps
-│   ├── development/
-│   ├── staging/
-│   ├── production/
-│   └── hub/
-│
-├── catalog/                            # Platform-specific workloads
+├── catalog/                            # Platform-specific workloads (charts)
 │   └── druid/
 │
 ├── dashboards/                         # GrafanaDashboard CRs (grafana-operator)

@@ -39,7 +39,7 @@ jobs:
             kustomize build --enable-helm "$dir" > "rendered/${name}.yaml" || exit 1
           done
           # Env-agnostic kustomize roots (no per-env overlays — same on every cluster).
-          for dir in dashboards/base addons/bootstrap/secret-stores; do
+          for dir in dashboards/base addons/bootstrap/secret-stores addons/bootstrap/secret-stores-managed; do
             name=$(echo "$dir" | sed 's|^\./||' | tr '/' '-')
             echo "Rendering $dir ..."
             kustomize build --enable-helm "$dir" > "rendered/${name}.yaml" || exit 1
