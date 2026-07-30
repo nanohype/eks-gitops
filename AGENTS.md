@@ -12,7 +12,7 @@ ArgoCD App-of-Apps catalog for EKS clusters. Eight addon categories, plus Applic
 - **`addons/security/`** — kyverno, falco, trivy-operator
 - **`addons/observability/`** — otel-agent, otel-gateway, grafana-operator, loki, tempo, kube-state-metrics, opencost
 - **`addons/operations/`** — karpenter, karpenter-resources, keda, descheduler, goldilocks, vpa, velero
-- **`addons/ai-platform/`** — kagent, Envoy AI Gateway, the eks-agent-platform operator (plus their CRDs)
+- **`addons/ai-platform/`** — Envoy AI Gateway, the eks-agent-platform operator (plus their CRDs)
 - **`addons/argo-platform/`** — Argo Workflows, Argo Rollouts, Argo Events
 
 Plus:

@@ -68,7 +68,7 @@ repoURL: '{{ index .metadata.annotations "gitops/repo-url" }}'
 │  ├── addons-operations-helm (VPA, Goldilocks, Descheduler, KEDA)    │
 │  ├── addons-operations-kustomize (Karpenter Resources)              │
 │  ├── addons-velero (Velero)                                         │
-│  ├── addons-ai-platform (kagent, envoy-ai-gateway + CRDs)          │
+│  ├── addons-ai-platform (envoy-ai-gateway + CRDs)                  │
 │  ├── agent-platform (Tenant/Platform/Budget/ModelGateway CRs)       │
 │  ├── addons-argo-platform (Rollouts, Events, Workflows)             │
 │  └── dashboards (GrafanaDashboards)                                 │
@@ -106,7 +106,7 @@ eks-gitops/
 │   │               karpenter-resources,keda}/
 │   ├── accelerators/{gpu-operator,nvidia-dra-driver}/
 │   ├── argo-platform/{argo-rollouts,argo-events,argo-workflows}/
-│   └── ai-platform/{agent-platform,kagent,kagent-crds,envoy-gateway,
+│   └── ai-platform/{agent-platform,envoy-gateway,
 │                    envoy-ai-gateway,envoy-ai-gateway-crds,operator}/
 │
 ├── policies/                           # Kyverno policies (pure Kustomize)
@@ -137,7 +137,7 @@ eks-gitops/
 | 20 | Kyverno Policies | After Kyverno is ready |
 | 21 | Agent Operator (eks-agent-platform) | Operator + CRDs before the agent platform consumes them |
 | 29-34 | Observability (kube-state-metrics 29, Loki, Tempo, OTel collector 32, OpenCost 33, grafana-operator 34), Gateway API CRDs (30) | After security |
-| 40 | AI Platform (kagent, envoy-ai-gateway); Operations (Velero, VPA, Goldilocks, Descheduler, KEDA) | After operator + observability |
+| 40 | AI Platform (envoy-ai-gateway); Operations (Velero, VPA, Goldilocks, Descheduler, KEDA) | After operator + observability |
 | 42 | Operations kustomize (Karpenter Resources) | After operations Helm |
 | 44 | Agent Platform CRs | After the AI-platform runtime is up |
 | 50 | Argo Platform (Rollouts, Events, Workflows); Druid tenants | Application layer |

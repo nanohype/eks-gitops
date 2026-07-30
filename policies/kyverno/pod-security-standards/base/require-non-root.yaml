@@ -60,7 +60,6 @@ spec:
                 - argo-events
                 - argo-workflows
                 # ai platform
-                - kagent
                 - envoy-gateway-system
                 - eks-agent-platform
                 # accelerators — device plugins need privileged host access
