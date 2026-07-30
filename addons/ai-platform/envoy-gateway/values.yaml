@@ -1,0 +1,29 @@
+# envoy-gateway — the Gateway API control plane the model gateway runs on.
+#
+# The eks-agent-platform operator reconciles each ModelGateway CR into a Gateway
+# plus Envoy AI Gateway resources in the owning tenant's namespace. This chart
+# runs the controller that turns those into a live Envoy.
+#
+# Bedrock region, model routes, guardrails and rate limits are NOT set here —
+# they live on the ModelGateway CR.
+
+config:
+  envoyGateway:
+    provider:
+      type: Kubernetes
+      kubernetes:
+        deploy:
+          # Deploy each Gateway's Envoy into that Gateway's own namespace rather
+          # than one shared controller namespace.
+          #
+          # This is what makes per-tenant identity work. The operator points each
+          # Platform's EnvoyProxy at the tenant ServiceAccount, which already
+          # carries a Pod Identity association to the tenant IAM role — so the
+          # gateway reaches Bedrock as the tenant, with no credential of its own,
+          # and Bedrock attributes every invocation to the right tenant.
+          #
+          # Under the default controller-namespace mode every tenant's traffic
+          # would leave through one shared proxy under one shared identity, which
+          # collapses per-tenant cost attribution and hands every tenant the
+          # union of all tenants' model access.
+          type: GatewayNamespace

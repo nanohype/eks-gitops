@@ -1,8 +1,8 @@
-# eks-agent-platform — agentgateway
+# eks-agent-platform — model gateway
 apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDashboard
 metadata:
-  name: agent-agentgateway
+  name: agent-model-gateway
 spec:
   instanceSelector:
     matchLabels:
@@ -10,11 +10,11 @@ spec:
   resyncPeriod: 24h
   json: |
     {
-      "title": "eks-agent-platform \u2014 agentgateway",
-      "uid": "agents-agentgateway",
+      "title": "eks-agent-platform \u2014 model gateway",
+      "uid": "agents-model-gateway",
       "tags": [
         "eks-agent-platform",
-        "agentgateway",
+        "model-gateway",
         "bedrock"
       ],
       "timezone": "browser",
@@ -27,10 +27,10 @@ spec:
       "templating": {
         "list": [
           {
-            "name": "platform",
+            "name": "namespace",
             "type": "query",
             "datasource": "prometheus",
-            "query": "label_values(agentgateway_llm_request_duration_seconds_count, platform)",
+            "query": "label_values(gen_ai_server_request_duration_seconds_count, namespace)",
             "includeAll": true,
             "multi": true
           }
@@ -43,16 +43,16 @@ spec:
           "datasource": "prometheus",
           "targets": [
             {
-              "expr": "histogram_quantile(0.50, sum by (le, model_id) (rate(agentgateway_llm_request_duration_seconds_bucket{platform=~\"$platform\"}[5m])))",
-              "legendFormat": "p50 {{model_id}}"
+              "expr": "histogram_quantile(0.50, sum by (le, gen_ai_request_model) (rate(gen_ai_server_request_duration_seconds_bucket{namespace=~\"$namespace\"}[5m])))",
+              "legendFormat": "p50 {{gen_ai_request_model}}"
             },
             {
-              "expr": "histogram_quantile(0.95, sum by (le, model_id) (rate(agentgateway_llm_request_duration_seconds_bucket{platform=~\"$platform\"}[5m])))",
-              "legendFormat": "p95 {{model_id}}"
+              "expr": "histogram_quantile(0.95, sum by (le, gen_ai_request_model) (rate(gen_ai_server_request_duration_seconds_bucket{namespace=~\"$namespace\"}[5m])))",
+              "legendFormat": "p95 {{gen_ai_request_model}}"
             },
             {
-              "expr": "histogram_quantile(0.99, sum by (le, model_id) (rate(agentgateway_llm_request_duration_seconds_bucket{platform=~\"$platform\"}[5m])))",
-              "legendFormat": "p99 {{model_id}}"
+              "expr": "histogram_quantile(0.99, sum by (le, gen_ai_request_model) (rate(gen_ai_server_request_duration_seconds_bucket{namespace=~\"$namespace\"}[5m])))",
+              "legendFormat": "p99 {{gen_ai_request_model}}"
             }
           ],
           "fieldConfig": {
@@ -69,12 +69,12 @@ spec:
         },
         {
           "type": "timeseries",
-          "title": "Error rate by model + status",
+          "title": "Error rate by model + error type",
           "datasource": "prometheus",
           "targets": [
             {
-              "expr": "sum by (model_id, status) (rate(agentgateway_llm_requests_total{platform=~\"$platform\",status!=\"200\"}[5m]))",
-              "legendFormat": "{{model_id}} {{status}}"
+              "expr": "sum by (gen_ai_request_model, error_type) (rate(gen_ai_server_request_duration_seconds_count{namespace=~\"$namespace\",error_type!=\"\"}[5m]))",
+              "legendFormat": "{{gen_ai_request_model}} {{error_type}}"
             }
           ],
           "gridPos": {
@@ -86,12 +86,12 @@ spec:
         },
         {
           "type": "timeseries",
-          "title": "Throughput by route (req/s)",
+          "title": "Throughput by route alias (req/s)",
           "datasource": "prometheus",
           "targets": [
             {
-              "expr": "sum by (route) (rate(agentgateway_llm_requests_total{platform=~\"$platform\"}[1m]))",
-              "legendFormat": "{{route}}"
+              "expr": "sum by (gen_ai_original_model) (rate(gen_ai_server_request_duration_seconds_count{namespace=~\"$namespace\"}[1m]))",
+              "legendFormat": "{{gen_ai_original_model}}"
             }
           ],
           "gridPos": {

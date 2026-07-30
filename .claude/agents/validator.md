@@ -52,7 +52,7 @@ live in `scripts/check-sync-waves.py`; keep this list in sync with it):
 - observability: 29-34
 - gateway-crds: 30
 - operations: 40-44 (karpenter is a documented exception at wave 5)
-- ai-platform: 21-44 (agent-operator 21, kagent/agentgateway 40-42, agent-platform CRs 44)
+- ai-platform: 21-44 (agent-operator 21, kagent/envoy-ai-gateway 40-42, agent-platform CRs 44)
 - argo-platform: 50-52
 - apps (druid-tenants, dashboards): 50-60
 

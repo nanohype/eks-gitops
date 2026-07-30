@@ -16,7 +16,7 @@ spec:
                 matchLabels:
                   argocd.argoproj.io/secret-type: cluster
                   # Gated on the SAME opt-in label the operator appset uses
-                  # (addons-agent-operator.yaml). kagent + agentgateway are the
+                  # (addons-agent-operator.yaml). kagent + Envoy AI Gateway are the
                   # runtime the operator's ModelGateway/AgentFleet reconcile INTO
                   # (agent-platform.yaml), so the whole AI-platform stack — operator,
                   # runtime, and CRs — deploys together on an opted-in cluster and
@@ -34,12 +34,12 @@ spec:
                   chartVersion: "0.9.11"
                   path: addons/ai-platform/kagent-crds
                   syncWave: "40"
-                - appName: agentgateway-crds
-                  namespace: agentgateway
-                  chartRepo: oci://ghcr.io/agentgateway/agentgateway/charts/agentgateway-crds
-                  chart: agentgateway-crds
-                  chartVersion: "1.0.1"
-                  path: addons/ai-platform/agentgateway-crds
+                - appName: envoy-ai-gateway-crds
+                  namespace: envoy-gateway-system
+                  chartRepo: oci://docker.io/envoyproxy/ai-gateway-crds-helm
+                  chart: ai-gateway-crds-helm
+                  chartVersion: "1.0.0"
+                  path: addons/ai-platform/envoy-ai-gateway-crds
                   syncWave: "40"
                 - appName: kagent
                   namespace: kagent
@@ -48,12 +48,21 @@ spec:
                   chartVersion: "0.9.11"
                   path: addons/ai-platform/kagent
                   syncWave: "42"
-                - appName: agentgateway
-                  namespace: agentgateway
-                  chartRepo: oci://ghcr.io/agentgateway/agentgateway/charts/agentgateway
-                  chart: agentgateway
-                  chartVersion: "1.0.1"
-                  path: addons/ai-platform/agentgateway
+                # envoy-gateway before envoy-ai-gateway: the AI layer registers a
+                # webhook against the control plane and reads its GatewayClass.
+                - appName: envoy-gateway
+                  namespace: envoy-gateway-system
+                  chartRepo: oci://docker.io/envoyproxy/gateway-helm
+                  chart: gateway-helm
+                  chartVersion: "1.8.3"
+                  path: addons/ai-platform/envoy-gateway
+                  syncWave: "41"
+                - appName: envoy-ai-gateway
+                  namespace: envoy-gateway-system
+                  chartRepo: oci://docker.io/envoyproxy/ai-gateway-helm
+                  chart: ai-gateway-helm
+                  chartVersion: "1.0.0"
+                  path: addons/ai-platform/envoy-ai-gateway
                   syncWave: "42"
   template:
     metadata:

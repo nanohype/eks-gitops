@@ -33,7 +33,7 @@ The `environment` label is mandatory — it resolves `values-{env}.yaml` paths a
 
 **OutOfSync with sync errors** — read `operationState`. The recurring shapes:
 
-- *CRD kind not found* — a CRD-dependent resource synced before its CRD chart. Sync waves order this: `prometheus-operator-crds` (bootstrap, wave 0-2) before anything shipping ServiceMonitors, `kagent-crds`/`agentgateway-crds` before `kagent`/`agentgateway`, `cert-manager` before any Certificate. Waves only order creation during a coordinated sync — on a fresh cluster, confirm the CRD app itself is Synced/Healthy before chasing the consumer.
+- *CRD kind not found* — a CRD-dependent resource synced before its CRD chart. Sync waves order this: `prometheus-operator-crds` (bootstrap, wave 0-2) before anything shipping ServiceMonitors, `kagent-crds`/`envoy-ai-gateway-crds` before `kagent`/`envoy-ai-gateway`, `cert-manager` before any Certificate. Waves only order creation during a coordinated sync — on a fresh cluster, confirm the CRD app itself is Synced/Healthy before chasing the consumer.
 - *ComparisonError / values ref failure* — the `$values` multi-source ref points at this repo on `main`; a missing `values-{env}.yaml` for the cluster's environment breaks comparison. Every Helm addon needs `values.yaml` plus the env delta file.
 - *ServerSideApply field conflict* — another controller owns a field. Check `operationState.message` for the conflicting manager.
 
