@@ -16,7 +16,7 @@ spec:
                 matchLabels:
                   argocd.argoproj.io/secret-type: cluster
                   # Gated on the SAME opt-in label the operator appset uses
-                  # (addons-agent-operator.yaml). kagent + Envoy AI Gateway are the
+                  # (addons-agent-operator.yaml). Envoy AI Gateway is the
                   # runtime the operator's ModelGateway/AgentFleet reconcile INTO
                   # (agent-platform.yaml), so the whole AI-platform stack — operator,
                   # runtime, and CRs — deploys together on an opted-in cluster and
@@ -27,13 +27,6 @@ spec:
           - list:
               elements:
                 # CRDs first (wave 40), then the controllers (wave 42).
-                - appName: kagent-crds
-                  namespace: kagent
-                  chartRepo: oci://ghcr.io/kagent-dev/kagent/helm/kagent-crds
-                  chart: kagent-crds
-                  chartVersion: "0.9.11"
-                  path: addons/ai-platform/kagent-crds
-                  syncWave: "40"
                 - appName: envoy-ai-gateway-crds
                   namespace: envoy-gateway-system
                   chartRepo: oci://docker.io/envoyproxy/ai-gateway-crds-helm
@@ -41,13 +34,6 @@ spec:
                   chartVersion: "1.0.0"
                   path: addons/ai-platform/envoy-ai-gateway-crds
                   syncWave: "40"
-                - appName: kagent
-                  namespace: kagent
-                  chartRepo: oci://ghcr.io/kagent-dev/kagent/helm/kagent
-                  chart: kagent
-                  chartVersion: "0.9.11"
-                  path: addons/ai-platform/kagent
-                  syncWave: "42"
                 # envoy-gateway before envoy-ai-gateway: the AI layer registers a
                 # webhook against the control plane and reads its GatewayClass.
                 - appName: envoy-gateway

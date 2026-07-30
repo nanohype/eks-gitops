@@ -1,12 +1,13 @@
 # Instantiates the eks-agent-platform CRs — the platform's OWN agent surface.
 #
 # The operator runs controllers for platform, tenant, modelgateway, agentfleet,
-# budget, eval, agentsandbox, sandboxpool and batch, and until now not one custom
-# resource existed for any of them: the product was installed and never turned on,
-# while the kagent chart's demo agents ran in its place against OpenAI.
+# budget, eval, agentsandbox, sandboxpool and batch. These CRs are what turn the
+# product on: without them the controllers are installed and idle.
 #
-# Sync wave 44: after kagent-crds (40) and the kagent + operator controllers (42),
-# because a ModelGateway/AgentFleet reconciles down into kagent CRs.
+# Sync wave 44: after the Envoy AI Gateway CRDs (40) and the gateway + operator
+# controllers (41-42), because a ModelGateway reconciles down into those CRs. An
+# AgentFleet needs nothing beyond core Kubernetes — its agents are Deployments —
+# so it is only the gateway that constrains the ordering.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:

@@ -129,12 +129,15 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
 
 ## 6. Agent platform governance  (`addons/ai-platform/`, `dashboards/base/alerting/agent-platform.yaml`)
 
-- **Elevation of privilege (an over-privileged LLM)** — the bundled kagent runtime
-  ships a `kagent-tools` ServiceAccount bound to cluster-admin and a `grafana-mcp`
-  wired to an admin token. Both are **refused**: `kagent-tools: enabled: false` and
-  `grafana-mcp: enabled: false` (kagent/values.yaml:32,170-171). Model access is an
-  explicit `allowedModels` allowlist, not a family wildcard
-  (platform.yaml:35-37), and operator sessions cap at 1h (:41).
+- **Elevation of privilege (an over-privileged LLM)** — there is no bundled agent
+  runtime to over-privilege. Agents are Deployments running the tenant's own image
+  under the tenant ServiceAccount, so an agent holds exactly the tenant's grants and
+  nothing more, and its actions appear in the audit log under the tenant's identity.
+  The catalog previously carried a runtime that shipped a cluster-admin-bound tools
+  ServiceAccount and an admin-token MCP, both switched off by values — a refusal
+  that had to keep being made correctly. Removing the runtime removes the need to
+  make it. Model access is an explicit `allowedModels` allowlist, not a family
+  wildcard (platform.yaml:35-37), and operator sessions cap at 1h (:41).
 - **Denial of service (runaway spend)** — a two-tier budget with
   `killSwitchEnabled: true` and `alertThresholdsPercent: [50,80,100]`
   (platform.yaml:50-52). Grafana **paging** alerts fire the instant the kill-switch

@@ -301,7 +301,7 @@ customResourceState:
                 customresource_kind: AgentFleet
                 field: readyAgents
             - name: condition
-              help: "AgentFleet.status.conditions (downstream kagent rollout truth; phase=Ready can mask degraded)"
+              help: "AgentFleet.status.conditions (downstream Deployment rollout truth; phase=Ready can mask degraded)"
               each:
                 type: Gauge
                 gauge:
