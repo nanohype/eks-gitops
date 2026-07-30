@@ -1,11 +1,11 @@
 # Upstream Gateway API CRDs (gateway.networking.k8s.io).
 #
-# These were never installed. agentgateway is a Gateway API implementation and was
-# running against an API that did not exist on the cluster; the eks-agent-platform
-# operator's ModelGateway controller — the Bedrock front door, the thing that routes
-# agent traffic through guardrails and rate limits — sat in phase=Pending with
+# The model gateway is a Gateway API implementation, so these CRDs have to exist
+# before it can do anything; the eks-agent-platform operator's ModelGateway
+# controller — the Bedrock front door, the thing that routes agent traffic through
+# guardrails and rate limits — reports phase=Pending without them, with
 #
-#   RoutesReconciled=False: waiting on Platform or agentgateway / Gateway-API CRDs
+#   RoutesReconciled=False: waiting on Platform or Envoy AI Gateway / Gateway-API CRDs
 #
 # because it cannot create the Gateway/HTTPRoute it exists to create. The operator's
 # own chart RBAC grants gateway.networking.k8s.io on gateways + httproutes, so the
@@ -20,16 +20,18 @@
 # VERSION: v1.5.1 (stable since 2026-03), not v1.6.0 (2026-06-29). For CRDs that
 # every gateway on the cluster depends on, four months of soak beats two weeks of
 # novelty, and the v1 CRDs are backward compatible — v1.5.1 carries GatewayClass,
-# Gateway, HTTPRoute and GRPCRoute, which is everything the operator and agentgateway
-# use. Bump deliberately, not incidentally. Renovate watches this git tag (a custom
+# GatewayClass, Gateway, HTTPRoute, GRPCRoute and BackendTLSPolicy, which is
+# everything the operator and Envoy AI Gateway use. BackendTLSPolicy is served at v1
+# here — its older v1alpha3 ships in the same CRD but is served: false, so the
+# operator emits v1. Bump deliberately, not incidentally. Renovate watches this git tag (a custom
 # manager in renovate.json, since it is a manifest directory, not a Helm chart) and
 # opens a currency PR when a newer release ships; the deliberate-bump judgment above
 # governs whether that PR merges.
 #
 # CHANNEL: standard, not experimental. Nothing here needs TCPRoute/UDPRoute.
 #
-# SYNC WAVE 30: before the ai-platform CRDs (40) and controllers (42) — agentgateway
-# and the operator both need these to exist before they start.
+# SYNC WAVE 30: before the ai-platform CRDs (40) and controllers (41-42) — Envoy
+# Gateway and the operator both need these to exist before they start.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:

@@ -1,0 +1,12 @@
+# envoy-ai-gateway — the AI-aware layer over envoy-gateway.
+#
+# Owns AIGatewayRoute / AIServiceBackend / BackendSecurityPolicy: model-name
+# routing, upstream schema translation (Anthropic Messages and OpenAI chat
+# completions both reach Bedrock), and upstream credentials.
+#
+# Credentials are resolved through the AWS default chain rather than stored:
+# BackendSecurityPolicy names only a region, and the Envoy pod's Pod Identity
+# association supplies the rest. Nothing here holds an AWS key.
+
+controller:
+  replicaCount: 2

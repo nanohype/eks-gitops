@@ -61,7 +61,7 @@ spec:
                 - argo-workflows
                 # ai platform
                 - kagent
-                - agentgateway
+                - envoy-gateway-system
                 - eks-agent-platform
                 # accelerators — device plugins need privileged host access
                 - gpu-operator

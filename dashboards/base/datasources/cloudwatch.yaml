@@ -1,5 +1,5 @@
 # Amazon CloudWatch data source. The agent persona boards (ops, kill-switch,
-# agentgateway, finance) graph CloudWatch-native AWS metrics that have no
+# model gateway, finance) graph CloudWatch-native AWS metrics that have no
 # Prometheus equivalent — AWS/SQS queue depth, AWS/States Step Functions
 # execution health, AWS/Events rule failures, AWS/Bedrock throttling. These
 # exist in CloudWatch natively (no exporter), so Grafana queries them directly.

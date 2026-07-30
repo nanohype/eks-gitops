@@ -20,7 +20,7 @@ WHY THIS EXISTS
     policies render clean, kubeconform clean, and kyverno's own unit tests pass;
     the contradiction only surfaces when the addon meets the policy on a real
     Enforce cluster. That is exactly how a `require-labels` tier extension shipped
-    against a fleet whose grafana-operator, falco, kagent, agentgateway, and
+    against a fleet whose grafana-operator, falco, kagent, envoy-gateway, and
     accelerator namespaces were never excluded.
 
 WHAT IT DOES

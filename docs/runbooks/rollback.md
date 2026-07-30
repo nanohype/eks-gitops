@@ -40,7 +40,7 @@ Before rolling back, check the failure isn't environment-scoped: a bad `values-s
 
 **Version-specific gotchas:**
 
-- Charts that manage CRDs (kyverno, prometheus-operator-crds, kagent-crds, agentgateway-crds): Helm chart-version reverts do not downgrade CRDs already applied. Verify the older chart tolerates the newer CRD schema; if not, this is a fix-forward, not a rollback.
+- Charts that manage CRDs (kyverno, prometheus-operator-crds, kagent-crds, envoy-ai-gateway-crds): Helm chart-version reverts do not downgrade CRDs already applied. Verify the older chart tolerates the newer CRD schema; if not, this is a fix-forward, not a rollback.
 - StatefulSet-backed addons (loki, tempo, druid): a revert that changes `volumeClaimTemplates` will not apply — those fields are immutable and deliberately covered by `ignoreDifferences`. Data-format downgrades (e.g. a store schema migrated on upgrade) may also need the component's own downgrade procedure first.
 
 ## Verification
