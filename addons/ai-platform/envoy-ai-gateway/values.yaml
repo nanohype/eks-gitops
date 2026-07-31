@@ -10,3 +10,45 @@
 
 controller:
   replicaCount: 2
+
+extProc:
+  # The routing ledger.
+  #
+  # The extproc emits an OpenInference span per model call. What it records is
+  # what nothing else can: the route name the caller asked for, the model that
+  # name resolved to, the guardrail headers applied, token counts, latency, and
+  # requests refused at the gateway — which never reach Bedrock and so appear
+  # in no Bedrock log at all. Unset, the exporter has no endpoint and the
+  # ledger simply does not exist.
+  #
+  # Content is deliberately NOT in this stream. Bedrock model-invocation
+  # logging already delivers full request and response bodies to the
+  # object-locked `invocations` bucket, written by AWS at the API boundary —
+  # outside the cluster, unsuppressable by the workload or by this gateway, and
+  # indifferent to which wire format the caller used. That is a strictly better
+  # witness than anything in-cluster, so duplicating bodies here would add a
+  # second, weaker copy of the same prompts to a tracing backend with different
+  # access controls and no retention lock.
+  #
+  # The OPENINFERENCE_HIDE_* flags all default to false, so this redaction is
+  # an explicit choice rather than the absence of one: without these four the
+  # gateway ships every prompt and completion into Tempo.
+  extraEnvVars:
+    - name: OTEL_SERVICE_NAME
+      value: ai-gateway-extproc
+    - name: OTEL_TRACES_EXPORTER
+      value: otlp
+    - name: OTEL_EXPORTER_OTLP_PROTOCOL
+      value: http/protobuf
+    # The stable collector alias every tenant chart wires against. The tenant
+    # NetworkPolicy the operator emits opens 4317/4318 to this namespace.
+    - name: OTEL_EXPORTER_OTLP_ENDPOINT
+      value: http://telemetry.monitoring.svc.cluster.local:4318
+    - name: OPENINFERENCE_HIDE_INPUTS
+      value: "true"
+    - name: OPENINFERENCE_HIDE_OUTPUTS
+      value: "true"
+    - name: OPENINFERENCE_HIDE_INPUT_MESSAGES
+      value: "true"
+    - name: OPENINFERENCE_HIDE_OUTPUT_MESSAGES
+      value: "true"
