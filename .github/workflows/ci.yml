@@ -76,6 +76,23 @@ jobs:
   # still render + schema-validate clean — the cluster would just stop enforcing
   # it. This gate catches that at PR time. CLI pinned to the release the policies
   # were authored against.
+  serviceaccount-bindings:
+    name: Pods name ServiceAccounts that exist
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install helm
+        uses: azure/setup-helm@v4
+      - name: Install pyyaml
+        run: pip install pyyaml
+      # A Pod Identity association binds by ServiceAccount NAME and does not fail
+      # when the name is wrong — it is created, it shows in the console, and the pod
+      # runs on the node role instead. Every manifest is valid and the workload has
+      # no AWS identity.
+      - name: Every pod names a ServiceAccount its chart creates
+        run: ./scripts/check-serviceaccount-bindings.py
+
   kyverno:
     name: Kyverno policy tests
     runs-on: ubuntu-latest
