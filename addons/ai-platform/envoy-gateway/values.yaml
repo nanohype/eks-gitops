@@ -27,3 +27,59 @@ config:
           # collapses per-tenant cost attribution and hands every tenant the
           # union of all tenants' model access.
           type: GatewayNamespace
+
+    # ── what makes the AI layer take effect ──────────────────────────────────
+    #
+    # Envoy AI Gateway is not a self-contained controller sitting beside this
+    # one. It reaches into this control plane's xDS translation, and both of
+    # the blocks below are what let it. Neither has a default that works:
+    # installed without them, every AI Gateway resource still reports Accepted
+    # and no request the gateway serves can succeed.
+    extensionApis:
+      # The operator writes a gateway.envoyproxy.io Backend for the Bedrock
+      # upstream. The Backend API is opt-in; with it off the controller logs
+      # "Backend is disabled in Envoy Gateway configuration" and installs a 500
+      # direct response on the route — a healthy-looking gateway that answers
+      # every model call with a server error.
+      enableBackend: true
+      # Not load-bearing today. Upstream recommends it for compatibility with
+      # AI Gateway features that patch xDS directly.
+      enableEnvoyPatchPolicy: true
+
+    # The AI layer's extproc — the sidecar that reads the model name out of a
+    # request body and sets x-ai-eg-model, which is what every route the
+    # operator writes matches on. The sidecar is injected into each proxy pod
+    # regardless; this is what inserts its HTTP filter into the filter chain.
+    #
+    # Without it the sidecar starts, reports ready, registers every endpoint
+    # prefix, and is never called. The header is never set, so no route matches
+    # and the gateway answers 404 with "No matching route found. It is likely
+    # because the model specified in your request is not configured" — pointing
+    # at the route config, which is correct.
+    #
+    # The hook set is upstream's (manifests/envoy-gateway-values.yaml). All four
+    # translation kinds have to be included: with only `listener` the extension
+    # is called but the filter never lands.
+    extensionManager:
+      hooks:
+        xdsTranslator:
+          translation:
+            listener:
+              includeAll: true
+            route:
+              includeAll: true
+            cluster:
+              includeAll: true
+            secret:
+              includeAll: true
+          post:
+            - Translation
+            - Cluster
+            - Route
+      service:
+        fqdn:
+          # The AI Gateway controller's gRPC extension server. 18002 on the
+          # same Service is its rate-limit xDS port and answers "unknown
+          # service envoygateway.extension.EnvoyGatewayExtension".
+          hostname: ai-gateway-controller.envoy-gateway-system.svc.cluster.local
+          port: 1063

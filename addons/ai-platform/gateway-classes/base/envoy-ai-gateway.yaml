@@ -1,0 +1,21 @@
+# The GatewayClass every ModelGateway's Gateway names.
+#
+# The eks-agent-platform operator writes each Gateway with
+# `gatewayClassName: envoy-ai-gateway`. Neither the gateway-helm chart nor the
+# ai-gateway-helm chart ships that GatewayClass — a GatewayClass binds a
+# controller to a name, and upstream leaves the naming to the installer.
+#
+# A Gateway naming a GatewayClass that does not exist is not rejected. No
+# controller claims it, so it is never reconciled and never reports anything,
+# no Envoy is rendered, and the Service the ModelGateway publishes as its
+# endpoint has no backend. Nothing reports an error, because nothing is
+# watching to report one.
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: envoy-ai-gateway
+spec:
+  # Envoy Gateway's controller. The AI layer runs no GatewayClass controller of
+  # its own — it extends this one through the extensionManager hooks configured
+  # in ../../envoy-gateway/values.yaml.
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
