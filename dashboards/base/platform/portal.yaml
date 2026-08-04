@@ -26,7 +26,7 @@ spec:
         {
           "type": "stat",
           "title": "API availability (30d)",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "decimals": 4, "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 0.999 } ] } }, "overrides": [] },
           "targets": [
             { "expr": "1 - (sum(rate(portal_http_request_duration_seconds_count{status=~\"5..\"}[30d])) / clamp_min(sum(rate(portal_http_request_duration_seconds_count[30d])), 1))" }
@@ -36,7 +36,7 @@ spec:
         {
           "type": "gauge",
           "title": "Error budget remaining (30d)",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "orange", "value": 0.25 }, { "color": "green", "value": 0.5 } ] } }, "overrides": [] },
           "targets": [
             { "expr": "clamp_min(1 - ((sum(rate(portal_http_request_duration_seconds_count{status=~\"5..\"}[30d])) / clamp_min(sum(rate(portal_http_request_duration_seconds_count[30d])), 1)) / 0.001), 0)" }
@@ -46,7 +46,7 @@ spec:
         {
           "type": "stat",
           "title": "Fast burn (1h)",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "description": "Burn rate over 1h. Pages at 14.4x (2% of budget in 1h).",
           "fieldConfig": { "defaults": { "unit": "none", "decimals": 1, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 1 }, { "color": "red", "value": 14.4 } ] } }, "overrides": [] },
           "targets": [
@@ -57,7 +57,7 @@ spec:
         {
           "type": "stat",
           "title": "Slow burn (6h)",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "description": "Burn rate over 6h. Pages at 6x (5% of budget in 6h).",
           "fieldConfig": { "defaults": { "unit": "none", "decimals": 1, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 1 }, { "color": "red", "value": 6 } ] } }, "overrides": [] },
           "targets": [
@@ -73,7 +73,7 @@ spec:
         {
           "type": "timeseries",
           "title": "Request rate by status (req/s)",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
           "targets": [
             { "expr": "sum by (status) (rate(portal_http_request_duration_seconds_count[5m]))", "legendFormat": "{{status}}" },
@@ -84,7 +84,7 @@ spec:
         {
           "type": "timeseries",
           "title": "5xx error ratio (5m)",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "fieldConfig": { "defaults": { "unit": "percentunit", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 0.001 } ] } }, "overrides": [] },
           "targets": [
             { "expr": "sum(rate(portal_http_request_duration_seconds_count{status=~\"5..\"}[5m])) / clamp_min(sum(rate(portal_http_request_duration_seconds_count[5m])), 1)", "legendFormat": "5xx ratio" }
@@ -94,7 +94,7 @@ spec:
         {
           "type": "timeseries",
           "title": "Request latency p50 / p95 / p99 (s)",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
           "targets": [
             { "expr": "histogram_quantile(0.50, sum by (le) (rate(portal_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p50" },
@@ -106,7 +106,7 @@ spec:
         {
           "type": "timeseries",
           "title": "Slowest routes (p99, s)",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
           "targets": [
             { "expr": "topk(10, histogram_quantile(0.99, sum by (le, route) (rate(portal_http_request_duration_seconds_bucket[5m]))))", "legendFormat": "{{route}}" }
@@ -116,7 +116,7 @@ spec:
         {
           "type": "timeseries",
           "title": "Saturation — in-flight + DB pool",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "description": "HTTP requests in flight and pgx pool acquired vs max.",
           "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] },
           "targets": [
@@ -129,7 +129,7 @@ spec:
         {
           "type": "timeseries",
           "title": "DB pool acquire-wait rate",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "description": "Cumulative connection-acquire waits — climbing means pool contention.",
           "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
           "targets": [
@@ -145,7 +145,7 @@ spec:
         {
           "type": "timeseries",
           "title": "Run rate by operation & status (runs/h)",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "description": "tofu/terragrunt run completions — the core infra-execution health signal.",
           "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] },
           "targets": [
@@ -156,7 +156,7 @@ spec:
         {
           "type": "timeseries",
           "title": "Run duration p50 / p95 by operation (s)",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
           "targets": [
             { "expr": "histogram_quantile(0.50, sum by (le, operation) (rate(portal_tofu_run_duration_seconds_bucket[30m])))", "legendFormat": "p50 {{operation}}" },
@@ -172,7 +172,7 @@ spec:
         {
           "type": "timeseries",
           "title": "Jobs by state (queue depth & backlog)",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "description": "available/pending/scheduled = backlog; running = active; retryable/discarded/cancelled = trouble.",
           "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] },
           "targets": [
@@ -183,7 +183,7 @@ spec:
         {
           "type": "timeseries",
           "title": "Job errors & panics (per 5m)",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
           "targets": [
             { "expr": "sum by (kind, event) (rate(portal_worker_job_errors_total[5m]))", "legendFormat": "{{kind}} {{event}}" }
@@ -198,7 +198,7 @@ spec:
         {
           "type": "timeseries",
           "title": "Time since last successful tick (s)",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "description": "A loop that stalls climbs without bound — the tenant/cluster watchers' staleness signal.",
           "fieldConfig": { "defaults": { "unit": "s", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 300 }, { "color": "red", "value": 900 } ] } }, "overrides": [] },
           "targets": [
@@ -209,7 +209,7 @@ spec:
         {
           "type": "timeseries",
           "title": "Tick p95 (s) & panic rate",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
           "targets": [
             { "expr": "histogram_quantile(0.95, sum by (le, loop) (rate(portal_watcher_tick_duration_seconds_bucket[5m])))", "legendFormat": "p95 {{loop}}" },
