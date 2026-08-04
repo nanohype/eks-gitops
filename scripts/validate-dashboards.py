@@ -101,6 +101,137 @@ def alert_panels(node, titles: list[str]) -> None:
             alert_panels(child, titles)
 
 
+
+# ─────────────────────── locally-authored dashboard checks ───────────────────────
+#
+# The two checks above cover dashboards PULLED from grafana.com. Nothing covered
+# the ones this repo writes itself, and two defect classes lived in them for as
+# long as they have existed:
+#
+#   3. PANEL NAMES A DATASOURCE NOTHING WIRES
+#      agent-finance had four panels on "athena-cur". dashboards/base/datasources/
+#      holds cloudwatch, loki, prometheus and tempo, and the kustomization wires
+#      exactly those. The panels render an error forever. Nothing failed, because a
+#      dashboard is data — the operator applies it happily and Grafana discovers the
+#      missing datasource at view time, in front of whoever opened the board.
+#
+#   4. PANEL USES A TEMPLATE VARIABLE THE DASHBOARD DOES NOT DECLARE
+#      the same file's SQL interpolated ${cost_database} with no templating block at
+#      all, so the variable expands to nothing and the query is malformed. Its three
+#      sibling boards each declare one; this one was simply missing it.
+#
+# Both are local and offline, so they run before the network checks and regardless
+# of whether any grafana.com reference exists.
+
+JSON_BLOCK = re.compile(r"^(\s*)json:\s*\|\s*$", re.M)
+UID_LINE = re.compile(r"^\s+uid:\s*(\S+)\s*$", re.M)
+NAME_LINE = re.compile(r"^\s+name:\s*(\S+)\s*$", re.M)
+KUSTOMIZE_DS = re.compile(r"^\s*-\s*(datasources/[\w.-]+\.yaml)\s*$", re.M)
+TEMPLATE_VAR = re.compile(r"\$\{([A-Za-z_][\w]*)\}")
+
+
+def wired_datasource_refs(root: pathlib.Path) -> set[str]:
+    """Every string a panel could legally use to name a wired datasource.
+
+    Grafana's string form resolves against the datasource NAME historically and the
+    UID in current schemas, so both are accepted here — the point of the check is to
+    catch a reference that matches NEITHER, which is a reference to nothing.
+
+    Reading the kustomization rather than globbing the directory is deliberate: a
+    GrafanaDatasource file that exists but is not in `resources` is never applied,
+    so globbing would call a datasource wired when it is not.
+    """
+    kustom = root / "dashboards" / "base" / "kustomization.yaml"
+    if not kustom.is_file():
+        return set()
+    refs: set[str] = set()
+    for rel in KUSTOMIZE_DS.findall(kustom.read_text(encoding="utf-8")):
+        ds = kustom.parent / rel
+        if ds.is_file():
+            text = ds.read_text(encoding="utf-8")
+            refs.update(UID_LINE.findall(text))
+            refs.update(NAME_LINE.findall(text))
+    return refs
+
+
+def extract_dashboard_json(text: str):
+    """Pull the `json: |` literal block out of a GrafanaDashboard and parse it."""
+    m = JSON_BLOCK.search(text)
+    if not m:
+        return None
+    indent = len(m.group(1)) + 2
+    body = []
+    for line in text[m.end():].splitlines():
+        if line.strip() and not line.startswith(" " * indent):
+            break
+        body.append(line[indent:] if len(line) >= indent else "")
+    try:
+        return json.loads("\n".join(body))
+    except json.JSONDecodeError:
+        return None
+
+
+def walk_datasources(node, out: list[str]) -> None:
+    if isinstance(node, dict):
+        ds = node.get("datasource")
+        if isinstance(ds, str):
+            out.append(ds)
+        elif isinstance(ds, dict) and isinstance(ds.get("uid"), str):
+            out.append(ds["uid"])
+        for v in node.values():
+            walk_datasources(v, out)
+    elif isinstance(node, list):
+        for v in node:
+            walk_datasources(v, out)
+
+
+def declared_template_vars(dash) -> set[str]:
+    tpl = dash.get("templating") or {}
+    return {
+        v["name"]
+        for v in (tpl.get("list") or [])
+        if isinstance(v, dict) and isinstance(v.get("name"), str)
+    }
+
+
+def check_local_dashboards(root: pathlib.Path) -> list[str]:
+    wired = wired_datasource_refs(root)
+    problems: list[str] = []
+    base = root / "dashboards"
+    if not base.is_dir():
+        return problems
+
+    for path in sorted(base.rglob("*.yaml")):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if "kind: GrafanaDashboard" not in text:
+            continue
+        dash = extract_dashboard_json(text)
+        if dash is None:
+            continue
+        rel = path.relative_to(root)
+
+        refs: list[str] = []
+        walk_datasources(dash, refs)
+        for name in sorted(set(refs)):
+            if TEMPLATE_VAR.fullmatch(name):
+                continue  # datasource chosen by a template variable
+            if name not in wired:
+                problems.append(
+                    f"{rel}: panel datasource {name!r} is not wired — "
+                    f"nothing wired answers to that name or uid; wired: {sorted(wired)}"
+                )
+
+        declared = declared_template_vars(dash)
+        used: set[str] = set()
+        for m in TEMPLATE_VAR.finditer(json.dumps(dash)):
+            used.add(m.group(1))
+        for name in sorted(used - declared):
+            problems.append(
+                f"{rel}: uses ${{{name}}} but declares no such template variable"
+            )
+    return problems
+
+
 def discover(root: pathlib.Path) -> list[tuple[int, pathlib.Path]]:
     found: list[tuple[int, pathlib.Path]] = []
     for path in sorted(root.rglob("*.yaml")):
@@ -121,10 +252,19 @@ def main() -> int:
     )
     args = ap.parse_args()
 
+    local = check_local_dashboards(args.root)
+    if local:
+        print("Locally-authored dashboard problems:\n")
+        for p in local:
+            print(f"  {p}")
+        print()
+    else:
+        print("Locally-authored dashboards: datasources wired, template variables declared.\n")
+
     refs = discover(args.root)
     if not refs:
-        print("No grafanaCom.id references found — nothing to validate.")
-        return 0
+        print("No grafanaCom.id references found — nothing further to validate.")
+        return 1 if local else 0
 
     print(f"Validating {len(refs)} grafana.com dashboard reference(s)\n")
 
@@ -192,10 +332,11 @@ def main() -> int:
             '  returns 500 {"message":"Failed to save dashboard"} and grafana-operator parks\n'
             "  the CR ApplyFailed. Repoint to a dashboard with no legacy alerts."
         )
-    if dead or legacy:
+    if dead or legacy or local:
         return 1
 
     print(f"✓ all {len(refs)} grafana.com dashboards exist and are AMG-saveable")
+    print("✓ every locally-authored panel names a wired datasource and a declared variable")
     return 0
 
 

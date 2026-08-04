@@ -28,7 +28,7 @@ spec:
         {
           "type": "stat",
           "title": "Ready agents (across fleets)",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "targets": [
             {
               "expr": "sum(kube_customresource_status_field{customresource_kind=\"AgentFleet\",field=\"readyAgents\"})"
@@ -65,7 +65,7 @@ spec:
         {
           "type": "timeseries",
           "title": "Bedrock InvokeModel p50 / p95 / p99 latency",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "targets": [
             {
               "expr": "histogram_quantile(0.50, sum by (le, gen_ai_request_model) (rate(gen_ai_server_request_duration_seconds_bucket[5m])))",
@@ -90,7 +90,7 @@ spec:
         {
           "type": "table",
           "title": "Latest EvalSuite scores",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "targets": [
             {
               "expr": "topk(50, kube_customresource_status_field{customresource_kind=\"EvalSuite\",field=\"lastScore\"})"
@@ -106,7 +106,7 @@ spec:
         {
           "type": "timeseries",
           "title": "Error budget burn \u2014 Bedrock 4xx/5xx rate",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "targets": [
             {
               "expr": "sum by (gen_ai_request_model) (rate(gen_ai_server_request_duration_seconds_count{error_type=~\"4..\"}[5m]))",
