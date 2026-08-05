@@ -1,5 +1,20 @@
 # Argo Workflows - Workflow orchestration
 
+# The CRDs come from applicationsets/argo-workflows-crds.yaml at wave 13, not
+# from this chart at wave 52. Two reasons, either sufficient:
+#
+#   * ORDERING — the eks-agent-platform operator chart declares argoproj.io CRs
+#     at wave 21, so CRDs arriving at 52 are 31 waves too late on a first sync.
+#   * FETCH-AT-SYNC — at crds.full=true (the chart default) this chart installs
+#     no CRD manifests at all. It renders a pre-install hook Job that runs
+#     `kubectl apply -f https://raw.githubusercontent.com/...` for each CRD,
+#     making the control plane depend on live GitHub egress from this namespace.
+#
+# Setting install: false stops that Job rendering, so the CRD Application is the
+# single owner of the eight argoproj.io CRDs rather than the two racing.
+crds:
+  install: false
+
 server:
   replicas: 2
   resources:

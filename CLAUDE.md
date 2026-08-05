@@ -26,7 +26,9 @@ catalog/               → Platform-specific workloads (Druid)
 ## Key Conventions
 
 ### Sync Waves
-Components deploy in order: bootstrap (0, 2) → networking (1) → karpenter (5) → security (10-12) → policies (20-23) → observability (29-34) → operations (40-44) / ai-platform (40-42) → argo-platform (50-52).
+Components deploy in order: bootstrap (0, 2) → networking (1) → karpenter (5) → security (10-12) → argo-workflows CRDs (13) → policies (20-23) → observability (29-34) / gateway-api CRDs (30) → operations (40-44) / ai-platform (40-42) → argo-platform (50-52).
+
+CRD-only Applications sit immediately ahead of the first thing that renders one of their kinds, not inside a consumer's band. `scripts/check-sync-waves.py` asserts that precedence directly: an ApplicationSet rendering a manifest whose CRD another ApplicationSet installs must sync strictly after it. A controller that merely *watches* a CRD is not a consumer for this purpose — it retries until the kind exists.
 
 ### Helm Values Pattern
 Helm addons use a flat directory with ArgoCD multi-source. Each addon has `values.yaml` (base) plus `values-{env}.yaml` (delta only). ApplicationSets reference them via:
