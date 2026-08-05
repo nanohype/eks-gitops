@@ -13,15 +13,14 @@ WHY THIS EXISTS
     tier), require-probes, require-run-as-non-root, and require-resource-limits
     all carry a hand-maintained namespace exclusion list. The addon fleet cannot
     satisfy these policies: upstream charts never stamp the org
-    platform.nanohype.dev/* labels, device plugins and security agents need
-    root/host access, and batch jobs have no service-style probes. If an addon
+    platform.nanohype.dev/* labels, security agents need root/host access, and batch jobs have no service-style probes. If an addon
     lands in a namespace that is NOT on the exclusion list, its Deployment/
     DaemonSet is denied — and nothing before this gate would have caught it. The
     policies render clean, kubeconform clean, and kyverno's own unit tests pass;
     the contradiction only surfaces when the addon meets the policy on a real
     Enforce cluster. That is exactly how a `require-labels` tier extension shipped
-    against a fleet whose grafana-operator, falco, envoy-gateway, and
-    accelerator namespaces were never excluded.
+    against a fleet whose grafana-operator, falco, and envoy-gateway
+    namespaces were never excluded.
 
 WHAT IT DOES
     1. STRUCTURAL — parses the four exclusion-bearing base policies and asserts

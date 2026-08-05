@@ -27,7 +27,7 @@ spec:
                   namespace: kube-system
                   chartRepo: https://prometheus-community.github.io/helm-charts
                   chart: kube-state-metrics
-                  chartVersion: 7.5.2
+                  chartVersion: 8.1.3
                   path: addons/observability/kube-state-metrics
                   syncWave: "29"
                 # loki and tempo live in their own addons-loki / addons-tempo
@@ -42,7 +42,7 @@ spec:
                   namespace: grafana-operator
                   chartRepo: https://grafana.github.io/helm-charts
                   chart: grafana-operator
-                  chartVersion: "5.23.0"
+                  chartVersion: "5.24.0"
                   path: addons/observability/grafana-operator
                   syncWave: "34"
   template:

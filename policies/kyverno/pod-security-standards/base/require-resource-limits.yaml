@@ -63,9 +63,6 @@ spec:
                 # ai platform
                 - envoy-gateway-system
                 - eks-agent-platform
-                # accelerators — device plugins need privileged host access
-                - gpu-operator
-                - nvidia-dra-driver
       validate:
         allowExistingViolations: true
         message: "CPU limit is required for all containers."
@@ -121,9 +118,6 @@ spec:
                 # ai platform
                 - envoy-gateway-system
                 - eks-agent-platform
-                # accelerators — device plugins need privileged host access
-                - gpu-operator
-                - nvidia-dra-driver
       validate:
         allowExistingViolations: true
         message: "Memory limit is required for all containers."

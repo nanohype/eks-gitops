@@ -12,7 +12,6 @@ There is no `environments/` tree of ConfigMaps in this repo. Environment is a
 | `region` | cluster-bootstrap | Per-cluster Helm values (Loki/Tempo S3 region, etc.) |
 | `observability/tier: full\|floor` | cluster-bootstrap | Which observability appsets target the cluster |
 | `eks-agent-platform/enabled: "true"` | cluster-bootstrap | Operator + agent-platform appsets |
-| `eks-agent-platform/accelerators: "true"` | cluster-bootstrap | GPU device-plugin appsets |
 | `observability/loki-bucket`, `tempo-bucket`, `velero/backup-bucket`, … | cluster-bootstrap (opt-in) | Per-cluster S3 targets injected as Helm values |
 
 ApplicationSets read these with `{{ index .metadata.labels "environment" }}`

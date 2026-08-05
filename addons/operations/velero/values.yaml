@@ -18,7 +18,7 @@ resources:
 # AWS plugin
 initContainers:
   - name: velero-plugin-for-aws
-    image: velero/velero-plugin-for-aws:v1.11.0
+    image: velero/velero-plugin-for-aws:v1.14.2
     volumeMounts:
       - mountPath: /target
         name: plugins
@@ -55,7 +55,7 @@ tolerations:
 kubectl:
   image:
     repository: registry.k8s.io/kubectl
-    tag: v1.33.4
+    tag: v1.36.3
 
 # Default backup schedules
 schedules:

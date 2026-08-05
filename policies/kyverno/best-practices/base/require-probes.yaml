@@ -63,9 +63,6 @@ spec:
                 # ai platform
                 - envoy-gateway-system
                 - eks-agent-platform
-                # accelerators — device plugins need privileged host access
-                - gpu-operator
-                - nvidia-dra-driver
       validate:
         allowExistingViolations: true
         message: "Readiness probe is required for all containers."
@@ -120,9 +117,6 @@ spec:
                 # ai platform
                 - envoy-gateway-system
                 - eks-agent-platform
-                # accelerators — device plugins need privileged host access
-                - gpu-operator
-                - nvidia-dra-driver
       validate:
         allowExistingViolations: true
         message: "Liveness probe is required for all containers."
