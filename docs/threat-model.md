@@ -95,11 +95,14 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
   (require-non-root, require-resource-limits).
   `kyverno test` proves each rule passes a compliant and fails a violating resource
   (ci.yml:76-77), and `trivy config` MEDIUM+ backstops the rendered manifests. The
-  **policy-admission** gate (ci.yml:183-216) renders the whole addon fleet into its
+  **policy-admission** gate (`ci.yml` job `policy-admission`,
+  `scripts/check-policy-admission.py`) renders the whole addon fleet into its
   real destination namespaces and runs `kyverno apply` against the Enforce overlay,
   so an addon landing in a namespace the policies neither exclude nor let it satisfy
   fails at PR time instead of being denied at admission on a vended Enforce cluster;
-  it also asserts all four exclusion lists stay identical.
+  it also asserts all four exclusion lists stay identical, that every namespace the
+  fleet lands a workload in is on that list, and — via a deliberately non-compliant
+  canary every rule must deny — that the run evaluated anything at all.
 - **Residual** — the policies carry a fixed exclude list of platform/system
   namespaces (argocd, kyverno, cert-manager, monitoring, …) and set
   `allowExistingViolations: true`, so pre-existing violators and every excluded

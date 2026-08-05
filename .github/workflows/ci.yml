@@ -215,6 +215,15 @@ jobs:
   # so that class of contradiction fails here instead of at sync. It also asserts
   # all four exclusion lists are identical (their divergence is the same bug
   # class) and exercises the Audit overlay to prove the warn-vs-deny split.
+  #
+  # The fleet renders alongside a canary: one deliberately non-compliant workload
+  # in a namespace on no exclusion list, which every rule must deny (Enforce) and
+  # warn (Audit). Without it the run is indistinguishable from one that evaluated
+  # nothing — every fleet namespace IS excluded, so Kyverno legitimately matches
+  # zero resources and exits 0. The verdict therefore comes from the per-resource
+  # policy report, not the exit code, which the canary keeps permanently non-zero.
+  # A companion check asserts every namespace the fleet lands a workload in is on
+  # the exclusion list, so a new addon in a new namespace is reported as uncovered.
   policy-admission:
     name: Policy-admission gate
     runs-on: ubuntu-latest
