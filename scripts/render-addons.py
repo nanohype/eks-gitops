@@ -57,12 +57,15 @@ ENVIRONMENTS = ["development", "staging", "production", "hub"]
 #
 # A skip is re-tested on every run (see stale_skips below). Declaring the gap is
 # honest; leaving it declared after it closes is not, and the difference is
-# invisible without asking. This map was populated by exactly one entry —
-# NVIDIA's DRA driver, skipped because oci://nvcr.io denies anonymous pulls —
-# and while that reason stayed true, it hid a second problem behind it: the
-# appset named a chart (`k8s-dra-driver-gpu`) that did not exist under any
-# registry. The pin could not have rendered even with NGC credentials, and no
-# gate could say so, because the credential wall answered first.
+# invisible without asking.
+#
+# The map is EMPTY, and its one historical entry is worth keeping in view: the
+# NVIDIA DRA driver was skipped because oci://nvcr.io denies anonymous pulls, and
+# while that reason stayed true it hid a second problem behind it — the appset
+# named a chart (`k8s-dra-driver-gpu`) that existed under no registry at all. The
+# pin could not have rendered even with NGC credentials, and no gate could say
+# so, because the credential wall answered first. The accelerator stack has since
+# been deleted; the lesson is that a declared gap can conceal an undeclared one.
 SKIP_CHARTS: dict[str, str] = {}
 
 # Synthetic values for the appset's templated --set parameters. The render only
@@ -90,7 +93,9 @@ class Unit:
 
     def oci_ref(self) -> str:
         # ArgoCD appends the chart name to the OCI repoURL unless the repoURL
-        # already ends in it (karpenter pins the full path, nvidia does not).
+        # already ends in it. Every OCI pin in the catalog currently ends in its
+        # chart name, so the second branch is what runs; the first is kept
+        # because the appset schema permits either shape.
         if self.repo.rsplit("/", 1)[-1] == self.chart:
             return self.repo
         return f"{self.repo}/{self.chart}"
