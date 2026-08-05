@@ -69,6 +69,15 @@ jobs:
       - name: Dead ids + AMG-unsaveable legacy alerts
         run: ./scripts/validate-dashboards.py
 
+      # Two eval alerts each excluded the never-run state, each explaining in a
+      # comment that the OTHER one covered it. Both were individually correct;
+      # between them the state was reported by nobody — and it was the only state
+      # the fleet had ever been in. kubeconform SKIPs the Grafana CRDs and no gate
+      # executes the PromQL, so an alert that can never fire looks exactly like
+      # one that has not fired yet.
+      - name: Excluded alert states are somebody's job
+        run: ./scripts/check-alert-coverage.py
+
   # ── Kyverno policy unit tests ────────────────────────────────────────
   # `kyverno test` proves each policy rule PASSES a compliant resource and FAILS
   # a violating one (policies/kyverno/tests). Without this, a policy could be
