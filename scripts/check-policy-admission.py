@@ -43,6 +43,11 @@ WHAT IT DOES
     4. COVERAGE — asserts every namespace the fleet lands a workload kind in is on
        the exclusion list, so a new addon in a new namespace is reported here as
        uncovered rather than evaluated for real on a vended cluster.
+    5. RUNTIME POD — the mirror image of the canary. Everything above is built
+       from committed manifests, so a pod a CONTROLLER creates at runtime is
+       invisible to all of it. One Argo-shaped workflow pod rides along and must
+       be ADMITTED, and must be shown to have been evaluated. See "WHY THE
+       RUNTIME POD".
 
 WHY THE CANARY
     Without it this gate passed while evaluating NOTHING. Every namespace the
@@ -62,6 +67,24 @@ WHY THE CANARY
     and per rule. The canary is generated here rather than committed as a manifest:
     ArgoCD watches this repo, and a root-running probe-less Deployment sitting in a
     synced path is a hazard the gate does not need.
+
+WHY THE RUNTIME POD
+    The canary proves the gate evaluated SOMETHING. It cannot prove the gate
+    evaluated everything that meets these policies on a real cluster, because the
+    render only ever produces what a chart or kustomize root emits — and a
+    controller that creates pods at runtime emits nothing at render time.
+
+    require-probes matched `Pod` and denied every Argo Workflows step pod at
+    Enforce. The eval tier could not start on staging or production, and no gate
+    in this repo could see it: eval-runner receives no rendered workload, so it
+    was never on the exclusion list and never showed up as uncovered either. The
+    coverage check reports namespaces the fleet RENDERS into; this reports what
+    happens to a pod nobody renders.
+
+    The verdict is two-sided on purpose. "No rule denied it" and "no rule ever
+    saw it" are the same empty result set, and the second is the failure being
+    guarded against — so admission alone is not enough, the pod must also be
+    observed passing at least one rule.
 
 SCOPE
     Addons only — the fleet the exclusion lists govern. Tenant workloads (druid,
@@ -174,6 +197,93 @@ spec:
           securityContext:
             runAsNonRoot: false
             runAsUser: 0
+"""
+
+# ── The runtime pod ─────────────────────────────────────────────────────
+# The fleet render is built from charts and kustomize roots, so every resource
+# this gate sees is a manifest somebody committed. That is a blind spot with a
+# shape: pods created at RUNTIME by a controller are never rendered by anything,
+# meet the policies for the first time on a live Enforce cluster, and are denied
+# where no CI run can observe it.
+#
+# That is exactly how require-probes came to deny the whole eval tier. Argo
+# Workflows creates a step pod per template — `init`, `wait` and `main`
+# containers, none of which carry probes, none of which can — in the eval-runner
+# namespace, which is on no exclusion list because the operator's chart renders
+# no workload there for the gate to have noticed.
+#
+# So the gate now carries one, shaped the way Argo actually builds it, and
+# requires it to be ADMITTED. The assertion is deliberately two-sided (see
+# judge): it must produce at least one `pass`, which is what proves it was
+# loaded and evaluated rather than quietly missing, and zero denials.
+#
+# Its namespace is NOT added to `landed`. eval-runner belongs on no exclusion
+# list precisely because these pods are meant to comply on their own merits —
+# recording it would invert the claim this check exists to make.
+RUNTIME_POD_NAMESPACE = "eval-runner"
+RUNTIME_POD_NAME = "policy-gate-runtime-pod"
+RUNTIME_POD_MANIFEST = f"""apiVersion: v1
+kind: Pod
+metadata:
+  name: {RUNTIME_POD_NAME}
+  namespace: {RUNTIME_POD_NAMESPACE}
+  labels:
+    workflows.argoproj.io/workflow: {RUNTIME_POD_NAME}
+    workflows.argoproj.io/completed: "false"
+spec:
+  restartPolicy: Never
+  serviceAccountName: eval-runner
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: init
+      image: quay.io/argoproj/argoexec:v3.7.3
+      command: ["argoexec", "init"]
+      resources:
+        requests: {{cpu: 10m, memory: 64Mi}}
+        limits: {{cpu: 100m, memory: 256Mi}}
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        runAsUser: 8737
+        seccompProfile:
+          type: RuntimeDefault
+        capabilities:
+          drop: ["ALL"]
+  containers:
+    - name: wait
+      image: quay.io/argoproj/argoexec:v3.7.3
+      command: ["argoexec", "wait"]
+      resources:
+        requests: {{cpu: 10m, memory: 64Mi}}
+        limits: {{cpu: 100m, memory: 256Mi}}
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        runAsUser: 8737
+        seccompProfile:
+          type: RuntimeDefault
+        capabilities:
+          drop: ["ALL"]
+    - name: main
+      image: ghcr.io/nanohype/eks-agent-platform/eval-runner:0.1.0
+      command: ["/bin/sh", "-c", "true"]
+      resources:
+        requests: {{cpu: 100m, memory: 256Mi}}
+        limits: {{cpu: "1", memory: 1Gi}}
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+        capabilities:
+          drop: ["ALL"]
 """
 
 
@@ -315,6 +425,10 @@ def render_fleet(dest: pathlib.Path) -> tuple[int, set[str]]:
     # an uncovered addon.
     (dest / "zz-policy-gate-canary.yaml").write_text(CANARY_MANIFEST)
 
+    # Same reasoning, opposite verdict — the runtime pod must be ADMITTED. Also
+    # not recorded in `landed`; see the comment on RUNTIME_POD_MANIFEST.
+    (dest / "zz-policy-gate-runtime-pod.yaml").write_text(RUNTIME_POD_MANIFEST)
+
     return count, landed
 
 
@@ -376,6 +490,49 @@ def _is_canary(result: dict) -> bool:
                for r in result.get("resources", []))
 
 
+def _is_runtime_pod(result: dict) -> bool:
+    return any(r.get("namespace") == RUNTIME_POD_NAMESPACE
+               and r.get("name") == RUNTIME_POD_NAME
+               for r in result.get("resources", []))
+
+
+def judge_runtime_pod(results: list[dict]) -> bool:
+    """The runtime pod must be admitted, AND must have been evaluated.
+
+    One assertion would not do. "No rule denied it" and "no rule ever saw it"
+    produce the same empty result set, and the second is the failure this whole
+    check exists to catch — a pod the gate never rendered cannot be denied here
+    no matter how badly it would fare on a real cluster.
+
+    So the verdict is two-sided: at least one rule must report `pass` on it,
+    which can only happen if it was loaded and matched, and no rule may report
+    fail/warn/error. Reverting require-probes to match `Pod` trips the second;
+    dropping the pod from the render trips the first.
+    """
+    hits = [r for r in results if _is_runtime_pod(r)]
+    passes = [r for r in hits if r.get("result") == "pass"]
+    denials = [r for r in hits if r.get("result") in ("fail", "warn", "error")]
+
+    if not passes:
+        print("  FAIL  the runtime pod was evaluated by NO rule — it was not "
+              "rendered, or no policy")
+        print("        matches a bare Pod any more. An unevaluated pod cannot be "
+              "denied here, which is")
+        print("        indistinguishable from being admitted.")
+        return False
+    if denials:
+        print(f"  FAIL  the runtime pod was denied by {len(denials)} rule(s) — "
+              f"an Argo workflow step pod")
+        print("        would be rejected at admission on an Enforce cluster, and "
+              "the eval tier could not run:")
+        for r in denials:
+            print(f"          [{r.get('result')}] {r.get('policy')}/{r.get('rule')}")
+        return False
+    print(f"  ok    runtime pod admitted — evaluated by {len(passes)} rule(s), "
+          f"denied by none")
+    return True
+
+
 def judge(label: str, report: dict | None, proc: subprocess.CompletedProcess,
           expected_rules: set[str], canary_result: str) -> bool:
     """Verdict for one kyverno run, read out of the report rather than the exit code.
@@ -414,8 +571,11 @@ def judge(label: str, report: dict | None, proc: subprocess.CompletedProcess,
 
     canary_hits = {_rule_key(r) for r in results
                    if _is_canary(r) and r.get("result") == canary_result}
+    # The runtime pod is judged separately and more precisely, so it is not also
+    # counted as a foreign addon — its verdict names what actually broke.
     foreign = [r for r in results
-               if not _is_canary(r) and r.get("result") in ("fail", "warn", "error")]
+               if not _is_canary(r) and not _is_runtime_pod(r)
+               and r.get("result") in ("fail", "warn", "error")]
 
     ok = True
     unexercised = sorted(expected_rules - canary_hits)
@@ -445,6 +605,9 @@ def judge(label: str, report: dict | None, proc: subprocess.CompletedProcess,
             print(f"          … and {len(foreign) - 20} more")
     else:
         print("  ok    no addon flagged")
+
+    if not judge_runtime_pod(results):
+        ok = False
     print()
     return ok
 
