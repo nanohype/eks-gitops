@@ -206,6 +206,46 @@ def _single_path(spec: dict) -> str | None:
     return None
 
 
+
+# The README publishes a sync-wave table. It is the first thing a reader consults
+# to learn what deploys when, and nothing has ever compared it to the catalog —
+# so a band whose addons were deleted goes on being documented. Wave 6 read
+# "Accelerators (gpu-operator, nvidia-dra-driver)" for as long as those addons
+# have not existed.
+#
+# Only one direction is asserted: every wave the README documents must be a wave
+# something actually syncs at. The reverse — every wave in use appearing in the
+# table — is deliberately NOT required, because the table groups bands ("29-34")
+# and summarises, and demanding a row per wave would turn a readable overview
+# into a generated list.
+README = pathlib.Path(__file__).resolve().parent.parent / "README.md"
+README_WAVE_ROW = re.compile(r"^\|\s*(-?\d+)(?:\s*-\s*\d+)?\s*\|", re.M)
+
+
+def documented_waves_exist(apps) -> list[str]:
+    if not README.is_file():
+        return [f"{README.name} does not exist — the wave table cannot be checked"]
+    rows = [int(m) for m in README_WAVE_ROW.findall(README.read_text(encoding="utf-8"))]
+    if not rows:
+        return [
+            "the README sync-wave table matched no rows — README_WAVE_ROW no longer "
+            "matches its formatting, so this check is asserting nothing"
+        ]
+    in_use = {wave for _, _, _, wave in apps}
+    # -1 is the app-of-apps root, which lives in landing-zone rather than in an
+    # ApplicationSet here, so it is documented without appearing in `apps`.
+    problems = []
+    for wave in sorted(set(rows)):
+        if wave == -1:
+            continue
+        if wave not in in_use:
+            problems.append(
+                f"README documents sync wave {wave}, but no Application in "
+                f"applicationsets/ syncs at it — the row outlived its addons"
+            )
+    return problems
+
+
 def main() -> int:
     appset_waves: dict[str, int] = {}
     apps: list[tuple[str, str, str, int]] = []  # appset, category, addon, wave
@@ -238,6 +278,7 @@ def main() -> int:
             apps.append((name, cat, addon, int(wave)))
 
     errors: list[str] = []
+    errors.extend(documented_waves_exist(apps))
 
     # A. Category ordering.
     print("Category ordering (primary appset anchors):")

@@ -92,9 +92,9 @@ SCOPE
     comply, and that is the tenant chart's responsibility, gated on the tenant's
     own render path, not here. Git-sourced addons (the agent operator, pulled from
     eks-agent-platform) render in their own repo's CI; here they are covered by
-    namespace exclusion only. Charts that cannot be pulled by credential-less CI
-    (nvidia's NGC-gated DRA driver, see render-addons.SKIP_CHARTS) are likewise
-    covered by exclusion only.
+    namespace exclusion only. render-addons.SKIP_CHARTS, which would carve out any
+    chart credential-less CI cannot pull, is currently EMPTY — every addon in the
+    catalog is rendered and evaluated here.
 """
 
 from __future__ import annotations

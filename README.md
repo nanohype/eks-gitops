@@ -130,7 +130,6 @@ eks-gitops/
 | 1 | Networking (Cilium, ALB Controller, External DNS); Secret Stores (ClusterSecretStores) | CNI/ingress + secret backends |
 | 2 | Bootstrap continued (metrics-server, reloader, storage-classes, priority-classes) | Cluster essentials |
 | 5 | Karpenter | Nodes must be ready before workloads |
-| 6 | Accelerators (gpu-operator, nvidia-dra-driver) | GPU device plugins advertised before workloads |
 | 10 | Security (Kyverno, Trivy, Falco) | Policy engine before policies |
 | 20 | Kyverno Policies | After Kyverno is ready |
 | 21 | Agent Operator (eks-agent-platform) | Operator + CRDs before the agent platform consumes them |
