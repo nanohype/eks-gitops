@@ -3,6 +3,10 @@ apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDashboard
 metadata:
   name: loki
+  annotations:
+    # What id 13407 must resolve to on grafana.com. Asserted by
+    # scripts/validate-dashboards.py — see the IDENTITY section there.
+    nanohype.dev/grafana-com-title: "Loki2.0 Global Metrics"
 spec:
   instanceSelector:
     matchLabels:

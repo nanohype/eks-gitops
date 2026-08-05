@@ -24,13 +24,27 @@ CR holds the whole dashboards Application — and app-of-apps with it — Degrad
      CHECK: download the pinned revision's JSON and fail if ANY panel — including
      panels nested inside collapsed rows — carries an `alert` key.
 
+  3. RIGHT ID, WRONG DASHBOARD
+     Checks 1 and 2 ask whether an id resolves and whether AMG can save it. A
+     number that resolves to somebody else's board passes both, and nothing
+     downstream disagrees — the operator applies it, Grafana renders it, and the
+     board is simply about something else. `tempo` pinned 15473, which is
+     "AKA SNMP Network(网络设备监控)"; an operator opening "tempo" got an SNMP
+     device board with this gate green. Three more were the same: argo-events
+     resolved to "Beyla RED Metrics", descheduler to "Query Insights", and
+     aws-load-balancer-controller to "Kubernetes / Views / K3s Cluster".
+     CHECK: every pin carries a `nanohype.dev/grafana-com-title` annotation and
+     grafana.com's `name` must equal it. The annotation lives beside the id in
+     the same file so the two cannot be changed apart, and a pin with no
+     annotation fails rather than being skipped.
+
 Stdlib only (urllib): CI runs this on a bare ubuntu-latest with no pip install.
 Every grafana.com call is retried with backoff so a flaky network reports as a
 retry, not as a red build.
 
 Usage:  scripts/validate-dashboards.py [--root DIR]
-Exit:   0 all referenced dashboards exist and are AMG-saveable
-        1 one or more dead ids or legacy-alert panels (BLOCKING)
+Exit:   0 every reference exists, is AMG-saveable, and is the dashboard it claims
+        1 a dead id, a legacy-alert panel, or an id naming another board (BLOCKING)
 """
 
 from __future__ import annotations
@@ -55,6 +69,14 @@ TIMEOUT = 30
 GRAFANA_COM_ID = re.compile(
     r"^\s*grafanaCom:\s*$\n(?:^\s*#.*$\n)*^\s+id:\s*(\d+)\s*$",
     re.MULTILINE,
+)
+
+# The title an id is expected to resolve to, recorded beside the pin as an
+# annotation. Parsed textually for the same reason the id is: this runs on a
+# bare runner with no pyyaml. The value is a JSON string, so a title containing
+# a comma, a slash or a non-ASCII character survives round-tripping.
+EXPECTED_TITLE = re.compile(
+    r'^\s*nanohype\.dev/grafana-com-title:\s*"((?:[^"\\]|\\.)*)"\s*$', re.M
 )
 
 
@@ -232,13 +254,20 @@ def check_local_dashboards(root: pathlib.Path) -> list[str]:
     return problems
 
 
-def discover(root: pathlib.Path) -> list[tuple[int, pathlib.Path]]:
-    found: list[tuple[int, pathlib.Path]] = []
+def discover(root: pathlib.Path) -> list[tuple[int, pathlib.Path, str | None]]:
+    """Every pinned id, with the title its file says that id resolves to.
+
+    The title is read from the same file as the id so the two cannot be updated
+    apart: bumping a pin without touching the annotation fails check 3.
+    """
+    found: list[tuple[int, pathlib.Path, str | None]] = []
     for path in sorted(root.rglob("*.yaml")):
         if ".git" in path.parts:
             continue
-        for match in GRAFANA_COM_ID.finditer(path.read_text(encoding="utf-8", errors="replace")):
-            found.append((int(match.group(1)), path))
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for match in GRAFANA_COM_ID.finditer(text):
+            expected = EXPECTED_TITLE.search(text)
+            found.append((int(match.group(1)), path, expected.group(1) if expected else None))
     return found
 
 
@@ -270,8 +299,9 @@ def main() -> int:
 
     dead: list[str] = []
     legacy: list[str] = []
+    mismatched: list[str] = []
 
-    for gnet_id, path in refs:
+    for gnet_id, path, expected in refs:
         rel = path.relative_to(args.root)
         print(f"  [{gnet_id}] {rel}")
 
@@ -291,6 +321,26 @@ def main() -> int:
         meta = json.loads(body)
         revision = meta.get("revision")
         name = meta.get("name", "?")
+
+        # ── Check 3: the id must be the RIGHT dashboard ──────────────────
+        # Checks 1 and 2 ask whether an id resolves and whether AMG can save
+        # it. A number that resolves to somebody else's board passes both. The
+        # tempo pin resolved to "AKA SNMP Network", and an operator opening
+        # "tempo" in Grafana got an SNMP device board with the gate green.
+        if expected is None:
+            print("    NO EXPECTED TITLE — the pin records nothing to check against")
+            mismatched.append(
+                f"{gnet_id}  ({rel})  has no nanohype.dev/grafana-com-title annotation; "
+                f'grafana.com calls it "{name}"'
+            )
+            continue
+        if json.loads(f'"{expected}"') != name:
+            print(f'    WRONG BOARD — expected "{json.loads(chr(34)+expected+chr(34))}", grafana.com says "{name}"')
+            mismatched.append(
+                f'{gnet_id}  ({rel})  annotation says '
+                f'"{json.loads(chr(34)+expected+chr(34))}", grafana.com says "{name}"'
+            )
+            continue
 
         status, body = fetch(f"{API}/{gnet_id}/revisions/{revision}/download")
         if status != 200:
@@ -313,6 +363,16 @@ def main() -> int:
         print(f'    ok — "{name}" rev {revision}, no legacy alert panels')
 
     print()
+    if mismatched:
+        print("FAIL — grafana.com id(s) that resolve to a different dashboard:")
+        for line in mismatched:
+            print(f"  {line}")
+        print(
+            "\n  An id that resolves is not an id that is right. Check the pin against\n"
+            "  https://grafana.com/api/dashboards/<id> and update BOTH the id and the\n"
+            "  nanohype.dev/grafana-com-title annotation, which travel together on purpose.\n"
+        )
+
     if dead:
         print("FAIL — dead grafana.com dashboard id(s):")
         for line in dead:
@@ -332,10 +392,10 @@ def main() -> int:
             '  returns 500 {"message":"Failed to save dashboard"} and grafana-operator parks\n'
             "  the CR ApplyFailed. Repoint to a dashboard with no legacy alerts."
         )
-    if dead or legacy or local:
+    if dead or legacy or mismatched or local:
         return 1
 
-    print(f"✓ all {len(refs)} grafana.com dashboards exist and are AMG-saveable")
+    print(f"✓ all {len(refs)} grafana.com dashboards exist, are AMG-saveable, and\n  resolve to the title their pin records")
     print("✓ every locally-authored panel names a wired datasource and a declared variable")
     return 0
 
