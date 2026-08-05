@@ -3,6 +3,10 @@ apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDashboard
 metadata:
   name: kubernetes-cluster
+  annotations:
+    # What id 7249 must resolve to on grafana.com. Asserted by
+    # scripts/validate-dashboards.py — see the IDENTITY section there.
+    nanohype.dev/grafana-com-title: "Kubernetes Cluster"
 spec:
   instanceSelector:
     matchLabels:

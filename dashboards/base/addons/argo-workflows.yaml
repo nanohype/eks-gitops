@@ -3,6 +3,10 @@ apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDashboard
 metadata:
   name: argo-workflows
+  annotations:
+    # What id 13927 must resolve to on grafana.com. Asserted by
+    # scripts/validate-dashboards.py — see the IDENTITY section there.
+    nanohype.dev/grafana-com-title: "ArgoWorkflow Metrics"
 spec:
   instanceSelector:
     matchLabels:
