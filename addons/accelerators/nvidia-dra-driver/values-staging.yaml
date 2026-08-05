@@ -1,2 +1,0 @@
-# Staging inherits the base device-class config (TimeSlicing interval Default).
-# No overrides — realistic time-slicing characteristics match the base.

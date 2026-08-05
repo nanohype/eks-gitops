@@ -54,7 +54,6 @@ PRIMARY_ORDER = [
 BANDS = {
     "bootstrap": (0, 2),
     "networking": (1, 1),
-    "accelerators": (6, 7),
     "security": (10, 12),
     "policies": (20, 23),
     "observability": (29, 34),

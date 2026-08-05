@@ -58,7 +58,6 @@ repoURL: '{{ index .metadata.annotations "gitops/repo-url" }}'
 │  ├── addons-networking (Cilium, ALB Controller)                     │
 │  ├── addons-external-dns (External DNS)                             │
 │  ├── addons-karpenter (Karpenter)                                   │
-│  ├── addons-accelerators-helm (gpu-operator, nvidia-dra-driver)     │
 │  ├── addons-security (Kyverno, Trivy, Falco)                        │
 │  ├── kyverno-policies (PSS, best-practices, networking, ...)        │
 │  ├── addons-agent-operator (eks-agent-platform operator)            │
@@ -104,7 +103,6 @@ eks-gitops/
 │   │                  kube-state-metrics,opencost}/
 │   ├── operations/{velero,vpa,goldilocks,descheduler,karpenter,
 │   │               karpenter-resources,keda}/
-│   ├── accelerators/{gpu-operator,nvidia-dra-driver}/
 │   ├── argo-platform/{argo-rollouts,argo-events,argo-workflows}/
 │   └── ai-platform/{agent-platform,envoy-gateway,
 │                    envoy-ai-gateway,envoy-ai-gateway-crds,operator}/

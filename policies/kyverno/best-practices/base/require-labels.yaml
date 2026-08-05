@@ -76,9 +76,6 @@ spec:
                 # ai platform
                 - envoy-gateway-system
                 - eks-agent-platform
-                # accelerators — device plugins need privileged host access
-                - gpu-operator
-                - nvidia-dra-driver
       validate:
         allowExistingViolations: true
         message: >-

@@ -54,11 +54,16 @@ ENVIRONMENTS = ["development", "staging", "production", "hub"]
 # Charts that cannot be pulled by a public, credential-less CI. Keyed by chart
 # name, mapped to the reason — the same posture as the kubeconform first-party
 # skips in ci.yml: record the gap explicitly rather than pretend to cover it.
-SKIP_CHARTS = {
-    # oci://nvcr.io requires an authenticated NGC pull; an anonymous fetch is
-    # denied (403). Rendered where NGC credentials exist, not in public CI.
-    "k8s-dra-driver-gpu": "nvcr.io requires an authenticated NGC pull (anonymous 403)",
-}
+#
+# A skip is re-tested on every run (see stale_skips below). Declaring the gap is
+# honest; leaving it declared after it closes is not, and the difference is
+# invisible without asking. This map was populated by exactly one entry —
+# NVIDIA's DRA driver, skipped because oci://nvcr.io denies anonymous pulls —
+# and while that reason stayed true, it hid a second problem behind it: the
+# appset named a chart (`k8s-dra-driver-gpu`) that did not exist under any
+# registry. The pin could not have rendered even with NGC credentials, and no
+# gate could say so, because the credential wall answered first.
+SKIP_CHARTS: dict[str, str] = {}
 
 # Synthetic values for the appset's templated --set parameters. The render only
 # needs a syntactically valid, chart-accepted value; the real per-cluster value
@@ -217,7 +222,15 @@ def render(unit: Unit, env: str | None, aliases: dict[str, str]) -> tuple[bool, 
     else:
         chart_ref = [f"{aliases[unit.repo]}/{unit.chart}"]
 
+    # Render into the namespace ArgoCD will actually sync into. `helm template`
+    # otherwise reports `.Release.Namespace` as "default", so anything keyed on
+    # it — a RoleBinding subject, a webhook's service reference, a chart that
+    # refuses to install into `default` at all — renders differently here than
+    # at sync, which is the one thing this gate exists to rule out. The appset's
+    # destination namespace was already being collected and then dropped.
     cmd = ["helm", "template", unit.chart, *chart_ref, "--version", unit.version]
+    if unit.namespace:
+        cmd += ["--namespace", unit.namespace]
     for name, value in unit.params:
         cmd += ["--set", f"{name}={value}"]
     for vf in value_files:
@@ -227,6 +240,33 @@ def render(unit: Unit, env: str | None, aliases: dict[str, str]) -> tuple[bool, 
     if proc.returncode != 0:
         return (False, proc.stderr.strip() or proc.stdout.strip())
     return (True, "rendered")
+
+
+def stale_skips(units: list[Unit], aliases: dict[str, str]) -> list[tuple[str, str]]:
+    """Skips whose stated reason no longer holds.
+
+    Every entry in SKIP_CHARTS claims a chart cannot be fetched without
+    credentials. That claim expires: upstream re-hosts, a registry drops its
+    auth requirement, a chart moves. Nothing re-reads the reason, so the skip
+    outlives it and the addon stays uncovered for a reason that stopped being
+    true — which is worse than never having declared it, because the entry reads
+    as a considered decision.
+
+    So ask the registry. If an anonymous `helm show chart` succeeds, the chart is
+    fetchable here and the skip must go.
+    """
+    stale = []
+    for u in units:
+        if u.chart not in SKIP_CHARTS:
+            continue
+        ref = u.oci_ref() if u.is_oci else f"{aliases.get(u.repo, u.repo)}/{u.chart}"
+        proc = subprocess.run(
+            ["helm", "show", "chart", ref, "--version", u.version],
+            capture_output=True, text=True,
+        )
+        if proc.returncode == 0:
+            stale.append((u.chart, SKIP_CHARTS[u.chart]))
+    return stale
 
 
 def main() -> int:
@@ -265,7 +305,21 @@ def main() -> int:
     print()
     for u in skipped:
         print(f"  skip  {u.chart}@{u.version} — {SKIP_CHARTS[u.chart]}")
+
+    stale = stale_skips(skipped, aliases)
     print(f"\nRendered {count} addon×env combinations, {len(failures)} failed.")
+
+    if stale:
+        print("\n" + "=" * 72)
+        print("\nThese skips claim a chart cannot be fetched, but it can:")
+        for chart, reason in stale:
+            print(f"\n  {chart}")
+            print(f"    declared: {reason}")
+            print("    an anonymous `helm show chart` just succeeded")
+        print("\nRemove the entry from SKIP_CHARTS so the addon is rendered. A skip whose")
+        print("reason has expired reads as a considered decision and covers nothing.")
+        return 1
+
     if failures:
         print("\n" + "=" * 72)
         for f in failures:
