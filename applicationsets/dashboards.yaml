@@ -63,29 +63,27 @@ spec:
             # The AWS Secrets Manager secrets are cluster-scoped
             # (<cluster>-managed-monitoring-endpoints / <cluster>-grafana-token) so
             # co-located sibling clusters in one account don't collide. The bases carry
-            # a default name; patch remoteRef.key per cluster from the cluster_name label.
+            # a default name; patch the key per cluster from the cluster_name label.
+            #
+            # One op per ExternalSecret, because each pulls its whole payload through
+            # a single dataFrom.extract. A data list would put the same secret name on
+            # every entry and need an op per index — which is a count to keep in sync
+            # by hand, and the kind of thing that is wrong silently: External Secrets
+            # fails an ExternalSecret whole, so one unpatched index takes the working
+            # keys down with it rather than degrading to a partial sync.
             - target:
                 kind: ExternalSecret
                 name: managed-monitoring-endpoints
               patch: |-
                 - op: replace
-                  path: /spec/data/0/remoteRef/key
+                  path: /spec/dataFrom/0/extract/key
                   value: '{{ index .metadata.labels "cluster_name" }}-managed-monitoring-endpoints'
             - target:
                 kind: ExternalSecret
                 name: grafana-external-credentials
               patch: |-
                 - op: replace
-                  path: /spec/data/0/remoteRef/key
-                  value: '{{ index .metadata.labels "cluster_name" }}-grafana-token'
-                - op: replace
-                  path: /spec/data/1/remoteRef/key
-                  value: '{{ index .metadata.labels "cluster_name" }}-grafana-token'
-                - op: replace
-                  path: /spec/data/2/remoteRef/key
-                  value: '{{ index .metadata.labels "cluster_name" }}-grafana-token'
-                - op: replace
-                  path: /spec/data/3/remoteRef/key
+                  path: /spec/dataFrom/0/extract/key
                   value: '{{ index .metadata.labels "cluster_name" }}-grafana-token'
             - target:
                 kind: CronJob
@@ -146,9 +144,9 @@ spec:
         - group: external-secrets.io
           kind: ExternalSecret
           jqPathExpressions:
-            - .spec.data[].remoteRef.conversionStrategy
-            - .spec.data[].remoteRef.decodingStrategy
-            - .spec.data[].remoteRef.metadataPolicy
+            - .spec.dataFrom[].extract.conversionStrategy
+            - .spec.dataFrom[].extract.decodingStrategy
+            - .spec.dataFrom[].extract.metadataPolicy
             - .spec.target.deletionPolicy
       syncPolicy:
         automated:

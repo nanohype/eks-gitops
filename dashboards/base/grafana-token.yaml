@@ -24,20 +24,10 @@ spec:
   target:
     name: grafana-external-credentials
     creationPolicy: Owner
-  data:
-    - secretKey: token
-      remoteRef:
+  # extract, not a data list — the same reason as monitoring-endpoints. The
+  # comment above already says everything the rotator needs is in the one secret;
+  # naming that secret once here is what makes it true of this file too, and a
+  # cluster-scoped secret referenced once cannot be partially patched.
+  dataFrom:
+    - extract:
         key: eks-grafana-token
-        property: token
-    - secretKey: workspaceId
-      remoteRef:
-        key: eks-grafana-token
-        property: workspaceId
-    - secretKey: serviceAccountId
-      remoteRef:
-        key: eks-grafana-token
-        property: serviceAccountId
-    - secretKey: region
-      remoteRef:
-        key: eks-grafana-token
-        property: region

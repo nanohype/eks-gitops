@@ -69,6 +69,16 @@ jobs:
       - name: Dead ids + AMG-unsaveable legacy alerts
         run: ./scripts/validate-dashboards.py
 
+      # The datasource gate above resolves a panel's uid against the datasource
+      # files, which says nothing about whether the Secret behind a datasource
+      # ever arrives. An ExternalSecret naming a cluster-scoped secret the
+      # ApplicationSet does not patch never syncs, and External Secrets fails one
+      # whole — so an unpatched key takes the keys that WERE patched down with it,
+      # and every datasource reading that Secret goes with them while this job
+      # stays green.
+      - name: ExternalSecret keys are named once and patched per cluster
+        run: ./scripts/check-externalsecret-keys.py
+
       # Two eval alerts each excluded the never-run state, each explaining in a
       # comment that the OTHER one covered it. Both were individually correct;
       # between them the state was reported by nobody — and it was the only state
