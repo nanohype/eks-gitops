@@ -1,0 +1,61 @@
+# Amazon Athena data source — the account cost pipeline's CUR.
+#
+# The finance board's cost panels read the Cost and Usage Report through Athena
+# rather than CloudWatch, because CUR is the only place per-platform spend is
+# attributable: CloudWatch bills by service, and the question the board answers
+# is which tenant spent it.
+#
+# Points at the ACCOUNT workgroup, not a per-cluster one. One place the finance
+# number comes from and N Grafana workspaces reading it, rather than N workgroups
+# each answering slightly differently.
+#
+# access=proxy with ec2_iam_role: AMG queries using its workspace IAM role, which
+# landing-zone's managed-monitoring grants against exactly this workgroup, its
+# Glue database, the CUR and results buckets, and the pipeline's data key. That
+# grant is emitted only when the cost pipeline has published its SSM subtree, and
+# so is the ATHENA entry in the workspace's data_sources list — so on a cluster
+# with no cost pipeline this datasource exists and resolves to empty strings, and
+# its panels report no data rather than a broken query.
+#
+# Every account-specific value arrives through the monitoring-endpoints Secret.
+# A GrafanaDatasource cannot read SSM, and none of these may be committed: the
+# workgroup, database and results bucket all carry the account id.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDatasource
+metadata:
+  name: athena-cur
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: external
+  valuesFrom:
+    - targetPath: datasource.jsonData.workgroup
+      valueFrom:
+        secretKeyRef:
+          name: managed-monitoring-endpoints
+          key: ATHENA_WORKGROUP
+    - targetPath: datasource.jsonData.database
+      valueFrom:
+        secretKeyRef:
+          name: managed-monitoring-endpoints
+          key: ATHENA_DATABASE
+    - targetPath: datasource.jsonData.outputLocation
+      valueFrom:
+        secretKeyRef:
+          name: managed-monitoring-endpoints
+          key: ATHENA_RESULTS_LOCATION
+  datasource:
+    name: AthenaCUR
+    # Pinned UID so the finance dashboard's panels reference it deterministically.
+    uid: athena-cur
+    type: grafana-athena-datasource
+    access: proxy
+    jsonData:
+      authType: ec2_iam_role
+      catalog: AwsDataCatalog
+      workgroup: ${ATHENA_WORKGROUP}
+      database: ${ATHENA_DATABASE}
+      outputLocation: ${ATHENA_RESULTS_LOCATION}
+      # Committed default; the dashboards ApplicationSet patches this per cluster
+      # from the `region` label, the same seam the other three datasources use.
+      defaultRegion: us-west-2

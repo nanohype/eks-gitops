@@ -10,7 +10,7 @@ spec:
   resyncPeriod: 24h
   json: |
     {
-      "title": "eks-agent-platform — Finance",
+      "title": "eks-agent-platform \u2014 Finance",
       "uid": "agents-finance",
       "tags": [
         "eks-agent-platform",
@@ -141,6 +141,80 @@ spec:
             "w": 24,
             "x": 0,
             "y": 44
+          }
+        },
+        {
+          "type": "barchart",
+          "title": "Spend by platform, month to date (CUR)",
+          "description": "Attributable spend per tenant, from the Cost and Usage Report \u2014 the question CloudWatch cannot answer, since it bills by service and the platform identity lives only in the CUR's resource tags. line_item_type = 'Usage' excludes credits, refunds and tax, so this is what the tenant consumed rather than what the invoice netted to. Reaches resource-tagged spend only: model invocations are not a taggable resource, so Bedrock usage is NOT in this number (see cur-export-schema.txt).",
+          "datasource": {
+            "type": "grafana-athena-datasource",
+            "uid": "athena-cur"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-athena-datasource",
+                "uid": "athena-cur"
+              },
+              "format": 1,
+              "rawSQL": "SELECT element_at(resource_tags, 'user_PlatformId') AS platform,\n       SUM(line_item_unblended_cost)                AS usd\nFROM cur\nWHERE line_item_line_item_type = 'Usage'\n  AND element_at(resource_tags, 'user_PlatformId') IS NOT NULL\n  AND bill_billing_period_start_date = date_trunc('month', current_date)\nGROUP BY element_at(resource_tags, 'user_PlatformId')\nORDER BY usd DESC",
+              "refId": "A",
+              "connectionArgs": {
+                "catalog": "__default",
+                "database": "__default",
+                "region": "__default"
+              }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "currencyUSD"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 12,
+            "x": 0,
+            "y": 52
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "Spend by platform, month over month (CUR)",
+          "description": "The same attribution across billing periods, so a tenant whose spend is climbing is visible before the month it lands. Grouped on bill_billing_period_start_date rather than usage date: the billing period is what an invoice is cut against, and late-arriving line items land in the period they belong to rather than the day they appeared.",
+          "datasource": {
+            "type": "grafana-athena-datasource",
+            "uid": "athena-cur"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-athena-datasource",
+                "uid": "athena-cur"
+              },
+              "format": 1,
+              "rawSQL": "SELECT date_format(bill_billing_period_start_date, '%Y-%m') AS billing_month,\n       element_at(resource_tags, 'user_PlatformId')        AS platform,\n       SUM(line_item_unblended_cost)                       AS usd\nFROM cur\nWHERE line_item_line_item_type = 'Usage'\n  AND element_at(resource_tags, 'user_PlatformId') IS NOT NULL\nGROUP BY date_format(bill_billing_period_start_date, '%Y-%m'),\n         element_at(resource_tags, 'user_PlatformId')\nORDER BY billing_month, usd DESC",
+              "refId": "A",
+              "connectionArgs": {
+                "catalog": "__default",
+                "database": "__default",
+                "region": "__default"
+              }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "currencyUSD"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 12,
+            "x": 12,
+            "y": 52
           }
         }
       ]

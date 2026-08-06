@@ -124,6 +124,13 @@ spec:
                 - op: replace
                   path: /spec/datasource/jsonData/defaultRegion
                   value: '{{ index .metadata.labels "region" }}'
+            - target:
+                kind: GrafanaDatasource
+                name: athena-cur
+              patch: |-
+                - op: replace
+                  path: /spec/datasource/jsonData/defaultRegion
+                  value: '{{ index .metadata.labels "region" }}'
       destination:
         server: https://kubernetes.default.svc
         namespace: '{{ .namespace }}'

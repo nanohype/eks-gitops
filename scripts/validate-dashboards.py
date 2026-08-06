@@ -227,10 +227,29 @@ def check_local_dashboards(root: pathlib.Path) -> list[str]:
         text = path.read_text(encoding="utf-8", errors="replace")
         if "kind: GrafanaDashboard" not in text:
             continue
+        rel = path.relative_to(root)
         dash = extract_dashboard_json(text)
         if dash is None:
+            # A grafana.com-sourced dashboard carries no inline JSON — its
+            # content is a `grafanaCom.id` the checks above already validate
+            # against the API. Nothing to read here, and that is correct.
+            if "grafanaCom:" in text:
+                continue
+            # A LOCALLY-AUTHORED dashboard whose JSON this cannot read is a
+            # dashboard this is not checking, and skipping it quietly is how the
+            # check reports success having looked at nothing.
+            #
+            # It is not hypothetical. Round-tripping this file through
+            # yaml.safe_dump replaced the `json: |` literal block with a quoted
+            # scalar — semantically identical YAML, unreadable to the block
+            # parser below — and every assertion here silently stopped applying
+            # to it while the run stayed green.
+            problems.append(
+                f"{rel}: is a GrafanaDashboard but its dashboard JSON could not be read. "
+                "Expected a `json: |` literal block holding valid JSON; a quoted or folded "
+                "scalar parses as YAML and is invisible to every check below."
+            )
             continue
-        rel = path.relative_to(root)
 
         refs: list[str] = []
         walk_datasources(dash, refs)
