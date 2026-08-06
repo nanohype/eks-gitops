@@ -21,15 +21,20 @@ webhooks:
 # Kubernetes NetworkPolicy cannot match, so leave it on cilium.
 
 # The operator's own runtime, folded into the chart (0.2.0+). Enabled on every
-# agent-platform cluster (these match the chart defaults; set explicitly so the
+# agent-platform cluster (matches the chart default; set explicitly so the
 # deployment intent is visible at the gitops layer).
 #   - eval-runtime: the Argo WorkflowTemplate + SA/RBAC. The eval-runner role ARN
 #     and report bucket are injected per-cluster by the ApplicationSet above.
-#   - slo: the operator's PrometheusRule + CR-state metrics ConfigMap.
-# rollouts.enabled (needs the Argo Rollouts CRD) and slo.alerting.enabled (needs
-# the pagerduty/slack Secrets) stay off here; production flips alerting on in
-# values-production.yaml once those Secrets are provisioned.
+# rollouts.enabled needs the Argo Rollouts CRD and stays off here.
+#
+# `slo` is gone rather than off. It shipped a PrometheusRule and an
+# AlertmanagerConfig, and this catalog installs prometheus-operator-crds and no
+# operator, no server, no Alertmanager — so the rule was applied to every cluster
+# and evaluated by nothing. ADR 0010 already said the production stack runs no
+# ruler.
+#
+# Burn-rate evaluation lives in the operator's own control loop, and the paging
+# alerts are Grafana-managed against AMP (dashboards/base/alerting/). Both exist
+# and work; the PrometheusRule duplicated them against a ruler that does not.
 evalRuntime:
-  enabled: true
-slo:
   enabled: true
