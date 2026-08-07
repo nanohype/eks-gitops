@@ -244,6 +244,18 @@ def main() -> int:
     if failures:
         print(f"FAIL  {len(failures)} ExternalSecret key problem(s):\n")
         for f in failures:
+            # codeql[py/clear-text-logging-sensitive-data]
+            #
+            # The alert reads the ExternalSecret/key vocabulary in this file and
+            # concludes the failure text could carry secret material. It cannot.
+            # The only inputs are committed YAML manifests, and the value at a
+            # `key:` there is a Secrets Manager *object name* — `eks-grafana-token`
+            # — never its contents. Nothing in this script reads AWS, a cluster, or
+            # a rendered Secret; a name is the whole of what it can see, and
+            # printing it is the point, since the name being wrong is the failure.
+            #
+            # That the repo holds no secret material at all is asserted separately
+            # by the gitleaks job, so this is not resting on its own say-so.
             print(f"  - {f}\n")
         return 1
 
