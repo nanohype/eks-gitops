@@ -6,6 +6,22 @@
 # vend-provider-scrape). Per-cluster vend inventory/readiness (Cluster + Workspace
 # CR state) is a follow-up that needs the kube-state-metrics customResourceState
 # config extended and validated on a live hub — tracked separately.
+#
+# The burn rules carry two extra factors, both load-bearing:
+#
+#   clamp_min(<denominator>, 0.001)  — the divide-by-zero guard, at the org's own
+#     sliDenominatorFloor. Floored at 1 instead, the denominator is pinned at 1
+#     reconcile/s whenever the provider is quieter than that, which it always is,
+#     and the ratio degrades into an absolute error rate needing ~518 failures an
+#     hour to page. provider-opentofu failing 100% of reconciles at 0.1/s
+#     computes a burn of 10 against a 14.4 threshold: cluster vending completely
+#     broken, alert silent.
+#
+#   (rate(...) > bool 0.0167)  — a minimum-traffic gate, ~1 reconcile/minute over
+#     the long window, so a ratio taken over near-zero traffic cannot page.
+#
+# When reconciles stop entirely the gate silences the burn rules, which is the
+# condition FleetVendProviderAbsent below exists to catch.
 apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaAlertRuleGroup
 metadata:
@@ -48,7 +64,7 @@ spec:
             range: false
             intervalMs: 1000
             maxDataPoints: 43200
-            expr: "(sum(rate(controller_runtime_reconcile_errors_total{namespace=\"crossplane-system\"}[1h])) / clamp_min(sum(rate(controller_runtime_reconcile_total{namespace=\"crossplane-system\"}[1h])), 1) / 0.01 > bool 14.4) * (sum(rate(controller_runtime_reconcile_errors_total{namespace=\"crossplane-system\"}[5m])) / clamp_min(sum(rate(controller_runtime_reconcile_total{namespace=\"crossplane-system\"}[5m])), 1) / 0.01 > bool 14.4)"
+            expr: "(sum(rate(controller_runtime_reconcile_errors_total{namespace=\"crossplane-system\"}[1h])) / clamp_min(sum(rate(controller_runtime_reconcile_total{namespace=\"crossplane-system\"}[1h])), 0.001) / 0.01 > bool 14.4) * (sum(rate(controller_runtime_reconcile_errors_total{namespace=\"crossplane-system\"}[5m])) / clamp_min(sum(rate(controller_runtime_reconcile_total{namespace=\"crossplane-system\"}[5m])), 0.001) / 0.01 > bool 14.4) * (sum(rate(controller_runtime_reconcile_total{namespace=\"crossplane-system\"}[1h])) > bool 0.0167)"
         - refId: B
           datasourceUid: __expr__
           relativeTimeRange: {from: 3600, to: 0}
@@ -93,7 +109,7 @@ spec:
             range: false
             intervalMs: 1000
             maxDataPoints: 43200
-            expr: "(sum(rate(controller_runtime_reconcile_errors_total{namespace=\"crossplane-system\"}[6h])) / clamp_min(sum(rate(controller_runtime_reconcile_total{namespace=\"crossplane-system\"}[6h])), 1) / 0.01 > bool 6) * (sum(rate(controller_runtime_reconcile_errors_total{namespace=\"crossplane-system\"}[30m])) / clamp_min(sum(rate(controller_runtime_reconcile_total{namespace=\"crossplane-system\"}[30m])), 1) / 0.01 > bool 6)"
+            expr: "(sum(rate(controller_runtime_reconcile_errors_total{namespace=\"crossplane-system\"}[6h])) / clamp_min(sum(rate(controller_runtime_reconcile_total{namespace=\"crossplane-system\"}[6h])), 0.001) / 0.01 > bool 6) * (sum(rate(controller_runtime_reconcile_errors_total{namespace=\"crossplane-system\"}[30m])) / clamp_min(sum(rate(controller_runtime_reconcile_total{namespace=\"crossplane-system\"}[30m])), 0.001) / 0.01 > bool 6) * (sum(rate(controller_runtime_reconcile_total{namespace=\"crossplane-system\"}[6h])) > bool 0.0167)"
         - refId: B
           datasourceUid: __expr__
           relativeTimeRange: {from: 21600, to: 0}
