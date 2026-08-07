@@ -149,7 +149,53 @@ JSON_BLOCK = re.compile(r"^(\s*)json:\s*\|\s*$", re.M)
 UID_LINE = re.compile(r"^\s+uid:\s*(\S+)\s*$", re.M)
 NAME_LINE = re.compile(r"^\s+name:\s*(\S+)\s*$", re.M)
 KUSTOMIZE_DS = re.compile(r"^\s*-\s*(datasources/[\w.-]+\.yaml)\s*$", re.M)
-TEMPLATE_VAR = re.compile(r"\$\{([A-Za-z_][\w]*)\}")
+# Grafana writes a variable reference four ways and this must see all of them.
+# Anchored on `${name}` alone, it saw NONE of the ones this repo actually uses —
+# every dashboard here writes the bare `$namespace` / `$tenant` form — so the
+# undeclared-variable check below compared an always-empty set against the
+# declared list and passed on all 30 dashboards without examining anything.
+TEMPLATE_VAR = re.compile(
+    r"\$\{(\w+)(?::[^}]*)?\}"  # ${name} and ${name:csv}
+    r"|\$(\w+)"  # $name
+    r"|\[\[(\w+)(?::[^\]]*)?\]\]"  # [[name]] and [[name:csv]]
+)
+
+# Grafana supplies these itself; a dashboard is not expected to declare them.
+# Without the allowlist, widening the regex above turns every `$__rate_interval`
+# into a false positive and the gate becomes noise instead of signal.
+GRAFANA_BUILTINS = frozenset(
+    {
+        "__interval",
+        "__interval_ms",
+        "__rate_interval",
+        "__range",
+        "__range_s",
+        "__range_ms",
+        "__from",
+        "__to",
+        "__timeFilter",
+        "__timeGroup",
+        "__name",
+        "__field",
+        "__series",
+        "__value",
+        "__dashboard",
+        "__org",
+        "__user",
+        "__timezone",
+        "timeFilter",
+    }
+)
+
+
+def template_vars(text: str) -> set[str]:
+    """Variable names referenced in `text`, minus the ones Grafana provides."""
+    names = set()
+    for m in TEMPLATE_VAR.finditer(text):
+        name = next(g for g in m.groups() if g)
+        if name not in GRAFANA_BUILTINS:
+            names.add(name)
+    return names
 
 
 def wired_datasource_refs(root: pathlib.Path) -> set[str]:
@@ -219,6 +265,8 @@ def declared_template_vars(dash) -> set[str]:
 def check_local_dashboards(root: pathlib.Path) -> list[str]:
     wired = wired_datasource_refs(root)
     problems: list[str] = []
+    total_declared = 0
+    total_used = 0
     base = root / "dashboards"
     if not base.is_dir():
         return problems
@@ -263,13 +311,24 @@ def check_local_dashboards(root: pathlib.Path) -> list[str]:
                 )
 
         declared = declared_template_vars(dash)
-        used: set[str] = set()
-        for m in TEMPLATE_VAR.finditer(json.dumps(dash)):
-            used.add(m.group(1))
+        used = template_vars(json.dumps(dash))
+        total_declared += len(declared)
+        total_used += len(used)
         for name in sorted(used - declared):
             problems.append(
-                f"{rel}: uses ${{{name}}} but declares no such template variable"
+                f"{rel}: uses ${name} but declares no such template variable"
             )
+
+    # An empty `used` satisfies `used - declared` on every dashboard, so a regex
+    # that stops matching turns this check into a silent no-op — which is exactly
+    # how it shipped. If anything declares a variable, something must reference
+    # one, or the parse is broken rather than the tree being clean.
+    if total_declared and not total_used:
+        problems.append(
+            f"{total_declared} template variable(s) are declared across these dashboards and "
+            "not one reference was found — TEMPLATE_VAR has stopped matching Grafana's syntax, "
+            "so the undeclared-variable check is asserting nothing"
+        )
     return problems
 
 
