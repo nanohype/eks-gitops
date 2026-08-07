@@ -1,0 +1,106 @@
+# Argo Workflows CRDs (argoproj.io).
+#
+# Two problems, one Application.
+#
+# ORDERING. The eks-agent-platform operator chart ships a WorkflowTemplate, and
+# its EvalSuite controller submits Workflows. That chart syncs at wave 21
+# (applicationsets/addons-agent-operator.yaml); the argo-workflows controller
+# syncs at wave 52. So for 31 waves the catalog asks the API server to accept a
+# kind it has never heard of, on every first sync of every cluster. The eval
+# tier is the visible casualty, but anything declaring an argoproj.io CR before
+# wave 52 has the same problem.
+#
+# FETCH-AT-SYNC. The chart does not ship its CRDs as manifests. At
+# crds.full=true — the default, which this catalog took — templates/crds.yaml
+# renders NOTHING and templates/crds-install-job.yaml renders a
+# `helm.sh/hook: pre-install,pre-upgrade` Job that runs
+#
+#   kubectl apply --server-side -f https://raw.githubusercontent.com/argoproj/argo-helm/argo-workflows-<ver>/charts/argo-workflows/files/crds/full/<crd>.yaml
+#
+# for each of the eight CRDs. That makes the cluster's control plane depend on
+# live egress to raw.githubusercontent.com from the argo-workflows namespace, at
+# sync time, forever — the exact thing gateway-api-crds.yaml declines to do, in
+# the same words: "rather than [...] fetching a release URL at sync time (which
+# would make every sync depend on a GitHub download and silently drift as the tag
+# moves)". addons/argo-platform/argo-workflows/values.yaml now sets
+# crds.install: false, so that Job no longer renders and the two stop co-owning
+# the same eight objects.
+#
+# SOURCE: argoproj/argo-helm at the tag matching the chart pin, not
+# argoproj/argo-workflows at its appVersion. Both publish the same eight CRDs,
+# but this path is definitionally the set THIS chart version installs — it is the
+# directory the hook Job was pointed at — so there is one version string to move
+# rather than a chart pin and an app version that can skew. It is also a plain
+# manifest directory (no kustomization.yaml, no README), which is what ArgoCD
+# renders most predictably.
+#
+# This tag and the chart pin in addons-argo-workflows.yaml must stay equal, and
+# scripts/check-sync-waves.py asserts that rather than trusting two Renovate
+# managers to move in step. A Renovate PR bumping only the chart therefore lands
+# RED, naming the tag it needs — which is the point. Move both in one commit.
+#
+# FULL, not minimal. The chart's own Job applies the `full` variants; `minimal`
+# strips the validation schemas. Server-side apply makes the size a non-issue.
+#
+# SYNC WAVE 13: after security (10-12), before the policies band (20) and before
+# the operator chart that declares the CRs (21). Nothing between 12 and 20
+# occupies a wave, so this takes 13 rather than crowding a band.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: argo-workflows-crds
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "13"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  argocd.argoproj.io/secret-type: cluster
+          - list:
+              elements:
+                - appName: argo-workflows-crds
+                  syncWave: "13"
+  template:
+    metadata:
+      name: '{{ .appName }}'
+      labels:
+        app.kubernetes.io/managed-by: argocd
+        app.kubernetes.io/component: '{{ .appName }}'
+        platform.nanohype.dev/environment: '{{ index .metadata.labels "environment" }}'
+        platform.nanohype.dev/repository: nanohype/eks-gitops
+        platform.nanohype.dev/team: platform-engineering
+      annotations:
+        argocd.argoproj.io/sync-wave: '{{ .syncWave }}'
+    spec:
+      project: platform
+      source:
+        # Upstream, pinned to the same version as the chart in
+        # applicationsets/addons-argo-workflows.yaml. Move both together.
+        repoURL: https://github.com/argoproj/argo-helm
+        targetRevision: argo-workflows-1.0.23
+        path: charts/argo-workflows/files/crds/full
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: kube-system
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          # The Workflow CRD alone is megabytes of schema — far past the
+          # 262144-byte last-applied-configuration annotation client-side apply
+          # writes. ServerSideApply is not optional here. It is also what the
+          # chart's own install Job used, so the field ownership matches.
+          - ServerSideApply=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m

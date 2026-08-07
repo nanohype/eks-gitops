@@ -26,7 +26,7 @@ spec:
         {
           "type": "stat",
           "title": "Reconciles under 1s (30d)",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "decimals": 4, "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 0.99 } ] } }, "overrides": [] },
           "targets": [
             { "expr": "sum(rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\",le=\"1\"}[30d])) / clamp_min(sum(rate(controller_runtime_reconcile_time_seconds_count{namespace=\"eks-agent-platform\"}[30d])), 1)" }
@@ -36,7 +36,7 @@ spec:
         {
           "type": "gauge",
           "title": "Error budget remaining (30d)",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "orange", "value": 0.25 }, { "color": "green", "value": 0.5 } ] } }, "overrides": [] },
           "targets": [
             { "expr": "clamp_min(1 - ((1 - (sum(rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\",le=\"1\"}[30d])) / clamp_min(sum(rate(controller_runtime_reconcile_time_seconds_count{namespace=\"eks-agent-platform\"}[30d])), 1))) / 0.01), 0)" }
@@ -46,7 +46,7 @@ spec:
         {
           "type": "stat",
           "title": "Fast burn (1h)",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "description": "Latency-budget burn over 1h. Pages at 14.4x (2% of budget in 1h).",
           "fieldConfig": { "defaults": { "unit": "none", "decimals": 1, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 1 }, { "color": "red", "value": 14.4 } ] } }, "overrides": [] },
           "targets": [
@@ -57,7 +57,7 @@ spec:
         {
           "type": "stat",
           "title": "Slow burn (6h)",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "description": "Latency-budget burn over 6h. Pages at 6x (5% of budget in 6h).",
           "fieldConfig": { "defaults": { "unit": "none", "decimals": 1, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 1 }, { "color": "red", "value": 6 } ] } }, "overrides": [] },
           "targets": [
@@ -73,7 +73,7 @@ spec:
         {
           "type": "timeseries",
           "title": "Reconcile rate by controller (rec/s)",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
           "targets": [
             { "expr": "sum by (controller) (rate(controller_runtime_reconcile_total{namespace=\"eks-agent-platform\"}[5m]))", "legendFormat": "{{controller}}" }
@@ -83,7 +83,7 @@ spec:
         {
           "type": "timeseries",
           "title": "Reconcile error rate by controller",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "fieldConfig": { "defaults": { "unit": "percentunit", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 0.05 } ] } }, "overrides": [] },
           "targets": [
             { "expr": "sum by (controller) (rate(controller_runtime_reconcile_errors_total{namespace=\"eks-agent-platform\"}[5m])) / clamp_min(sum by (controller) (rate(controller_runtime_reconcile_total{namespace=\"eks-agent-platform\"}[5m])), 0.001)", "legendFormat": "{{controller}}" }
@@ -93,7 +93,7 @@ spec:
         {
           "type": "timeseries",
           "title": "Reconcile latency p50 / p95 / p99 (s)",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
           "targets": [
             { "expr": "histogram_quantile(0.50, sum by (le) (rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\"}[5m])))", "legendFormat": "p50" },
@@ -105,7 +105,7 @@ spec:
         {
           "type": "timeseries",
           "title": "Reconcile p99 by controller (s) — SLO line at 1s",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "fieldConfig": { "defaults": { "unit": "s", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] },
           "targets": [
             { "expr": "histogram_quantile(0.99, sum by (le, controller) (rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\"}[5m])))", "legendFormat": "{{controller}}" }
@@ -120,7 +120,7 @@ spec:
         {
           "type": "timeseries",
           "title": "Workqueue depth by queue",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] },
           "targets": [
             { "expr": "sum by (name) (workqueue_depth{namespace=\"eks-agent-platform\"})", "legendFormat": "{{name}}" }
@@ -130,7 +130,7 @@ spec:
         {
           "type": "timeseries",
           "title": "Workqueue add rate by queue",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
           "targets": [
             { "expr": "sum by (name) (rate(workqueue_adds_total{namespace=\"eks-agent-platform\"}[5m]))", "legendFormat": "{{name}}" }
@@ -140,7 +140,7 @@ spec:
         {
           "type": "timeseries",
           "title": "Queue wait p95 by queue (s)",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
           "targets": [
             { "expr": "histogram_quantile(0.95, sum by (le, name) (rate(workqueue_queue_duration_seconds_bucket{namespace=\"eks-agent-platform\"}[5m])))", "legendFormat": "{{name}}" }
@@ -150,7 +150,7 @@ spec:
         {
           "type": "timeseries",
           "title": "Active workers by controller",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] },
           "targets": [
             { "expr": "sum by (controller) (controller_runtime_active_workers{namespace=\"eks-agent-platform\"})", "legendFormat": "{{controller}}" }
@@ -165,7 +165,7 @@ spec:
         {
           "type": "stat",
           "title": "Platforms Ready ratio",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "description": "Fraction of Platform CRs in the Ready phase — fed by the kube-state-metrics customResourceState config.",
           "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "orange", "value": 0.9 }, { "color": "green", "value": 1 } ] } }, "overrides": [] },
           "targets": [
@@ -176,7 +176,7 @@ spec:
         {
           "type": "timeseries",
           "title": "Custom resources by kind & phase",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] },
           "targets": [
             { "expr": "sum by (customresource_kind, customresource_phase) (kube_customresource_status_phase == 1)", "legendFormat": "{{customresource_kind}} / {{customresource_phase}}" }

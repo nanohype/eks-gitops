@@ -29,7 +29,7 @@ spec:
           {
             "name": "namespace",
             "type": "query",
-            "datasource": "prometheus",
+            "datasource": "managed-prometheus",
             "query": "label_values(gen_ai_server_request_duration_seconds_count, namespace)",
             "includeAll": true,
             "multi": true
@@ -40,7 +40,7 @@ spec:
         {
           "type": "timeseries",
           "title": "Bedrock InvokeModel latency p50 / p95 / p99",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "targets": [
             {
               "expr": "histogram_quantile(0.50, sum by (le, gen_ai_request_model) (rate(gen_ai_server_request_duration_seconds_bucket{namespace=~\"$namespace\"}[5m])))",
@@ -70,7 +70,7 @@ spec:
         {
           "type": "timeseries",
           "title": "Error rate by model + error type",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "targets": [
             {
               "expr": "sum by (gen_ai_request_model, error_type) (rate(gen_ai_server_request_duration_seconds_count{namespace=~\"$namespace\",error_type!=\"\"}[5m]))",
@@ -87,7 +87,7 @@ spec:
         {
           "type": "timeseries",
           "title": "Throughput by route alias (req/s)",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "targets": [
             {
               "expr": "sum by (gen_ai_original_model) (rate(gen_ai_server_request_duration_seconds_count{namespace=~\"$namespace\"}[1m]))",

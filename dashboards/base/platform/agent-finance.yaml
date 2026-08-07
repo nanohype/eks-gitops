@@ -46,40 +46,8 @@ spec:
         },
         {
           "type": "timeseries",
-          "title": "Daily spend by Platform",
-          "datasource": "athena-cur",
-          "targets": [
-            {
-              "rawSql": "SELECT line_item_usage_start_date AS time, resource_tags_user_platformid AS platform, SUM(line_item_unblended_cost) AS cost FROM ${cost_database}.cur WHERE line_item_usage_start_date >= date_add('day', -30, current_date) GROUP BY 1, 2 ORDER BY 1"
-            }
-          ],
-          "gridPos": {
-            "h": 10,
-            "w": 18,
-            "x": 6,
-            "y": 0
-          }
-        },
-        {
-          "type": "table",
-          "title": "Top-N models (last 7d)",
-          "datasource": "athena-cur",
-          "targets": [
-            {
-              "rawSql": "SELECT product['model_id'] AS model, SUM(line_item_unblended_cost) AS cost_usd FROM ${cost_database}.cur WHERE line_item_usage_start_date >= date_add('day', -7, current_date) AND line_item_product_code = 'AmazonBedrock' GROUP BY 1 ORDER BY 2 DESC LIMIT 20"
-            }
-          ],
-          "gridPos": {
-            "h": 12,
-            "w": 12,
-            "x": 0,
-            "y": 4
-          }
-        },
-        {
-          "type": "timeseries",
           "title": "Spend vs. BudgetPolicy threshold",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "targets": [
             {
               "expr": "sum by (name) (kube_customresource_status_field{customresource_kind=\"BudgetPolicy\",field=\"currentSpendUsd\"})",
@@ -101,7 +69,7 @@ spec:
           "type": "stat",
           "title": "BudgetPolicy reconcile staleness (max lag)",
           "description": "Seconds since the oldest BudgetPolicy.status.lastReconciled. Default budget tick is 1h in production; >7200s indicates the Budget reconciler is unhealthy (Athena down, IAM regression, etc.). Matches the BudgetReconcileLag alert threshold.",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "targets": [
             {
               "expr": "max(time() - kube_customresource_status_field{customresource_kind=\"BudgetPolicy\",field=\"lastReconciled\"})"
@@ -134,68 +102,6 @@ spec:
             "w": 6,
             "x": 6,
             "y": 0
-          }
-        },
-        {
-          "type": "timeseries",
-          "title": "Estimate vs CUR truth (daily, by platform)",
-          "description": "EstimatedInvocationCostUsd export overlaid on CUR-derived truth via invocation_cost_reconciliation. A persistent delta beyond a few percent suggests the Lambda pricing table has drifted from real Bedrock pricing. The estimate runs ahead of truth by the ~24h CUR lag.",
-          "datasource": "athena-cur",
-          "targets": [
-            {
-              "refId": "TRUTH",
-              "rawSql": "SELECT date_parse(day, '%Y-%m-%d') AS time, platform_id, cur_truth_usd AS cost FROM ${cost_database}.invocation_cost_reconciliation WHERE cur_truth_usd IS NOT NULL ORDER BY 1"
-            },
-            {
-              "refId": "ESTIMATE",
-              "rawSql": "SELECT date_parse(day, '%Y-%m-%d') AS time, platform_id, estimate_usd AS cost FROM ${cost_database}.invocation_cost_reconciliation ORDER BY 1"
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "unit": "currencyUSD"
-            }
-          },
-          "gridPos": {
-            "h": 10,
-            "w": 24,
-            "x": 0,
-            "y": 26
-          }
-        },
-        {
-          "type": "table",
-          "title": "Estimate drift vs CUR (reconciled days)",
-          "datasource": "athena-cur",
-          "targets": [
-            {
-              "rawSql": "SELECT platform_id, day, estimate_usd, cur_truth_usd, delta_usd, delta_pct FROM ${cost_database}.invocation_cost_reconciliation WHERE cur_truth_usd IS NOT NULL ORDER BY abs(delta_pct) DESC"
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "unit": "currencyUSD"
-            },
-            "overrides": [
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "delta_pct"
-                },
-                "properties": [
-                  {
-                    "id": "unit",
-                    "value": "percentunit"
-                  }
-                ]
-              }
-            ]
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 24,
-            "x": 0,
-            "y": 36
           }
         },
         {
@@ -235,6 +141,80 @@ spec:
             "w": 24,
             "x": 0,
             "y": 44
+          }
+        },
+        {
+          "type": "barchart",
+          "title": "Spend by platform, month to date (CUR)",
+          "description": "Attributable spend per tenant, from the Cost and Usage Report \u2014 the question CloudWatch cannot answer, since it bills by service and the platform identity lives only in the CUR's resource tags. line_item_type = 'Usage' excludes credits, refunds and tax, so this is what the tenant consumed rather than what the invoice netted to. Reaches resource-tagged spend only: model invocations are not a taggable resource, so Bedrock usage is NOT in this number (see cur-export-schema.txt).",
+          "datasource": {
+            "type": "grafana-athena-datasource",
+            "uid": "athena-cur"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-athena-datasource",
+                "uid": "athena-cur"
+              },
+              "format": 1,
+              "rawSQL": "SELECT element_at(resource_tags, 'user_PlatformId') AS platform,\n       SUM(line_item_unblended_cost)                AS usd\nFROM cur\nWHERE billing_period = date_format(current_date, '%Y-%m')\n  AND line_item_line_item_type = 'Usage'\n  AND element_at(resource_tags, 'user_PlatformId') IS NOT NULL\nGROUP BY element_at(resource_tags, 'user_PlatformId')\nORDER BY usd DESC",
+              "refId": "A",
+              "connectionArgs": {
+                "catalog": "__default",
+                "database": "__default",
+                "region": "__default"
+              }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "currencyUSD"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 12,
+            "x": 0,
+            "y": 52
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "Spend by platform, month over month (CUR)",
+          "description": "The same attribution across billing periods, so a tenant whose spend is climbing is visible before the month it lands. Grouped on the billing_period partition rather than usage date: the billing period is what an invoice is cut against, and late-arriving line items land in the period they belong to rather than the day they appeared. It is also the partition key, so the scan is pruned to the months in range instead of reading the whole export.",
+          "datasource": {
+            "type": "grafana-athena-datasource",
+            "uid": "athena-cur"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-athena-datasource",
+                "uid": "athena-cur"
+              },
+              "format": 1,
+              "rawSQL": "SELECT billing_period                               AS billing_month,\n       element_at(resource_tags, 'user_PlatformId') AS platform,\n       SUM(line_item_unblended_cost)                AS usd\nFROM cur\nWHERE line_item_line_item_type = 'Usage'\n  AND element_at(resource_tags, 'user_PlatformId') IS NOT NULL\nGROUP BY billing_period,\n         element_at(resource_tags, 'user_PlatformId')\nORDER BY billing_month, usd DESC",
+              "refId": "A",
+              "connectionArgs": {
+                "catalog": "__default",
+                "database": "__default",
+                "region": "__default"
+              }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "currencyUSD"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 12,
+            "x": 12,
+            "y": 52
           }
         }
       ]

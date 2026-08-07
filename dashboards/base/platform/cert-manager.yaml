@@ -3,6 +3,10 @@ apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDashboard
 metadata:
   name: cert-manager
+  annotations:
+    # What id 20842 must resolve to on grafana.com. Asserted by
+    # scripts/validate-dashboards.py — see the IDENTITY section there.
+    nanohype.dev/grafana-com-title: "Cert-manager-Kubernetes"
 spec:
   instanceSelector:
     matchLabels:

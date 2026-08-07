@@ -91,8 +91,18 @@ tasks:
     cmds:
       - ./scripts/check-policy-admission.py
 
+  validate:externalsecret-keys:
+    desc: "ExternalSecret key gate — each names its remote secret once, and the delivering appset patches it"
+    cmds:
+      - ./scripts/check-externalsecret-keys.py
+
+  validate:athena-panel-columns:
+    desc: "Athena panel gate — every column a CUR panel names is one the export delivers"
+    cmds:
+      - ./scripts/check-athena-panel-columns.py
+
   validate:
-    desc: Run all validations (lint, build, helm-render, appset schema, sync waves, appset render, policy admission, dashboard/fork-safety)
+    desc: Run all validations (lint, build, helm-render, appset schema, sync waves, appset render, policy admission, externalsecret keys, athena panel columns, dashboard/fork-safety)
     deps:
       - lint:yaml
       - kustomize:build
@@ -101,6 +111,8 @@ tasks:
       - validate:sync-waves
       - validate:appset-render
       - validate:policy-admission
+      - validate:externalsecret-keys
+      - validate:athena-panel-columns
       - validate:dashboards
       - validate:fork-safety
     cmds:

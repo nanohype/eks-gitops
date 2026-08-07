@@ -40,7 +40,7 @@ spec:
       sources:
         - repoURL: https://grafana.github.io/helm-charts
           chart: loki
-          targetRevision: 7.0.0
+          targetRevision: 7.2.0
           helm:
             releaseName: loki
             # S3 log storage, injected only on clusters carrying the observability/loki-bucket

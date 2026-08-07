@@ -3,6 +3,10 @@ apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDashboard
 metadata:
   name: cilium-overview
+  annotations:
+    # What id 16611 must resolve to on grafana.com. Asserted by
+    # scripts/validate-dashboards.py — see the IDENTITY section there.
+    nanohype.dev/grafana-com-title: "Cilium v1.12 Agent Metrics"
 spec:
   instanceSelector:
     matchLabels:

@@ -18,7 +18,7 @@
     },
     {
       "customType": "regex",
-      "description": "OCI Helm chart pins in ApplicationSet matrix list elements. The registry path already carries the chart name for every pin except the NVIDIA DRA driver, which is auth-gated and updated out of band.",
+      "description": "OCI Helm chart pins in ApplicationSet matrix list elements. The registry path carries the chart name for every pin, so packageName is the path alone.",
       "managerFilePatterns": ["/^applicationsets/[^/]+\\.ya?ml$/"],
       "matchStrings": [
         "chartRepo:\\s*oci://(?<packageName>[^\\s]+)\\s*\\n\\s*chart:[^\\n]*\\n\\s*chartVersion:\\s*\"?(?<currentValue>[^\"\\s]+)\"?"

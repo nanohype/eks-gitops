@@ -26,7 +26,9 @@ catalog/               → Platform-specific workloads (Druid)
 ## Key Conventions
 
 ### Sync Waves
-Components deploy in order: bootstrap (0, 2) → networking (1) → karpenter (5) → accelerators (6-7) → security (10-12) → policies (20-23) → observability (29-34) → operations (40-44) / ai-platform (40-42) → argo-platform (50-52).
+Components deploy in order: bootstrap (0, 2) → networking (1) → karpenter (5) → security (10-12) → argo-workflows CRDs (13) → policies (20-23) → observability (29-34) / gateway-api CRDs (30) → operations (40-44) / ai-platform (40-42) → argo-platform (50-52).
+
+CRD-only Applications sit immediately ahead of the first thing that renders one of their kinds, not inside a consumer's band. `scripts/check-sync-waves.py` asserts that precedence directly: an ApplicationSet rendering a manifest whose CRD another ApplicationSet installs must sync strictly after it. A controller that merely *watches* a CRD is not a consumer for this purpose — it retries until the kind exists.
 
 ### Helm Values Pattern
 Helm addons use a flat directory with ArgoCD multi-source. Each addon has `values.yaml` (base) plus `values-{env}.yaml` (delta only). ApplicationSets reference them via:
@@ -54,7 +56,7 @@ Run `task validate` to verify.
 ### Adding a new addon
 **Helm:** Create `addons/<category>/<name>/` with `values.yaml` + three `values-{env}.yaml` files. Add to the appropriate Helm ApplicationSet.
 **Kustomize:** Create `addons/<category>/<name>/base/` + three overlay directories. Add to the appropriate Kustomize ApplicationSet.
-Categories: `bootstrap`, `networking`, `accelerators`, `security`, `observability`, `operations`, `ai-platform`, `argo-platform`.
+Categories: `bootstrap`, `networking`, `security`, `observability`, `operations`, `ai-platform`, `argo-platform`.
 See `docs/configuration/adding-addons.md` for full guide.
 
 ### Adding a new policy
@@ -105,7 +107,7 @@ documents: `task validate` runs it report-only, CI runs it `--blocking`.
 
 - PR and push to main trigger `.github/workflows/ci.yml` (lint → validate per environment → PR summary)
 - The validate job renders every kustomize root plus the druid catalog chart, then gates the rendered output: render-assert (no unfilled sentinels), kubeconform strict (native schemas + datreeio CRDs-catalog, no ignore-missing-schemas, via the shared `scripts/kubeconform-scan.sh`), and `trivy config` (misconfiguration scan, MEDIUM+ hard-fails; scoped justified exceptions live in `.trivyignore.yaml`)
-- Standalone jobs on every PR: `helm-render` (templates every addon against its appset-pinned chart with base + each env's values — an unknown key fails here, not fleet-wide at sync), `policy-admission` (renders the whole fleet into its real destination namespaces and runs `kyverno apply` against the Enforce-tier best-practice/pod-security policies, so an addon landing in a namespace the policies don't exclude fails here instead of being denied at admission on a vended enforce cluster — also asserts all four exclusion lists stay identical), `appsets` (ApplicationSet schema + documented sync-wave ordering), `appset-render` (renders the Karpenter EC2NodeClass patch template the way the ArgoCD ApplicationSet controller does — Go text/template + sprig, `missingkey=error` — against fixture create/adopt/legacy cluster Secrets, so a control-flow edit that breaks the per-cluster render fails here instead of at sync), `secrets` (gitleaks over the working tree), plus the dashboard, fork-safety, and Kyverno policy gates
+- Standalone jobs on every PR: `helm-render` (templates every addon against its appset-pinned chart with base + each env's values — an unknown key fails here, not fleet-wide at sync), `policy-admission` (renders the whole fleet into its real destination namespaces and runs `kyverno apply` against the Enforce-tier best-practice/pod-security policies, so an addon landing in a namespace the policies don't exclude fails here instead of being denied at admission on a vended enforce cluster — also asserts all four exclusion lists stay identical, that every namespace the fleet lands a workload in is on that list, and that a deliberately non-compliant canary is denied by every rule, which is what proves the run evaluated anything), `appsets` (ApplicationSet schema + documented sync-wave ordering), `appset-render` (renders the Karpenter EC2NodeClass patch template the way the ArgoCD ApplicationSet controller does — Go text/template + sprig, `missingkey=error` — against fixture create/adopt/legacy cluster Secrets, so a control-flow edit that breaks the per-cluster render fails here instead of at sync), `secrets` (gitleaks over the working tree), plus the dashboard, fork-safety, and Kyverno policy gates
 - Chart pins in `applicationsets/` are watched by Renovate (`renovate.json`); `.github/dependabot.yml` owns the github-actions bumps
 - Manual diff rendering available via `.github/workflows/diff.yml`
 

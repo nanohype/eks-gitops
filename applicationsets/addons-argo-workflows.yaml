@@ -64,7 +64,7 @@ spec:
       sources:
         - repoURL: https://argoproj.github.io/argo-helm
           chart: argo-workflows
-          targetRevision: 1.0.14
+          targetRevision: 1.0.23
           helm:
             releaseName: argo-workflows
             # Default S3 artifact repository, injected only on clusters carrying

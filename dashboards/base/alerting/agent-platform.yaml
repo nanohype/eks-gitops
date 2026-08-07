@@ -328,6 +328,82 @@ spec:
                 operator: {type: and}
                 query: {params: [A]}
                 reducer: {type: last, params: []}
+    # 4b. Eval never ran. The state rules 3 and 4 each hand to the other, and
+    #     neither covers.
+    #
+    #     AgentEvalBelowThreshold excludes it and says so: "never-run suites do
+    #     not false-fire here (they are caught by AgentEvalStale instead)".
+    #     AgentEvalStale excludes it and says so too: the `!= 0` guard "drops
+    #     never-run suites (lastRunAt is nilIsZero, so 0 means 'never ran', a
+    #     different condition than 'stopped running')". Both are individually
+    #     correct — a never-run suite is genuinely neither a regression nor a
+    #     stoppage — and between them the state is reported by nobody.
+    #
+    #     It is also the ONLY state this fleet has ever been in. eks-gitops ships
+    #     a live ops-eval EvalSuite whose stated purpose is to give these alerts
+    #     something to observe, and the in-cluster eval path could not run: the
+    #     step pods were rejected by the namespace's restricted PSA, and the score
+    #     step exited on a bashism before it scored anything. A suite that has
+    #     never run looks exactly like a healthy one to rules 3 and 4.
+    #
+    #     `== bool 0` rather than `== 0`: the bool modifier makes a match yield 1
+    #     instead of the sample's own value. Grafana's threshold reducer trips on
+    #     `gt 0`, so a plain `== 0` produces a 0-valued sample that can never
+    #     exceed the threshold — the same shape of dead control this rule exists
+    #     to close.
+    #
+    #     for: 24h — a suite runs on a cron (ops-eval is daily at 06:00), so one
+    #     created just after its window must be given a full day before "has not
+    #     run" means anything. Ticket, not page: a suite that has never run is a
+    #     setup defect, not an outage.
+    - uid: agent-platform-eval-never-ran
+      title: AgentEvalNeverRan
+      condition: B
+      for: 24h
+      noDataState: OK
+      execErrState: Error
+      isPaused: false
+      labels:
+        severity: ticket
+        service: eks-agent-platform
+        component: eval
+      annotations:
+        summary: an EvalSuite has never run — the harness never executed for it
+        description: >
+          EvalSuite.status.lastRunAt is zero: this suite has been declared but has
+          never completed a run, so it has produced no quality signal at all.
+          AgentEvalBelowThreshold and AgentEvalStale both deliberately exclude this
+          state, so nothing else reports it. Check the eval-runner namespace for
+          pods rejected at admission, the Argo workflow-controller logs, and
+          whether the argoproj.io CRDs exist on this cluster.
+        runbook_url: https://github.com/nanohype/eks-gitops/blob/main/docs/runbooks/ai-platform-budget-killswitch.md
+      data:
+        - refId: A
+          datasourceUid: managed-prometheus
+          relativeTimeRange: {from: 600, to: 0}
+          model:
+            refId: A
+            datasource: {type: prometheus, uid: managed-prometheus}
+            editorMode: code
+            instant: true
+            range: false
+            intervalMs: 1000
+            maxDataPoints: 43200
+            expr: "kube_customresource_status_field{customresource_kind=\"EvalSuite\",field=\"lastRunAt\"} == bool 0"
+        - refId: B
+          datasourceUid: __expr__
+          relativeTimeRange: {from: 600, to: 0}
+          model:
+            refId: B
+            type: threshold
+            datasource: {type: __expr__, uid: __expr__}
+            expression: A
+            conditions:
+              - type: query
+                evaluator: {type: gt, params: [0]}
+                operator: {type: and}
+                query: {params: [A]}
+                reducer: {type: last, params: []}
     # 5. Rollout hold engaged but never applied — PAGE.
     #    The SLO reconciler decides a burn-rate hold and records it on
     #    SLOPolicy.status; the Platform reconciler renders the deny sync window

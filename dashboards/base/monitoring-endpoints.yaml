@@ -14,8 +14,17 @@ spec:
   target:
     name: managed-monitoring-endpoints
     creationPolicy: Owner
-  data:
-    - secretKey: AMP_QUERY_URL
-      remoteRef:
+  # extract, not a data list. The payload is one JSON object whose field names
+  # are already the key names consumers want (AMP_QUERY_URL, AMP_REMOTE_WRITE_URL,
+  # ATHENA_WORKGROUP, ATHENA_DATABASE, ATHENA_RESULTS_LOCATION), so enumerating
+  # them here would restate the producer's own shape and name this secret once
+  # per field. That repetition is load-bearing in the wrong direction: the secret
+  # is cluster-scoped, every mention has to be patched per cluster, and each one
+  # is a chance to miss one. One reference cannot be partially patched.
+  #
+  # It also drops the coupling that a property absent from the payload fails the
+  # whole ExternalSecret — extract takes what is there, so managed-monitoring can
+  # add or omit a field without this file changing or the AMP endpoint going dark.
+  dataFrom:
+    - extract:
         key: eks-managed-monitoring-endpoints
-        property: AMP_QUERY_URL

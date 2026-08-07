@@ -1,5 +1,49 @@
 # Argo Workflows - Workflow orchestration
 
+# The CRDs come from applicationsets/argo-workflows-crds.yaml at wave 13, not
+# from this chart at wave 52. Two reasons, either sufficient:
+#
+#   * ORDERING — the eks-agent-platform operator chart declares argoproj.io CRs
+#     at wave 21, so CRDs arriving at 52 are 31 waves too late on a first sync.
+#   * FETCH-AT-SYNC — at crds.full=true (the chart default) this chart installs
+#     no CRD manifests at all. It renders a pre-install hook Job that runs
+#     `kubectl apply -f https://raw.githubusercontent.com/...` for each CRD,
+#     making the control plane depend on live GitHub egress from this namespace.
+#
+# Setting install: false stops that Job rendering, so the CRD Application is the
+# single owner of the eight argoproj.io CRDs rather than the two racing.
+crds:
+  install: false
+
+# The securityContext for the `init` and `wait` containers Argo injects into
+# EVERY workflow pod. Without it, a workflow in a namespace enforcing the
+# restricted Pod Security Standard is rejected outright — and PSA is a built-in
+# admission plugin, so there is no exclusion list to add the namespace to.
+#
+# This is the half that only lives here. A WorkflowTemplate can set its own
+# containers' securityContext and a pod-level block (eks-agent-platform's
+# eval-runner does both), but allowPrivilegeEscalation and capabilities are
+# per-container fields, and no WorkflowTemplate can reach the containers the
+# controller injects. Both halves are required; neither alone admits the pod:
+#
+#   pods "…-resolve-cases-…" is forbidden: violates PodSecurity
+#   "restricted:latest": allowPrivilegeEscalation != false (containers "init",
+#   "wait", "main" must set …)
+#
+# uid 8737 is the argoexec image's own non-root user. readOnlyRootFilesystem is
+# not required by the restricted profile; the executor writes only to the shared
+# emptyDir volumes, so it costs nothing here.
+executor:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 8737
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: [ALL]
+    seccompProfile:
+      type: RuntimeDefault
+
 server:
   replicas: 2
   resources:

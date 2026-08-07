@@ -29,7 +29,7 @@ spec:
           {
             "name": "fleet",
             "type": "query",
-            "datasource": "prometheus",
+            "datasource": "managed-prometheus",
             "query": "label_values(kube_customresource_status_phase{customresource_kind=\"AgentFleet\"}, name)",
             "includeAll": true,
             "multi": true
@@ -40,7 +40,7 @@ spec:
         {
           "type": "stat",
           "title": "EvalSuites by status (last run)",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "targets": [
             {
               "expr": "count(kube_customresource_status_phase{customresource_kind=\"EvalSuite\",customresource_phase=\"Passed\"})",
@@ -65,7 +65,7 @@ spec:
         {
           "type": "stat",
           "title": "Suites currently failing",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "targets": [
             {
               "expr": "count(kube_customresource_status_phase{customresource_kind=\"EvalSuite\",customresource_phase=\"Failed\"})"
@@ -102,7 +102,7 @@ spec:
         {
           "type": "timeseries",
           "title": "Last-run score per suite (decimal-string \u2192 number; click into a suite to see history)",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "targets": [
             {
               "expr": "kube_customresource_status_field{customresource_kind=\"EvalSuite\",field=\"lastScore\"} ",
@@ -143,7 +143,7 @@ spec:
         {
           "type": "table",
           "title": "Eval suites \u2014 current state",
-          "datasource": "prometheus",
+          "datasource": "managed-prometheus",
           "targets": [
             {
               "expr": "kube_customresource_status_phase{customresource_kind=\"EvalSuite\"}",

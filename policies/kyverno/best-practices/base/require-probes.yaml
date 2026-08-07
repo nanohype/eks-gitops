@@ -6,11 +6,12 @@ metadata:
     policies.kyverno.io/title: Require Readiness and Liveness Probes
     policies.kyverno.io/category: Best Practices
     policies.kyverno.io/severity: medium
-    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/subject: Deployment, StatefulSet, DaemonSet
     policies.kyverno.io/description: >-
       Liveness and readiness probes are essential for Kubernetes to manage
-      pod lifecycle correctly. This policy validates that all containers
-      have both probes defined.
+      pod lifecycle correctly. This policy validates that all containers in a
+      long-running workload controller have both probes defined. It deliberately
+      does not match bare Pods — see the comment on the match block.
 spec:
   admission: true
   emitWarning: false
@@ -19,11 +20,46 @@ spec:
   rules:
     - name: require-readiness-probe
       skipBackgroundRequests: true
+      # ── Why this matches controllers and not Pod ──────────────────────────
+      # A readiness probe gates traffic to a Service; a liveness probe restarts
+      # a process that is supposed to stay up. Neither means anything to a pod
+      # whose success condition is exiting 0. Matching `Pod` swept those in:
+      # Argo Workflows creates its step pods at RUNTIME, in their own namespace,
+      # so the eval-runner pods met this policy at Enforce and were denied — a
+      # whole tier that could never start, invisible to every gate because no
+      # rendered manifest carries those pods.
+      #
+      # Matching the long-running controller kinds directly is the narrowest fix
+      # that keeps everything else. Two alternatives were tried and rejected,
+      # both by rendering rather than by reading:
+      #
+      #   * an `exclude` selector on the Argo workflow label — makes Kyverno skip
+      #     autogen for the rule, so the Deployment/StatefulSet/DaemonSet variants
+      #     vanish and the policy silently stops protecting the entire fleet.
+      #     7 rendered rules became 3.
+      #   * a `precondition` reading `request.object.metadata.labels` — evaluates
+      #     at admission but NOT under `kyverno apply`, where `request.object` is
+      #     unpopulated. Every pod skipped, including one without the label, so
+      #     scripts/check-policy-admission.py would have reported a compliant
+      #     fleet while enforcing nothing.
+      #
+      # Adding eval-runner to the shared namespace exclusion was rejected too:
+      # the four lists are pinned identical, so it would have exempted those pods
+      # from require-labels, require-run-as-non-root and require-resource-limits
+      # as well — three policies they already satisfy.
+      #
+      # The cost of this shape is that a bare long-running Pod is no longer
+      # matched. Nothing in the fleet or the tenant charts deploys one; every
+      # workload arrives as a controller.
       match:
         any:
           - resources:
               kinds:
-                - Pod
+                - Deployment
+                - StatefulSet
+                - DaemonSet
+                - ReplicaSet
+                - ReplicationController
       exclude:
         any:
           - resources:
@@ -63,24 +99,29 @@ spec:
                 # ai platform
                 - envoy-gateway-system
                 - eks-agent-platform
-                # accelerators — device plugins need privileged host access
-                - gpu-operator
-                - nvidia-dra-driver
       validate:
         allowExistingViolations: true
         message: "Readiness probe is required for all containers."
         pattern:
           spec:
-            containers:
-              - readinessProbe:
-                  periodSeconds: ">0"
+            template:
+              spec:
+                containers:
+                  - readinessProbe:
+                      periodSeconds: ">0"
     - name: require-liveness-probe
       skipBackgroundRequests: true
+      # Matches controllers rather than Pod for the reason documented on
+      # require-readiness-probe above. Keep the two match blocks in step.
       match:
         any:
           - resources:
               kinds:
-                - Pod
+                - Deployment
+                - StatefulSet
+                - DaemonSet
+                - ReplicaSet
+                - ReplicationController
       exclude:
         any:
           - resources:
@@ -120,14 +161,13 @@ spec:
                 # ai platform
                 - envoy-gateway-system
                 - eks-agent-platform
-                # accelerators — device plugins need privileged host access
-                - gpu-operator
-                - nvidia-dra-driver
       validate:
         allowExistingViolations: true
         message: "Liveness probe is required for all containers."
         pattern:
           spec:
-            containers:
-              - livenessProbe:
-                  periodSeconds: ">0"
+            template:
+              spec:
+                containers:
+                  - livenessProbe:
+                      periodSeconds: ">0"

@@ -46,7 +46,6 @@ Verify sync waves follow the documented category ranges (the authoritative bands
 live in `scripts/check-sync-waves.py`; keep this list in sync with it):
 - bootstrap: 0-2
 - networking: 1
-- accelerators: 6-7
 - security: 10-12
 - policies: 20-23
 - observability: 29-34

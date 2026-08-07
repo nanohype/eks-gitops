@@ -17,8 +17,11 @@ spec:
   target:
     name: managed-monitoring-endpoints
     creationPolicy: Owner
-  data:
-    - secretKey: AMP_REMOTE_WRITE_URL
-      remoteRef:
+  # extract, not a data list — one idiom across every ExternalSecret that reads a
+  # cluster-scoped secret, so "which indices does the ApplicationSet patch" is
+  # never a question anyone has to answer. The collector reads
+  # AMP_REMOTE_WRITE_URL by secretKeyRef, so the other fields riding along in this
+  # Secret are inert.
+  dataFrom:
+    - extract:
         key: eks-managed-monitoring-endpoints
-        property: AMP_REMOTE_WRITE_URL
