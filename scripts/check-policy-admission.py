@@ -384,9 +384,19 @@ def render_fleet(dest: pathlib.Path) -> tuple[int, set[str]]:
         if not u.namespace:
             continue  # CRDs-only / no destination — nothing for the gate to check
         chart_ref = u.oci_ref() if u.is_oci else f"{aliases[u.repo]}/{u.chart}"
-        base = REPO_ROOT / u.path / "values.yaml"
+        # Same discriminator as render-addons.py, and the same reason. A missing
+        # directory meant "not deployed to this env" here too, so an appset
+        # element pointing at nothing dropped silently out of the admission gate
+        # as well — and neither gate backstopped the other, because both were
+        # blind in exactly the same place.
+        unit_dir = REPO_ROOT / u.path
+        if not unit_dir.is_dir():
+            print(f"  path '{u.path}' does not exist — the ApplicationSet element "
+                  f"points at nothing, so {u.chart} reaches this gate never")
+            return -1, landed
+        base = unit_dir / "values.yaml"
         for env in ENFORCE_ENVS:
-            env_file = REPO_ROOT / u.path / f"values-{env}.yaml"
+            env_file = unit_dir / f"values-{env}.yaml"
             if not env_file.exists():
                 continue  # addon not deployed to this env
             cmd = ["helm", "template", u.chart, chart_ref, "--version", u.version,

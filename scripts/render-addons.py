@@ -212,12 +212,26 @@ def add_repos(units: list[Unit]) -> dict[str, str]:
 
 
 def render(unit: Unit, env: str | None, aliases: dict[str, str]) -> tuple[bool, str]:
-    base = REPO_ROOT / unit.path / "values.yaml"
+    # The directory is the discriminator, and it has to be checked first.
+    #
+    # "this addon has no delta for this environment" and "the ApplicationSet
+    # points at a path that does not exist" produced the same answer here, and
+    # that answer was success. So a typo in an appset element's `path` removed
+    # the addon from this gate with no signal at all: nothing rendered, nothing
+    # failed, and the summary counted one fewer unit than the fleet contains.
+    #
+    # A missing directory is never a legitimate skip. A missing values-<env>.yaml
+    # inside a real directory always is.
+    unit_dir = REPO_ROOT / unit.path
+    if not unit_dir.is_dir():
+        return (False, f"path '{unit.path}' does not exist — the ApplicationSet element points at nothing")
+
+    base = unit_dir / "values.yaml"
     value_files = []
     if base.exists():
         value_files.append(base)
     if env is not None:
-        env_file = REPO_ROOT / unit.path / f"values-{env}.yaml"
+        env_file = unit_dir / f"values-{env}.yaml"
         if not env_file.exists():
             return (True, "no env delta")  # addon not deployed to this env
         value_files.append(env_file)
