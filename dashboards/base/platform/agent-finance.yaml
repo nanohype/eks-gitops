@@ -28,15 +28,26 @@ spec:
         {
           "type": "stat",
           "title": "Spend MTD (USD)",
-          "datasource": "cloudwatch",
+          "description": "Month-to-date spend across every BudgetPolicy, the same figure the Budget reconciler enforces its threshold against: settled CUR spend plus the in-flight agents/Bedrock estimate. Reduced with lastNotNull because currentSpendUsd is already a cumulative month-to-date gauge — summing it over the board's range would multiply it by the number of samples.",
+          "datasource": "managed-prometheus",
           "targets": [
             {
-              "namespace": "AWS/Bedrock",
-              "metricName": "InvocationCost",
-              "statistic": "Sum",
-              "period": 86400
+              "expr": "sum(kube_customresource_status_field{customresource_kind=\"BudgetPolicy\",field=\"currentSpendUsd\"})"
             }
           ],
+          "options": {
+            "reduceOptions": {
+              "calc": [
+                "lastNotNull"
+              ],
+              "values": false
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "currencyUSD"
+            }
+          },
           "gridPos": {
             "h": 4,
             "w": 6,
@@ -116,6 +127,7 @@ spec:
               "statistic": "Sum",
               "period": 86400,
               "dimensions": {
+                "PlatformId": "*",
                 "ModelId": "*"
               },
               "label": "in {{ModelId}}"
@@ -126,6 +138,7 @@ spec:
               "statistic": "Sum",
               "period": 86400,
               "dimensions": {
+                "PlatformId": "*",
                 "ModelId": "*"
               },
               "label": "out {{ModelId}}"
