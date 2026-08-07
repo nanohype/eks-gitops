@@ -27,6 +27,7 @@ resources:
   - alerting/fleet-vend.yaml
   - alerting/ksm-health.yaml
   - alerting/agent-platform.yaml
+  - alerting/loki-retention.yaml
   - platform/kubernetes-cluster.yaml
   - platform/kubernetes-views-pods.yaml
   - platform/kubernetes-views-namespaces.yaml
