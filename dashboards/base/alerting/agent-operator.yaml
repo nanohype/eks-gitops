@@ -52,7 +52,7 @@ spec:
             range: false
             intervalMs: 1000
             maxDataPoints: 43200
-            expr: "((1 - (sum(rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\",le=\"1\"}[1h])) / clamp_min(sum(rate(controller_runtime_reconcile_time_seconds_count{namespace=\"eks-agent-platform\"}[1h])), 1))) / 0.01 > bool 14.4) * ((1 - (sum(rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\",le=\"1\"}[5m])) / clamp_min(sum(rate(controller_runtime_reconcile_time_seconds_count{namespace=\"eks-agent-platform\"}[5m])), 1))) / 0.01 > bool 14.4)"
+            expr: "((1 - (sum(rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\",le=\"1\"}[1h])) / clamp_min(sum(rate(controller_runtime_reconcile_time_seconds_count{namespace=\"eks-agent-platform\"}[1h])), 0.001))) / 0.01 > bool 14.4) * ((1 - (sum(rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\",le=\"1\"}[5m])) / clamp_min(sum(rate(controller_runtime_reconcile_time_seconds_count{namespace=\"eks-agent-platform\"}[5m])), 0.001))) / 0.01 > bool 14.4)"
         - refId: B
           datasourceUid: __expr__
           relativeTimeRange: {from: 3600, to: 0}
@@ -97,7 +97,7 @@ spec:
             range: false
             intervalMs: 1000
             maxDataPoints: 43200
-            expr: "((1 - (sum(rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\",le=\"1\"}[6h])) / clamp_min(sum(rate(controller_runtime_reconcile_time_seconds_count{namespace=\"eks-agent-platform\"}[6h])), 1))) / 0.01 > bool 6) * ((1 - (sum(rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\",le=\"1\"}[30m])) / clamp_min(sum(rate(controller_runtime_reconcile_time_seconds_count{namespace=\"eks-agent-platform\"}[30m])), 1))) / 0.01 > bool 6)"
+            expr: "((1 - (sum(rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\",le=\"1\"}[6h])) / clamp_min(sum(rate(controller_runtime_reconcile_time_seconds_count{namespace=\"eks-agent-platform\"}[6h])), 0.001))) / 0.01 > bool 6) * ((1 - (sum(rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\",le=\"1\"}[30m])) / clamp_min(sum(rate(controller_runtime_reconcile_time_seconds_count{namespace=\"eks-agent-platform\"}[30m])), 0.001))) / 0.01 > bool 6)"
         - refId: B
           datasourceUid: __expr__
           relativeTimeRange: {from: 21600, to: 0}
@@ -142,7 +142,7 @@ spec:
             range: false
             intervalMs: 1000
             maxDataPoints: 43200
-            expr: "((1 - (sum(rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\",le=\"1\"}[1d])) / clamp_min(sum(rate(controller_runtime_reconcile_time_seconds_count{namespace=\"eks-agent-platform\"}[1d])), 1))) / 0.01 > bool 3) * ((1 - (sum(rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\",le=\"1\"}[2h])) / clamp_min(sum(rate(controller_runtime_reconcile_time_seconds_count{namespace=\"eks-agent-platform\"}[2h])), 1))) / 0.01 > bool 3)"
+            expr: "((1 - (sum(rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\",le=\"1\"}[1d])) / clamp_min(sum(rate(controller_runtime_reconcile_time_seconds_count{namespace=\"eks-agent-platform\"}[1d])), 0.001))) / 0.01 > bool 3) * ((1 - (sum(rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\",le=\"1\"}[2h])) / clamp_min(sum(rate(controller_runtime_reconcile_time_seconds_count{namespace=\"eks-agent-platform\"}[2h])), 0.001))) / 0.01 > bool 3)"
         - refId: B
           datasourceUid: __expr__
           relativeTimeRange: {from: 86400, to: 0}
@@ -187,7 +187,7 @@ spec:
             range: false
             intervalMs: 1000
             maxDataPoints: 43200
-            expr: "((1 - (sum(rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\",le=\"1\"}[3d])) / clamp_min(sum(rate(controller_runtime_reconcile_time_seconds_count{namespace=\"eks-agent-platform\"}[3d])), 1))) / 0.01 > bool 1) * ((1 - (sum(rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\",le=\"1\"}[6h])) / clamp_min(sum(rate(controller_runtime_reconcile_time_seconds_count{namespace=\"eks-agent-platform\"}[6h])), 1))) / 0.01 > bool 1)"
+            expr: "((1 - (sum(rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\",le=\"1\"}[3d])) / clamp_min(sum(rate(controller_runtime_reconcile_time_seconds_count{namespace=\"eks-agent-platform\"}[3d])), 0.001))) / 0.01 > bool 1) * ((1 - (sum(rate(controller_runtime_reconcile_time_seconds_bucket{namespace=\"eks-agent-platform\",le=\"1\"}[6h])) / clamp_min(sum(rate(controller_runtime_reconcile_time_seconds_count{namespace=\"eks-agent-platform\"}[6h])), 0.001))) / 0.01 > bool 1)"
         - refId: B
           datasourceUid: __expr__
           relativeTimeRange: {from: 259200, to: 0}

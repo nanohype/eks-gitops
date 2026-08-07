@@ -3,6 +3,24 @@
 # windows the observability-slo standard defines (nanohype#123); each burn rule is
 # a dual-window check (both the long and short window must exceed the factor),
 # encoded with PromQL `> bool` products so a single instant query yields 1/0.
+#
+# Each burn rule ends in two extra factors, and both are load-bearing:
+#
+#   clamp_min(<denominator>, 0.001)  — the divide-by-zero guard, at the org's
+#     own sliDenominatorFloor. It must stay well below any real traffic rate.
+#     Floored at 1 instead, the denominator is pinned at 1 req/s whenever the
+#     portal is quieter than that, which is always, and the ratio silently
+#     degrades into an absolute error rate: the rule then needs ~52 5xx/hour to
+#     page no matter how few requests were served. A portal serving 40 req/hour
+#     and failing every one reads as perfectly healthy.
+#
+#   (rate(...) > bool 0.0167)  — a minimum-traffic gate, ~1 request/minute over
+#     the long window. A ratio SLI over near-zero traffic is not a measurement;
+#     without this, one 5xx against an idle portal pages at a burn of 1000x.
+#     The gate is what makes the correct floor safe to use.
+#
+# The gate's cost is a silence window when traffic stops altogether, which is
+# why PortalHttpMetricsAbsent below is not optional.
 apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaAlertRuleGroup
 metadata:
@@ -44,7 +62,7 @@ spec:
             range: false
             intervalMs: 1000
             maxDataPoints: 43200
-            expr: "(sum(rate(portal_http_request_duration_seconds_count{status=~\"5..\"}[1h])) / clamp_min(sum(rate(portal_http_request_duration_seconds_count[1h])), 1) / 0.001 > bool 14.4) * (sum(rate(portal_http_request_duration_seconds_count{status=~\"5..\"}[5m])) / clamp_min(sum(rate(portal_http_request_duration_seconds_count[5m])), 1) / 0.001 > bool 14.4)"
+            expr: "(sum(rate(portal_http_request_duration_seconds_count{status=~\"5..\"}[1h])) / clamp_min(sum(rate(portal_http_request_duration_seconds_count[1h])), 0.001) / 0.001 > bool 14.4) * (sum(rate(portal_http_request_duration_seconds_count{status=~\"5..\"}[5m])) / clamp_min(sum(rate(portal_http_request_duration_seconds_count[5m])), 0.001) / 0.001 > bool 14.4) * (sum(rate(portal_http_request_duration_seconds_count[1h])) > bool 0.0167)"
         - refId: B
           datasourceUid: __expr__
           relativeTimeRange:
@@ -91,7 +109,7 @@ spec:
             range: false
             intervalMs: 1000
             maxDataPoints: 43200
-            expr: "(sum(rate(portal_http_request_duration_seconds_count{status=~\"5..\"}[6h])) / clamp_min(sum(rate(portal_http_request_duration_seconds_count[6h])), 1) / 0.001 > bool 6) * (sum(rate(portal_http_request_duration_seconds_count{status=~\"5..\"}[30m])) / clamp_min(sum(rate(portal_http_request_duration_seconds_count[30m])), 1) / 0.001 > bool 6)"
+            expr: "(sum(rate(portal_http_request_duration_seconds_count{status=~\"5..\"}[6h])) / clamp_min(sum(rate(portal_http_request_duration_seconds_count[6h])), 0.001) / 0.001 > bool 6) * (sum(rate(portal_http_request_duration_seconds_count{status=~\"5..\"}[30m])) / clamp_min(sum(rate(portal_http_request_duration_seconds_count[30m])), 0.001) / 0.001 > bool 6) * (sum(rate(portal_http_request_duration_seconds_count[6h])) > bool 0.0167)"
         - refId: B
           datasourceUid: __expr__
           relativeTimeRange:
@@ -199,6 +217,62 @@ spec:
             conditions:
               - type: query
                 evaluator: {type: gt, params: [0.1]}
+                operator: {type: and}
+                query: {params: [A]}
+                reducer: {type: last, params: []}
+
+    # The burn rules above are gated on at least ~1 request/minute, because a
+    # ratio SLI over near-zero traffic is not a measurement — a single 5xx
+    # against an idle portal would otherwise page at a burn of 1000x. That gate
+    # buys correctness at low traffic and opens one blind spot in exchange: if
+    # the portal stops serving entirely, or its scrape breaks, the burn rules go
+    # quiet rather than firing. This closes it, and is the same guard fleet-vend
+    # and agent-operator already carry.
+    - uid: portal-http-metrics-absent
+      title: PortalHttpMetricsAbsent
+      condition: B
+      for: 5m
+      noDataState: OK
+      execErrState: Error
+      isPaused: false
+      labels:
+        severity: page
+        service: portal
+        component: api
+      annotations:
+        summary: portal HTTP metrics absent — availability is unmeasured, not healthy
+        description: >
+          No portal_http_request_duration_seconds_count series is reaching Amazon
+          Managed Prometheus. The portal is down, crashlooping, or its scrape broke.
+          This matters beyond the outage itself: the availability burn rules are
+          ratio-based and gated on a minimum request rate, so with no series they
+          evaluate to no-data and stay silent. Absent metrics read exactly like a
+          perfectly healthy portal on every dashboard. Check the portal deployment
+          and its scrape path.
+      data:
+        - refId: A
+          datasourceUid: managed-prometheus
+          relativeTimeRange: {from: 600, to: 0}
+          model:
+            refId: A
+            datasource: {type: prometheus, uid: managed-prometheus}
+            editorMode: code
+            instant: true
+            range: false
+            intervalMs: 1000
+            maxDataPoints: 43200
+            expr: "absent(portal_http_request_duration_seconds_count)"
+        - refId: B
+          datasourceUid: __expr__
+          relativeTimeRange: {from: 600, to: 0}
+          model:
+            refId: B
+            type: threshold
+            datasource: {type: __expr__, uid: __expr__}
+            expression: A
+            conditions:
+              - type: query
+                evaluator: {type: gt, params: [0]}
                 operator: {type: and}
                 query: {params: [A]}
                 reducer: {type: last, params: []}
