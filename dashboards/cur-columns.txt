@@ -1,0 +1,41 @@
+# Columns the CUR 2.0 Glue table delivers.
+#
+# Mirrors the `cur` table declared in eks-agent-platform's cost-pipeline
+# component (terraform/components/cost-pipeline/main.tf, the aws_glue_catalog_table
+# "cur" resource). A dashboard panel querying that table may reference these names
+# and no others; scripts/check-athena-panel-columns.py enforces it.
+#
+# WHY THIS FILE EXISTS
+#
+# A CUR export runs an explicit column projection, not SELECT *. The set below is
+# what this system's export actually produces — six columns and a partition key —
+# and it is far narrower than the CUR specification, which is where the mistake
+# comes from: every column named in AWS's CUR documentation looks plausible in a
+# query and all but these fail.
+#
+# It has happened twice. eks-agent-platform#180 fixed a set of queries that read
+# `tags` and `product`, neither of which this export delivers, and every one
+# returned NULL rather than failing — so a month-to-date budget query reported
+# every platform at zero spend and the kill switch had nothing to act on. Then
+# two dashboard panels shipped naming `bill_billing_period_start_date`, which is
+# also absent; those fail outright rather than silently, because Athena resolves a
+# missing column at parse time but resolves a missing MAP KEY to NULL.
+#
+# WHY IT IS VENDORED
+#
+# The producing table is defined in another repo and CI cannot reach it. The set
+# changes only when the CUR export itself is recreated — a destroy-and-create on a
+# billing export, which is a deliberate, rare, human act — so a copy here is
+# durable in a way a vendored fast-moving schema would not be. If the export is
+# ever recreated, this file moves in the same change.
+
+# ── delivered columns ──
+line_item_unblended_cost
+line_item_usage_start_date
+line_item_line_item_type
+line_item_product_code
+line_item_usage_account_id
+resource_tags
+
+# ── partition key (projected, format yyyy-MM) ──
+billing_period

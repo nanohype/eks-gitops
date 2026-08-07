@@ -79,6 +79,17 @@ jobs:
       - name: ExternalSecret keys are named once and patched per cluster
         run: ./scripts/check-externalsecret-keys.py
 
+      # A CUR export runs an explicit column projection, so its delivered set is
+      # far narrower than the CUR specification and every documented column name
+      # looks plausible in a panel query. Two finance panels shipped naming
+      # bill_billing_period_start_date, which this export does not carry; the
+      # dashboard gate below reads datasource refs and grafana.com ids and never
+      # opens rawSQL, so nothing here could see it. The equivalent assertion in
+      # eks-agent-platform sits next to the table definition and cannot reach the
+      # consumer side of the repo boundary, which is where this one landed.
+      - name: Athena panels name only columns the CUR export delivers
+        run: ./scripts/check-athena-panel-columns.py
+
       # Two eval alerts each excluded the never-run state, each explaining in a
       # comment that the OTHER one covered it. Both were individually correct;
       # between them the state was reported by nobody — and it was the only state
