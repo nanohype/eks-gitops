@@ -60,7 +60,7 @@ spec:
         # charts in addons-ai-platform use.
         - repoURL: oci://ghcr.io/nanohype/eks-agent-platform/charts/operator
           chart: operator
-          targetRevision: 0.6.1
+          targetRevision: 0.6.3
           helm:
             # Matches the Application name above so Application == release ==
             # Deployment (eks-agent-platform-operator) — one fully-qualified name
