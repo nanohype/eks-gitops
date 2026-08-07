@@ -69,6 +69,12 @@ spec:
                       index:
                         prefix: loki_index_
                         period: 24h
+                # Delete requests must live with the chunks they refer to. The
+                # base values default this to filesystem, which on an S3-backed
+                # cluster writes them to the PVC and loses every in-flight
+                # request when the pod is rescheduled.
+                compactor:
+                  delete_request_store: s3
               {{- end }}
             valueFiles:
               - $values/addons/observability/loki/values.yaml

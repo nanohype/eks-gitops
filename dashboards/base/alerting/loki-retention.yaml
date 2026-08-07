@@ -1,0 +1,136 @@
+# Loki retention, watched at the only place it can be observed: whether the
+# compactor has actually run a retention pass.
+#
+# `limits_config.retention_period` deletes nothing on its own — upstream states
+# it "only applies if retention_enabled is true in the compactor config", and
+# that flag defaults to false. The pairing is easy to break and impossible to
+# see from the outside, because deploymentMode SingleBinary runs `-target=all`
+# and Loki's All target includes Compactor: the process is up, index compaction
+# is happening, the retention period is right there in the config. Only deletion
+# is off, and the first symptom is a full PVC and stopped ingestion weeks later.
+#
+# loki_compactor_apply_retention_last_successful_run_timestamp_seconds is the
+# direct read, and it is a good canary precisely because of how it behaves when
+# the control is off: the gauge is registered at compactor start and stays at 0
+# until a retention pass succeeds. So `time() - gauge` is enormous the moment
+# retention is disabled, rather than the series politely disappearing.
+#
+# Two rules with two distinct claims, rather than one that quietly covers both:
+# retention is not running, and the compactor is reporting nothing at all.
+# Neither uses noDataState: Alerting — an AMP scrape gap is a different failure
+# with a different owner, and a retention alert that pages for it would be
+# claiming more than it can tell.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaAlertRuleGroup
+metadata:
+  name: loki-retention
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: external
+  folderRef: slo-alerts
+  interval: 5m
+  rules:
+    - uid: loki-retention-not-running
+      title: LokiRetentionNotRunning
+      condition: B
+      # compaction_interval is 10m, so a healthy compactor refreshes this gauge
+      # six times an hour. 3h of staleness plus 30m of `for` is deliberately far
+      # outside normal jitter — this is a slow-burn disk problem, not a page.
+      for: 30m
+      noDataState: OK
+      execErrState: Error
+      isPaused: false
+      labels:
+        severity: ticket
+        service: observability
+        component: loki
+      annotations:
+        summary: Loki has not completed a retention pass — logs are accumulating without limit
+        description: >
+          loki_compactor_apply_retention_last_successful_run_timestamp_seconds has not
+          advanced in over 3 hours. Loki is retaining every log line regardless of the
+          retention_period in its config, and the singleBinary PVC will fill and stop
+          ingestion. The usual cause is compactor.retention_enabled having reverted to
+          false (its upstream default) — check the loki ConfigMap for a compactor block
+          with retention_enabled true and a delete_request_store matching the object
+          store. On an S3-backed cluster the store must be s3, not the filesystem
+          default. If the config is right, read the compactor logs for a failing
+          retention pass; a permissions error on the chunks bucket surfaces here.
+      data:
+        - refId: A
+          datasourceUid: managed-prometheus
+          relativeTimeRange: {from: 600, to: 0}
+          model:
+            refId: A
+            datasource: {type: prometheus, uid: managed-prometheus}
+            editorMode: code
+            instant: true
+            range: false
+            intervalMs: 1000
+            maxDataPoints: 43200
+            expr: "time() - max(loki_compactor_apply_retention_last_successful_run_timestamp_seconds)"
+        - refId: B
+          datasourceUid: __expr__
+          relativeTimeRange: {from: 600, to: 0}
+          model:
+            refId: B
+            type: threshold
+            datasource: {type: __expr__, uid: __expr__}
+            expression: A
+            conditions:
+              - type: query
+                evaluator: {type: gt, params: [10800]}
+                operator: {type: and}
+                query: {params: [A]}
+                reducer: {type: last, params: []}
+
+    - uid: loki-compactor-metrics-absent
+      title: LokiCompactorMetricsAbsent
+      condition: B
+      for: 15m
+      noDataState: OK
+      execErrState: Error
+      isPaused: false
+      labels:
+        severity: ticket
+        service: observability
+        component: loki
+      annotations:
+        summary: Loki compactor metrics absent — retention cannot be observed at all
+        description: >
+          No loki_compactor_apply_retention_last_successful_run_timestamp_seconds series
+          is reaching Amazon Managed Prometheus. This is the blind spot the retention
+          alert cannot cover on its own: with no series, LokiRetentionNotRunning
+          evaluates to no-data and stays silent, so retention could be off indefinitely
+          with nothing said. Either the Loki pod is not running, its :3100 scrape
+          annotations were dropped from singleBinary.podAnnotations, or the compactor
+          target is not in the running target set. Check the loki StatefulSet and that
+          its args still carry -target=all.
+      data:
+        - refId: A
+          datasourceUid: managed-prometheus
+          relativeTimeRange: {from: 600, to: 0}
+          model:
+            refId: A
+            datasource: {type: prometheus, uid: managed-prometheus}
+            editorMode: code
+            instant: true
+            range: false
+            intervalMs: 1000
+            maxDataPoints: 43200
+            expr: "absent(loki_compactor_apply_retention_last_successful_run_timestamp_seconds)"
+        - refId: B
+          datasourceUid: __expr__
+          relativeTimeRange: {from: 600, to: 0}
+          model:
+            refId: B
+            type: threshold
+            datasource: {type: __expr__, uid: __expr__}
+            expression: A
+            conditions:
+              - type: query
+                evaluator: {type: gt, params: [0]}
+                operator: {type: and}
+                query: {params: [A]}
+                reducer: {type: last, params: []}
