@@ -335,6 +335,16 @@ jobs:
       - name: Sync-wave ordering gate
         run: ./scripts/check-sync-waves.py
 
+      # Offline half of the chart-provenance gate: every pinned chart has a
+      # record and every record a pin. Deliberately does not touch the network —
+      # whether a chart went deprecated overnight is not a function of this
+      # commit, and gating merges on it would redden pull requests that changed
+      # nothing. chart-provenance.yml asks that question on a schedule.
+      - name: Chart provenance gate
+        run: |
+          ./scripts/check-chart-deprecation.py
+          ./scripts/check-chart-deprecation.py --self-test
+
   # ── Appset render gate ───────────────────────────────────────────────
   # The Karpenter EC2NodeClass patch carries if/range control flow inside a
   # `patch: |-` string block. Every other gate treats that string as opaque —

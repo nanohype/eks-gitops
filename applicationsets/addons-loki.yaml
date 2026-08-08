@@ -38,9 +38,15 @@ spec:
     spec:
       project: platform
       sources:
-        - repoURL: https://grafana.github.io/helm-charts
+        # The OSS Loki chart moved to grafana-community, forked at 6.55.0. The
+        # chart still published at grafana/helm-charts is now maintained for
+        # Grafana Enterprise Logs only — its description says so and its 7.x
+        # line is the GEL line, but it carries no `deprecated` flag, so nothing
+        # would ever have reported that the pin had changed product underneath
+        # it. This is the OSS lineage, continuous from the fork point.
+        - repoURL: https://grafana-community.github.io/helm-charts
           chart: loki
-          targetRevision: 7.2.0
+          targetRevision: 18.7.5
           helm:
             releaseName: loki
             # S3 log storage, injected only on clusters carrying the observability/loki-bucket
