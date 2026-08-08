@@ -170,6 +170,53 @@ config:
                 target_label: namespace
               - source_labels: [__meta_kubernetes_pod_name]
                 target_label: pod
+          # eks-agent-platform operator. It cannot ride the annotation-gated job
+          # above: charts/operator serves /metrics over HTTPS behind
+          # controller-runtime's authn/authz filter whenever metrics.secure is
+          # true — the chart default — and it suppresses its own
+          # prometheus.io/scrape annotations while secure, because an
+          # annotation scrape is plaintext and unauthenticated and that endpoint
+          # rejects it. So the operator was discovered by nothing, and five
+          # alert rules plus the whole agent-operator dashboard read a metric
+          # that never arrived.
+          #
+          # The authenticated route needs no new grant. The endpoint authorizes
+          # with a TokenReview plus a SubjectAccessReview on the /metrics
+          # nonResourceURL, and this collector's ClusterRole above already holds
+          # exactly that — so the agent presents its own ServiceAccount token,
+          # the same way the cadvisor job does, rather than mounting the chart's
+          # metrics-reader Secret from another namespace.
+          #
+          # insecure_skip_verify because controller-runtime generates a
+          # self-signed cert in memory; there is no CA to pin, and the bearer
+          # token is what actually gates access. Same reasoning the chart's own
+          # ServiceMonitor records for the prometheus-operator path.
+          - job_name: eks-agent-platform-operator
+            scheme: https
+            bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+            tls_config:
+              insecure_skip_verify: true
+            kubernetes_sd_configs:
+              - role: pod
+                namespaces:
+                  names: [eks-agent-platform]
+                selectors:
+                  - role: pod
+                    field: spec.nodeName=${env:K8S_NODE_NAME}
+            relabel_configs:
+              - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+                regex: operator
+                action: keep
+              # The metrics port, not the probe port on 8081. Discovery yields a
+              # target per declared container port, so without this the agent
+              # would also scrape :8081 and log a failure every interval.
+              - source_labels: [__meta_kubernetes_pod_container_port_name]
+                regex: metrics
+                action: keep
+              - source_labels: [__meta_kubernetes_namespace]
+                target_label: namespace
+              - source_labels: [__meta_kubernetes_pod_name]
+                target_label: pod
   processors:
     batch: {}
     memory_limiter:

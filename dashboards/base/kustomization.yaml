@@ -48,7 +48,9 @@ resources:
   - platform/agent-ops.yaml
   - platform/agent-founder.yaml
   # Operator reconcile RED + latency SLO/error-budget (controller-runtime metrics
-  # reach AMP via the operator pod's prometheus.io/scrape annotation).
+  # reach AMP via the otel-agent's authenticated eks-agent-platform-operator
+  # scrape job, not the annotation path — the operator's metrics endpoint is
+  # HTTPS + token-gated and carries no scrape annotations).
   - platform/agent-operator.yaml
   # Ops control-plane app (portal): API SLO/RED + tofu-run, River-job, watcher,
   # and pgxpool surfaces — self-contained PromQL over the portal_* metrics in AMP.
