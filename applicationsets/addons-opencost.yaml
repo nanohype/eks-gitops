@@ -45,7 +45,7 @@ spec:
       sources:
         - repoURL: https://opencost.github.io/opencost-helm-chart
           chart: opencost
-          targetRevision: "2.5.28"
+          targetRevision: "2.5.29"
           helm:
             releaseName: opencost
             valueFiles:
