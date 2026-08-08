@@ -1,8 +1,14 @@
 # eks-agent-platform operator — Grafana-managed SLO / health alert rules. The
 # latency SLO is "99% of reconciles complete in <1s over 30d" (budget 0.01); each
 # burn rule is a dual-window check encoded as a `> bool` product. Self-contained
-# over controller-runtime metrics, which reach AMP once the operator pod carries
-# the prometheus.io/scrape annotation (eks-agent-platform operator-prod-scrape).
+# over controller-runtime metrics, which reach AMP through the otel-agent's
+# `eks-agent-platform-operator` scrape job — an authenticated HTTPS scrape using
+# the agent's own ServiceAccount token. NOT the annotation path: the operator
+# serves /metrics behind controller-runtime's authn/authz filter while
+# metrics.secure is true (the chart default) and suppresses its own
+# prometheus.io/scrape annotations for exactly that reason, since an annotation
+# scrape is plaintext and unauthenticated. These rules read no data at all until
+# that job exists.
 #
 # This is the PROD path (Grafana-managed, evaluated by Amazon Managed Grafana
 # against AMP). The operator chart's own PrometheusRule
