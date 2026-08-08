@@ -27,7 +27,7 @@ spec:
                   namespace: kube-system
                   chartRepo: https://helm.cilium.io
                   chart: cilium
-                  chartVersion: 1.19.6
+                  chartVersion: 1.20.0
                   path: addons/networking/cilium
                   syncWave: "1"
                 - appName: aws-load-balancer-controller
