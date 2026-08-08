@@ -17,7 +17,14 @@ mode: deployment
 
 image:
   repository: otel/opentelemetry-collector-contrib
-  tag: '0.157.0'
+  # No `tag:` deliberately. The chart renders
+  # `.Values.image.tag | default .Chart.AppVersion`, so leaving it unset makes the
+  # image follow the chart pin instead of being maintained beside it. A hand-set
+  # tag here has to be moved by a second act nothing performs or checks — Renovate
+  # sees the chart (argocd manager) and not this file — which is how the two spent
+  # a stretch a release apart. The contrib distro publishes the same version
+  # numbers as the core collector the appVersion tracks, verified against the
+  # registry for the version this pin resolves to.
 
 # Identical object names to the full tier, deliberately: the node agent forwards
 # to otel-gateway.monitoring.svc.cluster.local:4317 and the telemetry alias
