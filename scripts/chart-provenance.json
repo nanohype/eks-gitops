@@ -1,0 +1,155 @@
+{
+  "_README": "What each pinned chart says it is, recorded so that a change is visible. check-chart-deprecation.py compares upstream against this on a schedule; the blocking gate only checks that every pin has a record and every record a pin. A description change means the chart redescribed itself \u2014 read the upstream notes before running --sync, because that is the signal a chart has changed product or maintainer without ever setting a deprecated flag.",
+  "charts": {
+    "ai-gateway-crds-helm": {
+      "repo": "oci://docker.io/envoyproxy/ai-gateway-crds-helm",
+      "description": "The Helm chart for Envoy AI Gateway CRD",
+      "deprecated": false
+    },
+    "ai-gateway-helm": {
+      "repo": "oci://docker.io/envoyproxy/ai-gateway-helm",
+      "description": "The Helm chart for Envoy AI Gateway",
+      "deprecated": false
+    },
+    "argo-events": {
+      "repo": "https://argoproj.github.io/argo-helm",
+      "description": "A Helm chart for Argo Events, the event-driven workflow automation framework",
+      "deprecated": false
+    },
+    "argo-rollouts": {
+      "repo": "https://argoproj.github.io/argo-helm",
+      "description": "A Helm chart for Argo Rollouts",
+      "deprecated": false
+    },
+    "argo-workflows": {
+      "repo": "https://argoproj.github.io/argo-helm",
+      "description": "A Helm chart for Argo Workflows",
+      "deprecated": false
+    },
+    "aws-load-balancer-controller": {
+      "repo": "https://aws.github.io/eks-charts",
+      "description": "AWS Load Balancer Controller Helm chart for Kubernetes",
+      "deprecated": false
+    },
+    "cert-manager": {
+      "repo": "https://charts.jetstack.io",
+      "description": "A Helm chart for cert-manager",
+      "deprecated": false
+    },
+    "cilium": {
+      "repo": "https://helm.cilium.io",
+      "description": "eBPF-based Networking, Security, and Observability",
+      "deprecated": false
+    },
+    "descheduler": {
+      "repo": "https://kubernetes-sigs.github.io/descheduler/",
+      "description": "Descheduler for Kubernetes is used to rebalance clusters by evicting pods that can potentially be scheduled on better nodes. In the current implementation, descheduler does not schedule replacement of evicted pods but relies on the default scheduler for that.",
+      "deprecated": false
+    },
+    "external-dns": {
+      "repo": "https://kubernetes-sigs.github.io/external-dns/",
+      "description": "ExternalDNS synchronizes exposed Kubernetes Services and Ingresses with DNS providers.",
+      "deprecated": false
+    },
+    "external-secrets": {
+      "repo": "https://charts.external-secrets.io",
+      "description": "External secrets management for Kubernetes",
+      "deprecated": false
+    },
+    "falco": {
+      "repo": "https://falcosecurity.github.io/charts",
+      "description": "Falco",
+      "deprecated": false
+    },
+    "gateway-helm": {
+      "repo": "oci://docker.io/envoyproxy/gateway-helm",
+      "description": "The Helm chart for Envoy Gateway",
+      "deprecated": false
+    },
+    "goldilocks": {
+      "repo": "https://charts.fairwinds.com/stable",
+      "description": "A Helm chart for running Fairwinds Goldilocks. See https://github.com/FairwindsOps/goldilocks",
+      "deprecated": false
+    },
+    "grafana-operator": {
+      "repo": "https://grafana.github.io/helm-charts",
+      "description": "Helm chart for the Grafana Operator",
+      "deprecated": false
+    },
+    "karpenter": {
+      "repo": "oci://public.ecr.aws/karpenter/karpenter",
+      "description": "A Helm chart for Karpenter, an open-source node provisioning project built for Kubernetes.",
+      "deprecated": false
+    },
+    "keda": {
+      "repo": "https://kedacore.github.io/charts",
+      "description": "Event-based autoscaler for workloads on Kubernetes",
+      "deprecated": false
+    },
+    "kube-state-metrics": {
+      "repo": "https://prometheus-community.github.io/helm-charts",
+      "description": "Install kube-state-metrics to generate and expose cluster-level metrics",
+      "deprecated": false
+    },
+    "kyverno": {
+      "repo": "https://kyverno.github.io/kyverno",
+      "description": "Kubernetes Native Policy Management",
+      "deprecated": false
+    },
+    "loki": {
+      "repo": "https://grafana-community.github.io/helm-charts",
+      "description": "Helm chart for Grafana Loki supporting monolithic, simple scalable, and microservices modes.",
+      "deprecated": false
+    },
+    "metrics-server": {
+      "repo": "https://kubernetes-sigs.github.io/metrics-server/",
+      "description": "Metrics Server is a scalable, efficient source of container resource metrics for Kubernetes built-in autoscaling pipelines.",
+      "deprecated": false
+    },
+    "opencost": {
+      "repo": "https://opencost.github.io/opencost-helm-chart",
+      "description": "OpenCost and OpenCost UI",
+      "deprecated": false
+    },
+    "opentelemetry-collector": {
+      "repo": "https://open-telemetry.github.io/opentelemetry-helm-charts",
+      "description": "OpenTelemetry Collector Helm chart for Kubernetes",
+      "deprecated": false
+    },
+    "operator": {
+      "repo": "oci://ghcr.io/nanohype/eks-agent-platform/charts/operator",
+      "description": "eks-agent-platform \u2014 Kubernetes operator (CRDs + Deployment + RBAC).",
+      "deprecated": false
+    },
+    "prometheus-operator-crds": {
+      "repo": "https://prometheus-community.github.io/helm-charts",
+      "description": "A Helm chart that collects custom resource definitions (CRDs) from the Prometheus Operator, allowing for seamless integration with GitOps tools",
+      "deprecated": false
+    },
+    "reloader": {
+      "repo": "https://stakater.github.io/stakater-charts",
+      "description": "Reloader chart that runs on kubernetes",
+      "deprecated": false
+    },
+    "tempo": {
+      "repo": "https://grafana-community.github.io/helm-charts",
+      "description": "Grafana Tempo Single Binary Mode",
+      "deprecated": false
+    },
+    "trivy-operator": {
+      "repo": "https://aquasecurity.github.io/helm-charts",
+      "description": "Keeps security report resources updated",
+      "deprecated": false
+    },
+    "velero": {
+      "repo": "https://vmware-tanzu.github.io/helm-charts",
+      "description": "A Helm chart for velero",
+      "deprecated": false
+    },
+    "vpa": {
+      "repo": "https://charts.fairwinds.com/stable",
+      "description": "A Helm chart for Kubernetes Vertical Pod Autoscaler",
+      "deprecated": false
+    }
+  }
+}

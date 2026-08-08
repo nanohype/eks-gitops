@@ -1,0 +1,50 @@
+name: chart provenance
+
+# The live half of the chart-provenance check: is every chart this catalog pins
+# still the chart it was pinned for, upstream, right now?
+#
+# It is a separate workflow rather than a job in ci.yml on purpose, and there
+# are two reasons.
+#
+# The verdict is not a function of this commit. A maintainer can deprecate a
+# chart, or hand it to a different organisation, at any moment. Run in the merge
+# path, that turns a pull request red for a reason the pull request did not
+# cause — the same trap `mirror-check freshness` and `schemas:freshness` are
+# kept off the blocking path to avoid.
+#
+# And the merge gate in ci.yml refuses any workflow containing a job it does not
+# watch, while counting a skipped dependency as a failure. A job that only runs
+# on a schedule cannot satisfy both, so it does not belong in that file. The
+# offline half — every pin has a record, every record a pin — does run there,
+# because that IS a function of the tree.
+on:
+  schedule:
+    # Mondays, ahead of the working week and after the weekend's upstream releases.
+    - cron: "0 13 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    name: pinned charts still are what they were
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+
+      - name: Install PyYAML
+        run: pip install --quiet pyyaml
+
+      # Fails on a `deprecated: true`, and on a chart whose description no
+      # longer matches what was recorded. The second is the one worth having:
+      # a chart can be re-scoped to a different product, or forked away to a
+      # different maintainer, without anyone ever setting the deprecated flag,
+      # and then the pin keeps resolving and the currency signal keeps saying
+      # "current" for something that is no longer the same software.
+      - name: Compare every pinned chart against its record
+        run: ./scripts/check-chart-deprecation.py --live
