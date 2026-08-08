@@ -39,8 +39,10 @@ them completely and the other only in part: it checks COLUMN names. It does not
 check MAP KEYS. `element_at(resource_tags, 'user_PlatformId')` is verified as far
 as `resource_tags` being a delivered column; whether `user_PlatformId` is a tag
 the export carries is not knowable from this repo, because it depends on which
-cost-allocation tags are activated in the payer account — a live, non-retroactive
-setting. The `tags`-vs-`resource_tags` half of eks-agent-platform#180 is caught
+cost-allocation tags are activated in the payer account — a live setting this
+repo cannot see. (Activating late is repairable: AWS backfills up to twelve
+months. A resource that ran untagged is not, because backfill applies an
+activation status and invents no tag values.) The `tags`-vs-`resource_tags` half of eks-agent-platform#180 is caught
 here; the `'resourceTags/PlatformId'`-vs-`'user_PlatformId'` half is not, and
 that is the half that fails silently. Asserting it needs a live read.
 
