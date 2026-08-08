@@ -1,16 +1,31 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended"],
-  "description": "Currency management for the catalog. Renovate watches every Helm chart version pinned in applicationsets/ (and the git-pinned Gateway API CRDs), the Go module behind the appset-render gate, and the CLI tools the CI workflow downloads — the helm-render + schema + policy CI gates then validate each bump before merge. Scoped to chart, git-tag, gomod, and CI-tool managers so it never overlaps the github-actions updates dependabot owns.",
-  "enabledManagers": ["argocd", "gomod", "custom.regex"],
+  "extends": [
+    "github>nanohype/.github"
+  ],
+  "description": [
+    "Currency management for the catalog, layered on the org preset at nanohype/.github.",
+    "What stays local is the manager scoping and the custom managers. Renovate watches every Helm chart version pinned in applicationsets/ (and the git-pinned Gateway API CRDs), the Go module behind the appset-render gate, the CLI tools the CI workflow downloads, and the GitHub Actions in .github/workflows/ — the helm-render, schema and policy CI gates then validate each bump before merge.",
+    "enabledManagers is an allowlist rather than a default because this repo is a manifest catalog: without it Renovate would try to read every values.yaml as a Helm chart it owns."
+  ],
+  "enabledManagers": [
+    "argocd",
+    "gomod",
+    "custom.regex",
+    "github-actions"
+  ],
   "argocd": {
-    "managerFilePatterns": ["/^applicationsets/[^/]+\\.ya?ml$/"]
+    "managerFilePatterns": [
+      "/^applicationsets/[^/]+\\.ya?ml$/"
+    ]
   },
   "customManagers": [
     {
       "customType": "regex",
       "description": "HTTPS Helm chart pins in ApplicationSet matrix list elements (chartRepo/chart/chartVersion), which the argocd manager cannot resolve because they are templated onto the source.",
-      "managerFilePatterns": ["/^applicationsets/[^/]+\\.ya?ml$/"],
+      "managerFilePatterns": [
+        "/^applicationsets/[^/]+\\.ya?ml$/"
+      ],
       "matchStrings": [
         "chartRepo:\\s*(?<registryUrl>https://[^\\s]+)\\s*\\n\\s*chart:\\s*(?<depName>[^\\s]+)\\s*\\n\\s*chartVersion:\\s*\"?(?<currentValue>[^\"\\s]+)\"?"
       ],
@@ -19,7 +34,9 @@
     {
       "customType": "regex",
       "description": "OCI Helm chart pins in ApplicationSet matrix list elements. The registry path carries the chart name for every pin, so packageName is the path alone.",
-      "managerFilePatterns": ["/^applicationsets/[^/]+\\.ya?ml$/"],
+      "managerFilePatterns": [
+        "/^applicationsets/[^/]+\\.ya?ml$/"
+      ],
       "matchStrings": [
         "chartRepo:\\s*oci://(?<packageName>[^\\s]+)\\s*\\n\\s*chart:[^\\n]*\\n\\s*chartVersion:\\s*\"?(?<currentValue>[^\"\\s]+)\"?"
       ],
@@ -28,7 +45,9 @@
     {
       "customType": "regex",
       "description": "Git-pinned Gateway API CRDs (gateway-api-crds.yaml). A plain manifest directory (config/crd/standard) sourced from a git tag, not a Helm chart, so neither the argocd manager nor the chart regex managers above can resolve it. Watched against the upstream GitHub release tags so a currency PR opens and runs the render + schema gates; the deliberate-bump rationale in the file still governs the merge decision.",
-      "managerFilePatterns": ["/^applicationsets/gateway-api-crds\\.ya?ml$/"],
+      "managerFilePatterns": [
+        "/^applicationsets/gateway-api-crds\\.ya?ml$/"
+      ],
       "matchStrings": [
         "repoURL:\\s*https://github\\.com/(?<depName>kubernetes-sigs/gateway-api)\\s*\\n\\s*targetRevision:\\s*(?<currentValue>v[0-9][^\\s]+)"
       ],
@@ -37,7 +56,9 @@
     {
       "customType": "regex",
       "description": "CLI tools the CI workflow downloads as release tarballs or installs through a setup action (kyverno/gitleaks/kubeconform/trivy). These are release binaries, not GitHub Actions (dependabot owns those), so they age silently otherwise. Each pin in ci.yml's top-level env block carries a `# renovate:` comment naming its datasource + GitHub repo; a bump also fails the hardcoded checksum next to it until a human confirms the new SHA256, so it never auto-merges blind.",
-      "managerFilePatterns": ["/^\\.github/workflows/ci\\.ya?ml$/"],
+      "managerFilePatterns": [
+        "/^\\.github/workflows/ci\\.ya?ml$/"
+      ],
       "matchStrings": [
         "#\\s*renovate:\\s*datasource=(?<datasource>[a-z-]+)\\s+depName=(?<depName>[^\\s]+)\\s*\\n\\s*[A-Z0-9_]+:\\s*\"?(?<currentValue>[^\"\\s]+)\"?"
       ],
@@ -46,27 +67,50 @@
   ],
   "packageRules": [
     {
-      "matchDatasources": ["helm", "docker"],
-      "labels": ["dependencies", "charts"]
+      "matchDatasources": [
+        "helm",
+        "docker"
+      ],
+      "labels": [
+        "dependencies",
+        "charts"
+      ]
     },
     {
-      "matchDatasources": ["github-releases"],
-      "matchPackageNames": ["kubernetes-sigs/gateway-api"],
-      "labels": ["dependencies", "charts"]
+      "matchDatasources": [
+        "github-releases"
+      ],
+      "matchPackageNames": [
+        "kubernetes-sigs/gateway-api"
+      ],
+      "labels": [
+        "dependencies",
+        "charts"
+      ]
     },
     {
-      "matchManagers": ["gomod"],
-      "labels": ["dependencies", "go"]
+      "matchManagers": [
+        "gomod"
+      ],
+      "labels": [
+        "dependencies",
+        "go"
+      ]
     },
     {
-      "matchDatasources": ["github-releases"],
+      "matchDatasources": [
+        "github-releases"
+      ],
       "matchPackageNames": [
         "kyverno/kyverno",
         "gitleaks/gitleaks",
         "yannh/kubeconform",
         "aquasecurity/trivy"
       ],
-      "labels": ["dependencies", "ci"]
+      "labels": [
+        "dependencies",
+        "ci"
+      ]
     }
   ]
 }
