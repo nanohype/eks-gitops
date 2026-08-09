@@ -82,6 +82,12 @@ BANDS = {
     "ai-platform": (21, 44),
     "argo-platform": (50, 52),
     "apps": (50, 60),
+    # Tenant boundary manifests, applied from the tenants GitOps repo rather
+    # than from this catalog. They declare Platform/Tenant/BudgetPolicy and the
+    # agent-plane CRs, so they need both the operator's CRDs (ai-platform, 21)
+    # and a running operator to reconcile them — which is every other category.
+    # Hence a band of its own at the end rather than a slot inside apps.
+    "tenants": (100, 100),
 }
 
 # Documented cross-band exceptions: (category, addon, wave). karpenter is
@@ -99,6 +105,7 @@ FILE_CATEGORY = {
     "agent-platform.yaml": "ai-platform",
     "addons-agent-operator.yaml": "ai-platform",
     "dashboards.yaml": "apps",
+    "portal-tenants.yaml": "tenants",
 }
 
 # C. Which ApplicationSet installs a CRD, and which ones RENDER A MANIFEST of a
