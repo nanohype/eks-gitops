@@ -339,12 +339,14 @@ spec:
     #     correct — a never-run suite is genuinely neither a regression nor a
     #     stoppage — and between them the state is reported by nobody.
     #
-    #     It is also the ONLY state this fleet has ever been in. eks-gitops ships
-    #     a live ops-eval EvalSuite whose stated purpose is to give these alerts
-    #     something to observe, and the in-cluster eval path could not run: the
-    #     step pods were rejected by the namespace's restricted PSA, and the score
-    #     step exited on a bashism before it scored anything. A suite that has
-    #     never run looks exactly like a healthy one to rules 3 and 4.
+    #     A suite that has never run looks exactly like a healthy one to rules 3
+    #     and 4, and "never ran" is the state a freshly declared suite is in for
+    #     its whole first cron window — so it is the state most likely to be
+    #     mistaken for working. The catalog itself declares no EvalSuite (the ops
+    #     platform has no AgentFleet to evaluate, because a fleet needs an agent
+    #     image this catalog cannot name), so this rule watches what a fork
+    #     declares. noDataState: OK, so an empty catalog is silent rather than
+    #     alarming.
     #
     #     `== bool 0` rather than `== 0`: the bool modifier makes a match yield 1
     #     instead of the sample's own value. Grafana's threshold reducer trips on
@@ -352,10 +354,9 @@ spec:
     #     exceed the threshold — the same shape of dead control this rule exists
     #     to close.
     #
-    #     for: 24h — a suite runs on a cron (ops-eval is daily at 06:00), so one
-    #     created just after its window must be given a full day before "has not
-    #     run" means anything. Ticket, not page: a suite that has never run is a
-    #     setup defect, not an outage.
+    #     for: 24h — a suite runs on a cron, so one created just after its window
+    #     must be given a full day before "has not run" means anything. Ticket,
+    #     not page: a suite that has never run is a setup defect, not an outage.
     - uid: agent-platform-eval-never-ran
       title: AgentEvalNeverRan
       condition: B
