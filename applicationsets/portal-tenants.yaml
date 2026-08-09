@@ -1,0 +1,88 @@
+# Applies the tenant boundary manifests the portal commits to the tenants
+# GitOps repo. The portal's write path renders charts/tenant (Platform +
+# BudgetPolicy + Tenant + agent-plane CRs) and commits one manifest per tenant
+# to tenants/<cluster>/<tenant>.yaml; without this ApplicationSet nothing
+# applies those commits, so portal-created tenants never reach the cluster.
+#
+# Both halves of the wiring come from the cluster Secret, so no org is named
+# here:
+#
+#   annotation gitops/tenants-repo-url  the repo the portal pushes to
+#   label      portal/tenants-enabled   opts the cluster in
+#
+# landing-zone's cluster-bootstrap stamps both under the one condition that
+# also registers ArgoCD's read-only deploy key for that repo, so a cluster
+# never carries the label without the annotation and the credential that make
+# it work. That matters twice over: the deploy key exists to be used by this
+# appset, and `missingkey=error` below turns a label stamped without its
+# annotation into a render failure rather than a silent no-op.
+#
+# The git generator reads its repoURL from the first child generator's output —
+# the matrix generator passes parameters forward, and a consumer must come
+# after its producer, which is why the clusters generator is first.
+#
+# Scoping the discovered path to the cluster's own name rather than globbing
+# tenants/* is what makes this correct on an ArgoCD with more than one cluster
+# registered. A tenants/* glob crossed with the clusters generator would apply
+# every cluster's tenants to every cluster; naming the directory after the
+# cluster means each one sees only its own, and the destination is that same
+# cluster rather than a fixed in-cluster address.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: portal-tenants
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "100"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  argocd.argoproj.io/secret-type: cluster
+                  portal/tenants-enabled: "true"
+          # A directory that does not exist yet yields no parameters, so a
+          # cluster opted in before its first tenant is committed renders
+          # nothing rather than erroring.
+          - git:
+              repoURL: '{{ index .metadata.annotations "gitops/tenants-repo-url" }}'
+              revision: main
+              directories:
+                - path: 'tenants/{{ index .metadata.labels "cluster_name" }}'
+  template:
+    metadata:
+      name: 'portal-tenants-{{ .path.basename }}'
+      labels:
+        app.kubernetes.io/managed-by: argocd
+        app.kubernetes.io/component: portal-tenant
+        platform.nanohype.dev/environment: '{{ index .metadata.labels "environment" }}'
+        platform.nanohype.dev/repository: nanohype/eks-gitops
+        platform.nanohype.dev/team: platform-engineering
+      annotations:
+        argocd.argoproj.io/sync-wave: "100"
+    spec:
+      project: platform
+      source:
+        repoURL: '{{ index .metadata.annotations "gitops/tenants-repo-url" }}'
+        targetRevision: main
+        path: '{{ .path.path }}'
+        directory:
+          recurse: true
+      destination:
+        server: '{{ .server }}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - ServerSideApply=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
