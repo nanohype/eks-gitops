@@ -45,7 +45,7 @@ spec:
       project: platform
       sources:
         # A published chart at a version, not a branch. Rendering from
-        # `targetRevision: main` meant there was no release boundary at all
+        # `targetRevision: '{{ index .metadata.annotations "gitops/repo-branch" }}'` meant there was no release boundary at all
         # between a merge upstream and every cluster this ApplicationSet syncs —
         # a chart change reached production the moment it landed, and a chart
         # could ship a CRD field the operator image it names does not
@@ -90,7 +90,7 @@ spec:
               - $values/addons/ai-platform/operator/values.yaml
               - $values/addons/ai-platform/operator/values-{{ index .metadata.labels "environment" }}.yaml
         - repoURL: '{{ index .metadata.annotations "gitops/repo-url" }}'
-          targetRevision: main
+          targetRevision: '{{ index .metadata.annotations "gitops/repo-branch" }}'
           ref: values
       destination:
         server: https://kubernetes.default.svc

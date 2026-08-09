@@ -65,7 +65,7 @@ spec:
               - $values/addons/observability/tempo/values.yaml
               - $values/addons/observability/tempo/values-{{ index .metadata.labels "environment" }}.yaml
         - repoURL: '{{ index .metadata.annotations "gitops/repo-url" }}'
-          targetRevision: main
+          targetRevision: '{{ index .metadata.annotations "gitops/repo-branch" }}'
           ref: values
       destination:
         server: https://kubernetes.default.svc

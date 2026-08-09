@@ -145,6 +145,21 @@ jobs:
       - name: Every platform CR the catalog declares would be admitted
         run: ./scripts/check-platform-crs.py --list
 
+  catalog-revision:
+    name: a catalog source reads its revision, never pins one
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Install pyyaml
+        run: pip install pyyaml
+      # cluster-bootstrap stamps gitops/repo-branch beside gitops/repo-url. Only
+      # app-of-apps ever read it, so a cluster bootstrapped against any other
+      # revision ran app-of-apps there and every child Application on main — two
+      # revisions of the catalog at once, both reporting Synced and Healthy.
+      - name: Catalog sources read gitops/repo-branch
+        run: ./scripts/check-catalog-revision.py --list
+
   kyverno:
     name: Kyverno policy tests
     runs-on: ubuntu-latest
@@ -610,6 +625,7 @@ jobs:
         dashboards,
         serviceaccount-bindings,
         platform-crs,
+        catalog-revision,
         kyverno,
         fork-safety,
         helm-render,

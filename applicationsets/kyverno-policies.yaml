@@ -55,7 +55,7 @@ spec:
       project: platform
       source:
         repoURL: '{{ index .metadata.annotations "gitops/repo-url" }}'
-        targetRevision: main
+        targetRevision: '{{ index .metadata.annotations "gitops/repo-branch" }}'
         path: '{{ .path }}/overlays/{{ index .metadata.labels "environment" }}'
       destination:
         server: https://kubernetes.default.svc

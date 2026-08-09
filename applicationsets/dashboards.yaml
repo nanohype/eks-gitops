@@ -45,7 +45,7 @@ spec:
       project: platform
       source:
         repoURL: '{{ index .metadata.annotations "gitops/repo-url" }}'
-        targetRevision: main
+        targetRevision: '{{ index .metadata.annotations "gitops/repo-branch" }}'
         path: '{{ .path }}/base'
         # The Grafana CR's workspace URL is per-cluster and can't be templated
         # from a Secret, so inject it here from the monitoring/grafana-url

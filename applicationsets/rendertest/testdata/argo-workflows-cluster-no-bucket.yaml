@@ -16,4 +16,5 @@ metadata:
     region: us-west-2
   annotations:
     gitops/repo-url: https://github.com/example/gitops
+    gitops/repo-branch: main
 type: Opaque

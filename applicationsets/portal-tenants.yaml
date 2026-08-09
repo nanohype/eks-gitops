@@ -68,7 +68,7 @@ spec:
       project: platform
       source:
         repoURL: '{{ index .metadata.annotations "gitops/tenants-repo-url" }}'
-        targetRevision: main
+        targetRevision: '{{ index .metadata.annotations "gitops/repo-branch" }}'
         path: '{{ .path.path }}'
         directory:
           recurse: true
