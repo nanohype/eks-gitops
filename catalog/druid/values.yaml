@@ -17,7 +17,7 @@ version: "36.0.0"
 # set per tenant/environment above; the org dimensions are constant for this stack.
 managedBy: "argocd"
 project: "landing-zone"
-repository: "nanohype/eks-gitops"
+repository: "nanohype.eks-gitops"
 team: "data-platform"
 costCenter: "platform-engineering"
 businessUnit: "engineering"

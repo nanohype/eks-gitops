@@ -26,7 +26,11 @@ catalog/               → Platform-specific workloads (Druid)
 ## Key Conventions
 
 ### Sync Waves
-Components deploy in order: bootstrap (0, 2) → networking (1) → karpenter (5) → security (10-12) → argo-workflows CRDs (13) → policies (20-23) → observability (29-34) / gateway-api CRDs (30) → operations (40-44) / ai-platform (40-42) → argo-platform (50-52).
+Components deploy in order: bootstrap (0, 2) → networking (1) → karpenter (5) → security (10-12) → argo-workflows CRDs (13) → policies (20-23) → observability (29-34) / gateway-api CRDs (30) → operations (40-44) / ai-platform (40-42) → argo-platform (50-52) → tenants (100).
+
+The tenants band sits alone at the end: `portal-tenants` applies the tenant boundary
+manifests the portal commits to the tenants repo, and those declare CRs that need both
+the operator's CRDs and a running operator to reconcile them.
 
 CRD-only Applications sit immediately ahead of the first thing that renders one of their kinds, not inside a consumer's band. `scripts/check-sync-waves.py` asserts that precedence directly: an ApplicationSet rendering a manifest whose CRD another ApplicationSet installs must sync strictly after it. A controller that merely *watches* a CRD is not a consumer for this purpose — it retries until the kind exists.
 

@@ -335,6 +335,15 @@ jobs:
       - name: Sync-wave ordering gate
         run: ./scripts/check-sync-waves.py
 
+      # An ApplicationSet's spec.template.metadata.labels is a plain string map
+      # in the CRD schema, so kubeconform admits any value there. It only
+      # becomes a label when the controller renders an Application, and an
+      # invalid value fails that Application at admission — which fails the
+      # app-of-apps sync task, which stops the entire addon catalog from
+      # installing. Valid manifest, passing schema gate, nothing deployed.
+      - name: Label-value gate
+        run: ./scripts/check-label-values.py
+
       # Offline half of the chart-provenance gate: every pinned chart has a
       # record and every record a pin. Deliberately does not touch the network —
       # whether a chart went deprecated overnight is not a function of this

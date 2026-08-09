@@ -74,7 +74,7 @@ repoURL: '{{ index .metadata.annotations "gitops/repo-url" }}'
 └─────────────────────────────────────────────────────────────────────┘
 
 Plus opt-in ApplicationSets under `applicationsets/opt-in/` (`apps-tenants`,
-`clusters-appset`, `portal-tenants`) — not applied by a default install; see
+`clusters-appset`) — not applied by a default install; see
 [`applicationsets/opt-in/README.md`](applicationsets/opt-in/README.md).
 ```
 
@@ -90,6 +90,8 @@ eks-gitops/
 │   ├── gateway-api-crds.yaml
 │   ├── secret-stores.yaml
 │   ├── dashboards.yaml
+│   ├── portal-tenants.yaml           # tenant boundary CRs from the tenants repo
+│   │                                 #   (label-gated; repo URL from the cluster Secret)
 │   └── opt-in/                          # NOT applied by default (apps/clusters/portal)
 │
 ├── addons/                             # Addon configurations

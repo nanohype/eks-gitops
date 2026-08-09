@@ -80,6 +80,11 @@ tasks:
     cmds:
       - ./scripts/check-sync-waves.py
 
+  validate:label-values:
+    desc: "Label-value gate — every k8s label value satisfies the API server's grammar"
+    cmds:
+      - ./scripts/check-label-values.py
+
   validate:appset-render:
     desc: "Appset render gate — render the Karpenter EC2NodeClass patch template against fixture cluster Secrets"
     dir: applicationsets/rendertest
@@ -102,13 +107,14 @@ tasks:
       - ./scripts/check-athena-panel-columns.py
 
   validate:
-    desc: Run all validations (lint, build, helm-render, appset schema, sync waves, appset render, policy admission, externalsecret keys, athena panel columns, dashboard/fork-safety)
+    desc: Run all validations (lint, build, helm-render, appset schema, sync waves, label values, appset render, policy admission, externalsecret keys, athena panel columns, dashboard/fork-safety)
     deps:
       - lint:yaml
       - kustomize:build
       - validate:helm-render
       - validate:appset-schema
       - validate:sync-waves
+      - validate:label-values
       - validate:appset-render
       - validate:policy-admission
       - validate:externalsecret-keys
