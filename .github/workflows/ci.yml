@@ -123,6 +123,28 @@ jobs:
       - name: Every pod names a ServiceAccount its chart creates
         run: ./scripts/check-serviceaccount-bindings.py
 
+  platform-crs:
+    name: the catalog's own CRs are admissible
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Install helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+      - name: Install pyyaml
+        run: pip install pyyaml
+      # The platform's own CRDs are on kubeconform-scan.sh's skip list — their
+      # schemas are published to no public catalog — and that skip's comment says
+      # these kinds are validated out-of-band against a real webhook. For
+      # addons/ai-platform/agent-platform/base/platform.yaml that never happened,
+      # and it shipped an AgentFleet with no spec.agents[].image. This closes the
+      # gap without a cluster: the CRDs come from the operator chart version this
+      # catalog pins.
+      - name: The walker is wrong loudly, not quietly
+        run: ./scripts/check-platform-crs.py --self-test
+      - name: Every platform CR the catalog declares would be admitted
+        run: ./scripts/check-platform-crs.py --list
+
   kyverno:
     name: Kyverno policy tests
     runs-on: ubuntu-latest
@@ -587,6 +609,7 @@ jobs:
         lint,
         dashboards,
         serviceaccount-bindings,
+        platform-crs,
         kyverno,
         fork-safety,
         helm-render,
