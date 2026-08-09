@@ -63,7 +63,7 @@ spec:
               - $values/addons/observability/otel-gateway/values.yaml
               - $values/addons/observability/otel-gateway/values-{{ index .metadata.labels "environment" }}.yaml
         - repoURL: '{{ index .metadata.annotations "gitops/repo-url" }}'
-          targetRevision: main
+          targetRevision: '{{ index .metadata.annotations "gitops/repo-branch" }}'
           ref: values
       destination:
         server: https://kubernetes.default.svc

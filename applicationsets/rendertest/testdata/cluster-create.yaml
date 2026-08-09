@@ -13,4 +13,5 @@ metadata:
     network_mode: create
   annotations:
     gitops/repo-url: https://github.com/example/gitops
+    gitops/repo-branch: main
 type: Opaque

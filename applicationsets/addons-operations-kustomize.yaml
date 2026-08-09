@@ -42,7 +42,7 @@ spec:
       project: platform
       source:
         repoURL: '{{ index .metadata.annotations "gitops/repo-url" }}'
-        targetRevision: main
+        targetRevision: '{{ index .metadata.annotations "gitops/repo-branch" }}'
         path: '{{ .path }}/overlays/{{ index .metadata.labels "environment" }}'
         # The overlay renders this environment's primary-cluster identity; patch
         # the EC2NodeClass per cluster from the cluster_name label so co-located

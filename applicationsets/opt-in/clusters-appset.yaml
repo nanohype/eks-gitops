@@ -70,7 +70,7 @@ spec:
       project: platform
       source:
         repoURL: git@github.com:nanohype/clusters.git
-        targetRevision: main
+        targetRevision: '{{ index .metadata.annotations "gitops/repo-branch" }}'
         path: '{{ .path.path }}'
         directory:
           include: '{{ .path.filename }}'

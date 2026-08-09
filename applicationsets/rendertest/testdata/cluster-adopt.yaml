@@ -14,6 +14,7 @@ metadata:
     network_mode: adopt
   annotations:
     gitops/repo-url: https://github.com/example/gitops
+    gitops/repo-branch: main
     network/private-subnet-ids: subnet-priv-a,subnet-priv-b,subnet-priv-c
     network/public-subnet-ids: subnet-pub-a,subnet-pub-b,subnet-pub-c
 type: Opaque

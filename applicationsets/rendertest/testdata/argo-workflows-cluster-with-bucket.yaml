@@ -15,5 +15,6 @@ metadata:
     region: us-west-2
   annotations:
     gitops/repo-url: https://github.com/example/gitops
+    gitops/repo-branch: main
     argo-workflows/artifact-bucket: alpha-111111111111-us-west-2-argo-workflows
 type: Opaque
