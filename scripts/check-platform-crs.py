@@ -119,8 +119,76 @@ def crd_schemas(version: str, workdir: Path) -> dict[str, dict]:
     return out
 
 
+def list_identities(value, schema):
+    """What the API server compares two entries of this list by, or None.
+
+    `map` identifies an entry by its listMapKeys tuple; `set` identifies a scalar
+    entry by itself. Any other list-type (`atomic`, or none) imposes no
+    uniqueness, so there is nothing to compare.
+
+    Absent keys participate in a map identity: under listMapKeys ["name"],
+    `[{"name": "a"}, {"name": "a", "kind": "cache"}]` is a duplicate, and reading
+    only the fields that happen to be set would miss it. Entries of the wrong
+    shape are skipped rather than guessed at — a non-dict in a map list is a type
+    error the type checker below reports on its own terms.
+    """
+    kind_of_list = schema.get("x-kubernetes-list-type")
+    if kind_of_list == "map":
+        keys = schema.get("x-kubernetes-list-map-keys") or []
+        if not keys:
+            return None
+        pairs = [
+            (i, tuple(v.get(k) for k in keys))
+            for i, v in enumerate(value)
+            if isinstance(v, dict)
+        ]
+        return "+".join(keys), pairs
+    if kind_of_list == "set":
+        pairs = [
+            (i, v) for i, v in enumerate(value)
+            if isinstance(v, (str, int, float, bool))
+        ]
+        return "value", pairs
+    return None
+
+
+def check_list_uniqueness(value, schema, path, kind, source, problems):
+    """x-kubernetes-list-type is a validation rule, not documentation.
+
+    A violation is a hard rejection of the whole object at admission — not a
+    warning, not a merge of the two entries.
+
+    Nothing in the org checked this, which is how a Platform declaring two
+    datastores both named `main` passed every gate green and was refused by the
+    API server on a live cluster. `required`-and-pruning is the obvious half of
+    admissibility; this is the half a schema walker written from first
+    principles does not think to add, and the CRDs carry 16 of these arrays.
+    """
+    resolved = list_identities(value, schema)
+    if resolved is None:
+        return
+    label, pairs = resolved
+
+    seen: dict = {}
+    for i, identity in pairs:
+        if identity in seen:
+            shown = (
+                "/".join("<unset>" if p is None else str(p) for p in identity)
+                if isinstance(identity, tuple) else str(identity)
+            )
+            problems.append(
+                f"{source}: {kind} {path}[{i}] repeats {label}={shown}, already at "
+                f"{path}[{seen[identity]}] — the CRD declares this array "
+                f"`x-kubernetes-list-type: {schema['x-kubernetes-list-type']}`, so the API "
+                f"server rejects the whole object with `{path.lstrip('.')}: Duplicate value`. "
+                f"Nothing partial is applied and the Application never reaches Healthy"
+            )
+            continue
+        seen[identity] = i
+
+
 def walk(value, schema, path, kind, source, problems):
-    """Required present, nothing excess — arrays transparent.
+    """Required present, nothing excess, list identities unique — arrays transparent.
 
     Stops descending wherever the schema declines to describe the shape
     (x-kubernetes-preserve-unknown-fields, or an object with no properties),
@@ -130,6 +198,7 @@ def walk(value, schema, path, kind, source, problems):
         return
 
     if isinstance(value, list):
+        check_list_uniqueness(value, schema, path, kind, source, problems)
         items = schema.get("items")
         if isinstance(items, dict):
             for i, item in enumerate(value):
@@ -234,9 +303,10 @@ def check(listing: bool, offline: bool) -> int:
 def self_test() -> int:
     """The walker has to be wrong loudly, not quietly.
 
-    A walker that descends into nothing passes every catalog. These pin the four
+    A walker that descends into nothing passes every catalog. These pin the
     properties the check depends on: required is enforced, excess is caught,
-    arrays are transparent, and an unrestricted schema is left alone.
+    arrays are transparent, list identities are unique, and an unrestricted
+    schema is left alone.
     """
     schema = {
         "properties": {
@@ -251,6 +321,18 @@ def self_test() -> int:
                 "required": ["persona"],
                 "properties": {"persona": {"default": "generic"}},
             },
+            "datastores": {
+                "x-kubernetes-list-type": "map",
+                "x-kubernetes-list-map-keys": ["name"],
+                "items": {"properties": {"name": {}, "kind": {}}},
+            },
+            "routes": {
+                "x-kubernetes-list-type": "map",
+                "x-kubernetes-list-map-keys": ["group", "name"],
+                "items": {"properties": {"group": {}, "name": {}}},
+            },
+            "finalizers": {"x-kubernetes-list-type": "set", "items": {}},
+            "ordered": {"x-kubernetes-list-type": "atomic", "items": {"properties": {"name": {}}}},
         },
     }
     cases = [
@@ -263,6 +345,27 @@ def self_test() -> int:
         ("excess property", {"agents": [{"name": "a", "image": "i", "tools": []}]}, 1),
         ("preserve-unknown-fields is left alone", {"free": {"anything": {"nested": 1}}}, 0),
         ("unknown top-level key", {"nope": 1}, 1),
+        # The live failure: a Platform with two datastores both named `main`. Every
+        # property is present and none is excess, so every other rule here passes it.
+        ("duplicate list-map key", {"datastores": [{"name": "main"}, {"name": "main"}]}, 1),
+        ("distinct list-map keys", {"datastores": [{"name": "main"}, {"name": "logstream"}]}, 0),
+        # Same name, different kind — a duplicate, because `kind` is not a map key.
+        # Uniqueness is per listMapKeys, not per whole entry.
+        (
+            "duplicate on the key alone, not the whole entry",
+            {"datastores": [{"name": "main", "kind": "relational"}, {"name": "main", "kind": "cache"}]},
+            1,
+        ),
+        # Composite keys collide only when every key matches.
+        ("composite key differing in one field", {"routes": [{"group": "g", "name": "a"}, {"group": "g", "name": "b"}]}, 0),
+        ("composite key matching in both", {"routes": [{"group": "g", "name": "a"}, {"group": "g", "name": "a"}]}, 1),
+        # An unset key is a value: two entries omitting it collide on <unset>.
+        ("unset key participates in the identity", {"routes": [{"group": "g"}, {"group": "g"}]}, 1),
+        ("duplicate set member", {"finalizers": ["a", "a"]}, 1),
+        ("distinct set members", {"finalizers": ["a", "b"]}, 0),
+        # atomic imposes no uniqueness — flagging it would be a false positive that
+        # teaches operators to work around the gate.
+        ("atomic list permits repeats", {"ordered": [{"name": "a"}, {"name": "a"}]}, 0),
     ]
     bad = 0
     for name, value, want in cases:
