@@ -51,6 +51,19 @@ spec:
             # association — no static keys. Without the annotation the block renders empty and the
             # base values' local backend stands. `index` yields "" for the missing key under
             # missingkey=error.
+            #
+            # `endpoint` is REQUIRED and is not the same story as loki's. Tempo reaches S3 through
+            # the minio-go client, which validates the endpoint before it ever looks at the region
+            # and refuses an empty one:
+            #
+            #   failed to create minio client: Endpoint:  does not follow ip address or
+            #   domain name standards.
+            #
+            # Tempo then exits non-zero at startup, so the StatefulSet crashloops and the
+            # Application sits Progressing forever — it never reaches Healthy, and on a fresh
+            # install that is the one thing holding up convergence. loki does not need it because
+            # its AWS client derives the endpoint from the region, which is why the two blocks
+            # look asymmetric and have to stay that way.
             values: |
               {{- if index .metadata.annotations "observability/tempo-bucket" }}
               tempo:
@@ -60,6 +73,7 @@ spec:
                     s3:
                       bucket: {{ index .metadata.annotations "observability/tempo-bucket" }}
                       region: {{ index .metadata.labels "region" }}
+                      endpoint: s3.{{ index .metadata.labels "region" }}.amazonaws.com
               {{- end }}
             valueFiles:
               - $values/addons/observability/tempo/values.yaml
