@@ -82,8 +82,9 @@ func TestTempoS3Storage(t *testing.T) {
 					Trace struct {
 						Backend string `yaml:"backend"`
 						S3      struct {
-							Bucket string `yaml:"bucket"`
-							Region string `yaml:"region"`
+							Bucket   string `yaml:"bucket"`
+							Region   string `yaml:"region"`
+							Endpoint string `yaml:"endpoint"`
 						} `yaml:"s3"`
 					} `yaml:"trace"`
 				} `yaml:"storage"`
@@ -100,6 +101,27 @@ func TestTempoS3Storage(t *testing.T) {
 		}
 		if want := labels["region"]; v.Tempo.Storage.Trace.S3.Region != want {
 			t.Fatalf("tempo.storage.trace.s3.region = %q, want %q\n%s", v.Tempo.Storage.Trace.S3.Region, want, out)
+		}
+		// The assertion this test was missing, and it is not symmetric with loki's.
+		//
+		// Tempo reaches S3 through the minio-go client, which validates the endpoint before
+		// it looks at anything else and refuses an empty one:
+		//
+		//   failed to create minio client: Endpoint:  does not follow ip address or
+		//   domain name standards.
+		//
+		// Tempo then exits at startup, the StatefulSet crashloops, and the Application sits
+		// Progressing forever — on a fresh install that is the single thing that holds up
+		// catalog convergence, for thirty minutes, until the installer gives up. A bucket
+		// and a region rendered correctly the whole time, which is why asserting those was
+		// not enough: the manifest was well-formed and the config was incomplete.
+		//
+		// loki needs no endpoint because its AWS client derives one from the region. The two
+		// blocks are asymmetric on purpose.
+		if want := "s3." + labels["region"] + ".amazonaws.com"; v.Tempo.Storage.Trace.S3.Endpoint != want {
+			t.Fatalf("tempo.storage.trace.s3.endpoint = %q, want %q — tempo's minio client "+
+				"rejects an empty endpoint and the pod crashloops\n%s",
+				v.Tempo.Storage.Trace.S3.Endpoint, want, out)
 		}
 	})
 
