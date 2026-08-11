@@ -29,6 +29,11 @@ CR of those kinds in the tree:
   - every `required` property must be present, at every level
   - no property may be absent from the schema (the API server prunes it, so a
     field set here has never reached a cluster)
+  - every value must carry the type the CRD declares. YAML decides that for you,
+    and it is why `minACU: 0.5` is rejected where `minACU: "0.5"` is admitted —
+    Kubernetes serialises fractional quantities as strings
+  - a list declared `x-kubernetes-list-type: map` or `set` must hold unique
+    entries, because a duplicate is a hard rejection of the whole object
 
 The version comes from the appset rather than from `latest` deliberately. The
 question is not "is this manifest valid against the newest CRDs" but "is it
@@ -187,8 +192,92 @@ def check_list_uniqueness(value, schema, path, kind, source, problems):
         seen[identity] = i
 
 
+# OpenAPI type -> the Python types a YAML load produces for it.
+#
+# bool before int deliberately: in Python `True` is an int, so an unquoted `true` would
+# satisfy `integer` and a genuine type error would pass.
+_JSON_TYPES = {
+    "string": (str,),
+    "integer": (int,),
+    "number": (int, float),
+    "boolean": (bool,),
+    "object": (dict,),
+    "array": (list,),
+}
+
+
+def check_type(value, schema, path, kind, source, problems):
+    """The type the CRD declares is enforced at admission, and YAML decides it for you.
+
+    This is the half a required-and-pruning walker does not have, and it is the half that
+    bites hardest on numbers. `minACU: 0.5` reads as a YAML float; the CRD declares
+    minACU a STRING, because Kubernetes serialises fractional quantities as strings. The
+    manifest looks obviously correct, every property is present, none is excess, and the
+    API server rejects the whole object:
+
+        spec.datastores[0].relational.minACU: Invalid value: "number":
+          ... in body must be of type string: "number"
+
+    Only scalars and containers are checked here — the recursion below already walks into
+    objects and arrays, and a mistyped one is reported by this rule before it descends.
+    """
+    want = schema.get("type")
+    allowed = _JSON_TYPES.get(want)
+    if allowed is None or value is None:
+        return
+    # A bool is an int in Python; nothing else may borrow that.
+    if isinstance(value, bool) != (want == "boolean"):
+        if want != "boolean" and isinstance(value, bool):
+            problems.append(
+                f"{source}: {kind} {path} is a boolean and the CRD declares {want} — the API "
+                f"server rejects the object with `{path.lstrip('.')}: Invalid value`"
+            )
+            return
+    if not isinstance(value, allowed):
+        got = _json_type_name(value)
+        hint = ""
+        if want == "string" and isinstance(value, (int, float)):
+            hint = (
+                " — quote it. YAML makes an unquoted number a number, and Kubernetes "
+                "serialises fractional quantities as strings"
+            )
+        # Phrased as the API server phrases it, including reporting the value's OWN type in
+        # `Invalid value` rather than the wanted one, so the message can be searched for
+        # verbatim after a failed apply.
+        problems.append(
+            f"{source}: {kind} {path} is {_article(got)} {got} and the CRD declares {want}{hint}. The API "
+            f"server rejects the whole object with `{path.lstrip('.')}: Invalid value: "
+            f'"{got}": ... in body must be of type {want}: "{got}"`, so nothing is applied'
+        )
+
+
+def _article(word: str) -> str:
+    return "an" if word[:1] in "aeiou" else "a"
+
+
+def _json_type_name(value) -> str:
+    """The OpenAPI type name for a value, which is what the API server reports.
+
+    bool first: a bool is an int in Python, and calling one an integer here would print a
+    message that does not match what kubectl said.
+    """
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    if isinstance(value, dict):
+        return "object"
+    if isinstance(value, list):
+        return "array"
+    return type(value).__name__
+
+
 def walk(value, schema, path, kind, source, problems):
-    """Required present, nothing excess, list identities unique — arrays transparent.
+    """Required present, nothing excess, types right, list identities unique.
 
     Stops descending wherever the schema declines to describe the shape
     (x-kubernetes-preserve-unknown-fields, or an object with no properties),
@@ -196,6 +285,8 @@ def walk(value, schema, path, kind, source, problems):
     """
     if not isinstance(schema, dict):
         return
+
+    check_type(value, schema, path, kind, source, problems)
 
     if isinstance(value, list):
         check_list_uniqueness(value, schema, path, kind, source, problems)
@@ -332,6 +423,14 @@ def self_test() -> int:
                 "items": {"properties": {"group": {}, "name": {}}},
             },
             "finalizers": {"x-kubernetes-list-type": "set", "items": {}},
+            "acu": {
+                "type": "object",
+                "properties": {
+                    "minACU": {"type": "string"},
+                    "retention": {"type": "integer"},
+                    "paused": {"type": "boolean"},
+                },
+            },
             "ordered": {"x-kubernetes-list-type": "atomic", "items": {"properties": {"name": {}}}},
         },
     }
@@ -362,6 +461,16 @@ def self_test() -> int:
         # An unset key is a value: two entries omitting it collide on <unset>.
         ("unset key participates in the identity", {"routes": [{"group": "g"}, {"group": "g"}]}, 1),
         ("duplicate set member", {"finalizers": ["a", "a"]}, 1),
+        # The live failure this rule was added for: a CRD string carrying a YAML number.
+        # Every property present, none excess, and the API server refuses the object.
+        ("a number where the CRD wants a string", {"acu": {"minACU": 0.5}}, 1),
+        ("an integer where the CRD wants a string", {"acu": {"minACU": 4}}, 1),
+        ("the same value quoted", {"acu": {"minACU": "0.5"}}, 0),
+        ("a string where the CRD wants an integer", {"acu": {"retention": "7"}}, 1),
+        ("an integer where the CRD wants an integer", {"acu": {"retention": 7}}, 0),
+        # A bool is an int in Python and must not satisfy `integer`.
+        ("a boolean where the CRD wants an integer", {"acu": {"retention": True}}, 1),
+        ("a boolean where the CRD wants a boolean", {"acu": {"paused": True}}, 0),
         ("distinct set members", {"finalizers": ["a", "b"]}, 0),
         # atomic imposes no uniqueness — flagging it would be a false positive that
         # teaches operators to work around the gate.
