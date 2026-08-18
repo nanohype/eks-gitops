@@ -5,7 +5,7 @@ Gather the following from the user (or from $ARGUMENTS if provided):
 2. **Addon name**: kebab-case (e.g., `metrics-server`)
 3. **Type**: Helm (default) or Kustomize
 4. **Namespace**: Kubernetes namespace for the addon
-5. **Sync wave**: the ArgoCD sync wave number (bootstrap: 0-2, networking: 1, karpenter: 5, security: 10-12, policies: 20-23, observability: 29-34, gateway-crds: 30, operations: 40-44, ai-platform: 21-44, argo-platform: 50-52, apps: 50-60)
+5. **Sync wave**: the ArgoCD sync wave number (bootstrap: 0-2, networking: 1, karpenter: 5, security: 10-12, argo-workflows-crds: 13, policies: 20-23, observability: 29-34, gateway-crds: 30, operations: 40-44, ai-platform: 21-44, argo-platform: 50-52, apps: 50-60, tenants: 100). These bands are asserted by `scripts/check-sync-waves.py` (`BANDS`) — that table is the source of truth.
 
 **For Helm addons, also gather:**
 6. **Helm chart name**: the chart name in the repository
