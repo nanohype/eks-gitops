@@ -160,6 +160,20 @@ jobs:
       - name: Catalog sources read gitops/repo-branch
         run: ./scripts/check-catalog-revision.py --list
 
+  renovate-coverage:
+    name: every chart pin is watched by a manager that resolves
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # A customManager whose regex matches nothing is valid config —
+      # renovate-config-validator passes it, because the schema is fine and the
+      # pattern never runs against a file. And the built-in argocd manager can
+      # *detect* a pin while deriving a package name that resolves to nothing.
+      # Both leave a pin aging in silence with the config looking complete.
+      - name: Every chart pin is watched
+        run: ./scripts/check-renovate-coverage.py
+
   kyverno:
     name: Kyverno policy tests
     runs-on: ubuntu-latest
@@ -621,6 +635,7 @@ jobs:
     needs:
       [
         placeholders,
+        renovate-coverage,
         lint,
         dashboards,
         serviceaccount-bindings,
