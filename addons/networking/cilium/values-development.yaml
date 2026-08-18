@@ -3,3 +3,30 @@
 
 operator:
   replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
+# Requests only. Development spokes run small, sparsely packed nodes, so the
+# base requests reserve capacity these clusters would rather schedule. Limits
+# are deliberately NOT relaxed here — they bound a failure mode that does not
+# get less dangerous for being in development, and keeping them identical across
+# environments means an OOM seen in dev is the same OOM production would see.
+resources:
+  requests:
+    cpu: 50m
+    memory: 256Mi
+
+envoy:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+
+hubble:
+  relay:
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi

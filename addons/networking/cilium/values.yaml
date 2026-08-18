@@ -30,11 +30,36 @@ hubble:
     enabled: true
     prometheus:
       enabled: true
+    # Control plane for the flow API, not the datapath — a full limit pair is
+    # safe here because throttling relay delays observability, not packets.
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
   ui:
     enabled: true
     tolerations:
       - key: CriticalAddonsOnly
         operator: Exists
+    frontend:
+      resources:
+        requests:
+          cpu: 10m
+          memory: 64Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
+    backend:
+      resources:
+        requests:
+          cpu: 10m
+          memory: 64Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
   metrics:
     enabled:
       - dns
@@ -64,6 +89,65 @@ operator:
   tolerations:
     - key: CriticalAddonsOnly
       operator: Exists
+  # The operator drives ENI/IPAM allocation, so it is bursty exactly when a
+  # spoke scales out and Karpenter adds nodes. A generous CPU limit keeps that
+  # burst from being throttled into slow IP allocation; the memory limit is what
+  # actually protects the node.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 1
+      memory: 512Mi
 
 tolerations:
   - operator: Exists
+
+# ─── Resource bounds ────────────────────────────────────────────────────────
+# The chart ships `resources: {}` for every component; only the
+# install-cni-binaries init container carries limits upstream. Unset, the agent
+# and the Envoy proxy run unbounded on every node in the fleet, so a memory leak
+# or a policy explosion in either takes the node with it rather than the pod.
+#
+# Datapath components below (cilium-agent, cilium-envoy) deliberately carry a
+# memory limit and NO CPU limit. CFS throttling on the CNI datapath adds
+# packet-processing latency to every pod on that node — a CPU limit would
+# degrade the thing it is meant to protect, while the memory limit still bounds
+# the failure. Control-plane components (operator, hubble relay/ui) take a full
+# limit pair, because throttling them costs observability, not traffic.
+#
+# Note this is an engineering choice, not admission compliance: kube-system is
+# on the exclusion list of policies/kyverno/pod-security-standards (see
+# require-resource-limits.yaml), so nothing here is required to carry a CPU
+# limit. Do not "fix" the missing CPU limits below to satisfy that policy.
+
+# cilium-agent — one per node, and every pod's networking depends on it.
+resources:
+  requests:
+    cpu: 100m
+    memory: 512Mi
+  limits:
+    memory: 1Gi
+
+# Init containers (all except install-cni-binaries, which the chart pins itself).
+# These run before the datapath is serving, so throttling them is harmless and a
+# CPU limit is appropriate. clean-cilium-state is the heaviest of them.
+initResources:
+  requests:
+    cpu: 100m
+    memory: 100Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+envoy:
+  # The L7 proxy, also a per-node DaemonSet. It is in the request path for the
+  # httpV2 Hubble metrics enabled above, so its memory tracks connection and L7
+  # policy count. Same datapath reasoning as the agent: memory bound, no CPU cap.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
