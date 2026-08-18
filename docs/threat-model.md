@@ -136,10 +136,12 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
   runtime to over-privilege. Agents are Deployments running the tenant's own image
   under the tenant ServiceAccount, so an agent holds exactly the tenant's grants and
   nothing more, and its actions appear in the audit log under the tenant's identity.
-  The catalog previously carried a runtime that shipped a cluster-admin-bound tools
-  ServiceAccount and an admin-token MCP, both switched off by values — a refusal
-  that had to keep being made correctly. Removing the runtime removes the need to
-  make it. Model access is an explicit `allowedModels` allowlist, not a family
+  The catalog ships no cluster-admin-bound tools ServiceAccount and no admin-token
+  MCP that a values flag could switch back on. That is the point of omitting a
+  bundled runtime rather than shipping one with its dangerous options defaulted
+  off: a surface that does not exist needs no refusal, and a refusal is only safe
+  for as long as everyone keeps making it correctly.
+  Model access is an explicit `allowedModels` allowlist, not a family
   wildcard (platform.yaml:35-37), and operator sessions cap at 1h (:41).
 - **Denial of service (runaway spend)** — a two-tier budget with
   `killSwitchEnabled: true` and `alertThresholdsPercent: [50,80,100]`
