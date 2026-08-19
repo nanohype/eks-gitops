@@ -5,7 +5,7 @@
   ],
   "description": [
     "Currency management for the catalog, layered on the org preset at nanohype/.github.",
-    "What stays local is the manager scoping and the custom managers. Renovate watches every Helm chart version pinned in applicationsets/ (and the git-pinned Gateway API CRDs), the Go module behind the appset-render gate, the CLI tools the CI workflow downloads, and the GitHub Actions in .github/workflows/ — the helm-render, schema and policy CI gates then validate each bump before merge.",
+    "What stays local is the manager scoping and the custom managers. Renovate watches every Helm chart version pinned in applicationsets/ (and the git-pinned Gateway API CRDs), the Go module behind the appset-render gate, the CLI tools the CI workflow downloads, and the GitHub Actions in .github/workflows/ \u2014 the helm-render, schema and policy CI gates then validate each bump before merge.",
     "enabledManagers is an allowlist rather than a default because this repo is a manifest catalog: without it Renovate would try to read every values.yaml as a Helm chart it owns."
   ],
   "enabledManagers": [
@@ -63,6 +63,17 @@
         "#\\s*renovate:\\s*datasource=(?<datasource>[a-z-]+)\\s+depName=(?<depName>[^\\s]+)\\s*\\n\\s*[A-Z0-9_]+:\\s*\"?(?<currentValue>[^\"\\s]+)\"?"
       ],
       "datasourceTemplate": "{{{datasource}}}"
+    },
+    {
+      "customType": "regex",
+      "description": "OCI Helm charts pinned on an ArgoCD source directly (repoURL/chart/targetRevision) rather than as a matrix list element. The built-in argocd manager cannot read these: it concatenates repoURL and chart, and both of these appsets deliberately repeat the chart name in repoURL because ArgoCD resolves the OCI digest from repoURL alone. That produces .../operator/operator and .../karpenter/karpenter, neither of which is a package, so both pins aged unwatched. As with the matrix OCI manager above, the registry path already carries the chart name, so packageName is the path alone.",
+      "managerFilePatterns": [
+        "/^applicationsets/[^/]+\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "repoURL:\\s*oci://(?<packageName>[^\\s]+)\\s*\\n\\s*chart:[^\\n]*\\n\\s*targetRevision:\\s*\"?(?<currentValue>[^\"\\s]+)\"?"
+      ],
+      "datasourceTemplate": "docker"
     }
   ],
   "packageRules": [
@@ -114,7 +125,7 @@
     },
     {
       "description": [
-        "Cilium is the CNI and does not ride the batch. Two things are encoded here, and the org preset's ordering note is what makes it possible: a consumer's packageRules are appended after the preset's, and later rules win — so this ungroups a package the preset grouped.",
+        "Cilium is the CNI and does not ride the batch. Two things are encoded here, and the org preset's ordering note is what makes it possible: a consumer's packageRules are appended after the preset's, and later rules win \u2014 so this ungroups a package the preset grouped.",
         "It moves alone. The preset extends group:allNonMajor, which folds cilium in with every other non-major chart; the last cilium minor arrived alongside five unrelated bumps. A CNI minor cannot be reviewed, staged or reverted independently once it is in a batch, and this is the one chart on which every pod's networking depends.",
         "It moves with landing-zone. components/aws/cluster-bootstrap installs Cilium on every bootstrapped cluster and then never touches it again (ignore_changes = all); this catalog owns it from the first sync on everything except the hub. Both pins decide what version a cluster ends up on, so moving this one alone makes a freshly bootstrapped cluster jump straight from the cluster-bootstrap pin to this one. Cilium's upgrade documentation forbids that: consecutive minors only, newest patch of the current minor first. A skew that is dormant at patch level becomes a rule-violating minor jump on every new install, with every gate in both repos green.",
         "dependencyDashboardApproval rather than enabled:false. The update stays listed on the Dependency Dashboard with a checkbox, so it is visible and can be released the moment both pins are ready to move together. Turning the package off would make the update silently stop existing, which is the failure this rule is written to prevent."
@@ -133,9 +144,17 @@
         "cni"
       ],
       "prBodyNotes": [
-        "**This PR moves only one of the two pins that decide a cluster's Cilium version.** `landing-zone/components/aws/cluster-bootstrap` carries the other and installs Cilium on every bootstrapped cluster. Merging this alone makes a freshly bootstrapped cluster cross a minor in one hop, which Cilium's upgrade documentation forbids — consecutive minors only, newest patch of the current minor first.",
+        "**This PR moves only one of the two pins that decide a cluster's Cilium version.** `landing-zone/components/aws/cluster-bootstrap` carries the other and installs Cilium on every bootstrapped cluster. Merging this alone makes a freshly bootstrapped cluster cross a minor in one hop, which Cilium's upgrade documentation forbids \u2014 consecutive minors only, newest patch of the current minor first.",
         "Move both pins in one step, or hold this until the other is ready."
       ]
+    },
+    {
+      "description": "Silence the two dead lookups the built-in argocd manager derives from the same two pins. The customManager above watches them correctly; these names are what argocd's repoURL+chart concatenation produces and they resolve to nothing. Disabling them removes the standing 'Renovate failed to look up' warning from the Dependency Dashboard, where a permanent warning trains readers to ignore the panel that is supposed to tell them a pin is unwatched.",
+      "matchPackageNames": [
+        "ghcr.io/nanohype/eks-agent-platform/charts/operator/operator",
+        "public.ecr.aws/karpenter/karpenter/karpenter"
+      ],
+      "enabled": false
     }
   ]
 }
