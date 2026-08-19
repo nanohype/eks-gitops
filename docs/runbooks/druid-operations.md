@@ -33,9 +33,7 @@ Rotation procedure:
    ```
 4. Roll the pods. Druid reloads keystore *files* from disk every 180s (`reloadSslContextSeconds`), but the *password* env var is read once at process start — a rotation is not complete until every pod restarts:
    ```bash
-   for c in coordinator overlord historical; do
-     kubectl -n druid-<tenant> rollout restart statefulset -l app.kubernetes.io/name=druid
-   done
+   kubectl -n druid-<tenant> rollout restart statefulset -l app.kubernetes.io/name=druid
    kubectl -n druid-<tenant> rollout restart deployment
    ```
 5. Order matters only in one place: do not restart pods between steps 2 and 3 — a pod starting with the new password while the TLS secret still holds keystores encrypted with the old one fails at JVM keystore load.

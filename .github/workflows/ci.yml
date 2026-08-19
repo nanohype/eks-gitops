@@ -478,7 +478,7 @@ jobs:
   # ── Secret scan ──────────────────────────────────────────────────────
   # gitleaks over the working tree. The catalog keeps secrets out by
   # construction (External Secrets + Pod Identity, no static keys in values), but
-  # nothing mechanically stopped a future commit from pasting a raw credential
+  # nothing mechanically stops a future commit from pasting a raw credential
   # into a values file — the residual the threat model named
   # (docs/threat-model.md). Run as the pinned binary rather than the marketplace
   # action, which is license-gated for organization accounts.

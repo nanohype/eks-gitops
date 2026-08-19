@@ -2,8 +2,7 @@
 """Every chart pin in applicationsets/ is watched by something that resolves.
 
 A Renovate manager that detects a pin is not the same as a manager that can look
-it up. Both failures are silent in opposite ways, and this repo has had one of
-each:
+it up. Both failures are silent in opposite ways:
 
   - A customManager whose regex matches nothing is valid config.
     `renovate-config-validator` passes it happily — the schema is fine and the

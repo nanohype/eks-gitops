@@ -16,9 +16,8 @@ and the names the chart creates must be the same set, in both directions.
   - a pod naming a ServiceAccount the chart does not create is a pod that will not
     schedule, or that silently runs as `default`
   - a ServiceAccount no pod uses is either dead config or, worse, the name an external
-    Pod Identity association is bound to while the real pods run as something else —
-    which is exactly how druid's ingestion and query roles came to be attached to
-    nothing while the overlord and broker ran with node credentials
+  Pod Identity association is bound to while the real pods run as something else and
+  fall back to node credentials
 
 The cross-repo half cannot be gated from here: landing-zone composes the associations
 and this repo composes the ServiceAccounts. What makes that bearable is that each side

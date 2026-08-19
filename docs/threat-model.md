@@ -136,7 +136,7 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
 - **Residual** — the architecture is backstopped by an enforced scan: a
   **gitleaks** job scans the working tree on every PR and push (`ci.yml`
   `secrets` job), failing the build on a committed credential — so a raw secret
-  pasted into a values file no longer merges. gitleaks is pattern- and
+  pasted into a values file does not merge. gitleaks is pattern- and
   entropy-based, so a novel secret format it has no rule for can still slip; a
   fork handling real secrets should pair it with GitHub push-protection and
   narrow its allowlist to the repo's known example values.

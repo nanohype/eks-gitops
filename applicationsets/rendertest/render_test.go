@@ -137,8 +137,8 @@ func renderOps(t *testing.T, patch string, labels, annotations map[string]string
 		t.Fatalf("parse patch template: %v", err)
 	}
 	// Mirror the ArgoCD cluster generator: metadata.labels and metadata.annotations
-	// arrive as string maps, the exact shape that made a dig-based read panic in
-	// this template's history — so the harness reproduces it rather than passing
+	// arrive as string maps, the exact shape a dig-based read panics on — so the
+	// harness reproduces it rather than passing
 	// the more forgiving map[string]interface{}.
 	data := map[string]interface{}{
 		"metadata": map[string]interface{}{

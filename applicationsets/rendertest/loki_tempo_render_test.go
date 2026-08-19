@@ -102,7 +102,7 @@ func TestTempoS3Storage(t *testing.T) {
 		if want := labels["region"]; v.Tempo.Storage.Trace.S3.Region != want {
 			t.Fatalf("tempo.storage.trace.s3.region = %q, want %q\n%s", v.Tempo.Storage.Trace.S3.Region, want, out)
 		}
-		// The assertion this test was missing, and it is not symmetric with loki's.
+		// Deliberately not symmetric with loki's assertion.
 		//
 		// Tempo reaches S3 through the minio-go client, which validates the endpoint before
 		// it looks at anything else and refuses an empty one:
@@ -113,8 +113,8 @@ func TestTempoS3Storage(t *testing.T) {
 		// Tempo then exits at startup, the StatefulSet crashloops, and the Application sits
 		// Progressing forever — on a fresh install that is the single thing that holds up
 		// catalog convergence, for thirty minutes, until the installer gives up. A bucket
-		// and a region rendered correctly the whole time, which is why asserting those was
-		// not enough: the manifest was well-formed and the config was incomplete.
+		// A bucket and a region render correctly regardless, which is why asserting those
+		// is not enough: the manifest is well-formed and the config incomplete.
 		//
 		// loki needs no endpoint because its AWS client derives one from the region. The two
 		// blocks are asymmetric on purpose.

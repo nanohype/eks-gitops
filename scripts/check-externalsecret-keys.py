@@ -10,9 +10,8 @@ replaces it per cluster from the `cluster_name` label.
 
 A `data:` list names that same remote secret once per key it pulls. Four keys,
 four identical names, four JSON-pointer paths to patch — and the count lives in
-two files that nothing reconciles. `managed-monitoring-endpoints` grew from one
-key to four and the patch stayed at `/spec/data/0/...`, so indices 1-3 kept a
-placeholder that exists in no account.
+two files that nothing reconciles. Add a key without extending the patch and the
+unpatched indices keep a placeholder that exists in no account.
 
 That failure is not partial. External Secrets fails an ExternalSecret whole, so
 one unpatched index takes the working keys down with it: the Athena datasource
