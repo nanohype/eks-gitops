@@ -79,7 +79,10 @@ graph LR
 | 2 | Bootstrap | metrics-server, reloader, storage-classes, priority-classes |
 | 5 | Karpenter | Karpenter (nodes ready before workloads) |
 | 10-12 | Security | Kyverno, Trivy Operator, Falco |
-| 20-22 | Policies | Kyverno PSS, Best Practices, Supply Chain |
+| 13 | CRDs | Argo Workflows CRDs (ahead of the operator chart that declares argoproj.io CRs) |
+| 20-23 | Policies | Kyverno PSS (20), Best Practices (21), Supply Chain (22), Networking (23) |
+| 21-44 | AI Platform | agent operator (21), Envoy AI Gateway CRDs + controllers (40-42), agent-platform CRs (44) |
+| 30 | CRDs | Gateway API |
 | 29-34 | Observability | kube-state-metrics, Loki, Tempo, OTel agent + gateway, OpenCost, grafana-operator |
 | 40-44 | Operations | Velero, VPA, Goldilocks, Descheduler, Karpenter Resources, KEDA |
 | 50-52 | Argo Platform | Argo Rollouts, Argo Events, Argo Workflows |

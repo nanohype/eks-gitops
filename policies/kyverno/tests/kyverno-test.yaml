@@ -18,7 +18,7 @@ results:
   # require-labels — the full required tier (name + managed-by + component +
   # environment + team). good-deploy carries all five; bad-deploy carries none;
   # bad-deploy-missing-tier carries name but omits team, so it proves the tier is
-  # enforced, not just the legacy app.kubernetes.io/name check.
+  # enforced, not just the app.kubernetes.io/name label.
   - policy: require-labels
     rule: require-standard-labels
     kind: Deployment

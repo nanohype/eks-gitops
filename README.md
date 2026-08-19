@@ -62,7 +62,14 @@ repoURL: '{{ index .metadata.annotations "gitops/repo-url" }}'
 │  ├── kyverno-policies (PSS, best-practices, networking, ...)        │
 │  ├── addons-agent-operator (eks-agent-platform operator)            │
 │  ├── gateway-api-crds (Gateway API CRDs)                            │
-│  ├── addons-observability (kube-state-metrics, Loki, Tempo, OTel)   │
+│  ├── addons-observability (kube-state-metrics, grafana-operator)    │
+│  ├── addons-loki / addons-tempo (per-cluster S3 backends)           │
+│  ├── addons-otel-agent / addons-otel-gateway[-floor] (telemetry)    │
+│  ├── argo-workflows-crds (argoproj.io CRDs)                         │
+│  ├── addons-argo-workflows (Argo Workflows + artifact repo)         │
+│  ├── addons-ai-platform-kustomize (GatewayClasses)                  │
+│  ├── addons-disruption-budgets (PDBs for chart-less addons)         │
+│  ├── portal-tenants (tenant boundary CRs)                           │
 │  ├── addons-opencost (OpenCost)                                     │
 │  ├── addons-operations-helm (VPA, Goldilocks, Descheduler, KEDA)    │
 │  ├── addons-operations-kustomize (Karpenter Resources)              │
@@ -139,7 +146,7 @@ eks-gitops/
 | 40 | AI Platform (envoy-ai-gateway); Operations (Velero, VPA, Goldilocks, Descheduler, KEDA) | After operator + observability |
 | 42 | Operations kustomize (Karpenter Resources) | After operations Helm |
 | 44 | Agent Platform CRs | After the AI-platform runtime is up |
-| 50 | Argo Platform (Rollouts, Events, Workflows); Druid tenants | Application layer |
+| 50 | Argo Platform (Rollouts, Events, Workflows); Druid tenants (opt-in — the chart is `catalog/druid/`, no default ApplicationSet) | Application layer |
 | 60 | Dashboards | After the systems they chart exist |
 
 ## Environment Differences

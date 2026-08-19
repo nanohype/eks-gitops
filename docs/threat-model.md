@@ -9,7 +9,7 @@ residual risk a fork should weigh.
 
 The substrate this catalog deploys onto — the EKS control plane, node security,
 Terraform state, per-tenant IAM — is modeled separately in the
-[landing-zone threat model](../../landing-zone/docs/threat-model.md). Where this
+[landing-zone threat model](https://github.com/nanohype/landing-zone/blob/main/docs/threat-model.md). Where this
 model says "owned by landing-zone" it means exactly that boundary.
 
 ## Trust boundaries
@@ -87,7 +87,9 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
 - **Elevation of privilege** — a root or unconstrained pod. Mitigated by Kyverno
   ClusterPolicies: `runAsNonRoot: true` (require-non-root.yaml:51-54), CPU + memory
   limits (require-resource-limits.yaml:52-57,90-95), required probes and the
-  `app.kubernetes.io/name` label (require-probes.yaml, require-labels.yaml:53-56).
+  the five-label org tier — `app.kubernetes.io/name`, `managed-by`, `component`,
+  `platform.nanohype.dev/environment`, `platform.nanohype.dev/team`
+  (require-probes.yaml, require-labels.yaml:88-92).
   Base is `Audit`; each group's **production overlay patches every ClusterPolicy to
   `Enforce`** — both `best-practices/overlays/production/kustomization.yaml:8-14`
   (require-labels, require-probes) and
@@ -184,7 +186,7 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
 
 - **The running cluster and its substrate** — EKS control plane, node security,
   Terraform state, org guardrails: owned by the
-  [landing-zone threat model](../../landing-zone/docs/threat-model.md).
+  [landing-zone threat model](https://github.com/nanohype/landing-zone/blob/main/docs/threat-model.md).
 - **Per-tenant IAM** — IRSA/Pod Identity role minting and the agent-iam boundary
   are provisioned by landing-zone; this catalog only *consumes* the role ARNs.
 - **Agent-platform enforcement logic** — the budget reconciler, kill-switch

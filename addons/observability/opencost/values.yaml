@@ -25,8 +25,8 @@ opencost:
         cpu: 100m
         memory: 128Mi
   # Single deployment (exporter + ui), so tolerations live at opencost.tolerations
-  # — the previous per-component exporter/ui tolerations sat on invalid paths and
-  # were silently dropped, so CriticalAddonsOnly never actually applied until now.
+  # — per-component exporter/ui tolerations sit on invalid paths here and are
+  # silently dropped, so CriticalAddonsOnly would never actually apply.
   tolerations:
     - key: CriticalAddonsOnly
       operator: Exists

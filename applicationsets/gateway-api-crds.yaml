@@ -9,7 +9,7 @@
 #
 # because it cannot create the Gateway/HTTPRoute it exists to create. The operator's
 # own chart RBAC grants gateway.networking.k8s.io on gateways + httproutes, so the
-# code has always expected them. Nothing in this catalog installed them.
+# code expects them. This Application is what installs them.
 #
 # SOURCE: the upstream repo, pinned to a tag, rather than vendoring several thousand
 # lines of CRD into this catalog or fetching a release URL at sync time (which would
@@ -19,8 +19,8 @@
 #
 # VERSION: v1.5.1 (stable since 2026-03), not v1.6.0 (2026-06-29). For CRDs that
 # every gateway on the cluster depends on, four months of soak beats two weeks of
-# novelty, and the v1 CRDs are backward compatible — v1.5.1 carries GatewayClass,
-# GatewayClass, Gateway, HTTPRoute, GRPCRoute and BackendTLSPolicy, which is
+# the pinned release carries GatewayClass, Gateway, HTTPRoute, GRPCRoute and
+# BackendTLSPolicy, which is
 # everything the operator and Envoy AI Gateway use. BackendTLSPolicy is served at v1
 # here — its older v1alpha3 ships in the same CRD but is served: false, so the
 # operator emits v1. Bump deliberately, not incidentally. Renovate watches this git tag (a custom

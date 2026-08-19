@@ -51,4 +51,4 @@ argocd app history <app-name>                # newest entry = reverted revision
 kubectl -n <addon-namespace> get pods        # workloads back to steady state
 ```
 
-Confirm the app remains Synced across a self-heal interval, and re-enable anything paused (`--sync-policy automated`, applicationset-controller replicas) if a manual lever was used. Then track the failed upgrade as its own work item — the pin bump will come back (Renovate watches chart versions; `.github/dependabot.yml` owns only the github-actions bumps), and the next attempt needs whatever the postmortem found.
+Confirm the app remains Synced across a self-heal interval, and re-enable anything paused (`--sync-policy automated`, applicationset-controller replicas) if a manual lever was used. Then track the failed upgrade as its own work item — the pin bump will come back (Renovate watches chart versions and the GitHub Actions pins alike), and the next attempt needs whatever the postmortem found.

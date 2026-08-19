@@ -15,7 +15,7 @@
 #
 # NAME CONVENTION (portal depends on this — keep in sync with portal's per-cluster
 # ArgoCD lookup):
-#   cluster-<environment>-<name>     e.g. cluster-production-spazeks
+#   cluster-<environment>-<name>     e.g. cluster-production-analytics
 # where <environment> is the cluster file's parent directory (.path.basename) and
 # <name> is the CR's metadata.name (== the file stem). The singular "cluster-"
 # prefix is distinct from any env-rollup name space, so the two never collide.
@@ -36,8 +36,10 @@
 # SCOPING: this must reconcile ONLY on the management (hub) cluster — spokes have
 # no Cluster CRD/Crossplane. The destination below is in-cluster, so it's correct
 # wherever this ApplicationSet's ArgoCD runs; ensuring it's instantiated only on the
-# hub (a cluster-label selector / hub-only App-of-Apps path) is the same open
-# multi-cluster-routing question portal-tenants carries — verify on the hub on first use.
+# hub. Instantiating it only on the hub is the enabling step in
+# applicationsets/opt-in/README.md; portal-tenants solves the same scoping with a
+# `portal/tenants-enabled` cluster-label selector, which is the pattern to reach
+# for if this ever needs to ship in the default path.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:

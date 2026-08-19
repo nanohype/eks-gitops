@@ -75,9 +75,9 @@ spec:
       destination:
         server: https://kubernetes.default.svc
         namespace: '{{ .namespace }}'
-      # Kyverno's CRDs drift on three paths that carry no meaning, so the app sat
-      # permanently OutOfSync while perfectly Healthy. Enumerated by diffing the
-      # rendered target against the live object:
+      # Kyverno's CRDs drift on three paths that carry no meaning; without these
+      # ignores the app sits permanently OutOfSync while perfectly Healthy. The set
+      # comes from diffing the rendered target against the live object:
       #
       #   .metadata.annotations  git {}  vs live absent  — the chart renders an EMPTY
       #   .metadata.labels       git {}  vs live absent    map; the API server stores

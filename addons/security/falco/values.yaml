@@ -2,9 +2,9 @@
 
 driver:
   kind: modern_ebpf
-  # camelCase keys — the previous snake_case (modern_ebpf/cpus_for_each_buffer/
-  # buf_size_preset) sat on invalid paths and were silently dropped, so this
-  # ring-buffer tuning did not apply until now.
+  # camelCase keys. The snake_case forms (modern_ebpf/cpus_for_each_buffer/
+  # buf_size_preset) sit on invalid paths and are silently dropped, so this
+  # ring-buffer tuning would not apply at all.
   modernEbpf:
     cpusForEachBuffer: 4
     bufSizePreset: 4

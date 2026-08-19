@@ -5,7 +5,11 @@ kind: Kustomization
 # and only that. No namespace transform, so the ClusterSecretStore stays
 # cluster-scoped.
 #
-# The AMP endpoint sync used to ride here too. It is full-tier only — its
+# The AMP endpoint sync is deliberately not here. It is full-tier only — its
+# remoteRef resolves to a Secrets Manager entry only managed-monitoring creates —
+# so it lives in secret-stores-managed and is delivered by a tier-gated
+# generator. Delivered cluster-wide it would leave every floor cluster with a
+# permanently Degraded wave-1 Application.
 # remoteRef resolves to a Secrets Manager entry only managed-monitoring creates —
 # so it lives in secret-stores-managed and is delivered by a tier-gated
 # generator. Cluster-wide, it left every floor cluster with a permanently

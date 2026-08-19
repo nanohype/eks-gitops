@@ -4,8 +4,9 @@
 # the provider's controller-runtime metrics, which reach AMP once the
 # provider-opentofu pod carries the prometheus.io/scrape annotation (eks-fleet
 # vend-provider-scrape). Per-cluster vend inventory/readiness (Cluster + Workspace
-# CR state) is a follow-up that needs the kube-state-metrics customResourceState
-# config extended and validated on a live hub — tracked separately.
+# CR state) is out of scope for this group — it needs the kube-state-metrics
+# customResourceState config extended to the Cluster and Workspace kinds, which
+# these rules do not read.
 #
 # The burn rules carry two extra factors, both load-bearing:
 #

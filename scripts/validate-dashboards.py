@@ -10,8 +10,8 @@ CR holds the whole dashboards Application — and app-of-apps with it — Degrad
      grafana-operator resolves `spec.grafanaCom.id` by fetching
      https://grafana.com/api/dashboards/<id>/revisions. If grafana.com 404s
      (the dashboard was unpublished/renumbered) the operator marks the CR
-     InvalidSpec and never renders it. Hit us on opencost 19625, karpenter
-     21111, keda 15623 — all three 404.
+     InvalidSpec and never renders it.
+     CHECK: /revisions must return HTTP 200 for every id.
      CHECK: /revisions must return HTTP 200 for every id.
 
   2. LEGACY DASHBOARD ALERTS (ApplyFailed)

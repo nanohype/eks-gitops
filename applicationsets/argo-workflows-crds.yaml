@@ -22,9 +22,9 @@
 # sync time, forever — the exact thing gateway-api-crds.yaml declines to do, in
 # the same words: "rather than [...] fetching a release URL at sync time (which
 # would make every sync depend on a GitHub download and silently drift as the tag
-# moves)". addons/argo-platform/argo-workflows/values.yaml now sets
-# crds.install: false, so that Job no longer renders and the two stop co-owning
-# the same eight objects.
+# moves)". addons/argo-platform/argo-workflows/values.yaml sets
+# crds.install: false, so that Job does not render and this Application is the
+# single owner of the eight objects.
 #
 # SOURCE: argoproj/argo-helm at the tag matching the chart pin, not
 # argoproj/argo-workflows at its appVersion. Both publish the same eight CRDs,

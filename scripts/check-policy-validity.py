@@ -18,10 +18,10 @@ kubeconform (the schema permits both fields independently), and passes
 `kyverno test` — which loads the policy in a context that does not run this
 validation. It then fails to apply on every cluster whose overlay is Audit.
 
-That is exactly how it shipped: mutateDigest was set to true in a base that is
-Audit, the enforcing overlays were fine, and the development overlay was invalid.
-The policy-admission gate only ever renders the Enforce tier, so nothing looked
-at it.
+The combination is reachable here: a base setting `mutateDigest: true` renders an
+invalid policy in every Audit overlay while the enforcing overlays stay valid.
+The policy-admission gate renders only the Enforce tier, so it never reaches
+that overlay.
 
 So this renders EVERY policy overlay — every group, every environment — and runs
 each through Kyverno's own validation. An overlay the API server would reject
@@ -34,9 +34,9 @@ tag to the digest that was verified. Enforce with mutateDigest false is
 *perfectly valid* Kyverno, so nothing above catches it, and it silently reopens
 the window between admission resolving a tag and the kubelet resolving it again.
 
-The invariant was previously written in four comments — the base policy, both
-enforcing overlay kustomizations, and this file — and enforced in none of them. A
-comment cannot fail a build.
+The same pairing is described in prose beside the base policy and each enforcing
+overlay kustomization, but a comment cannot fail a build — which is why it is
+asserted here.
 """
 
 from __future__ import annotations

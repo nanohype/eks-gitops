@@ -16,7 +16,7 @@ spec:
                 matchLabels:
                   argocd.argoproj.io/secret-type: cluster
                   # Full tier only, and load-bearing rather than tidy: this
-                  # Application carries 45 grafana.integreatly.org CRs plus the
+                  # Application carries every grafana.integreatly.org CR plus the
                   # ExternalSecrets feeding Amazon Managed Grafana. On a floor
                   # cluster the grafana-operator CRDs do not exist, so every one
                   # of those objects fails to apply — the Application sits

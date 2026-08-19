@@ -9,8 +9,8 @@ on:
 permissions:
   contents: read
 
-# CLI tools this workflow downloads as release tarballs (not GitHub Actions, which
-# dependabot owns) or installs through a setup action. Pinned in one place so a
+# CLI tools this workflow downloads as release tarballs or installs through a
+# setup action. Pinned in one place so a
 # Renovate custom manager can watch each `# renovate:`-annotated line and open a
 # currency PR that runs the render/schema/policy gates before merge. A bump also
 # invalidates the hardcoded SHA256 below it, so a human confirms the new checksum.
@@ -90,10 +90,11 @@ jobs:
       - name: Athena panels name only columns the CUR export delivers
         run: ./scripts/check-athena-panel-columns.py
 
-      # Two eval alerts each excluded the never-run state, each explaining in a
-      # comment that the OTHER one covered it. Both were individually correct;
-      # between them the state was reported by nobody — and it was the only state
-      # the fleet had ever been in. kubeconform SKIPs the Grafana CRDs and no gate
+      # A rule that excludes a state is asserting some other rule covers it. Two
+      # rules can each be individually correct and leave the state reported by
+      # nobody. kubeconform SKIPs the Grafana CRDs and no gate executes the
+      # PromQL, so an alert that can never fire looks exactly like one that has
+      # not fired yet. kubeconform SKIPs the Grafana CRDs and no gate
       # executes the PromQL, so an alert that can never fire looks exactly like
       # one that has not fired yet.
       - name: Excluded alert states are somebody's job
@@ -155,8 +156,8 @@ jobs:
         run: pip install pyyaml
       # cluster-bootstrap stamps gitops/repo-branch beside gitops/repo-url. Only
       # app-of-apps ever read it, so a cluster bootstrapped against any other
-      # revision ran app-of-apps there and every child Application on main — two
-      # revisions of the catalog at once, both reporting Synced and Healthy.
+      # revision would run app-of-apps there and every child Application on main —
+      # two revisions of the catalog at once, both reporting Synced and Healthy.
       - name: Catalog sources read gitops/repo-branch
         run: ./scripts/check-catalog-revision.py --list
 
@@ -172,11 +173,9 @@ jobs:
       # the gates: a canary proves a gate RAN, and nothing proves it computes
       # the right answer. stdlib unittest, no test dependency to install.
       # Identical to `task validate:gate-tests` — same working directory, same
-      # argv. The first version of this step passed `-s scripts/tests` AND set
-      # working-directory to it, so discovery looked for scripts/tests inside
-      # scripts/tests. It failed only in CI, because the Taskfile ran a different
-      # command; a local gate and its CI counterpart drifting apart is how a
-      # green `task validate` stops meaning anything about the build.
+      # argv. Keep the two argv-identical: a local gate and its CI counterpart
+      # drifting apart is how a green `task validate` stops meaning anything
+      # about the build.
       - name: Gate-script unit tests
         run: ./run.py
         working-directory: scripts/tests
@@ -566,7 +565,7 @@ jobs:
         # Pinned to a commit SHA, not a floating branch: this action runs in the
         # merge path, so a pin keeps a change to nanohype/nanohype from silently
         # altering this gate. nanohype/nanohype publishes no release tags, so the
-        # SHA is the immutable ref; dependabot (github-actions) bumps it.
+        # SHA is the immutable ref; Renovate's github-actions manager bumps it.
         uses: nanohype/nanohype/.github/actions/render-assert@d75fb5c26a1745df8e33d1a8c89f6f7de6c37b39 # nanohype/nanohype main
         with:
           manifests: rendered

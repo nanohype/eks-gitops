@@ -2,10 +2,10 @@
 # agent kill-switch, two-tier budget, and eval-quality signals. These signals are
 # richly metered (kube_customresource_* projected by the kube-state-metrics
 # customResourceState config in addons/observability/kube-state-metrics) and
-# dashboarded (agent-kill-switch / agent-finance / agent-eval-quality), but until
-# now NOTHING pages when the kill-switch fires, a budget crosses its cap, an
-# EvalSuite regresses below its passThreshold, or evals silently stop. This group
-# closes that meter-but-don't-alert gap.
+# dashboarded (agent-kill-switch / agent-finance / agent-eval-quality). This
+# group is the paging path for those signals: without it nothing pages when the
+# kill-switch fires, a budget crosses its cap, an EvalSuite regresses below its
+# passThreshold, or evals silently stop.
 #
 # WHY CI CANNOT TEST THESE: kubeconform SKIPs the grafana.integreatly.org CRDs and
 # nothing in CI executes the PromQL, so a wrong metric name or label selector

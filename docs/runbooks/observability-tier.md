@@ -117,7 +117,7 @@ The gap has not been measured on a production-sized cluster. If you need a zero-
 | Symptom | Cause |
 | --- | --- |
 | An expected observability Application does not exist | The cluster's tier does not match the appset's selector. Check the label first — a blank label matches nothing. |
-| `dashboards` Application permanently `Degraded` on a floor cluster | It should not be there. `dashboards` is gated `full`; on floor its 45 Grafana CRs have no CRDs. Check the selector edit landed. |
+| `dashboards` Application permanently `Degraded` on a floor cluster | It should not be there. `dashboards` is gated `full`; on floor its Grafana CRs have no CRDs. Check the selector edit landed. |
 | A tenant Application `Degraded` on a floor cluster, `GrafanaDashboard` unknown | The tenant appset's `grafanaDashboard.enabled` parameter is not deriving from the tier. It renders `false` for any cluster whose label is not `full`, including a blank one. |
 | Tenant OTLP exports failing on a floor cluster | The `telemetry` Service or the floor gateway is missing. The endpoint is identical at both tiers; a tenant chart should never need to know the tier. |
 | Landing-zone CloudWatch alarms in `INSUFFICIENT_DATA` | The Container Insights producer is absent or on the OTel pipeline. See step 3. |
