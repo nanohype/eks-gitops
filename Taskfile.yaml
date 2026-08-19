@@ -79,7 +79,7 @@ tasks:
     desc: "Gate-script unit tests — the gates themselves, not the manifests they check"
     dir: scripts/tests
     cmds:
-      - python3 -m unittest discover -p 'test_*.py'
+      - ./run.py
 
   validate:policy-validity:
     desc: "Policy-validity gate — every rendered policy overlay is one Kyverno will accept"
