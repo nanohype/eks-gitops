@@ -31,6 +31,7 @@ EXPECTED = (
     "test_renovate_coverage",
     "test_label_values",
     "test_sync_waves",
+    "test_kyverno_corpus",
 )
 
 # A floor well under the real count. It catches "discovery found almost nothing",
