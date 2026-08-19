@@ -23,9 +23,9 @@ spec:
       # ── Why this matches controllers and not Pod ──────────────────────────
       # A readiness probe gates traffic to a Service; a liveness probe restarts
       # a process that is supposed to stay up. Neither means anything to a pod
-      # whose success condition is exiting 0. Matching `Pod` swept those in:
+      # whose success condition is exiting 0. Matching `Pod` sweeps those in:
       # Argo Workflows creates its step pods at RUNTIME, in their own namespace,
-      # so the eval-runner pods met this policy at Enforce and were denied — a
+      # so eval-runner pods would meet this policy at Enforce and be denied — a
       # whole tier that could never start, invisible to every gate because no
       # rendered manifest carries those pods.
       #
@@ -36,7 +36,7 @@ spec:
       #   * an `exclude` selector on the Argo workflow label — makes Kyverno skip
       #     autogen for the rule, so the Deployment/StatefulSet/DaemonSet variants
       #     vanish and the policy silently stops protecting the entire fleet.
-      #     7 rendered rules became 3.
+      #     Rendering the policy shows only the hand-written rules survive.
       #   * a `precondition` reading `request.object.metadata.labels` — evaluates
       #     at admission but NOT under `kyverno apply`, where `request.object` is
       #     unpopulated. Every pod skipped, including one without the label, so
@@ -48,8 +48,7 @@ spec:
       # from require-labels, require-run-as-non-root and require-resource-limits
       # as well — three policies they already satisfy.
       #
-      # The cost of this shape is that a bare long-running Pod is no longer
-      # matched. Nothing in the fleet or the tenant charts deploys one; every
+      # The cost of this shape is that a bare long-running Pod is not matched. Nothing in the fleet or the tenant charts deploys one; every
       # workload arrives as a controller.
       match:
         any:

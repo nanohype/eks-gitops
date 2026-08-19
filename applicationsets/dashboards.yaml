@@ -16,7 +16,7 @@ spec:
                 matchLabels:
                   argocd.argoproj.io/secret-type: cluster
                   # Full tier only, and load-bearing rather than tidy: this
-                  # Application carries 45 grafana.integreatly.org CRs plus the
+                  # Application carries every grafana.integreatly.org CR plus the
                   # ExternalSecrets feeding Amazon Managed Grafana. On a floor
                   # cluster the grafana-operator CRDs do not exist, so every one
                   # of those objects fails to apply — the Application sits
@@ -134,10 +134,10 @@ spec:
         namespace: '{{ .namespace }}'
       # The external-secrets mutating webhook defaults remoteRef.{conversionStrategy,
       # decodingStrategy,metadataPolicy} and target.deletionPolicy onto every
-      # ExternalSecret. Git omits them, so ArgoCD saw perpetual drift on the two
-      # dashboards ExternalSecrets (grafana-external-credentials, managed-monitoring-
-      # endpoints) and selfHeal churned forever — the app never reached a clean
-      # Synced/Healthy state. Ignore those server-defaulted paths; the
+      # ExternalSecret. Git omits them, so without these ignores ArgoCD sees
+      # perpetual drift on the two dashboards ExternalSecrets
+      # (grafana-external-credentials, managed-monitoring-endpoints) and selfHeal
+      # churns forever, never reaching a clean Synced/Healthy state. Ignore those server-defaulted paths; the
       # RespectIgnoreDifferences syncOption makes selfHeal honor the ignores too,
       # not just the diff view.
       ignoreDifferences:

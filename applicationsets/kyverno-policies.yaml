@@ -61,9 +61,9 @@ spec:
         server: https://kubernetes.default.svc
         namespace: kyverno
       # Kyverno defaults five fields onto its own ClusterPolicies at admission. None
-      # are in git, so the policy sat permanently OutOfSync while Healthy. The exact
-      # set was enumerated by diffing `kustomize build overlays/development` against the live
-      # object — not guessed:
+      # are in git, so without these ignores the policy sits permanently OutOfSync
+      # while Healthy. Re-derive the set by diffing `kustomize build
+      # overlays/development` against the live object:
       #
       #   .spec.admission                                                = true
       #   .spec.emitWarning                                              = false

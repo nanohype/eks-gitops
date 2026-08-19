@@ -8,7 +8,7 @@ eni:
   # IPs, raising the per-node pod cap ~4x (m7g.large ~35 -> ~110). Without it a
   # freshly vended spoke syncing the full catalog exhausts node IPs before
   # Karpenter can scale out — pods stick in ContainerCreating with
-  # "cilium-cni: no IPs available", and Karpenter itself can lose DNS. (#82)
+  # "cilium-cni: no IPs available", and Karpenter itself can lose DNS.
   awsEnablePrefixDelegation: true
 ipam:
   mode: eni

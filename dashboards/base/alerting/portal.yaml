@@ -1,6 +1,7 @@
 # portal — Grafana-managed SLO / burn-rate alert rules, reconciled onto the
 # external Amazon Managed Grafana by the grafana-operator. Mirrors the burn-rate
-# windows the observability-slo standard defines (nanohype#123); each burn rule is
+# windows the observability-slo standard defines
+# (nanohype/standards/observability-slo.json); each burn rule is
 # a dual-window check (both the long and short window must exceed the factor),
 # encoded with PromQL `> bool` products so a single instant query yields 1/0.
 #

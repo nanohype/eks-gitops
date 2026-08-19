@@ -1,4 +1,4 @@
-# ADR-002: ArgoCD Multi-Source Flat Values
+# ADR-0001: ArgoCD Multi-Source Flat Values
 
 ## Status
 
@@ -88,10 +88,21 @@ Helm chart to inflate, so the multi-source model does not apply to them.
 - Correct merge precedence depends on file order in `valueFiles` — the base
   must precede the environment delta.
 
-## Supersedes
+## Alternatives
 
-Replaces the approach recorded in
-[ADR-001](001-kustomize-helm-overlays.md) (Kustomize `helmCharts` inflation with
-`additionalValuesFiles`). The delta-only principle for environment values files
-carries forward unchanged; the mechanism moved from Kustomize Helm inflation to
-ArgoCD multi-source `$values` refs.
+**Kustomize `helmCharts` inflation with `additionalValuesFiles`.** Kustomize can
+render a chart inline, with `valuesFile` for the base and
+`additionalValuesFiles` for the per-environment delta, which satisfies the
+delta-only requirement. It is rejected because every Kustomize operation then
+needs `--enable-helm`, values precedence has to be reasoned about through two
+templating systems at once, and the chart version is pinned in a
+`kustomization.yaml` per addon rather than beside the other chart pins the
+currency tooling reads.
+
+**Helm alone, with ArgoCD managing the release.** No layering mechanism short of
+ArgoCD-specific value overrides, which puts environment differences in the
+Application rather than in Git beside the addon.
+
+**Kustomize alone, over pre-rendered manifests.** Rendering each chart to raw
+YAML forfeits the chart's own upgrade path and templating, and makes a version
+bump a diff over generated output rather than a one-line pin change.

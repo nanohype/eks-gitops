@@ -9,7 +9,7 @@ residual risk a fork should weigh.
 
 The substrate this catalog deploys onto — the EKS control plane, node security,
 Terraform state, per-tenant IAM — is modeled separately in the
-[landing-zone threat model](../../landing-zone/docs/threat-model.md). Where this
+[landing-zone threat model](https://github.com/nanohype/landing-zone/blob/main/docs/threat-model.md). Where this
 model says "owned by landing-zone" it means exactly that boundary.
 
 ## Trust boundaries
@@ -77,7 +77,15 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
   `required` flips, the issuer changes, or the subjectRegExp loses its anchor, its
   org scope, or its `refs/tags` binding — run in CI (ci.yml:85-88).
 - **Residual** — verification is signature-presence only: `mutateDigest` /
-  `verifyDigest` are `false` (verify-images.yaml:43-45), so a tag is not yet pinned
+  - **Residual** — the base keeps `mutateDigest: false` (verify-images.yaml),
+  which Kyverno requires under an `Audit` failure action; the staging and
+  production overlays patch it to `true` alongside the `Enforce` patch
+  (supply-chain/overlays/production/kustomization.yaml, overlays/staging/kustomization.yaml), so a tag is pinned to the verified
+  digest exactly where the policy enforces and nowhere else. `verifyDigest` stays
+  `false` at every tier (verify-images.yaml) — Kyverno derives the digest
+  rather than demanding authors write one. Third-party images (anything outside
+  `ghcr.io/nanohype/*`) are unmatched and pass unsigned — their trust is the
+  upstream registry's, not this policy's.
   to a digest. Third-party images (anything outside `ghcr.io/nanohype/*`) are
   unmatched and pass unsigned — their trust is the upstream registry's, not this
   policy's.
@@ -85,9 +93,12 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
 ## 4. Admission / pod security  (`policies/kyverno/{best-practices,pod-security-standards}/`)
 
 - **Elevation of privilege** — a root or unconstrained pod. Mitigated by Kyverno
-  ClusterPolicies: `runAsNonRoot: true` (require-non-root.yaml:51-54), CPU + memory
+  ClusterPolicies: `runAsNonRoot: true` (require-non-root.yaml), CPU + memory
+  limits (require-resource-limits.yaml), required probes and
   limits (require-resource-limits.yaml:52-57,90-95), required probes and the
-  `app.kubernetes.io/name` label (require-probes.yaml, require-labels.yaml:53-56).
+  the five-label org tier — `app.kubernetes.io/name`, `managed-by`, `component`,
+  `platform.nanohype.dev/environment`, `platform.nanohype.dev/team`
+  (require-probes.yaml, require-labels.yaml:88-92).
   Base is `Audit`; each group's **production overlay patches every ClusterPolicy to
   `Enforce`** — both `best-practices/overlays/production/kustomization.yaml:8-14`
   (require-labels, require-probes) and
@@ -184,7 +195,7 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
 
 - **The running cluster and its substrate** — EKS control plane, node security,
   Terraform state, org guardrails: owned by the
-  [landing-zone threat model](../../landing-zone/docs/threat-model.md).
+  [landing-zone threat model](https://github.com/nanohype/landing-zone/blob/main/docs/threat-model.md).
 - **Per-tenant IAM** — IRSA/Pod Identity role minting and the agent-iam boundary
   are provisioned by landing-zone; this catalog only *consumes* the role ARNs.
 - **Agent-platform enforcement logic** — the budget reconciler, kill-switch

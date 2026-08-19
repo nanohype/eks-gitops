@@ -45,7 +45,7 @@ spec:
       project: platform
       sources:
         # A published chart at a version, not a branch. Rendering from
-        # `targetRevision: '{{ index .metadata.annotations "gitops/repo-branch" }}'` meant there was no release boundary at all
+        # A branch ref would leave no release boundary at all
         # between a merge upstream and every cluster this ApplicationSet syncs —
         # a chart change reached production the moment it landed, and a chart
         # could ship a CRD field the operator image it names does not
@@ -55,8 +55,7 @@ spec:
         # redundant and is not: ArgoCD resolves the OCI digest from repoURL
         # alone. Pointing repoURL at the enclosing `/charts` namespace makes it
         # request `.../charts/manifests/<version>`, which is not a package —
-        # verified against ArgoCD v3.4.2 on kx, where that form fails to
-        # generate manifests and this one renders all 27. Same shape the Envoy
+        # ArgoCD v3.4.2 fails to generate manifests from it. Same shape the Envoy
         # charts in addons-ai-platform use.
         - repoURL: oci://ghcr.io/nanohype/eks-agent-platform/charts/operator
           chart: operator

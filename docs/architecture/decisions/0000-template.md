@@ -1,8 +1,8 @@
-# ADR-000: [Title]
+# ADR-0000: [Title]
 
 ## Status
 
-[Proposed | Accepted | Deprecated | Superseded]
+[Proposed | Accepted | Deprecated]
 
 ## Context
 

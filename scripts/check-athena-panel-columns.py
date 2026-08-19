@@ -10,15 +10,24 @@ specification — so every column name in AWS's CUR documentation looks plausibl
 in a panel query and all but seven of them fail.
 
 That has now happened twice, in two repos, with two different failure modes:
+Two failure modes follow from that, and they fail differently:
 
-  * eks-agent-platform#180 — budget queries read `tags` and `product`, neither
+* A missing MAP KEY resolves to NULL rather than failing, so a budget query
+reading an undelivered key returns zero month-to-date spend and the kill
+switch has nothing to act on. Silent.
+
+* A missing COLUMN is resolved at parse time, so a panel naming one — say
+`bill_billing_period_start_date`, which this export does not carry — fails
+outright the moment the substrate exists. Loud, but only at query time, and
+invisible here: `validate-dashboards.py` checks datasource refs, template
+variables and grafana.com ids, and never opens `rawSQL`.
     delivered. Athena resolves a missing MAP KEY to NULL rather than failing, so
     every platform's month-to-date spend read zero and the kill switch had
     nothing to act on. Silent.
 
-  * eks-gitops#171 — two finance panels named `bill_billing_period_start_date`,
-    also not delivered. A missing COLUMN is resolved at parse time, so those
-    fail outright the moment the substrate exists. Loud, but only at query time,
+  * A missing COLUMN is resolved at parse time, so a panel naming one — say
+    `bill_billing_period_start_date`, which this export does not carry — fails
+    outright the moment the substrate exists. Loud, but only at query time,
     and nothing here could see it: `validate-dashboards.py` checks datasource
     refs, template variables and grafana.com ids, and never opens `rawSQL`.
 
@@ -42,7 +51,7 @@ the export carries is not knowable from this repo, because it depends on which
 cost-allocation tags are activated in the payer account — a live setting this
 repo cannot see. (Activating late is repairable: AWS backfills up to twelve
 months. A resource that ran untagged is not, because backfill applies an
-activation status and invents no tag values.) The `tags`-vs-`resource_tags` half of eks-agent-platform#180 is caught
+activation status and invents no tag values.) The `tags`-vs-`resource_tags` half is caught
 here; the `'resourceTags/PlatformId'`-vs-`'user_PlatformId'` half is not, and
 that is the half that fails silently. Asserting it needs a live read.
 

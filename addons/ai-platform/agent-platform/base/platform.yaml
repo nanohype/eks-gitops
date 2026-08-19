@@ -37,7 +37,7 @@ spec:
       - global.anthropic.claude-haiku-4-5-20251001-v1:0
   attribution:
     operators:
-      - stxkxs
+      - platform-operator@example.com
     sessionRoleMaxDurationSeconds: 3600
 ---
 apiVersion: governance.nanohype.dev/v1alpha1

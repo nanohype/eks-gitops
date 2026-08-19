@@ -55,7 +55,7 @@
     },
     {
       "customType": "regex",
-      "description": "CLI tools the CI workflow downloads as release tarballs or installs through a setup action (kyverno/gitleaks/kubeconform/trivy). These are release binaries, not GitHub Actions (dependabot owns those), so they age silently otherwise. Each pin in ci.yml's top-level env block carries a `# renovate:` comment naming its datasource + GitHub repo; a bump also fails the hardcoded checksum next to it until a human confirms the new SHA256, so it never auto-merges blind.",
+      "description": "CLI tools the CI workflow downloads as release tarballs or installs through a setup action (kyverno/gitleaks/kubeconform/trivy). These are release binaries rather than GitHub Actions, so the built-in managers do not see them and they age silently otherwise. Each pin in ci.yml's top-level env block carries a `# renovate:` comment naming its datasource + GitHub repo; a bump also fails the hardcoded checksum next to it until a human confirms the new SHA256, so it never auto-merges blind.",
       "managerFilePatterns": [
         "/^\\.github/workflows/ci\\.ya?ml$/"
       ],

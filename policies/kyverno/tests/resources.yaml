@@ -50,7 +50,7 @@ spec:
           image: registry.k8s.io/pause:3.10
 ---
 # Violates require-labels via the EXTENDED tier only: it carries
-# app.kubernetes.io/name (the old single-label check would pass it) but is
+# app.kubernetes.io/name (a name-only check would pass it) but is
 # missing platform.nanohype.dev/team, so it fails once the tier is enforced.
 apiVersion: apps/v1
 kind: Deployment

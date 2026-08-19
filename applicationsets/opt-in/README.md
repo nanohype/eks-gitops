@@ -6,9 +6,9 @@ applicationsets` **without `directory.recurse`**, so ArgoCD applies only the
 top-level manifests there and never descends into this folder.
 
 They are parked here because each one depends on infrastructure that a base
-cluster does not have. Shipping them in the default path meant every install —
-including one vended into a different GitHub org — instantiated ApplicationSets
-that could never generate, leaving them permanently `ErrorOccurred` and dragging
+cluster does not have. In the default path they would instantiate on every
+install — including one vended into a different GitHub org — as ApplicationSets
+that can never generate, sitting permanently `ErrorOccurred` and dragging
 `app-of-apps` (and therefore the whole install) to `Degraded`.
 
 | ApplicationSet | Requires |
@@ -43,7 +43,7 @@ portal, the private repos, and (for `clusters-appset`) the hub:
 `clusters-appset.yaml` hardcodes a `git@github.com:` URL, and
 `apps-tenants.yaml` hardcodes its four app source repos. An install in a
 different GitHub org must repoint these — they are not templated from the cluster
-Secret today.
+Secret.
 
 That is the difference between these two and `portal-tenants`: naming an org in
 the manifest is what forces an appset to be withheld from the default install,
