@@ -1,0 +1,30 @@
+# The upstream chart exposes no podDisruptionBudget value, so this cannot be set
+# through values.yaml the way external-secrets and cert-manager are. It ships
+# here instead, as a manifest alongside the chart — the same shape
+# karpenter-resources uses for resources that accompany a chart it does not own.
+#
+# Protects the workflows server (2 replicas). Argo-workflows-workflow-controller runs a single replica,
+# and a PodDisruptionBudget with minAvailable: 1 over a single replica makes the
+# node it lands on permanently undrainable: the eviction API can never satisfy
+# the budget, so a drain blocks forever. Leaving the singleton unprotected is the
+# correct behaviour, not an oversight — do not "complete" this file by adding one.
+#
+# The selector is copied from the Deployment the pinned chart actually renders,
+# not written by hand. A PodDisruptionBudget whose selector matches nothing is
+# created successfully, reports no error, and protects nothing.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: argo-workflows-server
+  namespace: argo-workflows
+  labels:
+    app.kubernetes.io/managed-by: argocd
+    app.kubernetes.io/component: argo-workflows-server
+spec:
+  # minAvailable rather than maxUnavailable: at 2 replicas they are equivalent,
+  # but minAvailable keeps its meaning if the replica count is ever lowered.
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argo-workflows-server
+      app.kubernetes.io/instance: argo-workflows
