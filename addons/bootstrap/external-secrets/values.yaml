@@ -1,5 +1,28 @@
 # External Secrets Operator
 
+# ─── Disruption + scheduling ────────────────────────────────────────────────
+# All three components run 2 replicas, and none of them got a PodDisruptionBudget
+# from the chart: `podDisruptionBudget.enabled` defaults to false here and there
+# is no replicas>1 auto-enable of the kind kyverno's chart does. So a node drain
+# could take both replicas of any of them at once.
+#
+# The webhook is the one that makes this urgent rather than tidy. It is a
+# validating admission webhook, so while it is down the API server rejects writes
+# to the resources it guards — losing both replicas turns a routine drain into a
+# cluster-wide write failure on ExternalSecret objects, not a degraded read path.
+#
+# minAvailable: 1 rather than maxUnavailable: 1 — with exactly 2 replicas the two
+# are equivalent today, but minAvailable keeps its meaning if replicaCount is ever
+# lowered to 1, where maxUnavailable: 1 would permit taking the only pod.
+#
+# platform-critical (value 1000000, addons/bootstrap/priority-classes) because
+# every workload that resolves a secret through ESO is blocked while it is down,
+# so it must outrank the tenant workloads competing for the same node.
+priorityClassName: platform-critical
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
 replicaCount: 2
 
 resources:
@@ -15,6 +38,10 @@ tolerations:
     operator: Exists
 
 webhook:
+  priorityClassName: platform-critical
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
   replicaCount: 2
   resources:
     requests:
@@ -28,6 +55,10 @@ webhook:
       operator: Exists
 
 certController:
+  priorityClassName: platform-critical
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
   replicaCount: 2
   resources:
     requests:
