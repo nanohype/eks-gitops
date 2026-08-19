@@ -40,10 +40,19 @@ spec:
       verifyImages:
         - imageReferences:
             - "ghcr.io/nanohype/*"
-          # Pure signature verification for the rollout: report presence/validity
-          # without rewriting tags to digests or requiring digest references yet.
           required: true
-          mutateDigest: false
+          # Kyverno resolves the tag to the digest it just verified and rewrites
+          # the pod spec to that digest. Without this, verification and execution
+          # look at different things: the signature is checked against whatever
+          # the tag pointed to during admission, and the kubelet pulls whatever
+          # the tag points to when it starts the container. Anyone able to move a
+          # tag between those two moments runs an unverified image through a
+          # policy reporting success. Pinning at admission closes that window.
+          mutateDigest: true
+          # Still false: this would REQUIRE callers to write digest references
+          # themselves, rejecting every tag-based image in the catalog. mutateDigest
+          # above already gives the guarantee — Kyverno derives the digest rather
+          # than demanding the author supply one.
           verifyDigest: false
           attestors:
             - count: 1

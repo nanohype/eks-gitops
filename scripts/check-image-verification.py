@@ -79,6 +79,18 @@ def main() -> None:
             if vi.get("required") is not True:
                 fail("verifyImages.required must be true — a false/absent value makes verification advisory")
 
+            # mutateDigest is what binds the verified artifact to the executed
+            # one. Flipped to false, every other assertion in this file still
+            # passes: the issuer is pinned, the subject is anchored, the
+            # signature is genuinely checked — and the kubelet can still pull a
+            # different image than the one verified, because the tag is resolved
+            # twice. A silent regression here leaves a policy that reports
+            # success while guaranteeing nothing about what actually ran.
+            if vi.get("mutateDigest") is not True:
+                fail("verifyImages.mutateDigest must be true — without it the tag is "
+                     "resolved once at admission and again by the kubelet, so a tag "
+                     "moved between them runs an unverified image past a passing policy")
+
             attestors = vi.get("attestors") or []
             keyless_seen = False
             for att in attestors:
