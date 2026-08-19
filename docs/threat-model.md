@@ -77,7 +77,15 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
   `required` flips, the issuer changes, or the subjectRegExp loses its anchor, its
   org scope, or its `refs/tags` binding — run in CI (ci.yml:85-88).
 - **Residual** — verification is signature-presence only: `mutateDigest` /
-  `verifyDigest` are `false` (verify-images.yaml:43-45), so a tag is not yet pinned
+  - **Residual** — the base keeps `mutateDigest: false` (verify-images.yaml),
+  which Kyverno requires under an `Audit` failure action; the staging and
+  production overlays patch it to `true` alongside the `Enforce` patch
+  (supply-chain/overlays/production/kustomization.yaml, overlays/staging/kustomization.yaml), so a tag is pinned to the verified
+  digest exactly where the policy enforces and nowhere else. `verifyDigest` stays
+  `false` at every tier (verify-images.yaml) — Kyverno derives the digest
+  rather than demanding authors write one. Third-party images (anything outside
+  `ghcr.io/nanohype/*`) are unmatched and pass unsigned — their trust is the
+  upstream registry's, not this policy's.
   to a digest. Third-party images (anything outside `ghcr.io/nanohype/*`) are
   unmatched and pass unsigned — their trust is the upstream registry's, not this
   policy's.
@@ -85,7 +93,8 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
 ## 4. Admission / pod security  (`policies/kyverno/{best-practices,pod-security-standards}/`)
 
 - **Elevation of privilege** — a root or unconstrained pod. Mitigated by Kyverno
-  ClusterPolicies: `runAsNonRoot: true` (require-non-root.yaml:51-54), CPU + memory
+  ClusterPolicies: `runAsNonRoot: true` (require-non-root.yaml), CPU + memory
+  limits (require-resource-limits.yaml), required probes and
   limits (require-resource-limits.yaml:52-57,90-95), required probes and the
   the five-label org tier — `app.kubernetes.io/name`, `managed-by`, `component`,
   `platform.nanohype.dev/environment`, `platform.nanohype.dev/team`

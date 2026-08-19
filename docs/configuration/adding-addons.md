@@ -12,7 +12,7 @@ Most addons use Helm charts managed via ArgoCD multi-source.
 mkdir -p addons/<category>/<addon-name>
 ```
 
-Categories: `bootstrap`, `networking`, `security`, `observability`, `operations`, `argo-platform`
+Categories: `bootstrap`, `networking`, `security`, `observability`, `operations`, `ai-platform`, `argo-platform`
 
 ### 2. Create Base Values
 

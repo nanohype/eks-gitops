@@ -8,17 +8,17 @@ AgentFleet and EvalSuite. Its comment is honest about why — their schemas live
 in eks-agent-platform and are published to no public catalog — and says they are
 validated "out-of-band" with `kubectl apply --dry-run=server`.
 
-For `addons/ai-platform/agent-platform/base/platform.yaml` that never happened.
-It shipped an AgentFleet whose single agent carried name, systemPrompt and
-modelRoute, and the AgentFleet CRD requires `spec.agents[].image`. Every cluster
-syncing the addon got
+Out-of-band is not a gate. A CR in this catalog can be missing a field its CRD
+requires — `spec.agents[].image` on an AgentFleet, say — and every gate upstream
+of admission stays green while the API server answers
 
     AgentFleet.agents.nanohype.dev "ops-fleet" is invalid:
       spec.agents[0].image: Required value
 
-and that Application never reached Healthy. A skip that records a gap is better
-than a green tick that pretends there is none, but a gap nobody closes is still
-a gap, and this one was in a manifest applied to every cluster in the fleet.
+so the Application never reaches Healthy on any cluster syncing the addon. A
+skip that records a gap is better than a green tick that pretends there is none,
+but a gap nobody closes is still a gap — and this one covers manifests applied
+to every cluster in the fleet.
 
 WHAT THIS DOES
 

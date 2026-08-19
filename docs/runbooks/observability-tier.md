@@ -47,7 +47,6 @@ kubectl get sa -n monitoring otel-gateway-cw
 
 ```bash
 kubectl get svc -n monitoring telemetry
-kubectl get sa -n monitoring otel-gateway-cw
 ```
 
 The `telemetry` Service must exist and have endpoints either way — that is the tenant contract, and it does not vary by tier.

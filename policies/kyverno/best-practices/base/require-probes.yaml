@@ -48,8 +48,7 @@ spec:
       # from require-labels, require-run-as-non-root and require-resource-limits
       # as well — three policies they already satisfy.
       #
-      # The cost of this shape is that a bare long-running Pod is no longer
-      # matched. Nothing in the fleet or the tenant charts deploys one; every
+      # The cost of this shape is that a bare long-running Pod is not matched. Nothing in the fleet or the tenant charts deploys one; every
       # workload arrives as a controller.
       match:
         any:

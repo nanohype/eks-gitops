@@ -17,10 +17,10 @@
 # ArgoCD renders config/crd/standard as a plain manifest directory — there is no
 # kustomization.yaml there, and none is needed.
 #
-# VERSION: v1.5.1 (stable since 2026-03), not v1.6.0 (2026-06-29). For CRDs that
-# every gateway on the cluster depends on, four months of soak beats two weeks of
-# the pinned release carries GatewayClass, Gateway, HTTPRoute, GRPCRoute and
-# BackendTLSPolicy, which is
+# VERSION: a released minor that has soaked, not the newest tag. For CRDs every
+# gateway on the cluster depends on, that trade is worth making, and the v1 CRDs
+# are backward compatible — the pinned release carries GatewayClass, Gateway,
+# HTTPRoute, GRPCRoute and BackendTLSPolicy, which is
 # everything the operator and Envoy AI Gateway use. BackendTLSPolicy is served at v1
 # here — its older v1alpha3 ships in the same CRD but is served: false, so the
 # operator emits v1. Bump deliberately, not incidentally. Renovate watches this git tag (a custom

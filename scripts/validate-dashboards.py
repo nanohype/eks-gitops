@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Dashboard gate — every grafana.com dashboard this repo references must both
 EXIST on grafana.com and be SAVEABLE by Amazon Managed Grafana.
-
-Two bug classes reached a live cluster and neither was caught by CI. Both park
+Two failure classes park
 a GrafanaDashboard CR forever, and because ArgoCD aggregates health, one parked
 CR holds the whole dashboards Application — and app-of-apps with it — Degraded.
 
@@ -320,8 +319,8 @@ def check_local_dashboards(root: pathlib.Path) -> list[str]:
             )
 
     # An empty `used` satisfies `used - declared` on every dashboard, so a regex
-    # that stops matching turns this check into a silent no-op — which is exactly
-    # how it shipped. If anything declares a variable, something must reference
+    # that stops matching turns this check into a silent no-op. If anything
+    # declares a variable, something must reference
     # one, or the parse is broken rather than the tree being clean.
     if total_declared and not total_used:
         problems.append(

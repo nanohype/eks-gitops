@@ -81,12 +81,11 @@ jobs:
 
       # A CUR export runs an explicit column projection, so its delivered set is
       # far narrower than the CUR specification and every documented column name
-      # looks plausible in a panel query. Two finance panels shipped naming
-      # bill_billing_period_start_date, which this export does not carry; the
-      # dashboard gate below reads datasource refs and grafana.com ids and never
-      # opens rawSQL, so nothing here could see it. The equivalent assertion in
-      # eks-agent-platform sits next to the table definition and cannot reach the
-      # consumer side of the repo boundary, which is where this one landed.
+      # looks plausible in a panel query. The dashboard gate below reads
+      # datasource refs and grafana.com ids and never opens rawSQL, so a panel
+      # naming an undelivered column is invisible to it. The equivalent assertion
+      # in eks-agent-platform sits next to the table definition and cannot reach
+      # the consumer side of the repo boundary.
       - name: Athena panels name only columns the CUR export delivers
         run: ./scripts/check-athena-panel-columns.py
 
@@ -136,11 +135,11 @@ jobs:
         run: pip install pyyaml
       # The platform's own CRDs are on kubeconform-scan.sh's skip list — their
       # schemas are published to no public catalog — and that skip's comment says
-      # these kinds are validated out-of-band against a real webhook. For
-      # addons/ai-platform/agent-platform/base/platform.yaml that never happened,
-      # and it shipped an AgentFleet with no spec.agents[].image. This closes the
-      # gap without a cluster: the CRDs come from the operator chart version this
-      # catalog pins.
+      # these kinds are validated out-of-band against a real webhook. This closes
+      # that gap without a cluster: a required field missing from a CR —
+      # `spec.agents[].image` on an AgentFleet, say — renders and schema-scans
+      # clean and only fails at apply. The CRDs come from the operator chart
+      # version this catalog pins.
       - name: The walker is wrong loudly, not quietly
         run: ./scripts/check-platform-crs.py --self-test
       - name: Every platform CR the catalog declares would be admitted
@@ -272,14 +271,11 @@ jobs:
   #     applicationsets/opt-in/README.md as a repoint-before-enabling step.
   # See the full rationale in scripts/check-hardcoded-org.py.
   #
-  # BLOCKING. The templating landed: every applied ApplicationSet now reads its
-  # source from `{{ index .metadata.annotations "gitops/repo-url" }}`, which
-  # cluster-bootstrap stamps on the ArgoCD cluster Secret. A hardcoded catalog
-  # repoURL reintroduced here would silently make a forked catalog INERT — the
-  # fork would sync from the upstream org's repo and edits to it would do nothing.
-  # That is exactly the bug this gate exists to prevent, and it is not theoretical:
-  # a cluster vended into another org was found syncing app-of-apps from
-  # nanohype/eks-gitops@main while its own fork sat unread. Expected count: 0.
+  # BLOCKING. Every applied ApplicationSet reads its source from
+  # `{{ index .metadata.annotations "gitops/repo-url" }}`, which cluster-bootstrap
+  # stamps on the ArgoCD cluster Secret. A hardcoded catalog repoURL makes a
+  # forked catalog INERT — the fork syncs from the upstream org's repo and edits
+  # to it do nothing. Expected count: 0.
   fork-safety:
     name: Fork-safety gate
     runs-on: ubuntu-latest

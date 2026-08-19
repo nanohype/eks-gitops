@@ -5,8 +5,9 @@
 # ORDERING. The eks-agent-platform operator chart ships a WorkflowTemplate, and
 # its EvalSuite controller submits Workflows. That chart syncs at wave 21
 # (applicationsets/addons-agent-operator.yaml); the argo-workflows controller
-# syncs at wave 52. So for 31 waves the catalog asks the API server to accept a
-# kind it has never heard of, on every first sync of every cluster. The eval
+# syncs at wave 52. Without a CRD Application ahead of them, the catalog would
+# ask the API server to accept a kind it has never heard of for 31 waves, on
+# every first sync of every cluster. The eval
 # tier is the visible casualty, but anything declaring an argoproj.io CR before
 # wave 52 has the same problem.
 #
