@@ -75,6 +75,11 @@ tasks:
     cmds:
       - KUBECONFORM_SKIP="" ./scripts/kubeconform-scan.sh applicationsets/
 
+  validate:policy-validity:
+    desc: "Policy-validity gate — every rendered policy overlay is one Kyverno will accept"
+    cmds:
+      - ./scripts/check-policy-validity.py
+
   validate:renovate-coverage:
     desc: "Renovate coverage gate — every chart pin in applicationsets/ is watched by a manager that resolves"
     cmds:
@@ -127,6 +132,7 @@ tasks:
       - validate:dashboards
       - validate:fork-safety
       - validate:renovate-coverage
+      - validate:policy-validity
     cmds:
       - echo "All validations passed."
 

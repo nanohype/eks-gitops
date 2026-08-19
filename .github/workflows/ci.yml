@@ -160,6 +160,31 @@ jobs:
       - name: Catalog sources read gitops/repo-branch
         run: ./scripts/check-catalog-revision.py --list
 
+  policy-validity:
+    name: every rendered policy is one Kyverno will accept
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # Same pinned tarball + checksum the kyverno job uses. Not an install
+      # action: a bump has to fail the hardcoded SHA256 next to it until a human
+      # confirms the new one.
+      - name: Install Kyverno CLI
+        run: |
+          curl -fsSL -o /tmp/kyverno.tar.gz "https://github.com/kyverno/kyverno/releases/download/${KYVERNO_VERSION}/kyverno-cli_${KYVERNO_VERSION}_linux_x86_64.tar.gz"
+          echo "${KYVERNO_SHA256}  /tmp/kyverno.tar.gz" | sha256sum -c -
+          tar -xz -C /tmp -f /tmp/kyverno.tar.gz kyverno
+          sudo install -m 0755 /tmp/kyverno /usr/local/bin/kyverno
+      - name: Install kustomize
+        uses: imranismail/setup-kustomize@53f941b41dca13ed61874bbc6b4b6e1562877530 # v3
+      # kyverno test proves what a policy DOES; this proves the API server
+      # would accept it at all. Kyverno enforces semantic rules no schema
+      # encodes — mutateDigest:true under an Audit failure action is rejected
+      # outright — and an invalid overlay renders clean, passes kubeconform,
+      # passes kyverno test, and then fails to sync on every cluster.
+      - name: Every rendered policy overlay is valid
+        run: ./scripts/check-policy-validity.py
+
   renovate-coverage:
     name: every chart pin is watched by a manager that resolves
     runs-on: ubuntu-latest
@@ -636,6 +661,7 @@ jobs:
       [
         placeholders,
         renovate-coverage,
+        policy-validity,
         lint,
         dashboards,
         serviceaccount-bindings,

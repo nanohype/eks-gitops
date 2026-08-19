@@ -48,7 +48,23 @@ spec:
           # the tag points to when it starts the container. Anyone able to move a
           # tag between those two moments runs an unverified image through a
           # policy reporting success. Pinning at admission closes that window.
-          mutateDigest: true
+          #
+          # FALSE HERE, AND THAT IS NOT THE SAFE DEFAULT IT LOOKS LIKE. Kyverno
+          # rejects the policy outright when mutateDigest is true and
+          # validationFailureAction is Audit:
+          #
+          #   spec.rules[0].verifyImages[0].mutateDigest: Invalid value: true:
+          #   mutateDigest must be set to false for 'Audit' failure action
+          #
+          # This base is Audit, so true here does not weaken the policy — it makes
+          # the whole ClusterPolicy invalid and the addon fails to sync wherever
+          # Audit applies, which is every development cluster. The staging and
+          # production overlays patch this to true alongside their Enforce patch,
+          # so the environments that block also pin. Move the two together or
+          # neither: an Enforce overlay with mutateDigest false silently reopens
+          # the tag-mutation window, and an Audit overlay with it true bricks the
+          # sync.
+          mutateDigest: false
           # Still false: this would REQUIRE callers to write digest references
           # themselves, rejecting every tag-based image in the catalog. mutateDigest
           # above already gives the guarantee — Kyverno derives the digest rather

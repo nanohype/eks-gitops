@@ -8,6 +8,10 @@ resources:
 # admission. Every factory image is keyless-signed by its release workflow,
 # so a verification failure means hand-pushed or altered — exactly what must
 # not run here.
+# mutateDigest moves WITH the Enforce patch, never independently. Kyverno
+# rejects mutateDigest:true under an Audit failure action, so the base keeps it
+# false and only the enforcing environments turn it on. Enforce without it would
+# verify a signature and still let the kubelet re-resolve the tag.
 patches:
   - patch: |-
       - op: replace
@@ -15,3 +19,10 @@ patches:
         value: Enforce
     target:
       kind: ClusterPolicy
+  - patch: |-
+      - op: replace
+        path: /spec/rules/0/verifyImages/0/mutateDigest
+        value: true
+    target:
+      kind: ClusterPolicy
+      name: verify-images
