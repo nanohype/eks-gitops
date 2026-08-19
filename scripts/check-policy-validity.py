@@ -26,6 +26,17 @@ at it.
 So this renders EVERY policy overlay — every group, every environment — and runs
 each through Kyverno's own validation. An overlay the API server would reject
 fails the build instead of the sync.
+
+It also asserts the one pairing Kyverno itself will not: an overlay running
+`validationFailureAction: Enforce` must set `mutateDigest: true`. That
+combination is the whole point of enforcing — verify the signature AND pin the
+tag to the digest that was verified. Enforce with mutateDigest false is
+*perfectly valid* Kyverno, so nothing above catches it, and it silently reopens
+the window between admission resolving a tag and the kubelet resolving it again.
+
+The invariant was previously written in four comments — the base policy, both
+enforcing overlay kustomizations, and this file — and enforced in none of them. A
+comment cannot fail a build.
 """
 
 from __future__ import annotations
@@ -53,6 +64,37 @@ spec:
 """
 
 failures: list[str] = []
+
+
+def _check_enforce_pins_digest(rel, rendered: str) -> None:
+    """Enforce implies mutateDigest: true, for any rule that verifies images.
+
+    Kyverno validates the illegal direction (mutateDigest true under Audit) and
+    is silent about the useless one (Enforce without it), which verifies a
+    signature and then lets the kubelet re-resolve the tag.
+    """
+    import yaml as _yaml
+
+    for doc in _yaml.safe_load_all(rendered):
+        if not doc or doc.get("kind") != "ClusterPolicy":
+            continue
+        action = (doc.get("spec") or {}).get("validationFailureAction")
+        for rule in (doc["spec"].get("rules") or []):
+            for vi in (rule.get("verifyImages") or []):
+                md = vi.get("mutateDigest")
+                name = doc["metadata"]["name"]
+                if action == "Enforce" and md is not True:
+                    failures.append(
+                        f"{rel}: ClusterPolicy {name} rule {rule.get('name')!r} is Enforce "
+                        f"but mutateDigest is {md!r}. Enforce without it verifies a signature "
+                        f"and still lets the kubelet re-resolve the tag — valid Kyverno, and "
+                        f"exactly the window the enforcing tier exists to close."
+                    )
+                elif action != "Enforce" and md is True:
+                    failures.append(
+                        f"{rel}: ClusterPolicy {name} rule {rule.get('name')!r} sets "
+                        f"mutateDigest true under {action!r}. Kyverno rejects that outright."
+                    )
 
 
 def main() -> int:
@@ -112,6 +154,9 @@ def main() -> int:
             if "error: 0" not in combined:
                 summary = next((ln.strip() for ln in combined.splitlines() if ln.startswith("pass:")), combined.strip()[:200])
                 failures.append(f"{rel}: kyverno reported errors: {summary}")
+                continue
+
+            _check_enforce_pins_digest(rel, build.stdout)
 
     if failures:
         for f in failures:
