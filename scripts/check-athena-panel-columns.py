@@ -165,6 +165,25 @@ def main() -> int:
         print("FAIL  the CUR column contract is empty — this check would pass vacuously")
         return 1
 
+    # The verdict below is derived from a FILTERED set: referenced_identifiers()
+    # subtracts SQL vocabulary, table names and query aliases before comparing.
+    # A filter that removes everything dies loudly; this one leaves survivors, so
+    # a delivered column that collides with a subtracted name is dropped from the
+    # comparison and the remaining identifiers still resolve. The gate then
+    # reports success over a column it never examined.
+    #
+    # The collision is the assertion, not a warning: if the export ever delivers
+    # a column named like SQL vocabulary, no verdict about that column is founded
+    # and the exclusion list has to be narrowed before this check means anything.
+    shadowed = sorted((columns & SQL_VOCAB) | (columns & TABLE_NAMES))
+    if shadowed:
+        print(f"FAIL  the CUR export delivers {', '.join(repr(c) for c in shadowed)}, "
+              f"which this gate subtracts as SQL vocabulary or a table name before "
+              f"comparing. Those columns are excluded from every panel check, so a "
+              f"panel referencing one is neither confirmed nor reported. Narrow the "
+              f"exclusion list.")
+        return 1
+
     failures: list[str] = []
     queries_checked = 0
 
@@ -187,6 +206,10 @@ def main() -> int:
     if queries_checked == 0:
         print("FAIL  found no Athena panel queries — this check would pass vacuously")
         return 1
+
+    print(f"  contract: {len(columns)} delivered columns; exclusions applied "
+          f"per query: {len(SQL_VOCAB)} SQL vocabulary, {len(TABLE_NAMES)} table "
+          f"name(s), plus each query's own aliases")
 
     if failures:
         print(f"FAIL  {len(failures)} Athena panel(s) reference undelivered columns:\n")
