@@ -12,7 +12,7 @@
 # cluster-wide write failure on ExternalSecret objects, not a degraded read path.
 #
 # minAvailable: 1 rather than maxUnavailable: 1 — with exactly 2 replicas the two
-# are equivalent today, but minAvailable keeps its meaning if replicaCount is ever
+# are equivalent at two replicas, but minAvailable keeps its meaning if replicaCount is ever
 # lowered to 1, where maxUnavailable: 1 would permit taking the only pod.
 #
 # platform-critical (value 1000000, addons/bootstrap/priority-classes) because

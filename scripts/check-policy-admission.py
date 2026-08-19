@@ -18,9 +18,7 @@ WHY THIS EXISTS
     DaemonSet is denied — and nothing before this gate would have caught it. The
     policies render clean, kubeconform clean, and kyverno's own unit tests pass;
     the contradiction only surfaces when the addon meets the policy on a real
-    Enforce cluster. That is exactly how a `require-labels` tier extension shipped
-    against a fleet whose grafana-operator, falco, and envoy-gateway
-    namespaces were never excluded.
+    Enforce cluster.
 
 WHAT IT DOES
     1. STRUCTURAL — parses the four exclusion-bearing base policies and asserts

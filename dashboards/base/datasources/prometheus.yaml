@@ -6,7 +6,7 @@
 # landing-zone grants AMP read access to).
 #
 # Note: AMG's Prometheus data source UI sets sigV4Auth=true automatically when
-# you create it through the AMG console. With grafana-operator, we declare it
+# it is created through the AMG console. With grafana-operator it is declared
 # explicitly in jsonData.
 apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDatasource

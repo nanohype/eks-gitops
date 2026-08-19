@@ -21,8 +21,8 @@ spec:
                   # (agent-platform.yaml), so the whole AI-platform stack — operator,
                   # runtime, and CRs — deploys together on an opted-in cluster and
                   # nowhere else. The hub is never opted in (it runs observability +
-                  # dashboards + bootstrap deps only), so this label subsumes the
-                  # previous hub exclusion.
+                  # dashboards + bootstrap deps only), so this label covers the
+                  # hub exclusion too.
                   eks-agent-platform/enabled: "true"
           - list:
               elements:
@@ -71,7 +71,7 @@ spec:
             releaseName: '{{ .appName }}'
             # No clusterName/vpcId parameters: these are upstream charts with
             # their own value schemas (passing unknown --set values fails their
-            # render, as it did for cert-manager).
+            # render).
             valueFiles:
               - $values/{{ .path }}/values.yaml
               - $values/{{ .path }}/values-{{ index .metadata.labels "environment" }}.yaml

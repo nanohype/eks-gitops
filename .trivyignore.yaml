@@ -29,7 +29,7 @@ misconfigurations:
       The apache/druid entrypoint and the JVM write inside the container
       filesystem at startup; scratch/task data already lives on the
       druid-scratch emptyDir at /var/druid. readOnlyRootFilesystem is not
-      enabled until it has been verified against the upstream image.
+      enabled.
   - id: KSV-0109
     paths:
       - "*catalog_druid_chart*"

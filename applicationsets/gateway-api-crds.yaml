@@ -68,7 +68,7 @@ spec:
       project: platform
       source:
         # Upstream, pinned. NOT this org's catalog — these are someone else's
-        # artifacts, consumed at a version we choose, exactly like a Helm chart.
+        # artifacts, consumed at a pinned version, exactly like a Helm chart.
         repoURL: https://github.com/kubernetes-sigs/gateway-api
         targetRevision: v1.6.1
         path: config/crd/standard

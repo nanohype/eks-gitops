@@ -17,7 +17,7 @@ ArgoCD App-of-Apps catalog for EKS clusters. Eight addon categories, plus Applic
 Plus:
 
 - **`applicationsets/`** — ApplicationSet generators that fan addons + tenant workloads out across clusters by label
-- **`catalog/`** — platform-specific tenant workloads (currently Druid)
+- **`catalog/`** — platform-specific tenant workloads (Druid)
 - **`dashboards/`** — `GrafanaDashboard` CRs that grafana-operator reconciles into the external Amazon Managed Grafana workspace
 - **`policies/`** — Kyverno policies (best-practices, pod-security-standards) enforced cluster-wide
 
@@ -72,4 +72,4 @@ The workload's source repo owns the ApplicationSet entry — typically `<app>/gi
 - [`docs/`](docs/) — addon catalog, sync-wave reference, cluster bootstrap process
 - [`CLAUDE.md`](CLAUDE.md) — Claude Code session instructions
 - [Platform Reference](https://github.com/nanohype/nanohype/blob/main/docs/platform-reference.md) — the stack-wide view
-- [`kx/AGENTS.md`](../kx/AGENTS.md) — local kind workspace that mirrors this catalog
+- [`kx/AGENTS.md`](https://github.com/nanohype/kx/blob/main/AGENTS.md) — local kind workspace that mirrors this catalog

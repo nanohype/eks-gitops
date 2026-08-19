@@ -26,8 +26,9 @@ set -euo pipefail
 #     They are validated against the real webhook with `kubectl apply
 #     --dry-run=server` out-of-band — a strictly stronger gate than a JSON-schema
 #     match (it caught identity.allowedModels / allowedModelFamilies being
-#     mutually exclusive, which no schema encodes). CI has no cluster, so this
-#     skip records the gap rather than pretending the schema resolved.
+#     mutually exclusive, which no schema encodes). CI has no cluster, so the
+#     skip stands here and scripts/check-platform-crs.py (CI job platform-crs)
+#     validates these kinds against the CRDs the pinned operator chart ships.
 DEFAULT_SKIP="Grafana,Platform,Tenant,ModelGateway,BudgetPolicy,AgentFleet,EvalSuite"
 SKIP="${KUBECONFORM_SKIP-$DEFAULT_SKIP}"
 

@@ -16,7 +16,7 @@
 #
 # The injection is inline `helm.values` with an `{{ if }}` guard rather than a
 # `valuesObject`, because the annotation is present only on clusters where the
-# bucket is enabled (production today) and absent everywhere else. A structured
+# bucket is enabled and absent everywhere else. A structured
 # valuesObject would always render a non-empty `artifactRepository.s3` map — an
 # empty-bucket default repo, which the controller would treat as its artifact
 # store — on the clusters that lack the annotation. The guard renders the artifact

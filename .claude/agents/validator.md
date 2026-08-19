@@ -49,11 +49,13 @@ live in `scripts/check-sync-waves.py`; keep this list in sync with it):
 - security: 10-12
 - policies: 20-23
 - observability: 29-34
+- workflow-crds: 13
 - gateway-crds: 30
 - operations: 40-44 (karpenter is a documented exception at wave 5)
 - ai-platform: 21-44 (agent-operator 21, envoy-ai-gateway 40-42, agent-platform CRs 44)
 - argo-platform: 50-52
-- apps (druid-tenants, dashboards): 50-60
+- apps (dashboards): 50-60
+- tenants: 100
 
 Flag any addon or policy with a sync wave outside its category's range.
 

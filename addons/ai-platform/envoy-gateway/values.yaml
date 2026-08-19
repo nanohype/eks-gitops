@@ -42,7 +42,7 @@ config:
       # direct response on the route — a healthy-looking gateway that answers
       # every model call with a server error.
       enableBackend: true
-      # Not load-bearing today. Upstream recommends it for compatibility with
+      # Nothing here depends on it. Upstream recommends it for compatibility with
       # AI Gateway features that patch xDS directly.
       enableEnvoyPatchPolicy: true
 

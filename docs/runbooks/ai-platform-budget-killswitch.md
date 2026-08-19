@@ -115,7 +115,7 @@ and a fresh AgentSandbox session schedules.
 
 Two independent controls bound which models an agent can reach. **Neither is
 optional guardrail decoration — an agent cannot invoke a model absent from
-both.**
+either.**
 
 - **`Platform.spec.identity`** is the IAM allowlist and the tighter of the two
   controls. Set *either* `allowedModels` (explicit model IDs — preferred) *or*

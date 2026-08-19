@@ -28,9 +28,9 @@ Three assertions:
      category. Neither can see the one ordering that actually breaks a sync: an
      Application that RENDERS a custom resource syncing before the Application
      that installs its CRD. That is not a band violation — both sides can sit
-     perfectly inside their documented bands and still be inverted — so A and B
-     stayed green while the operator chart rendered a WorkflowTemplate at wave 21
-     against argoproj.io CRDs that arrived at 52.
+     perfectly inside their documented bands and still be inverted — A and B stay
+     green while, say, an operator chart rendering a WorkflowTemplate at wave 21
+     waits on argoproj.io CRDs that would otherwise arrive at 52.
 
      CRD_PRECEDENCE names each CRD-providing ApplicationSet and the ApplicationSets
      that render manifests of its group. The provider must sync STRICTLY BEFORE

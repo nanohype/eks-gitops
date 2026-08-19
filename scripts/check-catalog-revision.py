@@ -5,10 +5,11 @@ WHY THIS EXISTS
 
 `cluster-bootstrap` stamps two sibling annotations on every ArgoCD cluster
 Secret: `gitops/repo-url` and `gitops/repo-branch`. The comment above them says
-appsets template their own source off these so no org is hardcoded in the
-manifests. That was true of `repo-url` — 33 files read it — and false of
-`repo-branch`, which had exactly one reference in the entire org: the line that
-writes it.
+`cluster-bootstrap` stamps two sibling annotations on every ArgoCD cluster
+Secret: `gitops/repo-url` and `gitops/repo-branch`. An appset that templates
+`repoURL` off the first while pinning `targetRevision: main` as a literal leaves
+a cluster bootstrapped against any other revision running `app-of-apps` at that
+revision and every child Application at `main`.
 
 Meanwhile 28 applied ApplicationSets carried `targetRevision: main` as a literal,
 directly beneath a `repoURL` templated off the annotation.
