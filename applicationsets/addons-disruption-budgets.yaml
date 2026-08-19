@@ -1,0 +1,94 @@
+# PodDisruptionBudgets for charts that cannot express one.
+#
+# Most addons declare their PDB in values.yaml, because their chart exposes a
+# podDisruptionBudget key — external-secrets and cert-manager both do, and
+# kyverno's chart creates one automatically above a single replica. Three do not
+# expose the key at all: argo-rollouts, argo-workflows and goldilocks. Each runs
+# a multi-replica Deployment that a node drain could take out entirely, and no
+# values edit can fix it.
+#
+# So the manifests ship alongside the charts instead, in `<addon>-resources`
+# Kustomize addons — the shape karpenter-resources already uses for resources
+# that accompany a chart this repo does not own.
+#
+# They are grouped in one ApplicationSet rather than split per category because
+# they are one decision, not three: this is the catalog's answer to "the chart
+# cannot express it." The elements still span two categories, and that is safe —
+# `scripts/check-sync-waves.py` derives each Application's category from its
+# `addons/<category>/` path, not from this file, so every wave below is checked
+# against its own category's band (argo-platform 50-52, operations 40-44).
+#
+# No kustomize patch block here, deliberately. addons-operations-kustomize
+# carries a per-cluster EC2NodeClass patch that applies to every element in its
+# list, so adding a non-karpenter addon to it would fail the render with "no
+# matches for target". These need no per-cluster rendering at all.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: addons-disruption-budgets
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "42"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  argocd.argoproj.io/secret-type: cluster
+                matchExpressions:
+                  # Exclude the hub - it runs only observability + dashboards + bootstrap deps.
+                  - key: environment
+                    operator: NotIn
+                    values:
+                      - hub
+          - list:
+              elements:
+                - appName: goldilocks-resources
+                  namespace: goldilocks
+                  path: addons/operations/goldilocks-resources
+                  syncWave: "42"
+                - appName: argo-rollouts-resources
+                  namespace: argo-rollouts
+                  path: addons/argo-platform/argo-rollouts-resources
+                  syncWave: "51"
+                - appName: argo-workflows-resources
+                  namespace: argo-workflows
+                  path: addons/argo-platform/argo-workflows-resources
+                  syncWave: "52"
+  template:
+    metadata:
+      name: '{{ .appName }}'
+      labels:
+        app.kubernetes.io/managed-by: argocd
+        app.kubernetes.io/component: '{{ .appName }}'
+        platform.nanohype.dev/environment: '{{ index .metadata.labels "environment" }}'
+        platform.nanohype.dev/repository: nanohype.eks-gitops
+        platform.nanohype.dev/team: platform-engineering
+      annotations:
+        argocd.argoproj.io/sync-wave: '{{ .syncWave }}'
+    spec:
+      project: platform
+      source:
+        repoURL: '{{ index .metadata.annotations "gitops/repo-url" }}'
+        targetRevision: '{{ index .metadata.annotations "gitops/repo-branch" }}'
+        path: '{{ .path }}/overlays/{{ index .metadata.labels "environment" }}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{ .namespace }}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
