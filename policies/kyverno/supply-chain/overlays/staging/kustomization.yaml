@@ -6,6 +6,10 @@ resources:
 
 # Staging: enforce, same as production, so an unsigned image surfaces as an
 # admission failure in staging before it ever reaches a production rollout.
+# mutateDigest moves WITH the Enforce patch, never independently. Kyverno
+# rejects mutateDigest:true under an Audit failure action, so the base keeps it
+# false and only the enforcing environments turn it on. Enforce without it would
+# verify a signature and still let the kubelet re-resolve the tag.
 patches:
   - patch: |-
       - op: replace
@@ -13,3 +17,10 @@ patches:
         value: Enforce
     target:
       kind: ClusterPolicy
+  - patch: |-
+      - op: replace
+        path: /spec/rules/0/verifyImages/0/mutateDigest
+        value: true
+    target:
+      kind: ClusterPolicy
+      name: verify-images

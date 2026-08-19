@@ -160,6 +160,26 @@ jobs:
       - name: Catalog sources read gitops/repo-branch
         run: ./scripts/check-catalog-revision.py --list
 
+  policy-validity:
+    name: every rendered policy is one Kyverno will accept
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Install Kyverno CLI
+        uses: kyverno/action-install-cli@fdb466f3c73d9d1b3a76bcc12e3e07d2926d2224 # v0.2.1
+        with:
+          release: v${{ env.KYVERNO_VERSION }}
+      - name: Install kustomize
+        uses: imranismail/setup-kustomize@53f941b477e5f4b0d0b0dbc3d1cd10ffe9dd0d05 # v2.1.0
+      # kyverno test proves what a policy DOES; this proves the API server
+      # would accept it at all. Kyverno enforces semantic rules no schema
+      # encodes — mutateDigest:true under an Audit failure action is rejected
+      # outright — and an invalid overlay renders clean, passes kubeconform,
+      # passes kyverno test, and then fails to sync on every cluster.
+      - name: Every rendered policy overlay is valid
+        run: ./scripts/check-policy-validity.py
+
   renovate-coverage:
     name: every chart pin is watched by a manager that resolves
     runs-on: ubuntu-latest
@@ -636,6 +656,7 @@ jobs:
       [
         placeholders,
         renovate-coverage,
+        policy-validity,
         lint,
         dashboards,
         serviceaccount-bindings,
