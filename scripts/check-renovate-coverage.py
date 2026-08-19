@@ -104,14 +104,34 @@ def load_patterns() -> list[re.Pattern[str]]:
 
 
 def covered_by_custom(text: str, chart: str, ver: str, patterns) -> bool:
-    """A customManager matches this exact pin (identified by chart + version)."""
+    """A customManager matches this exact pin (identified by chart + version).
+
+    Every comparison here is exact. A substring test — which this used to do —
+    reports `loki` as covered by a `loki-distributed` pin at the same version,
+    so a chart nothing watches passes the gate. That is the one failure this
+    gate must not have: a false positive is silent in precisely the way an
+    unwatched pin is.
+    """
     for pat in patterns:
         for m in pat.finditer(text):
-            if m.groupdict().get("currentValue") != ver:
-                continue
             gd = m.groupdict()
-            blob = " ".join(v for v in gd.values() if v)
-            if chart in blob or chart in m.group(0):
+            if gd.get("currentValue") != ver:
+                continue
+
+            # https matrix + CLI-tool managers capture the chart as depName.
+            if gd.get("depName") == chart:
+                return True
+
+            # OCI managers capture the registry path, whose last segment is the
+            # chart name (.../charts/operator, public.ecr.aws/karpenter/karpenter).
+            pkg = gd.get("packageName")
+            if pkg and pkg.rstrip("/").rsplit("/", 1)[-1] == chart:
+                return True
+
+            # The matrix OCI manager does not capture the chart name at all, so
+            # fall back to the `chart:` line inside the matched span — anchored,
+            # not a containment test.
+            if re.search(rf"chart:\s*{re.escape(chart)}\s*$", m.group(0), re.M):
                 return True
     return False
 
