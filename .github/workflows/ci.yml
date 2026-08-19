@@ -171,8 +171,14 @@ jobs:
       # Every other gate in this workflow checks a manifest. This one checks
       # the gates: a canary proves a gate RAN, and nothing proves it computes
       # the right answer. stdlib unittest, no test dependency to install.
+      # Identical to `task validate:gate-tests` — same working directory, same
+      # argv. The first version of this step passed `-s scripts/tests` AND set
+      # working-directory to it, so discovery looked for scripts/tests inside
+      # scripts/tests. It failed only in CI, because the Taskfile ran a different
+      # command; a local gate and its CI counterpart drifting apart is how a
+      # green `task validate` stops meaning anything about the build.
       - name: Gate-script unit tests
-        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+        run: python3 -m unittest discover -p 'test_*.py'
         working-directory: scripts/tests
 
   policy-validity:
