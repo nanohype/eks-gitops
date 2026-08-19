@@ -75,6 +75,11 @@ tasks:
     cmds:
       - KUBECONFORM_SKIP="" ./scripts/kubeconform-scan.sh applicationsets/
 
+  validate:renovate-coverage:
+    desc: "Renovate coverage gate — every chart pin in applicationsets/ is watched by a manager that resolves"
+    cmds:
+      - ./scripts/check-renovate-coverage.py
+
   validate:sync-waves:
     desc: "Sync-wave gate — documented category ordering holds across the appsets"
     cmds:
@@ -121,6 +126,7 @@ tasks:
       - validate:athena-panel-columns
       - validate:dashboards
       - validate:fork-safety
+      - validate:renovate-coverage
     cmds:
       - echo "All validations passed."
 
