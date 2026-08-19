@@ -75,6 +75,12 @@ tasks:
     cmds:
       - KUBECONFORM_SKIP="" ./scripts/kubeconform-scan.sh applicationsets/
 
+  validate:gate-tests:
+    desc: "Gate-script unit tests — the gates themselves, not the manifests they check"
+    dir: scripts/tests
+    cmds:
+      - python3 -m unittest discover -p 'test_*.py'
+
   validate:policy-validity:
     desc: "Policy-validity gate — every rendered policy overlay is one Kyverno will accept"
     cmds:
@@ -133,6 +139,7 @@ tasks:
       - validate:fork-safety
       - validate:renovate-coverage
       - validate:policy-validity
+      - validate:gate-tests
     cmds:
       - echo "All validations passed."
 
