@@ -178,7 +178,7 @@ jobs:
       # command; a local gate and its CI counterpart drifting apart is how a
       # green `task validate` stops meaning anything about the build.
       - name: Gate-script unit tests
-        run: python3 -m unittest discover -p 'test_*.py'
+        run: ./run.py
         working-directory: scripts/tests
 
   policy-validity:
