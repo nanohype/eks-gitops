@@ -81,6 +81,11 @@ tasks:
     cmds:
       - ./run.py
 
+  validate:named-things:
+    desc: "Prose gate — every repo path, task target and file:line citation in markdown resolves"
+    cmds:
+      - ./scripts/check-named-things.py
+
   validate:gate-controls:
     desc: "Positive controls — every gate rejects the violation it exists to catch"
     cmds:
@@ -146,6 +151,7 @@ tasks:
       - validate:policy-validity
       - validate:gate-tests
       - validate:gate-controls
+      - validate:named-things
     cmds:
       - echo "All validations passed."
 

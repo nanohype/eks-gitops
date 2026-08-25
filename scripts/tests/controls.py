@@ -390,7 +390,16 @@ def m_chart_deprecation(root):
     return p, before, after, f"{MARKER}-chart-no-appset-pins"
 
 
+def m_named_things(root):
+    """A runbook naming a task target the Taskfile does not define."""
+    return _sub(root, "docs/runbooks/troubleshooting.md",
+                "```bash",
+                f"```bash\ntask {MARKER}-not-a-target",
+                marker=f"task {MARKER}-not-a-target")
+
+
 CONTROLS = {
+    "check-named-things.py": ("prose naming a target that does not exist", m_named_things),
     "check-chart-deprecation.py": ("a provenance record no pin claims", m_chart_deprecation),
     "check-label-values.py": ("a label value the API server rejects", m_label_values),
     "check-sync-waves.py": ("a category syncing ahead of its band", m_sync_waves),

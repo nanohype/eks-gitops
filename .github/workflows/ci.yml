@@ -186,6 +186,10 @@ jobs:
       # asserted exemption fails this step, so the suite cannot shrink quietly.
       - name: Positive controls — every gate can reject
         run: ./scripts/tests/controls.py
+      # Prose that names a path, a task target or a file:line is a claim about
+      # the tree, and nothing else keeps those claims true as the tree moves.
+      - name: Named things in prose resolve
+        run: ./scripts/check-named-things.py
 
   policy-validity:
     name: every rendered policy is one Kyverno will accept

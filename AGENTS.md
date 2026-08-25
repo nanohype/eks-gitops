@@ -4,7 +4,7 @@ You're an AI client (or the author of one) about to add a cluster-level addon, r
 
 ## What this repo gives you
 
-ArgoCD App-of-Apps catalog for EKS clusters. Eight addon categories, plus ApplicationSets that bind workloads to clusters via labels (listed in deploy order):
+ArgoCD App-of-Apps catalog for EKS clusters. One directory per addon category under `addons/`, plus ApplicationSets that bind workloads to clusters via labels (categories listed in deploy order):
 
 - **`addons/bootstrap/`** — cert-manager, external-secrets, secret-stores, metrics-server, prometheus-operator-crds, reloader, storage-classes, priority-classes, portal-reader
 - **`addons/networking/`** — cilium, aws-load-balancer-controller, external-dns
@@ -26,7 +26,7 @@ Plus:
 Every addon:
 
 - Lives at `addons/<category>/<name>/`
-- Has a base `values.yaml` plus per-env deltas: `values-development.yaml`, `values-staging.yaml`, `values-production.yaml`
+- Has a base `values.yaml` plus per-env deltas: `values-development.yaml`, `values-staging.yaml`, `values-production.yaml`, and `values-hub.yaml` where it deploys to the hub
 - Is referenced by an ApplicationSet in `applicationsets/addons-<category>.yaml` with a sync wave
 - Sync waves run in order — bootstrap before security before observability before tenant workloads
 
@@ -38,7 +38,7 @@ Every tenant workload (an application chart, an AgentFleet, etc.):
 
 ## Add a new addon
 
-1. Create `addons/<category>/<name>/` with `values.yaml` + per-env deltas (`values-development.yaml` / `values-staging.yaml` / `values-production.yaml`).
+1. Create `addons/<category>/<name>/` with `values.yaml` + per-env deltas (`values-development.yaml` / `values-staging.yaml` / `values-production.yaml`). Add `values-hub.yaml` too if the addon deploys to the fleet hub — the hub runs the bootstrap and observability stacks only.
 2. Reference the upstream chart by name + version in the values structure (varies per category — see existing addons for the shape).
 3. Add an entry to `applicationsets/addons-<category>.yaml` with a sync wave that respects ordering (bootstrap < networking < security < observability < operations < ai-platform < argo-platform < apps).
 4. If your addon lands in a **new namespace**, add it to the Kyverno exclusion lists in `policies/kyverno/best-practices/base/` and `policies/kyverno/pod-security-standards/base/` (all four policies share one identical set) — or make the addon's workloads satisfy the label/probe/limit/non-root policies. Otherwise a vended staging/production cluster runs those policies in Enforce mode and denies your Deployment at admission.
@@ -61,7 +61,7 @@ The workload's source repo owns the ApplicationSet entry — typically `<app>/gi
 ## Conventions
 
 - Helm values: 2-space indent. ApplicationSet manifests: 2-space indent.
-- Every addon has all three env deltas (`values-development.yaml`, `values-staging.yaml`, `values-production.yaml`) — empty is fine, but the file must exist.
+- Every addon has the three spoke env deltas (`values-development.yaml`, `values-staging.yaml`, `values-production.yaml`) — empty is fine, but the file must exist. `values-hub.yaml` is required only where the addon deploys to the fleet hub — the hub runs the bootstrap and observability stacks and nothing else, so an addon outside those two categories carries no hub delta. `scripts/render-addons.py` renders all four environments and the CI `validate` job matrices over them, so a hub-scheduled addon without the file fails there.
 - Cluster labels drive ApplicationSet matrix generators. The `environment` label (`development|staging|production|hub`) selects the per-env values; opt-in addon groups select on additional labels (both set by cluster-bootstrap) — `eks-agent-platform/enabled: "true"` gates the operator onto agent-platform clusters.
 - Sync waves matter — addons that everything depends on (cert-manager, external-secrets) run first (wave 0–10); apps run last (wave 100+).
 - Kyverno policies in `policies/` enforce cluster-wide invariants (no privileged pods, image registry allowlist, required labels).
