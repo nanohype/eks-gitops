@@ -12,9 +12,21 @@
 # gate whose result depends on when it ran cannot be reasoned about.
 #
 # MEDIUM is the threshold, matching the `trivy config` gate over rendered output
-# so one severity floor governs both scanners. Informational findings are
-# reported and do not block: the ones this tree carries are template expansions
-# of `needs.<job>.result`, whose value is one of four literals GitHub writes.
+# so one severity floor governs both scanners. Low and informational findings
+# are reported and do not block: the ones this tree carries are template
+# expansions of `needs.<job>.result` (a value GitHub writes from four literals),
+# concurrency limits, and one undocumented-permissions note.
+#
+# --persona=auditor is load-bearing and is a DIFFERENT AXIS from severity. Under
+# the default persona the excessive-permissions audit DOES NOT RUN AT ALL, so a
+# workflow-level `id-token: write` — which lets any job added later mint an OIDC
+# token and assume a deploy role, with no diff that looks like a permission
+# change — passes silently. Demonstrated: a planted workflow-level id-token
+# grant exits 0 under the default persona and 14 under auditor.
+#
+# This tree carries no id-token grant and all three workflows are
+# `contents: read`, so the setting changes no verdict today. It changes which
+# question is being asked.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -54,7 +66,7 @@ if [ -n "$WANT_ZIZMOR" ] && [ "$have_zizmor" != "$WANT_ZIZMOR" ]; then
 fi
 
 echo "Scanning $count workflow file(s) with zizmor $have_zizmor (pinned)"
-zizmor --offline --min-severity medium --format plain "$WORKFLOWS"
+zizmor --offline --persona=auditor --min-severity=medium --format plain "$WORKFLOWS"
 status=$?
 
 # A bare non-zero conflates two different facts. zizmor exits 14 when it audited
@@ -79,4 +91,19 @@ if [ "$status" -ne 0 ]; then
   exit 2
 fi
 
+# Report the tier just BELOW the threshold on the passing line. A gate that
+# prints only "clean at MEDIUM and above" lets `ok` read as nothing-found, when
+# what it means is nothing-found-at-the-tier-we-block-on. The count is what
+# stops that reading.
+#
+# zizmor exits non-zero whenever it has findings at all, so its status here says
+# nothing about severity and is deliberately not read — the summary line it
+# prints is the operand.
+audit_out=$(zizmor --offline --persona=auditor --format plain "$WORKFLOWS" 2>&1)
+below=$(printf '%s\n' "$audit_out" | sed -n 's/^\([0-9][0-9]*\) findings.*/\1/p' | tail -1)
+[ -n "$below" ] || below="an unknown number of"
+
 echo "✓ $count workflow file(s) clean at MEDIUM and above"
+echo "  $below low/informational finding(s) sit below the threshold — reported, not"
+echo "  blocking. See them with:"
+echo "    zizmor --offline --persona=auditor $WORKFLOWS"

@@ -15,16 +15,20 @@ pass=0; fail=0
 
 # run <want> <label> <cmd...>
 #
-# 126 and 127 are "not executable" and "not found" — the tool never ran. Scoring
-# either as a rejection is the crash-scores-as-catch defect wearing a shell
-# costume, and the first draft of this very harness did exactly that, reporting
-# five green rejections from a command name it had eaten with an off-by-one
-# shift. A status above 125 is a harness failure, never a verdict.
+# 126 and 127 EXACTLY are "not executable" and "not found" — the tool never ran.
+# Scoring either as a rejection is the crash-scores-as-catch defect wearing a
+# shell costume, and the first draft of this harness did exactly that: an
+# off-by-one shift ate the command name and five 127s were reported as green
+# rejections.
+#
+# Only those two. A first draft of the fix rejected everything at or above 126
+# and then misread `task`'s own aggregate failure code, 201, as a missing
+# binary — a harness rule too broad is its own kind of wrong answer.
 run() {
   local want="$1" label="$2"; shift 2
   "$@" >"$OUT" 2>&1
   local rc=$?
-  if [ "$rc" -ge 126 ]; then
+  if [ "$rc" -eq 126 ] || [ "$rc" -eq 127 ]; then
     printf "  HARNESS %-50s rc=%s — the tool did not run; this is not a verdict\n" "$label" "$rc"
     sed -n '1,3p' "$OUT" | sed 's/^/          /'
     fail=$((fail+1)); return
@@ -58,7 +62,6 @@ run 0 "check-chart-deprecation --self-test" ./scripts/check-chart-deprecation.py
 run 0 "kyverno test" kyverno test policies/kyverno/tests
 run 0 "gitleaks dir (CI invocation)" gitleaks dir . --redact
 run 0 "yamllint" yamllint -c .yamllint.yaml .
-run 0 "renovate-config-validator" npx --yes --package renovate renovate-config-validator renovate.json
 
 echo
 echo "── Known-bad fed in: every gate must REJECT ──"
@@ -130,7 +133,12 @@ printf 'k: REPLACE_ME\n' > ./rv-probe.yaml
 run nonzero "no-placeholders: planted sentinel" ./scripts/no-placeholders.sh
 rm -f ./rv-probe.yaml
 
-printf 'k = "ghp_016C6e7Ab2Cd3Ef4Gh5Ij6Kl7Mn8Op9Qr0St1Uv"\n' > ./rv-leak.yaml
+# Assembled at run time rather than written as a literal. Committing a
+# credential-shaped string makes the repo's own secret scan fail on the file
+# that tests the secret scan — which is exactly what happened on the first
+# attempt, caught by gitleaks in this same harness.
+leak="ghp_$(printf '%s' '016C6e7Ab2Cd3Ef4Gh5Ij6Kl7Mn8Op9Qr0St1Uv')"
+printf 'k = "%s"\n' "$leak" > ./rv-leak.yaml
 run nonzero "gitleaks: planted GitHub PAT" gitleaks dir . --redact
 rm -f ./rv-leak.yaml
 
@@ -163,15 +171,11 @@ jobs:
 YAML
 run nonzero "zizmor: unpinned action" ./scripts/check-workflows.sh $SP/wbad/.github/workflows
 
-F=renovate.json; mut $F
-python3 - "$F" <<'PY'
-import pathlib,sys,json
-p=pathlib.Path(sys.argv[1]); d=json.loads(p.read_text())
-d["customManagers"][0]["matchStrings"]=["(unclosed"]
-p.write_text(json.dumps(d,indent=2)+"\n")
-PY
-run nonzero "renovate-config-validator: invalid regex" npx --yes --package renovate renovate-config-validator renovate.json
-res $F
+# renovate-config-validator is deliberately absent from this harness: it runs
+# through `npx --package renovate`, which fetches the whole Renovate package and
+# takes minutes. It is a CI-only gate, and this harness is meant to be runnable.
+# Its rejection was proven by hand once (an invalid regex in a matchString ->
+# rc=1) and that proof is recorded in the report, not re-run here.
 
 F=policies/kyverno/networking/base/inject-adopt-lb-subnets.yaml; mut $F
 python3 - "$F" <<'PY'

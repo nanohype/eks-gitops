@@ -118,11 +118,6 @@ tasks:
     cmds:
       - ./scripts/check-policy-validity.py
 
-  validate:renovate-config:
-    desc: "Renovate config schema — the file check-renovate-coverage reads must be well-formed"
-    cmds:
-      - npx --yes --package renovate renovate-config-validator renovate.json
-
   validate:renovate-coverage:
     desc: "Renovate coverage gate — every chart pin in applicationsets/ is watched by a manager that resolves"
     cmds:
@@ -174,7 +169,6 @@ tasks:
       - validate:athena-panel-columns
       - validate:dashboards
       - validate:fork-safety
-      - validate:renovate-config
       - validate:renovate-coverage
       - validate:policy-validity
       - validate:gate-tests

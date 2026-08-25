@@ -112,6 +112,14 @@ dashboards, fork-safety). CI runs those plus several gates that have **no local
 `task` target**, so a clean `task validate` is necessary but not sufficient:
 
 - **Zero-placeholder gate** — `scripts/no-placeholders.sh` (CI job `placeholders`)
+- **Renovate config schema** — `renovate-config-validator`, CI-only because it
+  runs through `npx --package renovate`, which fetches the whole Renovate
+  package. That is minutes per invocation and needs the network, so it fails the
+  hermetic-and-fast bar a local target has to meet. `check-renovate-coverage.py`
+  covers the overlapping half locally: it compiles every `matchStrings` regex out
+  of the shipped config, so a manager Renovate would discard as malformed fails
+  there too. What only the validator catches is an unknown or misspelled Renovate
+  KEY, which is why it still runs somewhere.
 - **Kyverno unit tests + verify-images signing-identity contract** —
   `kyverno test policies/kyverno/tests` and `scripts/check-image-verification.py`
   (CI job `kyverno`)

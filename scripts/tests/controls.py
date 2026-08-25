@@ -213,6 +213,9 @@ def called_names(src: str) -> set[str]:
 NOT_GATES = {
     "tests/controls.py": "the control harness; self_test() runs on every invocation",
     "tests/run.py": "the unit-test runner; asserts its own module list and floors",
+    "tests/reverify-gates.sh": "the Tier-1 re-verification harness; it drives the "
+                               "gates rather than checking the tree, and asserts "
+                               "its own pass/fail totals",
 }
 
 
