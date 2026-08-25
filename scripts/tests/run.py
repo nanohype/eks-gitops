@@ -38,7 +38,7 @@ EXPECTED = (
 
 # A floor well under the real count. It catches "discovery found almost nothing",
 # not "somebody removed one test".
-MIN_TESTS = 28
+MIN_TESTS = 31
 
 # Line coverage floors over the gate scripts, enforced when `coverage` is
 # available. A ratchet, not a target: each is set just under what the suite
