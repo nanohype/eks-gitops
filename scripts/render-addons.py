@@ -306,6 +306,14 @@ def stale_skips(units: list[Unit], aliases: dict[str, str]) -> list[tuple[str, s
     return stale
 
 
+# Floors on what was EXAMINED, not on what was found. Printing a denominator
+# is not gating on it: this gate printed its count and exited 0 against a
+# tree containing only the scripts — which is what a renamed directory or a
+# wrong working directory looks like. Set well under the real numbers, so
+# they catch "matched almost nothing", never "someone removed one".
+MIN_COMBINATIONS = 60
+
+
 def main() -> int:
     gatelib.require('helm')
     ap = argparse.ArgumentParser(description=__doc__)
@@ -346,6 +354,11 @@ def main() -> int:
 
     stale = stale_skips(skipped, aliases)
     print(f"\nRendered {count} addon×env combinations, {len(failures)} failed.")
+    if count < MIN_COMBINATIONS:
+        print(f"FAIL  rendered {count} combination(s), under the floor of "
+              f"{MIN_COMBINATIONS}. Discovery matched almost nothing, so a clean "
+              f"result here describes the discovery and not the fleet.")
+        return 2
 
     if stale:
         print("\n" + "=" * 72)

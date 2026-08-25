@@ -348,6 +348,14 @@ def discover(root: pathlib.Path) -> list[tuple[int, pathlib.Path, str | None]]:
     return found
 
 
+# Floors on what was EXAMINED, not on what was found. Printing a denominator
+# is not gating on it: this gate printed its count and exited 0 against a
+# tree containing only the scripts — which is what a renamed directory or a
+# wrong working directory looks like. Set well under the real numbers, so
+# they catch "matched almost nothing", never "someone removed one".
+MIN_DASHBOARD_REFS = 10
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
@@ -369,7 +377,10 @@ def main() -> int:
 
     refs = discover(args.root)
     if not refs:
-        print("No grafanaCom.id references found — nothing further to validate.")
+        print(f"FAIL  no grafanaCom.id references found. This repo ships "
+              f"{MIN_DASHBOARD_REFS}+ of them, so finding none means this gate read "
+              f"the wrong tree, not that the dashboards are clean.")
+        return 2
         return 1 if local else 0
 
     print(f"Validating {len(refs)} grafana.com dashboard reference(s)\n")

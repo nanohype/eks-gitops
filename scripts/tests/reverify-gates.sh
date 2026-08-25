@@ -194,4 +194,16 @@ run 0 "task validate (post)" task validate
 
 echo
 echo "RESULT pass=$pass fail=$fail"
+
+# The harness owes the same assertion it demands of the gates: with every `run`
+# line deleted it would report pass=0 fail=0 and exit 0, which is a green run
+# over nothing checked.
+MIN_CHECKS=25
+total=$((pass + fail))
+if [ "$total" -lt "$MIN_CHECKS" ]; then
+  echo "FAIL  ran $total check(s), under the floor of $MIN_CHECKS — this harness"
+  echo "      verified almost nothing, which is not the same as everything passing."
+  exit 2
+fi
+
 [ "$fail" -eq 0 ]
