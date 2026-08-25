@@ -168,12 +168,32 @@ def called_names(src: str) -> set[str]:
             if isinstance(n, ast.Call) and (name := dotted(n.func))}
 
 
+# The harnesses, which cannot control themselves: a suite asserting its own
+# ability to reject would be the thing under test and the thing testing it. Both
+# are covered instead by their own self-tests, which run on every ordinary
+# invocation. Asserted like every other exemption — an entry naming a file that
+# no longer exists fails.
+NOT_GATES = {
+    "tests/controls.py": "the control harness; self_test() runs on every invocation",
+    "tests/run.py": "the unit-test runner; asserts its own module list and floors",
+}
+
+
 def gate_files() -> list[str]:
-    """Every gate script in scripts/, by name."""
-    names = [p.name for p in SCRIPTS.iterdir()
-             if p.is_file() and os.access(p, os.X_OK)
-             and (p.suffix in {".py", ".sh"})]
-    return sorted(names)
+    """Every gate script under scripts/, relative to it.
+
+    rglob, not iterdir. A per-directory enumeration cannot make a per-file
+    claim: with iterdir a gate added in any subdirectory of scripts/ was never
+    enumerated, so it escaped the anti-vacuity floor entirely — the floor would
+    report full coverage of a set that did not contain it. The delta today is
+    two files, both harnesses, so the class was open and no gate was actually
+    escaping; the fix closes the class rather than the instance.
+    """
+    return sorted(
+        str(p.relative_to(SCRIPTS))
+        for p in SCRIPTS.rglob("*")
+        if p.is_file() and os.access(p, os.X_OK) and p.suffix in {".py", ".sh"}
+    )
 
 
 # ── mutations ────────────────────────────────────────────────────────────────
@@ -470,7 +490,16 @@ def check_vacuity() -> list[str]:
     problems = []
     present = set(gate_files())
 
+    for name, reason in sorted(NOT_GATES.items()):
+        if name not in present:
+            problems.append(
+                f"{name} is exempted as a harness rather than a gate, but no such "
+                f"executable exists under scripts/ — the exemption outlived its file. "
+                f"(recorded: {reason})")
+
     for gate in sorted(present):
+        if gate in NOT_GATES:
+            continue
         if gate not in CONTROLS and gate not in NEEDS_NETWORK:
             problems.append(
                 f"{gate} ships no positive control and is on no exemption list. A gate "
