@@ -44,11 +44,21 @@ Three assertions:
 
 from __future__ import annotations
 
+import importlib.util
 import pathlib
 import re
 import sys
 
 import yaml
+
+# Shared helpers, loaded by path: these are hyphenated executables run from
+# varying working directories.
+_gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
+_gs = importlib.util.spec_from_file_location("gatelib", _gl)
+gatelib = importlib.util.module_from_spec(_gs)
+sys.modules["gatelib"] = gatelib
+_gs.loader.exec_module(gatelib)
+
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 APPSET_DIR = REPO_ROOT / "applicationsets"
@@ -182,7 +192,8 @@ def _list_elements(spec: dict) -> list[dict]:
 
 def _target_revision(appset_file: pathlib.Path) -> str | None:
     """The git targetRevision of a single-source (manifest directory) appset."""
-    doc = yaml.safe_load(appset_file.read_text())
+    docs = gatelib.read_yaml_all(appset_file)
+    doc = docs[0] if docs else {}
     for src in (doc["spec"]["template"]["spec"].get("sources")
                 or [doc["spec"]["template"]["spec"].get("source") or {}]):
         if src.get("repoURL", "").startswith("https://github.com/"):
@@ -192,7 +203,8 @@ def _target_revision(appset_file: pathlib.Path) -> str | None:
 
 def _chart_version(appset_file: pathlib.Path, chart: str) -> str | None:
     """The pinned version of `chart` in a Helm-sourced appset."""
-    doc = yaml.safe_load(appset_file.read_text())
+    docs = gatelib.read_yaml_all(appset_file)
+    doc = docs[0] if docs else {}
     for src in (doc["spec"]["template"]["spec"].get("sources") or []):
         if src.get("chart") == chart:
             return str(src.get("targetRevision"))
@@ -258,7 +270,8 @@ def main() -> int:
     apps: list[tuple[str, str, str, int]] = []  # appset, category, addon, wave
 
     for appset_file in sorted(APPSET_DIR.glob("*.yaml")):
-        doc = yaml.safe_load(appset_file.read_text())
+        docs = gatelib.read_yaml_all(appset_file)
+        doc = docs[0] if docs else {}
         if not doc or doc.get("kind") != "ApplicationSet":
             continue
         name = appset_file.name
