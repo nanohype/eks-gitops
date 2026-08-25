@@ -406,7 +406,16 @@ def m_ai_config(root):
                 marker=MARKER)
 
 
+def m_workflows(root):
+    """A checkout that persists the job token into the working tree."""
+    return _sub(root, ".github/workflows/diff.yml",
+                "        with:\n          persist-credentials: false",
+                f"        with:\n          fetch-depth: 0  # {MARKER}",
+                marker=MARKER)
+
+
 CONTROLS = {
+    "check-workflows.sh": ("a checkout persisting the job token", m_workflows),
     "check-ai-config.py": ("a route naming a model outside the allowlist", m_ai_config),
     "check-named-things.py": ("prose naming a target that does not exist", m_named_things),
     "check-chart-deprecation.py": ("a provenance record no pin claims", m_chart_deprecation),

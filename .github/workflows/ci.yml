@@ -26,6 +26,8 @@ env:
   KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
   # renovate: datasource=github-releases depName=aquasecurity/trivy
   TRIVY_VERSION: v0.72.0
+  # renovate: datasource=pypi depName=zizmor
+  ZIZMOR_VERSION: 1.29.0
 
 jobs:
   placeholders:
@@ -34,6 +36,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: No unfilled placeholders in deploy config
         run: ./scripts/no-placeholders.sh
@@ -44,6 +48,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Install yamllint
         run: pip install yamllint
@@ -65,6 +71,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Dead ids + AMG-unsaveable legacy alerts
         run: ./scripts/validate-dashboards.py
@@ -112,6 +120,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Install helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
       - name: Install pyyaml
@@ -129,6 +139,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Install helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
       - name: Install pyyaml
@@ -151,6 +163,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Install pyyaml
         run: pip install pyyaml
       # cluster-bootstrap stamps gitops/repo-branch beside gitops/repo-url. Only
@@ -166,6 +180,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Install PyYAML
         run: pip install --quiet pyyaml
       # Every other gate in this workflow checks a manifest. This one checks
@@ -196,6 +212,13 @@ jobs:
       # a path no other gate exercises.
       - name: AI control-plane configuration is consistent
         run: ./scripts/check-ai-config.py
+      # This repo ships no package manifest, so the workflows are its whole
+      # third-party surface. Offline, so the verdict is a function of the commit
+      # rather than of what an upstream said today.
+      - name: Install zizmor
+        run: pip install --quiet "zizmor==${ZIZMOR_VERSION}"
+      - name: Workflows pass static analysis
+        run: ./scripts/check-workflows.sh
 
   policy-validity:
     name: every rendered policy is one Kyverno will accept
@@ -203,6 +226,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       # Same pinned tarball + checksum the kyverno job uses. Not an install
       # action: a bump has to fail the hardcoded SHA256 next to it until a human
       # confirms the new one.
@@ -228,6 +253,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       # A customManager whose regex matches nothing is valid config —
       # renovate-config-validator passes it, because the schema is fine and the
       # pattern never runs against a file. And the built-in argocd manager can
@@ -242,6 +269,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Install Kyverno CLI
         run: |
@@ -300,6 +329,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: No hardcoded catalog repoURL in applied ApplicationSets
         run: ./scripts/check-hardcoded-org.py --blocking
@@ -321,6 +352,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Install Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
@@ -370,6 +403,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Install Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
@@ -412,6 +447,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Install PyYAML
         run: pip install --quiet pyyaml
@@ -482,6 +519,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Install Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
@@ -506,6 +545,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Install gitleaks
         run: |
@@ -529,6 +570,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Install kustomize
         uses: imranismail/setup-kustomize@53f941b41dca13ed61874bbc6b4b6e1562877530 # v3
