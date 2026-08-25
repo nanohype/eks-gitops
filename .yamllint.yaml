@@ -2,6 +2,11 @@
 extends: default
 
 ignore: |
+  # Generated output. `task render` writes helm/kustomize output here, so a lint
+  # run after a render would report on manifests upstream charts emit rather than
+  # on anything this repo authors. Gated instead by `task scan` — kubeconform
+  # against the real schemas, then trivy config.
+  rendered/
   catalog/druid/chart/templates/
   # Authored dashboards embed Grafana JSON (PromQL exprs exceed line-length); the
   # JSON is validated by kustomize build + the GrafanaDashboard schema, not yamllint.

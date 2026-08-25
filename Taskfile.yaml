@@ -81,6 +81,11 @@ tasks:
     cmds:
       - ./run.py
 
+  validate:gate-controls:
+    desc: "Positive controls — every gate rejects the violation it exists to catch"
+    cmds:
+      - ./scripts/tests/controls.py
+
   validate:policy-validity:
     desc: "Policy-validity gate — every rendered policy overlay is one Kyverno will accept"
     cmds:
@@ -140,6 +145,7 @@ tasks:
       - validate:renovate-coverage
       - validate:policy-validity
       - validate:gate-tests
+      - validate:gate-controls
     cmds:
       - echo "All validations passed."
 

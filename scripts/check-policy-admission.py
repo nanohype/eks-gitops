@@ -125,6 +125,13 @@ render_addons = importlib.util.module_from_spec(_spec)
 sys.modules["render_addons"] = render_addons  # dataclass resolves annotations here
 _spec.loader.exec_module(render_addons)
 REPO_ROOT = render_addons.REPO_ROOT
+
+# Seconds a child process may run before the gate gives up on it. A subprocess
+# with no deadline turns an unreachable registry into a job that hangs until the
+# CI runner's own ceiling, with no diagnostic naming the command that stalled.
+# NETWORK_TIMEOUT covers commands that resolve a remote chart or registry;
+# LOCAL_TIMEOUT covers commands that only read the working tree.
+NETWORK_TIMEOUT = 300
 SKIP_CHARTS = render_addons.SKIP_CHARTS
 add_repos = render_addons.add_repos
 discover = render_addons.discover
@@ -286,6 +293,7 @@ spec:
 
 
 def _run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
+    kw.setdefault("timeout", NETWORK_TIMEOUT)
     return subprocess.run(cmd, capture_output=True, text=True, **kw)
 
 

@@ -178,6 +178,14 @@ jobs:
       - name: Gate-script unit tests
         run: ./run.py
         working-directory: scripts/tests
+      # A unit test says a gate computes the right answer on a fixture. A
+      # positive control says the gate REJECTS the violation it exists to
+      # catch, on the real tree: it asserts the gate is clean, introduces the
+      # violation, verifies the edit actually landed and changed the meaning,
+      # and requires a non-zero exit. A gate carrying neither a control nor an
+      # asserted exemption fails this step, so the suite cannot shrink quietly.
+      - name: Positive controls — every gate can reject
+        run: ./scripts/tests/controls.py
 
   policy-validity:
     name: every rendered policy is one Kyverno will accept

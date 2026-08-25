@@ -64,6 +64,13 @@ except ImportError:  # pragma: no cover
     sys.exit("PyYAML required: pip install pyyaml")
 
 ROOT = Path(__file__).resolve().parent.parent
+
+# Seconds a child process may run before the gate gives up on it. A subprocess
+# with no deadline turns an unreachable registry into a job that hangs until the
+# CI runner's own ceiling, with no diagnostic naming the command that stalled.
+# NETWORK_TIMEOUT covers commands that resolve a remote chart or registry;
+# LOCAL_TIMEOUT covers commands that only read the working tree.
+NETWORK_TIMEOUT = 300
 OPERATOR_APPSET = ROOT / "applicationsets" / "addons-agent-operator.yaml"
 CHART = "oci://ghcr.io/nanohype/eks-agent-platform/charts/operator"
 CRD_VERSION = "v1alpha1"
@@ -102,6 +109,7 @@ def crd_schemas(version: str, workdir: Path) -> dict[str, dict]:
         check=True,
         capture_output=True,
         text=True,
+        timeout=NETWORK_TIMEOUT,
     )
     crd_dir = workdir / "operator" / "crds"
     if not crd_dir.is_dir():

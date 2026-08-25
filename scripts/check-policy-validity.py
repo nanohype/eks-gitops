@@ -46,6 +46,13 @@ import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+
+# Seconds a child process may run before the gate gives up on it. A subprocess
+# with no deadline turns an unreachable registry into a job that hangs until the
+# CI runner's own ceiling, with no diagnostic naming the command that stalled.
+# NETWORK_TIMEOUT covers commands that resolve a remote chart or registry;
+# LOCAL_TIMEOUT covers commands that only read the working tree.
+LOCAL_TIMEOUT = 120
 POLICIES = ROOT / "policies" / "kyverno"
 ENVS = ("development", "staging", "production")
 
@@ -122,7 +129,8 @@ def main() -> int:
         for overlay in overlays:
             rel = overlay.relative_to(ROOT)
             build = subprocess.run(
-                ["kustomize", "build", str(overlay)], capture_output=True, text=True
+                ["kustomize", "build", str(overlay)], capture_output=True, text=True,
+                timeout=LOCAL_TIMEOUT,
             )
             if build.returncode != 0:
                 failures.append(f"{rel}: kustomize build failed:\n      {build.stderr.strip()[:300]}")
@@ -137,7 +145,7 @@ def main() -> int:
 
             run = subprocess.run(
                 ["kyverno", "apply", str(rendered), "--resource", str(probe)],
-                capture_output=True, text=True,
+                capture_output=True, text=True, timeout=LOCAL_TIMEOUT,
             )
             combined = run.stdout + run.stderr
             # kyverno apply exits 0 even when a policy fails validation; the

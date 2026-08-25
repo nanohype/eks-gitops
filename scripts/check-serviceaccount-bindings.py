@@ -31,6 +31,13 @@ from pathlib import Path
 
 import yaml
 
+# Seconds a child process may run before the gate gives up on it. A subprocess
+# with no deadline turns an unreachable registry into a job that hangs until the
+# CI runner's own ceiling, with no diagnostic naming the command that stalled.
+# NETWORK_TIMEOUT covers commands that resolve a remote chart or registry;
+# LOCAL_TIMEOUT covers commands that only read the working tree.
+LOCAL_TIMEOUT = 120
+
 # Charts rendered from this repo. Upstream-charted addons are covered by
 # render-addons.py, which templates them against their appset-pinned versions.
 CHART_GLOB = "catalog/*/chart"
@@ -61,7 +68,7 @@ def render(chart: Path) -> list[dict]:
     if values.exists():
         cmd += ["-f", str(values)]
     cmd += RENDER_VALUES.get(name, [])
-    out = subprocess.run(cmd, capture_output=True, text=True)
+    out = subprocess.run(cmd, capture_output=True, text=True, timeout=LOCAL_TIMEOUT)
     if out.returncode != 0:
         print(f"::error file={chart}::helm template failed\n{out.stderr.strip()[:1200]}")
         return []
