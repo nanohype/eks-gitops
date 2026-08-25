@@ -840,26 +840,43 @@ def main() -> int:
         print(f"FAIL  no control matches {only!r}")
         return 1
 
-    if not only and len(items) < MIN_CONTROLS_RUN:
-        print(f"FAIL  only {len(items)} control(s) would run, under the floor of "
-              f"{MIN_CONTROLS_RUN}. The registry still names a gate for every entry, "
-              f"which is a different claim from having exercised them — a suite that "
-              f"runs almost no controls cannot report that its invariants hold.")
-        return 1
-
     print(f"── Positive controls ── {len(items)} gate(s), "
           f"{len(NEEDS_NETWORK)} exempted as network-dependent\n")
+
+    # Counted at the END of the loop body, after run_control has returned a
+    # verdict — so `proven` is cases that completed a proof, not entries the
+    # registry happened to name.
+    #
+    # Those are different quantities and only the second used to be gated, from
+    # BEFORE the loop ran. `len(items)` is what the registry selected; a control
+    # that left the loop without proving or failing anything would not move it,
+    # and the summary would read the same either way.
+    proven = 0
     failed = 0
     for gate, what, mutate in items:
         ok, detail = run_control(gate, what, mutate)
         print(f"  {'ok  ' if ok else 'FAIL'}  {gate}: {detail}")
-        failed += 0 if ok else 1
+        if ok:
+            proven += 1
+        else:
+            failed += 1
 
     print()
+    silent = len(items) - (proven + failed)
+    if silent:
+        print(f"FAIL  {silent} control(s) left the loop without proving or failing "
+              f"anything, so this run licenses nothing.")
+        return 1
     if failed:
         print(f"Positive-control gate FAILED: {failed} of {len(items)} controls did not hold.")
         return 1
-    print(f"✓ every gate with a control rejects the violation it names ({len(items)} controls)")
+    if not only and proven < MIN_CONTROLS_RUN:
+        print(f"FAIL  only {proven} control(s) completed a proof, under the floor of "
+              f"{MIN_CONTROLS_RUN}. The registry naming a gate for every entry is a "
+              f"different claim from having exercised them.")
+        return 1
+    print(f"✓ every gate with a control rejects the violation it names "
+          f"({proven} control(s) completed a proof)")
     return 0
 
 

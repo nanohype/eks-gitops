@@ -39,6 +39,18 @@ WORKFLOWS="${1:-$ROOT/.github/workflows}"
 # green run then means "some version found nothing".
 WANT_ZIZMOR="$(sed -n 's/^zizmor==\([0-9][^ \\]*\).*/\1/p' "$ROOT/requirements.txt" | head -1)"
 
+# An unresolvable pin FAILS rather than skipping the version check. Guarding the
+# comparison with `[ -n "$WANT_ZIZMOR" ]` made an unreadable requirements.txt
+# silently delete the check: a wrong zizmor then passed, because the authority
+# the gate compares against had gone missing and the gate carried on without it.
+# Absence of an authority is a refusal, never a permissive default.
+if [ -z "$WANT_ZIZMOR" ]; then
+  echo "Cannot run: no zizmor==<version> pin found in $ROOT/requirements.txt."
+  echo "That pin is the authority this gate compares PATH against; without it the"
+  echo "version check would silently not happen and any zizmor would pass."
+  exit 2
+fi
+
 if ! command -v zizmor >/dev/null 2>&1; then
   echo "zizmor is not on PATH. Install it with:"
   echo "  pip install --require-hashes -r requirements.txt"
@@ -57,7 +69,7 @@ if [ "$count" -lt 1 ]; then
 fi
 
 have_zizmor="$(zizmor --version 2>/dev/null | awk '{print $NF}')"
-if [ -n "$WANT_ZIZMOR" ] && [ "$have_zizmor" != "$WANT_ZIZMOR" ]; then
+if [ "$have_zizmor" != "$WANT_ZIZMOR" ]; then
   echo "zizmor on PATH is $have_zizmor but requirements.txt pins $WANT_ZIZMOR."
   echo "Different releases run different audits, so this run would report on a"
   echo "rule set the lockfile does not describe. Install the pinned version:"
