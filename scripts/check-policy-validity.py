@@ -41,11 +41,31 @@ asserted here.
 
 from __future__ import annotations
 
+import importlib.util
 import pathlib
+import re
 import subprocess
 import sys
 
+import yaml
+
+# Shared precondition helper, loaded by path: these are hyphenated executables
+# run from varying working directories.
+_gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
+_gs = importlib.util.spec_from_file_location("gatelib", _gl)
+gatelib = importlib.util.module_from_spec(_gs)
+sys.modules["gatelib"] = gatelib
+_gs.loader.exec_module(gatelib)
+
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+
+# Seconds a child process may run before the gate gives up on it. A subprocess
+# with no deadline turns an unreachable registry into a job that hangs until the
+# CI runner's own ceiling, with no diagnostic naming the command that stalled.
+# NETWORK_TIMEOUT covers commands that resolve a remote chart or registry;
+# LOCAL_TIMEOUT covers commands that only read the working tree.
+LOCAL_TIMEOUT = 120
 POLICIES = ROOT / "policies" / "kyverno"
 ENVS = ("development", "staging", "production")
 
@@ -97,7 +117,24 @@ def _check_enforce_pins_digest(rel, rendered: str) -> None:
                     )
 
 
+def rules_in(rendered: str) -> int:
+    """Rules across every ClusterPolicy in a rendered overlay.
+
+    Parsed, not matched. Counting `- name:` by indentation returned 0 against
+    the real render — the depth differs from the source files — so the guard
+    that depended on it never fired and the gate kept reporting success while
+    kyverno was silently discarding a policy. A detector that reports zero is a
+    claim about the detector.
+    """
+    total = 0
+    for doc in yaml.safe_load_all(rendered):
+        if isinstance(doc, dict) and doc.get("kind") in ("ClusterPolicy", "Policy"):
+            total += len((doc.get("spec") or {}).get("rules") or [])
+    return total
+
+
 def main() -> int:
+    gatelib.require('kustomize', 'kyverno')
     import tempfile
 
     overlays = sorted(
@@ -122,7 +159,8 @@ def main() -> int:
         for overlay in overlays:
             rel = overlay.relative_to(ROOT)
             build = subprocess.run(
-                ["kustomize", "build", str(overlay)], capture_output=True, text=True
+                ["kustomize", "build", str(overlay)], capture_output=True, text=True,
+                timeout=LOCAL_TIMEOUT,
             )
             if build.returncode != 0:
                 failures.append(f"{rel}: kustomize build failed:\n      {build.stderr.strip()[:300]}")
@@ -137,9 +175,39 @@ def main() -> int:
 
             run = subprocess.run(
                 ["kyverno", "apply", str(rendered), "--resource", str(probe)],
-                capture_output=True, text=True,
+                capture_output=True, text=True, timeout=LOCAL_TIMEOUT,
             )
             combined = run.stdout + run.stderr
+
+            # ANTI-VACUITY. kyverno silently ignores a document it does not
+            # recognise as a policy, so a rendered file whose apiVersion or
+            # structure it rejects contributes nothing and the run still reports
+            # `error: 0`. Demonstrated: rewriting apiVersion to kyverno.io/vBOGUS
+            # left this gate printing "every one accepted by Kyverno".
+            #
+            # The load count is the signal. Compare the rules kyverno says it
+            # applied against the rules present in the render — if kyverno loaded
+            # fewer, it discarded a policy, which is exactly the invalidity this
+            # gate exists to catch.
+            want_rules = rules_in(build.stdout)
+            m = re.search(r"Applying (\d+) policy rule\(s\)", combined)
+            if not m:
+                failures.append(
+                    f"{rel}: kyverno printed no rule count, so nothing establishes "
+                    f"that it loaded any policy at all. A run that evaluated nothing "
+                    f"reports the same `error: 0` as a clean one.")
+                continue
+            got_rules = int(m.group(1))
+            if want_rules and got_rules < want_rules:
+                failures.append(
+                    f"{rel}: the render carries {want_rules} rule(s) but kyverno "
+                    f"loaded only {got_rules} — it discarded a policy it could not "
+                    f"parse, and silently reported no error for it.")
+                continue
+            if got_rules == 0:
+                failures.append(
+                    f"{rel}: kyverno loaded 0 policy rules from this overlay.")
+                continue
             # kyverno apply exits 0 even when a policy fails validation; the
             # signal is the error count in the summary and the validation
             # message on stderr. Read both rather than trusting the exit code.

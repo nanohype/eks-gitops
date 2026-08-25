@@ -76,10 +76,42 @@ tasks:
       - KUBECONFORM_SKIP="" ./scripts/kubeconform-scan.sh applicationsets/
 
   validate:gate-tests:
-    desc: "Gate-script unit tests — the gates themselves, not the manifests they check"
-    dir: scripts/tests
+    desc: "Gate-script unit tests + the coverage ratchet"
     cmds:
-      - ./run.py
+      # Through coverage so the ratchet in run.py applies. Bare `./run.py` still
+      # works and skips the ratchet — a developer running the suite should not
+      # be told the measurement failed, but CI and this target always measure.
+      - COVERAGE_REQUIRED=1 coverage run --rcfile=.coveragerc scripts/tests/run.py
+
+  validate:env-coverage:
+    desc: "Env-coverage gate — every addon carries a values file for each environment its appset reaches"
+    cmds:
+      - ./scripts/check-env-coverage.py
+
+  validate:image-pins:
+    desc: "Image-pin gate — every image the fleet renders carries an immutable reference"
+    cmds:
+      - ./scripts/check-image-pins.py
+
+  validate:workflows:
+    desc: "Workflow supply-chain gate — zizmor over .github/workflows, offline, MEDIUM+ blocks"
+    cmds:
+      - ./scripts/check-workflows.sh
+
+  validate:ai-config:
+    desc: "AI control-plane gate — model ids are us. inference profiles, routes are allowlisted, budgets enforce"
+    cmds:
+      - ./scripts/check-ai-config.py
+
+  validate:named-things:
+    desc: "Prose gate — every repo path, task target and file:line citation in markdown resolves"
+    cmds:
+      - ./scripts/check-named-things.py
+
+  validate:gate-controls:
+    desc: "Positive controls — every gate rejects the violation it exists to catch"
+    cmds:
+      - ./scripts/tests/controls.py
 
   validate:policy-validity:
     desc: "Policy-validity gate — every rendered policy overlay is one Kyverno will accept"
@@ -140,6 +172,12 @@ tasks:
       - validate:renovate-coverage
       - validate:policy-validity
       - validate:gate-tests
+      - validate:gate-controls
+      - validate:named-things
+      - validate:ai-config
+      - validate:workflows
+      - validate:image-pins
+      - validate:env-coverage
     cmds:
       - echo "All validations passed."
 

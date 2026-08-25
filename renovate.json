@@ -12,7 +12,8 @@
     "argocd",
     "gomod",
     "custom.regex",
-    "github-actions"
+    "github-actions",
+    "pip-compile"
   ],
   "argocd": {
     "managerFilePatterns": [
@@ -155,6 +156,16 @@
         "public.ecr.aws/karpenter/karpenter/karpenter"
       ],
       "enabled": false
+    },
+    {
+      "description": "Python tooling the gates and CI run, locked with hashes in requirements.txt. pip-compile regenerates the lockfile so the hashes move with the version.",
+      "matchManagers": [
+        "pip-compile"
+      ],
+      "labels": [
+        "dependencies",
+        "ci"
+      ]
     }
   ]
 }

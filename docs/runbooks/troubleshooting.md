@@ -11,7 +11,10 @@ task kustomize:build:env ENVIRONMENT=development
 
 - **Invalid YAML** — run `yamllint -c .yamllint.yaml <file>` first
 - **Missing base reference** — Kustomize overlays must reference `../../base` correctly
-- **Missing values files** — Helm addons need `values.yaml` + three `values-{env}.yaml` files
+- **Missing values files** — Helm addons need `values.yaml` plus a `values-{env}.yaml`
+  for every environment their ApplicationSet selector reaches: the three spoke
+  environments always, and `hub` where the appset does not exclude it. Run
+  `task validate:env-coverage` to see which pairs disagree.
 - **Kustomize addon path** — ensure `overlays/<env>/kustomization.yaml` exists for Kustomize addons
 
 ## ApplicationSet Not Generating Applications

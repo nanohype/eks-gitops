@@ -72,7 +72,9 @@ resources:
 ### `addons/<category>/<name>/base/<resource>.yaml`
 Create the Kubernetes resource manifests.
 
-### `addons/<category>/<name>/overlays/<env>/kustomization.yaml` (for development, staging, production)
+### `addons/<category>/<name>/overlays/<env>/kustomization.yaml`
+For development, staging and production always, plus `hub` when the addon's
+ApplicationSet selector reaches the hub (it does not carry `environment NotIn [hub]`).
 ```yaml
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization

@@ -15,9 +15,9 @@ addons/                → Addon configurations
     values-development.yaml → Development delta overrides
     values-staging.yaml    → Staging delta overrides
     values-production.yaml → Production delta overrides
-    # Kustomize addons (storage-classes, priority-classes, karpenter-resources):
+    # Kustomize addons (those shipping manifests this repo authors):
     base/                  → Kustomization + resource manifests
-    overlays/{development,staging,production}/
+    overlays/{development,staging,production}[,hub]/
                            → Environment-specific kustomization.yaml
 policies/              → Kyverno ClusterPolicy manifests (pure Kustomize, base/overlays)
 catalog/               → Platform-specific workloads (Druid)
@@ -37,7 +37,7 @@ the operator's CRDs and a running operator to reconcile them.
 CRD-only Applications sit immediately ahead of the first thing that renders one of their kinds, not inside a consumer's band. `scripts/check-sync-waves.py` asserts that precedence directly: an ApplicationSet rendering a manifest whose CRD another ApplicationSet installs must sync strictly after it. A controller that merely *watches* a CRD is not a consumer for this purpose — it retries until the kind exists.
 
 ### Helm Values Pattern
-Helm addons use a flat directory with ArgoCD multi-source. Each addon has `values.yaml` (base) plus `values-{env}.yaml` (delta only). ApplicationSets reference them via:
+Helm addons use a flat directory with ArgoCD multi-source. Each addon has `values.yaml` (base) plus `values-{env}.yaml` (delta only). The environments are `development`, `staging`, `production` and `hub`; the first three are the spoke clusters every addon reaches, while `hub` covers the fleet-management cluster, which runs the bootstrap and observability stacks only. ApplicationSets reference them via:
 ```yaml
 helm:
   valueFiles:
@@ -47,7 +47,17 @@ helm:
 Environment-specific values files contain ONLY differences from base — not a full copy.
 
 ### Kustomize Addons
-Three addons use pure Kustomize (no Helm): storage-classes, priority-classes, karpenter-resources. These use the `base/overlays` pattern with `kustomization.yaml` in each overlay directory. Kyverno policies also use pure Kustomize (resources + JSON patches for enforcement mode).
+Which style an addon uses follows from what it delivers, not from a list. An
+addon that configures an upstream Helm chart carries flat values; an addon that
+ships manifests this repo authors carries `base/` plus per-environment overlays,
+each with its own `kustomization.yaml`. Kyverno policies take the same shape
+(resources plus JSON patches for enforcement mode).
+
+To see which addons are on the Kustomize side:
+
+```bash
+find addons -mindepth 3 -maxdepth 3 -type d -name base | sed 's|/base||'
+```
 
 ### ApplicationSet Generator
 Most ApplicationSets use a `matrix` generator combining `clusters` selector with a `list` of addons. Two template styles: Helm multi-source (for Helm addons with `$values` ref) and single-source with Kustomize path (for Kustomize addons and policies). Environment is read from cluster secret labels: `{{ index .metadata.labels "environment" }}`.
@@ -60,8 +70,8 @@ Most ApplicationSets use a `matrix` generator combining `clusters` selector with
 Run `task validate` to verify.
 
 ### Adding a new addon
-**Helm:** Create `addons/<category>/<name>/` with `values.yaml` + three `values-{env}.yaml` files. Add to the appropriate Helm ApplicationSet.
-**Kustomize:** Create `addons/<category>/<name>/base/` + three overlay directories. Add to the appropriate Kustomize ApplicationSet.
+**Helm:** Create `addons/<category>/<name>/` with `values.yaml` + the three spoke `values-{env}.yaml` files, plus `values-hub.yaml` if the addon deploys to the fleet hub. Add to the appropriate Helm ApplicationSet.
+**Kustomize:** Create `addons/<category>/<name>/base/` + the three spoke overlay directories, plus `overlays/hub/` if the addon deploys to the fleet hub. Add to the appropriate Kustomize ApplicationSet.
 Categories: `bootstrap`, `networking`, `security`, `observability`, `operations`, `ai-platform`, `argo-platform`.
 See `docs/configuration/adding-addons.md` for full guide.
 
@@ -102,6 +112,14 @@ dashboards, fork-safety). CI runs those plus several gates that have **no local
 `task` target**, so a clean `task validate` is necessary but not sufficient:
 
 - **Zero-placeholder gate** — `scripts/no-placeholders.sh` (CI job `placeholders`)
+- **Renovate config schema** — `renovate-config-validator`, CI-only because it
+  runs through `npx --package renovate`, which fetches the whole Renovate
+  package. That is minutes per invocation and needs the network, so it fails the
+  hermetic-and-fast bar a local target has to meet. `check-renovate-coverage.py`
+  covers the overlapping half locally: it compiles every `matchStrings` regex out
+  of the shipped config, so a manager Renovate would discard as malformed fails
+  there too. What only the validator catches is an unknown or misspelled Renovate
+  KEY, which is why it still runs somewhere.
 - **Kyverno unit tests + verify-images signing-identity contract** —
   `kyverno test policies/kyverno/tests` and `scripts/check-image-verification.py`
   (CI job `kyverno`)

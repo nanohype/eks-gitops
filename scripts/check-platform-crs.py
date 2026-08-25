@@ -51,6 +51,8 @@ honest about having checked nothing.
 
 from __future__ import annotations
 
+import importlib.util
+import pathlib
 import argparse
 import re
 import subprocess
@@ -58,12 +60,28 @@ import sys
 import tempfile
 from pathlib import Path
 
+# Shared precondition helper, loaded by path: these are hyphenated executables
+# run from varying working directories.
+_gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
+_gs = importlib.util.spec_from_file_location("gatelib", _gl)
+gatelib = importlib.util.module_from_spec(_gs)
+sys.modules["gatelib"] = gatelib
+_gs.loader.exec_module(gatelib)
+
+
 try:
     import yaml
 except ImportError:  # pragma: no cover
     sys.exit("PyYAML required: pip install pyyaml")
 
 ROOT = Path(__file__).resolve().parent.parent
+
+# Seconds a child process may run before the gate gives up on it. A subprocess
+# with no deadline turns an unreachable registry into a job that hangs until the
+# CI runner's own ceiling, with no diagnostic naming the command that stalled.
+# NETWORK_TIMEOUT covers commands that resolve a remote chart or registry;
+# LOCAL_TIMEOUT covers commands that only read the working tree.
+NETWORK_TIMEOUT = 300
 OPERATOR_APPSET = ROOT / "applicationsets" / "addons-agent-operator.yaml"
 CHART = "oci://ghcr.io/nanohype/eks-agent-platform/charts/operator"
 CRD_VERSION = "v1alpha1"
@@ -102,6 +120,7 @@ def crd_schemas(version: str, workdir: Path) -> dict[str, dict]:
         check=True,
         capture_output=True,
         text=True,
+        timeout=NETWORK_TIMEOUT,
     )
     crd_dir = workdir / "operator" / "crds"
     if not crd_dir.is_dir():
@@ -491,6 +510,7 @@ def self_test() -> int:
 
 
 def main() -> int:
+    gatelib.require('helm')
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--list", action="store_true", help="print what was resolved and walked")
     ap.add_argument("--offline", action="store_true", help="skip rather than fail with no registry")

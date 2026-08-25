@@ -1,0 +1,18 @@
+# Coverage over the gate scripts, measured by the unit-test suite in
+# scripts/tests. The positive controls in scripts/tests/controls.py exercise
+# every gate end to end as a subprocess, which this figure does not see — so the
+# number below is the floor under the UNIT tier specifically, not a measure of
+# how much of the gate suite is exercised.
+[run]
+source = ./scripts
+omit =
+    scripts/tests/*
+branch = True
+
+[report]
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+    raise NotImplementedError
+show_missing = True
+skip_covered = False

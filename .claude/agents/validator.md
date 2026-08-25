@@ -24,6 +24,9 @@ For each Helm addon (directories with `values.yaml` at the top level), verify th
 - `values-development.yaml` exists
 - `values-staging.yaml` exists
 - `values-production.yaml` exists
+- `values-hub.yaml` exists where the addon's ApplicationSet selector reaches the
+  hub. Which addons those are is decided by the selector, not by this list, so
+  report what `scripts/check-env-coverage.py` says rather than asserting a count
 
 **Kustomize addons** — for each addon directory in `addons/*/*/` that contains a `base/` directory:
 - `base/kustomization.yaml` exists

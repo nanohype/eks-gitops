@@ -38,6 +38,9 @@ tolerations:
 
 For each environment, create a delta-only values file. Only include values that differ from base:
 
+A fourth environment, `hub`, exists for the fleet-management cluster. Whether an addon needs `values-hub.yaml` follows from its ApplicationSet's cluster selector, not from a rule of thumb: most appsets exclude the hub with `environment NotIn [hub]`, and the ones that do not — bootstrap and otel-agent — reach it. `scripts/check-env-coverage.py` compares each appset's reach against the values files present and fails when an addon is selected for an environment it cannot render for.
+
+
 **`values-development.yaml`:**
 ```yaml
 # <Addon name> - Development overrides
@@ -76,6 +79,7 @@ For addons that deploy raw Kubernetes resources without Helm.
 ```bash
 mkdir -p addons/<category>/<addon-name>/base
 mkdir -p addons/<category>/<addon-name>/overlays/{development,staging,production}
+# plus overlays/hub if the addon's ApplicationSet selector reaches the hub
 ```
 
 ### 2. Create Base Resources

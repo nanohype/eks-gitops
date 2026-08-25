@@ -27,14 +27,18 @@ spec:
     # a model outside this list cannot be invoked even if an agent asks for it.
     # allowedModels and allowedModelFamilies are mutually exclusive (the webhook
     # enforces it). The explicit model list is the tighter of the two: a family
-    # allowlist would admit every future anthropic model automatically. Both ids
-    # are fully qualified — geo-prefixed inference profile + the pinned model id
-    # that resolves in the pricing table — so cost accounting never falls back to
-    # an unpriced model, and the org's llm-policy default (sonnet) / light (haiku)
-    # split is explicit rather than implied.
+    # allowlist would admit every future anthropic model automatically.
+    #
+    # The `us.` prefix is load-bearing, not decoration. Bedrock reports
+    # inferenceTypesSupported: [INFERENCE_PROFILE] for the whole Claude family,
+    # so a bare foundation-model id is refused with a ValidationException on the
+    # first call — and the geo prefix has to match the deploy region, because a
+    # `global.` profile may route the request outside the jurisdiction the
+    # account's service-control policy exists to bound. scripts/check-ai-config.py
+    # asserts both, along with the default/light tiers named here.
     allowedModels:
-      - global.anthropic.claude-sonnet-4-6
-      - global.anthropic.claude-haiku-4-5-20251001-v1:0
+      - us.anthropic.claude-sonnet-5
+      - us.anthropic.claude-haiku-4-5-20251001-v1:0
   attribution:
     operators:
       - platform-operator@example.com
@@ -61,11 +65,11 @@ spec:
   routes:
     - name: reason
       modelFamily: anthropic
-      modelId: global.anthropic.claude-sonnet-4-6
+      modelId: us.anthropic.claude-sonnet-5
       rateLimit: 60
     - name: cheap
       modelFamily: anthropic
-      modelId: global.anthropic.claude-haiku-4-5-20251001-v1:0
+      modelId: us.anthropic.claude-haiku-4-5-20251001-v1:0
       rateLimit: 120
 ---
 # NO AgentFleet, and no EvalSuite over one.

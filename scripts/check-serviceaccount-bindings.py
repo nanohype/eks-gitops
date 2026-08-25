@@ -25,11 +25,29 @@ now names the other's file, and this check makes the in-chart set unambiguous, s
 there is one list to compare rather than a rendering to reconstruct.
 """
 
+import importlib.util
+import pathlib
 import subprocess
 import sys
 from pathlib import Path
 
 import yaml
+
+# Shared precondition helper, loaded by path: these are hyphenated executables
+# run from varying working directories.
+_gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
+_gs = importlib.util.spec_from_file_location("gatelib", _gl)
+gatelib = importlib.util.module_from_spec(_gs)
+sys.modules["gatelib"] = gatelib
+_gs.loader.exec_module(gatelib)
+
+
+# Seconds a child process may run before the gate gives up on it. A subprocess
+# with no deadline turns an unreachable registry into a job that hangs until the
+# CI runner's own ceiling, with no diagnostic naming the command that stalled.
+# NETWORK_TIMEOUT covers commands that resolve a remote chart or registry;
+# LOCAL_TIMEOUT covers commands that only read the working tree.
+LOCAL_TIMEOUT = 120
 
 # Charts rendered from this repo. Upstream-charted addons are covered by
 # render-addons.py, which templates them against their appset-pinned versions.
@@ -61,7 +79,7 @@ def render(chart: Path) -> list[dict]:
     if values.exists():
         cmd += ["-f", str(values)]
     cmd += RENDER_VALUES.get(name, [])
-    out = subprocess.run(cmd, capture_output=True, text=True)
+    out = subprocess.run(cmd, capture_output=True, text=True, timeout=LOCAL_TIMEOUT)
     if out.returncode != 0:
         print(f"::error file={chart}::helm template failed\n{out.stderr.strip()[:1200]}")
         return []
@@ -85,6 +103,7 @@ def pod_specs(doc: dict):
 
 
 def main() -> int:
+    gatelib.require('helm')
     repo = Path(__file__).resolve().parent.parent
     charts = sorted(repo.glob(CHART_GLOB))
     if not charts:

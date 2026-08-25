@@ -38,6 +38,7 @@ Run ``render-addons.py`` to render every env, or ``--env staging`` for one.
 
 from __future__ import annotations
 
+import importlib.util
 import argparse
 import pathlib
 import re
@@ -47,7 +48,23 @@ from dataclasses import dataclass, field
 
 import yaml
 
+# Shared precondition helper, loaded by path: these are hyphenated executables
+# run from varying working directories.
+_gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
+_gs = importlib.util.spec_from_file_location("gatelib", _gl)
+gatelib = importlib.util.module_from_spec(_gs)
+sys.modules["gatelib"] = gatelib
+_gs.loader.exec_module(gatelib)
+
+
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+
+# Seconds a child process may run before the gate gives up on it. A subprocess
+# with no deadline turns an unreachable registry into a job that hangs until the
+# CI runner's own ceiling, with no diagnostic naming the command that stalled.
+# NETWORK_TIMEOUT covers commands that resolve a remote chart or registry;
+# LOCAL_TIMEOUT covers commands that only read the working tree.
+NETWORK_TIMEOUT = 300
 APPSET_DIR = REPO_ROOT / "applicationsets"
 ENVIRONMENTS = ["development", "staging", "production", "hub"]
 
@@ -204,10 +221,11 @@ def add_repos(units: list[Unit]) -> dict[str, str]:
         aliases[u.repo] = alias
         subprocess.run(
             ["helm", "repo", "add", alias, u.repo],
-            check=True, capture_output=True, text=True,
+            check=True, capture_output=True, text=True, timeout=NETWORK_TIMEOUT,
         )
     if aliases:
-        subprocess.run(["helm", "repo", "update"], check=True, capture_output=True, text=True)
+        subprocess.run(["helm", "repo", "update"], check=True, capture_output=True,
+                       text=True, timeout=NETWORK_TIMEOUT)
     return aliases
 
 
@@ -255,7 +273,7 @@ def render(unit: Unit, env: str | None, aliases: dict[str, str]) -> tuple[bool, 
     for vf in value_files:
         cmd += ["-f", str(vf)]
 
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=NETWORK_TIMEOUT)
     if proc.returncode != 0:
         return (False, proc.stderr.strip() or proc.stdout.strip())
     return (True, "rendered")
@@ -281,7 +299,7 @@ def stale_skips(units: list[Unit], aliases: dict[str, str]) -> list[tuple[str, s
         ref = u.oci_ref() if u.is_oci else f"{aliases.get(u.repo, u.repo)}/{u.chart}"
         proc = subprocess.run(
             ["helm", "show", "chart", ref, "--version", u.version],
-            capture_output=True, text=True,
+            capture_output=True, text=True, timeout=NETWORK_TIMEOUT,
         )
         if proc.returncode == 0:
             stale.append((u.chart, SKIP_CHARTS[u.chart]))
@@ -289,6 +307,7 @@ def stale_skips(units: list[Unit], aliases: dict[str, str]) -> list[tuple[str, s
 
 
 def main() -> int:
+    gatelib.require('helm')
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--env", choices=ENVIRONMENTS, help="render one environment (default: all)")
     ap.add_argument("--list", action="store_true", help="print discovered units and exit")

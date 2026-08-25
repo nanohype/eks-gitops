@@ -34,6 +34,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: No unfilled placeholders in deploy config
         run: ./scripts/no-placeholders.sh
@@ -44,9 +46,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
-      - name: Install yamllint
-        run: pip install yamllint
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - name: Install Python dependencies
+        run: pip install --require-hashes -r requirements.txt
 
       - name: Run yamllint
         run: yamllint -c .yamllint.yaml .
@@ -65,6 +73,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Dead ids + AMG-unsaveable legacy alerts
         run: ./scripts/validate-dashboards.py
@@ -112,10 +122,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Install helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
-      - name: Install pyyaml
-        run: pip install pyyaml
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - name: Install Python dependencies
+        run: pip install --require-hashes -r requirements.txt
       # A Pod Identity association binds by ServiceAccount NAME and does not fail
       # when the name is wrong — it is created, it shows in the console, and the pod
       # runs on the node role instead. Every manifest is valid and the workload has
@@ -129,10 +145,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Install helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
-      - name: Install pyyaml
-        run: pip install pyyaml
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - name: Install Python dependencies
+        run: pip install --require-hashes -r requirements.txt
       # The platform's own CRDs are on kubeconform-scan.sh's skip list — their
       # schemas are published to no public catalog — and that skip's comment says
       # these kinds are validated out-of-band against a real webhook. This closes
@@ -151,8 +173,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - name: Install pyyaml
-        run: pip install pyyaml
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - name: Install Python dependencies
+        run: pip install --require-hashes -r requirements.txt
       # cluster-bootstrap stamps gitops/repo-branch beside gitops/repo-url. Only
       # app-of-apps ever read it, so a cluster bootstrapped against any other
       # revision would run app-of-apps there and every child Application on main —
@@ -166,8 +194,34 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - name: Install PyYAML
-        run: pip install --quiet pyyaml
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - name: Install Python dependencies
+        run: pip install --require-hashes -r requirements.txt
+      # The positive controls exercise every gate, and three of them shell out:
+      # check-policy-validity needs kustomize and kyverno, check-platform-crs
+      # and render-addons need helm. Without these the control cannot establish
+      # that the gate is clean before mutating, so it proves nothing — which is
+      # exactly what this job reported before they were installed.
+      #
+      # Those gates now exit 2 with a sentence when a tool is absent rather than
+      # raising FileNotFoundError, so a missing binary is distinguishable from a
+      # finding. Installing them here is the other half: a gate that CAN run
+      # should.
+      - name: Install Kyverno CLI
+        run: |
+          curl -fsSL -o /tmp/kyverno.tar.gz "https://github.com/kyverno/kyverno/releases/download/${KYVERNO_VERSION}/kyverno-cli_${KYVERNO_VERSION}_linux_x86_64.tar.gz"
+          echo "${KYVERNO_SHA256}  /tmp/kyverno.tar.gz" | sha256sum -c -
+          tar -xz -C /tmp -f /tmp/kyverno.tar.gz kyverno
+          sudo install -m 0755 /tmp/kyverno /usr/local/bin/kyverno
+      - name: Install kustomize
+        uses: imranismail/setup-kustomize@53f941b41dca13ed61874bbc6b4b6e1562877530 # v3
+      - name: Install Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
       # Every other gate in this workflow checks a manifest. This one checks
       # the gates: a canary proves a gate RAN, and nothing proves it computes
       # the right answer. stdlib unittest, no test dependency to install.
@@ -175,9 +229,37 @@ jobs:
       # argv. Keep the two argv-identical: a local gate and its CI counterpart
       # drifting apart is how a green `task validate` stops meaning anything
       # about the build.
-      - name: Gate-script unit tests
-        run: ./run.py
-        working-directory: scripts/tests
+      - name: Gate-script unit tests and coverage ratchet
+        run: COVERAGE_REQUIRED=1 coverage run --rcfile=.coveragerc scripts/tests/run.py
+      # A unit test says a gate computes the right answer on a fixture. A
+      # positive control says the gate REJECTS the violation it exists to
+      # catch, on the real tree: it asserts the gate is clean, introduces the
+      # violation, verifies the edit actually landed and changed the meaning,
+      # and requires a non-zero exit. A gate carrying neither a control nor an
+      # asserted exemption fails this step, so the suite cannot shrink quietly.
+      - name: Positive controls — every gate can reject
+        run: ./scripts/tests/controls.py
+      # Prose that names a path, a task target or a file:line is a claim about
+      # the tree, and nothing else keeps those claims true as the tree moves.
+      - name: Named things in prose resolve
+        run: ./scripts/check-named-things.py
+      # The AI control plane's CRs reference each other, and nothing else reads
+      # those references. A route naming an un-allowlisted model, a dangling
+      # budget reference, or a bare foundation-model id each break at runtime on
+      # a path no other gate exercises.
+      - name: AI control-plane configuration is consistent
+        run: ./scripts/check-ai-config.py
+      # An appset's selector decides which environments an addon lands on; its
+      # values files decide which it can render for. render-addons reads a
+      # missing delta as "not deployed here" and passes, so nothing compared
+      # the two until this gate.
+      - name: Addons render for every environment their appset reaches
+        run: ./scripts/check-env-coverage.py
+      # This repo ships no package manifest, so the workflows are its whole
+      # third-party surface. Offline, so the verdict is a function of the commit
+      # rather than of what an upstream said today.
+      - name: Workflows pass static analysis
+        run: ./scripts/check-workflows.sh
 
   policy-validity:
     name: every rendered policy is one Kyverno will accept
@@ -185,6 +267,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       # Same pinned tarball + checksum the kyverno job uses. Not an install
       # action: a bump has to fail the hardcoded SHA256 next to it until a human
       # confirms the new one.
@@ -210,11 +294,24 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       # A customManager whose regex matches nothing is valid config —
       # renovate-config-validator passes it, because the schema is fine and the
       # pattern never runs against a file. And the built-in argocd manager can
       # *detect* a pin while deriving a package name that resolves to nothing.
       # Both leave a pin aging in silence with the config looking complete.
+      # check-renovate-coverage.py READS renovate.json and applies its regexes, so
+      # the config is a dependency of the gate. A manager Renovate would discard
+      # as malformed still parses here, and the gate would then report a pin as
+      # covered by a rule the tool never ran. Validate the config before trusting
+      # what the gate says about it.
+      #
+      # PARTIAL by design, and stated so rather than rounded up: this checks
+      # schema validity, not semantics. It accepts a datasourceTemplate naming a
+      # datasource that does not exist.
+      - name: Renovate config is well-formed
+        run: npx --yes --package renovate renovate-config-validator renovate.json
       - name: Every chart pin is watched
         run: ./scripts/check-renovate-coverage.py
 
@@ -224,6 +321,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Install Kyverno CLI
         run: |
@@ -244,7 +343,7 @@ jobs:
       # subjectRegExp or a flipped `required` can't ship silently.
       - name: Verify-images signing-identity contract
         run: |
-          pip install --quiet pyyaml
+          pip install --require-hashes -r requirements.txt
           ./scripts/check-image-verification.py
 
   # ── Fork-safety gate ─────────────────────────────────────────────────
@@ -282,6 +381,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: No hardcoded catalog repoURL in applied ApplicationSets
         run: ./scripts/check-hardcoded-org.py --blocking
@@ -303,12 +404,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Install Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
 
-      - name: Install PyYAML
-        run: pip install --quiet pyyaml
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - name: Install Python dependencies
+        run: pip install --require-hashes -r requirements.txt
 
       - name: Cache Helm charts
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -320,6 +427,12 @@ jobs:
 
       - name: Render every addon across every environment
         run: ./scripts/render-addons.py
+      # Tag immutability is a fact about the commit under test, so it blocks.
+      # Whether a CVE landed in one of these images overnight is not, and that
+      # half stays scheduled — blocking a merge on the world changing is how a
+      # gate teaches people to route around it.
+      - name: Every rendered image carries an immutable reference
+        run: ./scripts/check-image-pins.py
 
   # ── Policy-admission gate ────────────────────────────────────────────
   # The best-practice / pod-security policies run in Enforce mode on staging and
@@ -352,6 +465,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Install Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
@@ -359,8 +474,12 @@ jobs:
       - name: Install kustomize
         uses: imranismail/setup-kustomize@53f941b41dca13ed61874bbc6b4b6e1562877530 # v3
 
-      - name: Install PyYAML
-        run: pip install --quiet pyyaml
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - name: Install Python dependencies
+        run: pip install --require-hashes -r requirements.txt
 
       - name: Install Kyverno CLI
         run: |
@@ -394,9 +513,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
-      - name: Install PyYAML
-        run: pip install --quiet pyyaml
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - name: Install Python dependencies
+        run: pip install --require-hashes -r requirements.txt
 
       - name: Cache kubeconform + schemas
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -464,6 +589,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Install Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
@@ -488,6 +615,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Install gitleaks
         run: |
@@ -511,6 +640,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Install kustomize
         uses: imranismail/setup-kustomize@53f941b41dca13ed61874bbc6b4b6e1562877530 # v3
@@ -613,7 +744,11 @@ jobs:
       - name: Install trivy
         uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
         with:
-          version: ${{ env.TRIVY_VERSION }}
+          # TRIVY_VERSION is a literal in this workflow's env block, carrying a
+          # `# renovate:` annotation and asserted by the renovate-coverage gate.
+          # zizmor cannot follow the env indirection and reads any expansion here
+          # as unpinned; the pin it looks for is one level up.
+          version: ${{ env.TRIVY_VERSION }} # zizmor: ignore[unpinned-tools]
           cache: true
 
       - name: Misconfiguration gate (trivy config)

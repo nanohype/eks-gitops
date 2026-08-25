@@ -151,6 +151,9 @@ eks-gitops/
 
 ## Environment Differences
 
+The hub column is omitted: the fleet-management cluster runs only the bootstrap
+and observability stacks, so none of the settings below vary for it.
+
 | Setting | Development | Staging | Production |
 |---------|-------------|---------|------------|
 | Replicas | 1 | 2-3 | 2-3 |
@@ -162,12 +165,29 @@ eks-gitops/
 
 ## Prerequisites
 
-Tools required for local development:
+Every binary `task validate` invokes. Installing a subset leaves the repo's own
+validation unable to run, so the list is the whole set rather than the common
+ones:
 
-- [task](https://taskfile.dev/installation/) >= 3.0
-- [kustomize](https://kubectl.docs.kubernetes.io/installation/kustomize/) >= 5.0
-- [helm](https://helm.sh/docs/intro/install/) >= 3.0
-- [yamllint](https://yamllint.readthedocs.io/) >= 1.0
+- [task](https://taskfile.dev/installation/) >= 3.0 — the runner
+- [kustomize](https://kubectl.docs.kubernetes.io/installation/kustomize/) >= 5.0 — overlay builds
+- [helm](https://helm.sh/docs/intro/install/) >= 3.0 — chart rendering
+- [yamllint](https://yamllint.readthedocs.io/) >= 1.0 — `lint:yaml`
+- [kubeconform](https://github.com/yannh/kubeconform) — `validate:appset-schema`, `scan`
+- [kyverno](https://kyverno.io/docs/kyverno-cli/) — `validate:policy-admission`, `validate:policy-validity`
+- [trivy](https://trivy.dev/) — `scan`
+- [go](https://go.dev/dl/) >= 1.26 — `validate:appset-render`
+- [zizmor](https://docs.zizmor.sh/) — `validate:workflows`
+- Python at the version `.python-version` pins, with the packages `requirements.txt`
+  locks — PyYAML for the gates under `scripts/`, `coverage` for `validate:gate-tests`,
+  `yamllint` for `lint:yaml`, `zizmor` for `validate:workflows`. Install them with
+  `pip install --require-hashes -r requirements.txt`, which is what CI runs.
+
+CI pins the versions of kyverno, kubeconform, trivy and gitleaks it downloads;
+those pins are in the `env:` block at the top of `.github/workflows/ci.yml` and
+are the versions a local run is expected to match. `task validate` shells out to
+whichever build is on `PATH`, so a different major can fail in ways the pinned
+one does not.
 
 Infrastructure prerequisites (deployed by landing-zone):
 

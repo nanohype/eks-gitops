@@ -135,6 +135,175 @@ def covered_by_custom(text: str, chart: str, ver: str, patterns) -> bool:
     return False
 
 
+# Version pins outside applicationsets/ chart elements. Each family names the
+# file that carries it and a regex for the pin; every match must be covered by
+# some manager, and a family whose regex matches nothing fails.
+#
+# Chart pins were the only family this gate read, and the sentence it printed —
+# "every one watched by a manager that resolves" — was true of the population it
+# scanned and read as true of the repo. The git-pinned CRDs, the CI tool
+# binaries and the Go module were all watched, by managers nothing asserted:
+# deleting one left the gate printing the same success.
+OTHER_FAMILIES = [
+    (
+        "git-pinned manifest directory",
+        "applicationsets/gateway-api-crds.yaml",
+        # depName as the shipped manager spells it: the org/repo pair, not the
+        # URL it is embedded in. Matching the URL would compare a string the
+        # manager never produces and report a watched pin as unwatched.
+        re.compile(r"repoURL:\s*https://github\.com/(?P<repo>[^\s/]+/[^\s/]+)\s*\n\s*"
+                   r"targetRevision:\s*(?P<ver>v[0-9]\S*)"),
+    ),
+    (
+        "CI tool binary",
+        ".github/workflows/ci.yml",
+        # Anchored on the pin, NOT on the annotation above it. Matching the
+        # annotation would make an unannotated pin invisible to this gate: the
+        # pin nothing watches is exactly the one that carries no `# renovate:`
+        # line, so keying on the annotation finds every pin except the ones
+        # that matter. The annotation is then checked as a property of each pin
+        # found, in check_ci_tool_pins.
+        re.compile(r"^  (?P<var>[A-Z][A-Z0-9_]*_VERSION):\s*\"?(?P<ver>[^\"\s]+)\"?\s*$",
+                   re.M),
+    ),
+    (
+        "Go module",
+        "applicationsets/rendertest/go.mod",
+        re.compile(r"^\t(?P<repo>[a-z0-9./-]+\S*)\s+(?P<ver>v[0-9]\S*)", re.M),
+    ),
+]
+
+# Files that must carry NO version pin. Asserted rather than described: a
+# comment saying a file has no versions cannot fail when one appears, and this
+# can. Both opt-in appsets read their revision from a cluster-Secret annotation,
+# which is the fork-safety contract — a literal here would be a pin nothing
+# watches AND a hardcoded org reference.
+NO_PINS = [
+    "applicationsets/opt-in/apps-tenants.yaml",
+    "applicationsets/opt-in/clusters-appset.yaml",
+]
+
+PIN_SHAPED = re.compile(r"(?:targetRevision|chartVersion):\s*[\"\']?(?P<ver>v?[0-9]+\.[0-9]+\S*)")
+
+
+def check_other_families(patterns) -> int:
+    """Assert every non-chart pin family is watched, and the pin-free files are."""
+    seen = 0
+    for label, rel, rx in OTHER_FAMILIES:
+        path = ROOT / rel
+        if not path.exists():
+            fail(f"{rel} does not exist, but this gate asserts a {label} pin lives "
+                 f"there — the reference outlived the file.")
+            continue
+        text = path.read_text()
+        hits = list(rx.finditer(text))
+        if not hits:
+            fail(f"{rel}: found no {label} pin. The shape this gate looks for is gone, "
+                 f"so its coverage claim over that family is vacuous.")
+            continue
+        if label == "CI tool binary":
+            seen += check_ci_tool_pins(text, rel, hits, patterns)
+            continue
+
+        for m in hits:
+            seen += 1
+            gd = m.groupdict()
+            if rel.endswith("go.mod"):
+                # The built-in gomod manager reads go.mod wholesale; there is no
+                # per-pin annotation to check, so the assertion is that the
+                # manager is enabled at all.
+                if "gomod" not in enabled_managers():
+                    fail(f"{rel}: the gomod manager is not in renovate.json's "
+                         f"enabledManagers, so {gd['repo']} {gd['ver']} is watched by "
+                         f"nothing.")
+                continue
+            if not covered_by_custom(text, gd["repo"], gd["ver"], patterns):
+                fail(f"{rel}: {label} pin {gd['repo']} {gd['ver']} is matched by no "
+                     f"customManager. Nothing opens a currency PR for it.")
+
+    for rel in NO_PINS:
+        path = ROOT / rel
+        if not path.exists():
+            fail(f"{rel} is asserted to carry no version pin but does not exist.")
+            continue
+        seen += 1
+        for m in PIN_SHAPED.finditer(path.read_text()):
+            fail(f"{rel}: carries a literal version {m.group('ver')!r}. This file is "
+                 f"asserted to pin nothing — its revision comes from a cluster-Secret "
+                 f"annotation — so a literal here is both an unwatched pin and a "
+                 f"hardcoded reference a fork would inherit.")
+    return seen
+
+
+# The annotation that makes one CI tool pin watchable. Renovate reads it as a
+# property of the line immediately below, so it covers ONE pin — a file-level
+# comment would silently adopt every version added afterwards.
+ANNOTATED = re.compile(
+    r"#\s*renovate:\s*datasource=(?P<ds>[a-z-]+)\s+depName=(?P<dep>\S+)\s*\n"
+    r"\s*(?P<var>[A-Z][A-Z0-9_]*_VERSION):")
+
+
+def check_ci_tool_pins(text: str, rel: str, hits, patterns) -> int:
+    """Every *_VERSION pin carries its own annotation and a manager that reads it."""
+    annotated = {m.group("var"): (m.group("dep"), m.group("ds"))
+                 for m in ANNOTATED.finditer(text)}
+    for m in hits:
+        var, ver = m.group("var"), m.group("ver")
+        if var not in annotated:
+            fail(f"{rel}: {var} pins {ver} with no `# renovate:` annotation on the line "
+                 f"above it. The customManager keys on that annotation, so this pin is "
+                 f"watched by nothing and ages silently.")
+            continue
+        dep, _ds = annotated[var]
+        if not covered_by_custom(text, dep, ver, patterns):
+            fail(f"{rel}: {var} ({dep} {ver}) is annotated but matched by no "
+                 f"customManager — the annotation names a datasource nothing reads.")
+    return len(hits)
+
+
+def check_oci_repourl_shape() -> int:
+    """An OCI direct-source pin's repoURL last segment equals its `chart`.
+
+    ArgoCD resolves the OCI digest from repoURL alone, so repoURL must name the
+    package and `chart` repeats it. Point repoURL at the enclosing namespace and
+    ArgoCD requests `.../<namespace>/manifests/<version>`, which is not a
+    package, and manifest generation fails at sync.
+
+    Two ApplicationSets carry that shape and two comments describe it — one of
+    them saying "Same shape the Envoy charts in addons-ai-platform use". A
+    recurring constraint named in prose in two places and enforced nowhere is an
+    open class with a memorial, so it is asserted here: the redundancy is
+    load-bearing, and a tidy-up that removes it breaks a sync rather than a
+    lint.
+
+    This is also the shape that makes the built-in argocd manager derive a
+    package name resolving to nothing, which is why this gate already reasons
+    about it for coverage.
+    """
+    seen = 0
+    for path in sorted(APPSETS.glob("*.yaml")):
+        text = path.read_text()
+        for m in re.finditer(
+            r"repoURL:\s*oci://(?P<repo>\S+)\s*\n\s*chart:\s*(?P<chart>\S+)", text
+        ):
+            seen += 1
+            last = m.group("repo").rstrip("/").rsplit("/", 1)[-1]
+            if last != m.group("chart"):
+                fail(f"{path.relative_to(ROOT)}: repoURL ends in {last!r} but chart is "
+                     f"{m.group('chart')!r}. ArgoCD resolves the OCI digest from repoURL "
+                     f"alone, so it would request .../{last}/manifests/<version>, which "
+                     f"is not a package, and manifest generation fails at sync.")
+    if not seen:
+        fail("found no OCI direct-source pins — this repo carries two, so the "
+             "pattern stopped matching and the repoURL shape is unasserted.")
+    return seen
+
+
+def enabled_managers() -> set[str]:
+    cfg = json.loads((ROOT / "renovate.json").read_text())
+    return set(cfg.get("enabledManagers") or [])
+
+
 def main() -> int:
     patterns = load_patterns()
     if failures:
@@ -170,13 +339,17 @@ def main() -> int:
         fail("no chart pins found in applicationsets/ — the pin regexes no "
              "longer match this repo's shape, so this gate proved nothing.")
 
+    total += check_other_families(patterns)
+    total += check_oci_repourl_shape()
+
     if failures:
         report()
         return 1
 
-    print(f"renovate coverage OK: {total} chart pins in "
-          f"{len(list(APPSETS.glob('*.yaml')))} ApplicationSets, every one watched "
-          f"by a manager that resolves")
+    print(f"renovate coverage OK: {total} pin(s) across chart elements in "
+          f"{len(list(APPSETS.glob('*.yaml')))} ApplicationSets, the git-pinned CRDs, "
+          f"the CI tool binaries and the Go module — every one watched by a manager "
+          f"that resolves, and {len(NO_PINS)} file(s) asserted to pin nothing")
     return 0
 
 
