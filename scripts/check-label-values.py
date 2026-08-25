@@ -118,6 +118,34 @@ MIN_FILES = 200
 MIN_VALUES = 100
 
 
+# Two floors, deliberately not collapsed into one number.
+#
+#   UNCONDITIONAL — at least one thing examined OUTSIDE the gate's own
+#   directories. This is a law about ANY tree: a run over scripts/ and the test
+#   fixtures alone has examined nothing this repo ships, whatever the count
+#   says. It is what catches a gate-scripts-only checkout even if someone later
+#   lowers the number below.
+#
+#   REPO-ONLY — the count floors below. True of THIS repo and not a law about
+#   any tree, which is why they are separate: collapsing the two makes the floor
+#   reject a legitimate small fixture and report it as the gate failing
+#   everything.
+SELF_DIRS = ("scripts", "policies/kyverno/tests", "applicationsets/rendertest")
+
+
+def outside_self(paths, root) -> int:
+    """How many of `paths` lie outside the gate's own directories."""
+    n = 0
+    for p in paths:
+        try:
+            rel = Path(p).resolve().relative_to(root).as_posix()
+        except ValueError:
+            continue
+        if not rel.startswith(SELF_DIRS):
+            n += 1
+    return n
+
+
 def main() -> int:
     failures: list[str] = []
     scanned = 0
@@ -153,6 +181,11 @@ def main() -> int:
                         )
 
     print(f"Checked {scanned} label value(s) across {len(files)} YAML file(s)")
+    product = outside_self(files, REPO)
+    if product == 0:
+        print(f"FAIL  every file examined lies inside {SELF_DIRS} — this run saw the "
+              f"gate's own directories and none of the manifests this repo ships.")
+        return 2
     if len(files) < MIN_FILES or scanned < MIN_VALUES:
         print(f"FAIL  examined {len(files)} file(s) and {scanned} label value(s), under "
               f"the floors ({MIN_FILES}/{MIN_VALUES}). This gate looked at almost "

@@ -129,9 +129,15 @@ printf '\nRun `task nonexistent-target-probe`.\n' >> $F
 run nonzero "named-things: fabricated task target" ./scripts/check-named-things.py
 res $F
 
-printf 'k: REPLACE_ME\n' > ./rv-probe.yaml
+# Planted in a TRACKED file, and restored after. An untracked probe file used
+# to work and stopped the moment no-placeholders was scoped to `git ls-files`:
+# the gate correctly ignored it, and this harness read that correct behaviour as
+# the gate failing to reject. A fixture outside the population its gate examines
+# tests nothing and reports a defect that is not there.
+F=addons/operations/karpenter/values-development.yaml; mut $F
+printf '\nrvProbe: REPLACE_ME\n' >> $F
 run nonzero "no-placeholders: planted sentinel" ./scripts/no-placeholders.sh
-rm -f ./rv-probe.yaml
+res $F
 
 # Assembled at run time rather than written as a literal. Committing a
 # credential-shaped string makes the repo's own secret scan fail on the file

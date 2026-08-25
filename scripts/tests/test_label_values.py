@@ -5,6 +5,7 @@ direction is returning None (valid) for something the API server will reject —
 that ships a manifest which fails at sync, fleet-wide, with every gate green.
 """
 
+import pathlib
 import unittest
 
 from gateloader import load
@@ -61,3 +62,37 @@ class Rejects(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UnconditionalFloor(unittest.TestCase):
+    """The half that is a law about any tree, not about this one.
+
+    `outside_self` decides whether a run saw anything the repo actually ships.
+    A count floor cannot answer that — it cannot tell a manifest from one of the
+    gate's own fixtures — which is why the two floors are separate and why this
+    one is tested on its own.
+    """
+
+    def test_manifest_paths_count_as_product(self):
+        root = lv.REPO
+        paths = [root / "addons/security/kyverno/values.yaml",
+                 root / "applicationsets/addons-karpenter.yaml"]
+        self.assertEqual(lv.outside_self(paths, root), 2)
+
+    def test_the_gates_own_directories_do_not(self):
+        root = lv.REPO
+        paths = [root / "scripts/check-label-values.py",
+                 root / "policies/kyverno/tests/kyverno-test.yaml",
+                 root / "applicationsets/rendertest/go.mod"]
+        self.assertEqual(lv.outside_self(paths, root), 0)
+
+    def test_a_mixed_set_counts_only_the_product_half(self):
+        root = lv.REPO
+        paths = [root / "scripts/gatelib.py",
+                 root / "addons/security/kyverno/values.yaml"]
+        self.assertEqual(lv.outside_self(paths, root), 1)
+
+    def test_a_path_outside_the_repo_is_not_counted(self):
+        # Resolving it against the repo raises, and a file the run reached from
+        # somewhere else is not evidence this repo was examined.
+        self.assertEqual(lv.outside_self([pathlib.Path("/tmp/elsewhere.yaml")], lv.REPO), 0)
