@@ -109,6 +109,15 @@ def check_value(raw) -> str | None:
     return None
 
 
+# Floors on what was EXAMINED, not on what was found. Printing a denominator
+# is not gating on it: this gate printed its count and exited 0 against a
+# tree containing only the scripts — which is what a renamed directory or a
+# wrong working directory looks like. Set well under the real numbers, so
+# they catch "matched almost nothing", never "someone removed one".
+MIN_FILES = 200
+MIN_VALUES = 100
+
+
 def main() -> int:
     failures: list[str] = []
     scanned = 0
@@ -144,6 +153,11 @@ def main() -> int:
                         )
 
     print(f"Checked {scanned} label value(s) across {len(files)} YAML file(s)")
+    if len(files) < MIN_FILES or scanned < MIN_VALUES:
+        print(f"FAIL  examined {len(files)} file(s) and {scanned} label value(s), under "
+              f"the floors ({MIN_FILES}/{MIN_VALUES}). This gate looked at almost "
+              f"nothing, which is not the same as finding nothing.")
+        return 2
 
     if failures:
         print(

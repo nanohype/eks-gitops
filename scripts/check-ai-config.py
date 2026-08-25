@@ -57,11 +57,60 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 # nanohype llm-policy: the model tiers, as inference-profile ids. Claude is the
 # primary family and Bedrock the delivery, so these are the only ids a route or
 # an allowlist may name.
+#
+# A SNAPSHOT, committed here on purpose, and a cache rather than a second source
+# of truth. Resolving the standard at run time from a sibling checkout, an env
+# var or a local cache would make this gate a function of the machine it runs
+# on: none of those exist on a CI runner, so the gate would take a skip branch
+# and report success in the one place it actually gates. Held in the repo, the
+# check is deterministic and identical everywhere.
+#
+# The cost of a snapshot is drift, so check_policy_drift() below compares it
+# against the published standard WHEREVER that resolves, and says plainly when
+# it could not. The comparison is an extra assertion, never a precondition —
+# the tier check above runs either way.
 POLICY_MODELS = {
     "us.anthropic.claude-sonnet-5": "default",
     "us.anthropic.claude-opus-5": "escalation",
     "us.anthropic.claude-haiku-4-5-20251001-v1:0": "light",
 }
+
+# Where the published standard may be found, in order. Absence is not failure;
+# a stale snapshot is.
+STANDARD_PATHS = (
+    pathlib.Path.home() / "codes/nanohype/nanohype/standards/llm-policy.json",
+    ROOT.parent / "nanohype/standards/llm-policy.json",
+)
+
+
+def check_policy_drift() -> tuple[list[str], str]:
+    """(problems, what-was-compared) for the snapshot against the standard."""
+    import json
+
+    for path in STANDARD_PATHS:
+        if not path.is_file():
+            continue
+        try:
+            doc = json.loads(path.read_text())
+            models = doc["content"]["models"]
+        except (ValueError, KeyError) as exc:
+            return ([f"{path} is not a readable llm-policy standard ({exc}). The "
+                     f"snapshot in this file could not be checked for drift."],
+                    f"unreadable: {path}")
+        want = {v: k for k, v in models.items()}
+        if want != POLICY_MODELS:
+            only_std = sorted(set(want) - set(POLICY_MODELS))
+            only_here = sorted(set(POLICY_MODELS) - set(want))
+            return ([f"POLICY_MODELS has drifted from {path}. "
+                     f"In the standard and not here: {only_std or 'none'}. "
+                     f"Here and not in the standard: {only_here or 'none'}. "
+                     f"Update the snapshot in this file to match."],
+                    f"compared against {path}")
+        return ([], f"matches {path}")
+
+    return ([], "NOT COMPARED — the published standard resolves nowhere on this "
+                "machine, so the snapshot is unverified here. The tier check "
+                "still ran.")
 
 # The geo prefix the policy names, matching its single preferred region. A
 # `global.` profile resolves and routes anywhere, which is the reason it is
@@ -111,7 +160,7 @@ def main() -> int:
               "the same clean result.")
         return 2
 
-    failures: list[str] = []
+    failures, drift_note = check_policy_drift()
     checked = 0
 
     def rel(p):
@@ -200,6 +249,7 @@ def main() -> int:
             print(f"  {f}")
         return 1
 
+    print(f"  llm-policy snapshot: {drift_note}")
     print(f"✓ {checked} assertion(s) over {len(docs)} AI control-plane CR(s): every model "
           f"id is a {GEO_PREFIX}-prefixed inference profile at an llm-policy tier, every "
           f"route is allowlisted, and every Platform has an enforcing budget")
