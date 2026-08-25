@@ -40,12 +40,22 @@ skipped, so a new selector shape cannot quietly opt out of the check.
 
 from __future__ import annotations
 
+import importlib.util
 import argparse
 import pathlib
 import re
 import sys
 
 import yaml
+
+# Shared helpers, loaded by path: these are hyphenated executables run from
+# varying working directories.
+_gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
+_gs = importlib.util.spec_from_file_location("gatelib", _gl)
+gatelib = importlib.util.module_from_spec(_gs)
+sys.modules["gatelib"] = gatelib
+_gs.loader.exec_module(gatelib)
+
 
 # Only the argparse default is taken from here. Every corpus read goes through
 # the resolved --root so the tree under test and the tree this file ships in
@@ -141,7 +151,7 @@ def main() -> int:
     pairs = 0
 
     for path in sorted(appsets.glob("*.yaml")):
-        for doc in yaml.safe_load_all(path.read_text()):
+        for doc in gatelib.read_yaml_all(path):
             if not isinstance(doc, dict) or doc.get("kind") != "ApplicationSet":
                 continue
             name = path.name

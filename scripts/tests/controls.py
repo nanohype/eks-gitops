@@ -87,6 +87,19 @@ IDENTIFIES = {
 # that changes bytes without changing meaning.
 DELETED = object()
 
+# A floor on CONTROLS ACTUALLY EXECUTED, not on registry keys being present.
+#
+# Those are different quantities, and only the second was ever asserted. The
+# anti-vacuity floor asks whether each gate HAS an entry; this asks how many
+# controls RAN. A registry can satisfy the first while contributing almost
+# nothing to the second — entries move into an exemption list, or a filter
+# narrows the set — and the suite would still print that the invariants hold.
+#
+# The count was printed and never gated. Set below the real number so a single
+# deliberate removal does not trip it, and far enough above zero that a gutted
+# registry cannot report success.
+MIN_CONTROLS_RUN = 14
+
 # Every planted marker carries this prefix. A marker that looks like real
 # syntax may already exist somewhere in the tree — gate docstrings in
 # particular are written out of the very shapes the gates catch — and a
@@ -825,6 +838,13 @@ def main() -> int:
     items = [(g, w, m) for g, (w, m) in sorted(CONTROLS.items()) if not only or g == only]
     if not items:
         print(f"FAIL  no control matches {only!r}")
+        return 1
+
+    if not only and len(items) < MIN_CONTROLS_RUN:
+        print(f"FAIL  only {len(items)} control(s) would run, under the floor of "
+              f"{MIN_CONTROLS_RUN}. The registry still names a gate for every entry, "
+              f"which is a different claim from having exercised them — a suite that "
+              f"runs almost no controls cannot report that its invariants hold.")
         return 1
 
     print(f"── Positive controls ── {len(items)} gate(s), "

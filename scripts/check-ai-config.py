@@ -46,11 +46,21 @@ reports.
 
 from __future__ import annotations
 
+import importlib.util
 import argparse
 import pathlib
 import sys
 
 import yaml
+
+# Shared helpers, loaded by path: these are hyphenated executables run from
+# varying working directories.
+_gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
+_gs = importlib.util.spec_from_file_location("gatelib", _gl)
+gatelib = importlib.util.module_from_spec(_gs)
+sys.modules["gatelib"] = gatelib
+_gs.loader.exec_module(gatelib)
+
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -91,7 +101,7 @@ def check_policy_drift() -> tuple[list[str], str]:
         if not path.is_file():
             continue
         try:
-            doc = json.loads(path.read_text())
+            doc = gatelib.read_json(path)
             models = doc["content"]["models"]
         except (ValueError, KeyError) as exc:
             return ([f"{path} is not a readable llm-policy standard ({exc}). The "
@@ -123,7 +133,7 @@ AI_KINDS = {"Platform", "Tenant", "BudgetPolicy", "ModelGateway", "AgentFleet"}
 def load(paths) -> list[tuple[pathlib.Path, dict]]:
     docs = []
     for p in paths:
-        for d in yaml.safe_load_all(p.read_text()):
+        for d in gatelib.read_yaml_all(p):
             if isinstance(d, dict) and d.get("kind") in AI_KINDS:
                 docs.append((p, d))
     return docs

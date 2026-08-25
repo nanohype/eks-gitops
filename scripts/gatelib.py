@@ -18,6 +18,7 @@ check-policy-admission.py already uses for render-addons.py:
 
 from __future__ import annotations
 
+import pathlib
 import shutil
 import sys
 
@@ -27,6 +28,52 @@ import sys
 # a policy failure, and how a positive-control floor reading only exit status
 # scores a crash as a catch.
 CANNOT_RUN = 2
+
+
+def read_yaml_all(path) -> list:
+    """Every document in `path`, or exit 2 NAMING the file that will not parse.
+
+    An unguarded `yaml.safe_load_all` raises, which exits non-zero — so by exit
+    status alone a malformed manifest is indistinguishable from a gate that
+    examined the tree and rejected it. The traceback then names a parser
+    internal rather than the file the reader has to fix, and the reader goes
+    looking in the wrong place.
+
+    A missing input and a malformed one are also different facts, and they get
+    different sentences here: an absent file is not this gate's business to
+    invent, a malformed one is a defect somebody introduced.
+    """
+    import yaml
+
+    path = pathlib.Path(path)
+    if not path.is_file():
+        print(f"Cannot run: {path} does not exist. This gate examined nothing, which "
+              f"is not the same as finding nothing.")
+        sys.exit(CANNOT_RUN)
+    try:
+        return [d for d in yaml.safe_load_all(path.read_text()) if d is not None]
+    except yaml.YAMLError as exc:
+        first = str(exc).strip().splitlines()[0] if str(exc).strip() else exc.__class__.__name__
+        print(f"Cannot run: {path} is not parseable YAML — {first}")
+        print("This gate examined nothing past that file. Fix the manifest and re-run.")
+        sys.exit(CANNOT_RUN)
+
+
+def read_json(path):
+    """`path` parsed as JSON, or exit 2 naming the file. See read_yaml_all."""
+    import json
+
+    path = pathlib.Path(path)
+    if not path.is_file():
+        print(f"Cannot run: {path} does not exist. This gate examined nothing, which "
+              f"is not the same as finding nothing.")
+        sys.exit(CANNOT_RUN)
+    try:
+        return json.loads(path.read_text())
+    except ValueError as exc:
+        print(f"Cannot run: {path} is not parseable JSON — {exc}")
+        print("This gate examined nothing past that file. Fix it and re-run.")
+        sys.exit(CANNOT_RUN)
 
 
 def require(*tools: str) -> None:
