@@ -21,8 +21,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKFLOWS="${1:-$ROOT/.github/workflows}"
 
 if ! command -v zizmor >/dev/null 2>&1; then
-  echo "zizmor is not on PATH. Install it with:  pip install zizmor==${ZIZMOR_VERSION:-1.29.0}"
-  echo "CI pins the version in .github/workflows/ci.yml's env block."
+  echo "zizmor is not on PATH. Install it with:"
+  echo "  pip install --require-hashes -r requirements.txt"
+  echo "requirements.txt is the single pinned source; CI installs the same file."
   exit 2
 fi
 

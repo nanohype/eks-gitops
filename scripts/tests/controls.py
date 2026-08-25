@@ -587,6 +587,28 @@ def self_test() -> int:
     bad += 0 if ok_lines else 1
     print()
 
+    # The AST view, which is why the Python exemptions do not use a textual one.
+    # Comment-blanking cannot help here: a docstring is a string, not a comment,
+    # so a gate documenting the call it makes would read its own documentation
+    # as an implementation. And a dead declaration commented out above a live
+    # one must not win a first-match search.
+    ast_cases = [
+        ("a docstring naming the call", '"""Calls subprocess.run."""' + chr(10), False),
+        ("a comment naming the call", "# subprocess.run(x)" + chr(10), False),
+        ("a string literal naming the call", 'm = "use subprocess.run"' + chr(10), False),
+        ("a real call", "subprocess.run([1])" + chr(10), True),
+        ("a dead copy above a live one",
+         "# subprocess.run([0])" + chr(10) + "subprocess.run([1])" + chr(10), True),
+    ]
+    print("\u2500\u2500 AST-view self-test \u2500\u2500")
+    for name, src, want in ast_cases:
+        got = "subprocess.run" in called_names(src)
+        ok = got is want
+        print(f"  {'ok  ' if ok else 'FAIL'}  {name}: "
+              f"{'found' if got else 'absent'}")
+        bad += 0 if ok else 1
+    print()
+
     print("\u2500\u2500 Mutation-contract self-test \u2500\u2500")
     for name, before, after, disk, marker, want in cases:
         got = mutation_landed("fixture.yaml", before, after, disk, marker)

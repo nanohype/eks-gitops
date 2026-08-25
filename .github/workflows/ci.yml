@@ -26,8 +26,6 @@ env:
   KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
   # renovate: datasource=github-releases depName=aquasecurity/trivy
   TRIVY_VERSION: v0.72.0
-  # renovate: datasource=pypi depName=zizmor
-  ZIZMOR_VERSION: 1.29.0
 
 jobs:
   placeholders:
@@ -51,8 +49,12 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install yamllint
-        run: pip install yamllint
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - name: Install Python dependencies
+        run: pip install --require-hashes -r requirements.txt
 
       - name: Run yamllint
         run: yamllint -c .yamllint.yaml .
@@ -124,8 +126,12 @@ jobs:
           persist-credentials: false
       - name: Install helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
-      - name: Install pyyaml
-        run: pip install pyyaml
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - name: Install Python dependencies
+        run: pip install --require-hashes -r requirements.txt
       # A Pod Identity association binds by ServiceAccount NAME and does not fail
       # when the name is wrong — it is created, it shows in the console, and the pod
       # runs on the node role instead. Every manifest is valid and the workload has
@@ -143,8 +149,12 @@ jobs:
           persist-credentials: false
       - name: Install helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
-      - name: Install pyyaml
-        run: pip install pyyaml
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - name: Install Python dependencies
+        run: pip install --require-hashes -r requirements.txt
       # The platform's own CRDs are on kubeconform-scan.sh's skip list — their
       # schemas are published to no public catalog — and that skip's comment says
       # these kinds are validated out-of-band against a real webhook. This closes
@@ -165,8 +175,12 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - name: Install pyyaml
-        run: pip install pyyaml
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - name: Install Python dependencies
+        run: pip install --require-hashes -r requirements.txt
       # cluster-bootstrap stamps gitops/repo-branch beside gitops/repo-url. Only
       # app-of-apps ever read it, so a cluster bootstrapped against any other
       # revision would run app-of-apps there and every child Application on main —
@@ -182,8 +196,12 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - name: Install PyYAML
-        run: pip install --quiet pyyaml
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - name: Install Python dependencies
+        run: pip install --require-hashes -r requirements.txt
       # Every other gate in this workflow checks a manifest. This one checks
       # the gates: a canary proves a gate RAN, and nothing proves it computes
       # the right answer. stdlib unittest, no test dependency to install.
@@ -191,9 +209,8 @@ jobs:
       # argv. Keep the two argv-identical: a local gate and its CI counterpart
       # drifting apart is how a green `task validate` stops meaning anything
       # about the build.
-      - name: Gate-script unit tests
-        run: ./run.py
-        working-directory: scripts/tests
+      - name: Gate-script unit tests and coverage ratchet
+        run: coverage run --rcfile=.coveragerc scripts/tests/run.py
       # A unit test says a gate computes the right answer on a fixture. A
       # positive control says the gate REJECTS the violation it exists to
       # catch, on the real tree: it asserts the gate is clean, introduces the
@@ -215,8 +232,6 @@ jobs:
       # This repo ships no package manifest, so the workflows are its whole
       # third-party surface. Offline, so the verdict is a function of the commit
       # rather than of what an upstream said today.
-      - name: Install zizmor
-        run: pip install --quiet "zizmor==${ZIZMOR_VERSION}"
       - name: Workflows pass static analysis
         run: ./scripts/check-workflows.sh
 
@@ -291,7 +306,7 @@ jobs:
       # subjectRegExp or a flipped `required` can't ship silently.
       - name: Verify-images signing-identity contract
         run: |
-          pip install --quiet pyyaml
+          pip install --require-hashes -r requirements.txt
           ./scripts/check-image-verification.py
 
   # ── Fork-safety gate ─────────────────────────────────────────────────
@@ -358,8 +373,12 @@ jobs:
       - name: Install Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
 
-      - name: Install PyYAML
-        run: pip install --quiet pyyaml
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - name: Install Python dependencies
+        run: pip install --require-hashes -r requirements.txt
 
       - name: Cache Helm charts
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -412,8 +431,12 @@ jobs:
       - name: Install kustomize
         uses: imranismail/setup-kustomize@53f941b41dca13ed61874bbc6b4b6e1562877530 # v3
 
-      - name: Install PyYAML
-        run: pip install --quiet pyyaml
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - name: Install Python dependencies
+        run: pip install --require-hashes -r requirements.txt
 
       - name: Install Kyverno CLI
         run: |
@@ -450,8 +473,12 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install PyYAML
-        run: pip install --quiet pyyaml
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - name: Install Python dependencies
+        run: pip install --require-hashes -r requirements.txt
 
       - name: Cache kubeconform + schemas
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -674,7 +701,11 @@ jobs:
       - name: Install trivy
         uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
         with:
-          version: ${{ env.TRIVY_VERSION }}
+          # TRIVY_VERSION is a literal in this workflow's env block, carrying a
+          # `# renovate:` annotation and asserted by the renovate-coverage gate.
+          # zizmor cannot follow the env indirection and reads any expansion here
+          # as unpinned; the pin it looks for is one level up.
+          version: ${{ env.TRIVY_VERSION }} # zizmor: ignore[unpinned-tools]
           cache: true
 
       - name: Misconfiguration gate (trivy config)

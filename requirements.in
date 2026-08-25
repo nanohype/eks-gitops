@@ -1,0 +1,7 @@
+# Every Python dependency the gates and CI need. Kept small on purpose: the
+# gates are stdlib plus a YAML parser, and the two tools CI installs to check
+# them.
+pyyaml
+yamllint
+coverage
+zizmor

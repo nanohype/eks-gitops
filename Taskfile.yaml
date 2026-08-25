@@ -76,10 +76,12 @@ tasks:
       - KUBECONFORM_SKIP="" ./scripts/kubeconform-scan.sh applicationsets/
 
   validate:gate-tests:
-    desc: "Gate-script unit tests — the gates themselves, not the manifests they check"
-    dir: scripts/tests
+    desc: "Gate-script unit tests + the coverage ratchet"
     cmds:
-      - ./run.py
+      # Through coverage so the ratchet in run.py applies. Bare `./run.py` still
+      # works and skips the ratchet — a developer running the suite should not
+      # be told the measurement failed, but CI and this target always measure.
+      - coverage run --rcfile=.coveragerc scripts/tests/run.py
 
   validate:workflows:
     desc: "Workflow supply-chain gate — zizmor over .github/workflows, offline, MEDIUM+ blocks"

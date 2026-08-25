@@ -32,11 +32,35 @@ EXPECTED = (
     "test_label_values",
     "test_sync_waves",
     "test_kyverno_corpus",
+    "test_named_things",
 )
 
 # A floor well under the real count. It catches "discovery found almost nothing",
 # not "somebody removed one test".
-MIN_TESTS = 15
+MIN_TESTS = 25
+
+# Line coverage floors over the gate scripts, enforced when `coverage` is
+# available. A ratchet, not a target: each is set just under what the suite
+# reaches, so coverage cannot fall silently, and raising one is what lands with
+# the tests that earn it.
+#
+# The org testing-rubric asks for 75% lines and 60% branches, and this suite is
+# nowhere near that — the honest figure is in TOTAL_FLOOR below. The gap is
+# real and stated rather than papered over: eleven of the eighteen gates have no
+# unit test, so the number cannot move without writing them.
+#
+# What the number does NOT capture: scripts/tests/controls.py runs every gate
+# end to end as a subprocess against a mutated tree, so every gate has
+# behavioural coverage that this line count cannot see. Neither figure
+# substitutes for the other — the controls prove a gate rejects, the unit tests
+# prove it computes the right answer on a case the real tree does not contain.
+TOTAL_FLOOR = 6
+PER_GATE_FLOORS = {
+    "scripts/check-named-things.py": 35,
+    "scripts/check-renovate-coverage.py": 30,
+    "scripts/check-label-values.py": 33,
+    "scripts/check-sync-waves.py": 10,
+}
 
 
 def main() -> int:
@@ -59,6 +83,65 @@ def main() -> int:
 
     print(f"gate-script tests OK: {result.testsRun} tests across "
           f"{len(EXPECTED)} modules")
+    return check_coverage()
+
+
+def check_coverage() -> int:
+    """Enforce the coverage ratchet, when this run was measured.
+
+    Silent when coverage is not collecting: the floors exist to stop a
+    regression, and a developer running the suite bare should not be told the
+    measurement failed. CI always measures, so the ratchet always applies there
+    — `task validate:gate-tests` and the CI step both invoke through coverage.
+    """
+    try:
+        import coverage
+    except ImportError:
+        return 0
+
+    cov = coverage.Coverage.current()
+    if cov is None:
+        return 0
+
+    cov.stop()
+    cov.save()
+    data = cov.get_data()
+    if not data.measured_files():
+        print("FAIL  coverage collected no data — the run was measured and saw "
+              "nothing, which reports the same as full coverage of an empty set.")
+        return 1
+
+    import io
+    buf = io.StringIO()
+    total = cov.report(file=buf, show_missing=False)
+
+    failures = []
+    if total < TOTAL_FLOOR:
+        failures.append(f"total line coverage {total:.0f}% is below the "
+                        f"{TOTAL_FLOOR}% ratchet")
+
+    root = HERE.parent.parent
+    for rel, floor in sorted(PER_GATE_FLOORS.items()):
+        path = str(root / rel)
+        if path not in data.measured_files():
+            failures.append(f"{rel} carries a coverage floor but was not measured — "
+                            f"the gate was renamed, or its tests stopped importing it")
+            continue
+        analysis = cov._analyze(path)
+        pct = analysis.numbers.pc_covered
+        if pct < floor:
+            failures.append(f"{rel} at {pct:.0f}% is below its {floor}% floor")
+
+    if failures:
+        print()
+        for f in failures:
+            print(f"FAIL  {f}")
+        print("\n  Coverage floors ratchet. Add the tests that restore the number, or "
+              "\n  lower the floor deliberately in scripts/tests/run.py with the reason.")
+        return 1
+
+    print(f"coverage ratchet OK: {total:.0f}% total (floor {TOTAL_FLOOR}%), "
+          f"{len(PER_GATE_FLOORS)} per-gate floor(s) held")
     return 0
 
 

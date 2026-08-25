@@ -47,3 +47,4 @@ rendered/
 
 # Local planning notes
 .plans/
+.coverage
