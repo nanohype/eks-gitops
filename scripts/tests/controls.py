@@ -390,18 +390,22 @@ def m_catalog_revision(root):
 
 
 def m_policy_validity(root):
-    """A ClusterPolicy whose rule is structurally invalid."""
-    import glob
-    for h in sorted(glob.glob(str(root / "policies/kyverno/best-practices/base/*.yaml"))):
-        p = pathlib.Path(h)
-        before = p.read_text()
-        if "validationFailureAction" in before or "kind: ClusterPolicy" in before:
-            after = before.replace("kind: ClusterPolicy",
-                                   f"kind: ClusterPolicy\n  {MARKER}TopLevel: true", 1)
-            if after != before:
-                p.write_text(after)
-                return p, before, after, f"{MARKER}TopLevel: true"
-    raise AssertionError("control found no ClusterPolicy to invalidate")
+    """A ClusterPolicy kyverno silently discards, while staying valid YAML.
+
+    An apiVersion kyverno does not recognise: the document renders, kyverno
+    drops it, and the run reports `error: 0` for a policy that will never be
+    installed. That silence is what the gate's rule-count assertion catches.
+
+    Deliberately NOT a structural break. Injecting a bogus top-level key made
+    the document unparseable, so check-externalsecret-keys rejected the same
+    tree too — the fixture then carried two violations and a rejection scored
+    here could have been for the other one. Verified: this mutation trips this
+    gate and no other.
+    """
+    return _sub(root, "policies/kyverno/best-practices/base/require-labels.yaml",
+                "apiVersion: kyverno.io/v1",
+                f"apiVersion: kyverno.io/v1{MARKER}",
+                marker=MARKER)
 
 
 def m_serviceaccount_bindings(root):
@@ -512,7 +516,16 @@ CONTROLS = {
 
 
 def copy_tree(dest: pathlib.Path) -> None:
-    """The tracked tree only — generated output and .git stay out."""
+    """The tracked tree only — generated output and .git stay out.
+
+    WHICH TREE THIS IS, precisely: the file LIST comes from the git index, and
+    the CONTENT comes from the working tree. So an uncommitted edit to a tracked
+    file IS under test, and an untracked new file is NOT — which is why a gate
+    added but not yet `git add`ed fails the anti-vacuity floor rather than being
+    silently skipped. A floor materialising fixtures purely from the index would
+    grade a different tree than the one being edited; this one does not, for
+    modifications, and says so for additions.
+    """
     listed = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True,
                             text=True, check=True, timeout=GATE_TIMEOUT)
     for rel in listed.stdout.split("\0"):
@@ -753,6 +766,20 @@ def run_control(gate: str, what: str, mutate) -> tuple[bool, str]:
         # does separate a gate that located something from one that merely
         # noticed the tree changed.
         said = dirty.stdout + dirty.stderr
+
+        # A CRASH exits non-zero too, so a floor reading exit status alone
+        # records a stack trace as a successful rejection — exit-code-conflates-
+        # causes, occurring inside the machinery built to catch it. Demonstrated
+        # against this floor with a gate that raises after printing the path it
+        # was processing, which satisfied both the exit check and the naming
+        # check below.
+        for crash in ("Traceback (most recent call last)", "panic: ",
+                      "goroutine 1 [running]"):
+            if crash in said:
+                return False, (f"gate exited {dirty.returncode} by CRASHING, not by "
+                               f"rejecting — a stack trace is not a verdict.\n"
+                               f"{said.strip()[:400]}")
+
         want = IDENTIFIES.get(gate)
         names = [want] if want else [str(rel), rel.name]
         hit = next((n for n in names if n in said), None)

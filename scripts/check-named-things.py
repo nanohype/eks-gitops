@@ -76,11 +76,22 @@ PLACEHOLDER = re.compile(r"[<>{}*]|\.\.\.")
 # and either resolves or does not; `values.yaml` names a convention. Markdown
 # link targets are checked whatever they look like, because a link is a claim
 # that following it arrives somewhere.
-ROOTED = tuple(sorted(
-    p.name + ("/" if p.is_dir() else "")
-    for p in ROOT.iterdir()
-    if not p.name.startswith(".git") and p.name not in {"rendered"}
-))
+def rooted_prefixes(root: pathlib.Path) -> tuple[str, ...]:
+    """Top-level entries of the tree UNDER TEST, not of the tree this file ships in.
+
+    Derived from the passed root. Computed once at import from the module's own
+    ROOT, `--root` checked another tree's documents against THIS repo's shape and
+    Taskfile — the corpus and the subject were different trees, so a verdict was
+    about a mixture of the two. Demonstrated: a target present in a fixture's
+    Taskfile was reported missing because the real repo's Taskfile was consulted.
+    That direction fails closed; the mirror image, a fixture MISSING something
+    this repo has, would have passed falsely.
+    """
+    return tuple(sorted(
+        p.name + ("/" if p.is_dir() else "")
+        for p in root.iterdir()
+        if not p.name.startswith(".git") and p.name not in {"rendered"}
+    ))
 
 # A `path:line` or `path:lo-hi` citation. The file must exist and the line must
 # be inside it: a citation past the end of a file is a reference that grew stale
@@ -137,9 +148,9 @@ def strip_fences(text: str) -> str:
     return "".join(out)
 
 
-def task_targets() -> set[str]:
-    """Target names the Taskfile defines."""
-    text = (ROOT / "Taskfile.yaml").read_text()
+def task_targets(root: pathlib.Path) -> set[str]:
+    """Target names the Taskfile of the tree UNDER TEST defines."""
+    text = (root / "Taskfile.yaml").read_text()
     return set(re.findall(r"^  ([a-z][a-z0-9]*(?::[a-z0-9-]+)*):$", text, re.M))
 
 
@@ -175,7 +186,7 @@ def command_spans(text: str):
             yield lineno, m.group(1).strip().lstrip("$ ").strip()
 
 
-def is_repo_path(ref: str, from_link: bool) -> bool:
+def is_repo_path(ref: str, from_link: bool, rooted: tuple[str, ...]) -> bool:
     if ref.startswith(("http://", "https://", "mailto:", "#", "oci://", "git@")):
         return False
     if PLACEHOLDER.search(ref):
@@ -185,7 +196,7 @@ def is_repo_path(ref: str, from_link: bool) -> bool:
         return False
     if from_link:
         return True
-    return ref.startswith(ROOTED)
+    return ref.startswith(rooted)
 
 
 def index_by_name(root: pathlib.Path) -> dict[str, list[pathlib.Path]]:
@@ -229,12 +240,13 @@ def main() -> int:
               f"would prove nothing.")
         return 2
 
-    targets = task_targets()
+    targets = task_targets(root)
     if not targets:
         print("FAIL  read no task targets out of Taskfile.yaml — the parser and the "
               "Taskfile disagree, so every `task ...` reference would pass unchecked.")
         return 2
 
+    rooted = rooted_prefixes(root)
     by_name = index_by_name(root)
     failures: list[str] = []
     checked = 0
@@ -244,7 +256,7 @@ def main() -> int:
         text = doc.read_text()
 
         for lineno, ref, from_link in candidates(text):
-            if not is_repo_path(ref, from_link):
+            if not is_repo_path(ref, from_link, rooted):
                 continue
             checked += 1
             bare = ref.split("#", 1)[0].strip().rstrip("/")

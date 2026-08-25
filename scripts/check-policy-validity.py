@@ -42,8 +42,11 @@ asserted here.
 from __future__ import annotations
 
 import pathlib
+import re
 import subprocess
 import sys
+
+import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -104,6 +107,22 @@ def _check_enforce_pins_digest(rel, rendered: str) -> None:
                     )
 
 
+def rules_in(rendered: str) -> int:
+    """Rules across every ClusterPolicy in a rendered overlay.
+
+    Parsed, not matched. Counting `- name:` by indentation returned 0 against
+    the real render — the depth differs from the source files — so the guard
+    that depended on it never fired and the gate kept reporting success while
+    kyverno was silently discarding a policy. A detector that reports zero is a
+    claim about the detector.
+    """
+    total = 0
+    for doc in yaml.safe_load_all(rendered):
+        if isinstance(doc, dict) and doc.get("kind") in ("ClusterPolicy", "Policy"):
+            total += len((doc.get("spec") or {}).get("rules") or [])
+    return total
+
+
 def main() -> int:
     import tempfile
 
@@ -148,6 +167,36 @@ def main() -> int:
                 capture_output=True, text=True, timeout=LOCAL_TIMEOUT,
             )
             combined = run.stdout + run.stderr
+
+            # ANTI-VACUITY. kyverno silently ignores a document it does not
+            # recognise as a policy, so a rendered file whose apiVersion or
+            # structure it rejects contributes nothing and the run still reports
+            # `error: 0`. Demonstrated: rewriting apiVersion to kyverno.io/vBOGUS
+            # left this gate printing "every one accepted by Kyverno".
+            #
+            # The load count is the signal. Compare the rules kyverno says it
+            # applied against the rules present in the render — if kyverno loaded
+            # fewer, it discarded a policy, which is exactly the invalidity this
+            # gate exists to catch.
+            want_rules = rules_in(build.stdout)
+            m = re.search(r"Applying (\d+) policy rule\(s\)", combined)
+            if not m:
+                failures.append(
+                    f"{rel}: kyverno printed no rule count, so nothing establishes "
+                    f"that it loaded any policy at all. A run that evaluated nothing "
+                    f"reports the same `error: 0` as a clean one.")
+                continue
+            got_rules = int(m.group(1))
+            if want_rules and got_rules < want_rules:
+                failures.append(
+                    f"{rel}: the render carries {want_rules} rule(s) but kyverno "
+                    f"loaded only {got_rules} — it discarded a policy it could not "
+                    f"parse, and silently reported no error for it.")
+                continue
+            if got_rules == 0:
+                failures.append(
+                    f"{rel}: kyverno loaded 0 policy rules from this overlay.")
+                continue
             # kyverno apply exits 0 even when a policy fails validation; the
             # signal is the error count in the summary and the validation
             # message on stderr. Read both rather than trusting the exit code.

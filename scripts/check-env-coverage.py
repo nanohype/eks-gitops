@@ -47,8 +47,10 @@ import sys
 
 import yaml
 
+# Only the argparse default is taken from here. Every corpus read goes through
+# the resolved --root so the tree under test and the tree this file ships in
+# cannot diverge.
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-APPSETS = ROOT / "applicationsets"
 
 ENVIRONMENTS = ["development", "staging", "production", "hub"]
 
