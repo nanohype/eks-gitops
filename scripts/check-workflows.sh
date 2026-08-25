@@ -20,6 +20,13 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKFLOWS="${1:-$ROOT/.github/workflows}"
 
+# The gate asserts its own precondition rather than assuming it. zizmor's audit
+# set changes between releases — 1.29.0 runs an `unpinned-tools` audit 1.16.3
+# does not — so the same tree gets different verdicts from different versions.
+# A gate that accepts whatever is on PATH reports on an unknown rule set, and a
+# green run then means "some version found nothing".
+WANT_ZIZMOR="$(sed -n 's/^zizmor==\([0-9][^ \\]*\).*/\1/p' "$ROOT/requirements.txt" | head -1)"
+
 if ! command -v zizmor >/dev/null 2>&1; then
   echo "zizmor is not on PATH. Install it with:"
   echo "  pip install --require-hashes -r requirements.txt"
@@ -37,7 +44,16 @@ if [ "$count" -lt 1 ]; then
   exit 2
 fi
 
-echo "Scanning $count workflow file(s) with $(zizmor --version)"
+have_zizmor="$(zizmor --version 2>/dev/null | awk '{print $NF}')"
+if [ -n "$WANT_ZIZMOR" ] && [ "$have_zizmor" != "$WANT_ZIZMOR" ]; then
+  echo "zizmor on PATH is $have_zizmor but requirements.txt pins $WANT_ZIZMOR."
+  echo "Different releases run different audits, so this run would report on a"
+  echo "rule set the lockfile does not describe. Install the pinned version:"
+  echo "  pip install --require-hashes -r requirements.txt"
+  exit 2
+fi
+
+echo "Scanning $count workflow file(s) with zizmor $have_zizmor (pinned)"
 zizmor --offline --min-severity medium --format plain "$WORKFLOWS"
 status=$?
 
