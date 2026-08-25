@@ -261,6 +261,44 @@ def check_ci_tool_pins(text: str, rel: str, hits, patterns) -> int:
     return len(hits)
 
 
+def check_oci_repourl_shape() -> int:
+    """An OCI direct-source pin's repoURL last segment equals its `chart`.
+
+    ArgoCD resolves the OCI digest from repoURL alone, so repoURL must name the
+    package and `chart` repeats it. Point repoURL at the enclosing namespace and
+    ArgoCD requests `.../<namespace>/manifests/<version>`, which is not a
+    package, and manifest generation fails at sync.
+
+    Two ApplicationSets carry that shape and two comments describe it — one of
+    them saying "Same shape the Envoy charts in addons-ai-platform use". A
+    recurring constraint named in prose in two places and enforced nowhere is an
+    open class with a memorial, so it is asserted here: the redundancy is
+    load-bearing, and a tidy-up that removes it breaks a sync rather than a
+    lint.
+
+    This is also the shape that makes the built-in argocd manager derive a
+    package name resolving to nothing, which is why this gate already reasons
+    about it for coverage.
+    """
+    seen = 0
+    for path in sorted(APPSETS.glob("*.yaml")):
+        text = path.read_text()
+        for m in re.finditer(
+            r"repoURL:\s*oci://(?P<repo>\S+)\s*\n\s*chart:\s*(?P<chart>\S+)", text
+        ):
+            seen += 1
+            last = m.group("repo").rstrip("/").rsplit("/", 1)[-1]
+            if last != m.group("chart"):
+                fail(f"{path.relative_to(ROOT)}: repoURL ends in {last!r} but chart is "
+                     f"{m.group('chart')!r}. ArgoCD resolves the OCI digest from repoURL "
+                     f"alone, so it would request .../{last}/manifests/<version>, which "
+                     f"is not a package, and manifest generation fails at sync.")
+    if not seen:
+        fail("found no OCI direct-source pins — this repo carries two, so the "
+             "pattern stopped matching and the repoURL shape is unasserted.")
+    return seen
+
+
 def enabled_managers() -> set[str]:
     cfg = json.loads((ROOT / "renovate.json").read_text())
     return set(cfg.get("enabledManagers") or [])
@@ -302,6 +340,7 @@ def main() -> int:
              "longer match this repo's shape, so this gate proved nothing.")
 
     total += check_other_families(patterns)
+    total += check_oci_repourl_shape()
 
     if failures:
         report()
