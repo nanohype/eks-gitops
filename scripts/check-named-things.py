@@ -15,6 +15,14 @@ described:
   * `task <target>` names a target the Taskfile defines
   * a `scripts/<name>` reference names a script that exists
 
+DECLARED ESCAPE SURFACE. Inputs that name a thing and are deliberately not
+checked, established by running them rather than by reading the patterns:
+
+  * a path written as bare prose, without backticks or a link. This is the
+    narrowing that makes the gate usable — `values.yaml` in this repo's prose is
+    a convention, not a path — and it means `see scripts/typo.py` passes.
+  * a path inside an HTML comment, which renders to nothing.
+
 Two halves of the same rule are NOT checked here, and a pass says nothing about
 either:
 
@@ -80,7 +88,14 @@ ROOTED = tuple(sorted(
 # path does not.
 CITATION = re.compile(r"([A-Za-z0-9._/-]+\.(?:yaml|yml|py|sh|go|json|md)):(\d+)(?:-(\d+))?\b")
 
-LINK = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
+# Inline link. The target stops at whitespace so a titled link — [x](path "T") —
+# yields the path rather than `path "T"`, which resolved to nothing and so was
+# skipped as a non-path rather than reported as a broken one.
+LINK = re.compile(r"\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+[\"'(][^)]*)?\)")
+
+# Reference-style link definition: `[label]: target`. A different syntax for the
+# same claim, and invisible to the inline pattern.
+LINK_DEF = re.compile(r"^\s{0,3}\[[^\]]+\]:\s*<?([^\s>]+)>?")
 CODE_SPAN = re.compile(r"`([^`\n]+)`")
 FENCE = re.compile(r"^\s*```", re.M)
 # `task` is also an ordinary English noun, and a Druid one — "task pods", "the
@@ -88,7 +103,22 @@ FENCE = re.compile(r"^\s*```", re.M)
 # only when it is formatted as a command: inside backticks, or at the start of a
 # line in a fenced block. Matching the bare word instead reports on a population
 # the Taskfile was never part of.
-TASK_REF = re.compile(r"^task\s+([a-z][a-z0-9]*(?::[a-z0-9-]+)*)")
+# The first segment allows hyphens too. Without them the pattern truncated at
+# the first `-`, so `task validate-nonexistent` matched `validate`, a real
+# target, and the fabricated name passed while being COUNTED as checked — the
+# most natural way to write a wrong target was the one shape invisible to the
+# gate. Anchored at both ends so a partial match cannot stand in for the whole.
+# The first segment allows hyphens. Without them the pattern truncated at the
+# first `-`, so `task validate-nonexistent` matched `validate`, a real target,
+# and the fabricated name passed while being COUNTED as checked — the most
+# natural way to write a wrong target was the one shape invisible to the gate.
+#
+# The target is bounded by whitespace or end-of-string rather than by `$` alone,
+# because this repo documents `task render ENVIRONMENT=staging` and anchoring
+# hard at the line end silently dropped every invocation carrying an argument:
+# 34 of 181 references, a fifth of the corpus, stopping being checked to fix a
+# false negative in the other direction.
+TASK_REF = re.compile(r"^task\s+([a-z][a-z0-9-]*(?::[a-z0-9-]+)*)(?:\s|$)")
 
 
 def strip_fences(text: str) -> str:
@@ -118,6 +148,9 @@ def candidates(text: str):
     body = strip_fences(text)
     for lineno, line in enumerate(body.splitlines(), 1):
         for m in LINK.finditer(line):
+            yield lineno, m.group(1), True
+        m = LINK_DEF.match(line)
+        if m:
             yield lineno, m.group(1), True
         for m in CODE_SPAN.finditer(line):
             yield lineno, m.group(1), False

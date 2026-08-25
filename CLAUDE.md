@@ -15,9 +15,9 @@ addons/                → Addon configurations
     values-development.yaml → Development delta overrides
     values-staging.yaml    → Staging delta overrides
     values-production.yaml → Production delta overrides
-    # Kustomize addons (storage-classes, priority-classes, karpenter-resources):
+    # Kustomize addons (those shipping manifests this repo authors):
     base/                  → Kustomization + resource manifests
-    overlays/{development,staging,production}/
+    overlays/{development,staging,production}[,hub]/
                            → Environment-specific kustomization.yaml
 policies/              → Kyverno ClusterPolicy manifests (pure Kustomize, base/overlays)
 catalog/               → Platform-specific workloads (Druid)

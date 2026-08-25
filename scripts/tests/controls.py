@@ -33,6 +33,22 @@ rather than ceremony:
 description that rots toward permissive — so each entry is asserted: naming a
 gate that does not exist, or one whose source no longer reaches the network,
 fails here.
+
+LIMIT — what a positive control does NOT establish.
+
+A control proves that a gate and its control agree: supply this input, get a
+rejection that names this file. It cannot prove the gate checks the property its
+NAME claims. A gate that greps for exactly the token its own control plants
+satisfies every assertion here — clean before, rejects after, names the file —
+while checking nothing. That was demonstrated against this harness rather than
+reasoned about: a four-line `check-liar.py` doing no work passed the floor
+before the naming assertion was added, and the naming assertion raises the cost
+of the deception without removing it.
+
+So "proven to reject" here means observed to reject a supplied input, which is
+strictly more than "wired into CI" and strictly less than "checks what it says".
+The second still needs a reader, and the gates in this repo have not all had
+one. Do not upgrade the claim.
 """
 
 from __future__ import annotations
@@ -49,6 +65,27 @@ SCRIPTS = ROOT / "scripts"
 
 # Seconds one gate may run inside a control before the harness gives up on it.
 GATE_TIMEOUT = 300
+
+# What each gate's rejection must NAME, where the right operand is not the file
+# the control edited. Several gates correctly name the affected OBJECT instead —
+# the chart, the policy rule, the unwatched pin — and demanding the file path
+# would be demanding a worse diagnostic. The requirement is that the rejection
+# identifies something specific; these say what "specific" means per gate.
+#
+# The detector fired on all five when it demanded the file, and that was the
+# rule being wrong rather than five gates being wrong.
+IDENTIFIES = {
+    "check-chart-deprecation.py": "chart-no-appset-pins",
+    "check-image-verification.py": "verify-images",
+    "check-policy-validity.py": "best-practices",
+    "check-renovate-coverage.py": "customManager",
+    "check-serviceaccount-bindings.py": "druid",
+}
+
+# Sentinel for a mutation that removes a file rather than editing one. Some
+# gates ask whether a path exists, and for those an emptied file is a mutation
+# that changes bytes without changing meaning.
+DELETED = object()
 
 # Every planted marker carries this prefix. A marker that looks like real
 # syntax may already exist somewhere in the tree — gate docstrings in
@@ -435,7 +472,23 @@ def m_workflows(root):
                 marker=MARKER)
 
 
+def m_env_coverage(root):
+    """Delete a hub delta from an addon whose appset reaches the hub.
+
+    Deleted, not emptied. The gate asks whether the file EXISTS, so an emptied
+    file is a mutation that changes bytes and not meaning — the gate correctly
+    accepts it and the acceptance reads as the gate failing to reject. The
+    DELETED sentinel tells the harness to assert the file is gone instead of
+    comparing its text.
+    """
+    p = root / "addons/bootstrap/cert-manager/values-hub.yaml"
+    before = p.read_text()
+    p.unlink()
+    return p, before, DELETED, DELETED
+
+
 CONTROLS = {
+    "check-env-coverage.py": ("an addon selected for an environment it cannot render", m_env_coverage),
     "check-workflows.sh": ("a checkout persisting the job token", m_workflows),
     "check-ai-config.py": ("a route naming a model outside the allowlist", m_ai_config),
     "check-named-things.py": ("prose naming a target that does not exist", m_named_things),
@@ -549,6 +602,15 @@ def mutation_landed(rel, before: str, after: str, on_disk: str,
     the declared marker must be present now and absent before. A leading "-"
     inverts the last pair for mutations that delete rather than plant.
     """
+    if after is DELETED:
+        if on_disk is not DELETED:
+            return (f"control claims to delete {rel}, but the file is still present — "
+                    f"the mutation proved nothing.")
+        return None
+
+    if on_disk is DELETED:
+        return f"{rel} was deleted, but the control did not declare a deletion."
+
     if on_disk == before:
         return (f"mutation did not change {rel} — the control proved nothing, in the "
                 f"direction that looks like success.")
@@ -672,7 +734,7 @@ def run_control(gate: str, what: str, mutate) -> tuple[bool, str]:
             return False, str(exc)
 
         rel = path.relative_to(tree)
-        on_disk = path.read_text()
+        on_disk = path.read_text() if path.exists() else DELETED
         problem = mutation_landed(rel, before, after, on_disk, marker)
         if problem:
             return False, problem
@@ -681,7 +743,25 @@ def run_control(gate: str, what: str, mutate) -> tuple[bool, str]:
         if dirty.returncode == 0:
             return False, (f"gate ACCEPTED {what} — it cannot reject the violation it exists "
                            f"to catch.\n{(dirty.stdout + dirty.stderr).strip()[:600]}")
-        return True, f"rejected {what} (exit {dirty.returncode})"
+
+        # The rejection must NAME what was mutated. A non-zero exit alone only
+        # says the gate behaved differently on a different tree, which a gate
+        # doing no real work can also do — a four-line script that greps for
+        # whatever its own control plants exits 1 on cue and tells you nothing.
+        # Requiring the path in the diagnostic is not proof the gate checks the
+        # property its name claims (see the LIMIT note in this module), but it
+        # does separate a gate that located something from one that merely
+        # noticed the tree changed.
+        said = dirty.stdout + dirty.stderr
+        want = IDENTIFIES.get(gate)
+        names = [want] if want else [str(rel), rel.name]
+        hit = next((n for n in names if n in said), None)
+        if hit is None:
+            return False, (f"gate exited {dirty.returncode} but its output never names "
+                           f"{want or rel} — a rejection that cannot say what it rejected "
+                           f"is indistinguishable from a gate reacting to any change at "
+                           f"all.\n{said.strip()[:400]}")
+        return True, f"rejected {what} (exit {dirty.returncode}, names {hit.split('/')[-1]})"
 
 
 def main() -> int:

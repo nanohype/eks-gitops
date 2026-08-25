@@ -81,7 +81,12 @@ tasks:
       # Through coverage so the ratchet in run.py applies. Bare `./run.py` still
       # works and skips the ratchet — a developer running the suite should not
       # be told the measurement failed, but CI and this target always measure.
-      - coverage run --rcfile=.coveragerc scripts/tests/run.py
+      - COVERAGE_REQUIRED=1 coverage run --rcfile=.coveragerc scripts/tests/run.py
+
+  validate:env-coverage:
+    desc: "Env-coverage gate — every addon carries a values file for each environment its appset reaches"
+    cmds:
+      - ./scripts/check-env-coverage.py
 
   validate:image-pins:
     desc: "Image-pin gate — every image the fleet renders carries an immutable reference"
@@ -112,6 +117,11 @@ tasks:
     desc: "Policy-validity gate — every rendered policy overlay is one Kyverno will accept"
     cmds:
       - ./scripts/check-policy-validity.py
+
+  validate:renovate-config:
+    desc: "Renovate config schema — the file check-renovate-coverage reads must be well-formed"
+    cmds:
+      - npx --yes --package renovate renovate-config-validator renovate.json
 
   validate:renovate-coverage:
     desc: "Renovate coverage gate — every chart pin in applicationsets/ is watched by a manager that resolves"
@@ -164,6 +174,7 @@ tasks:
       - validate:athena-panel-columns
       - validate:dashboards
       - validate:fork-safety
+      - validate:renovate-config
       - validate:renovate-coverage
       - validate:policy-validity
       - validate:gate-tests
@@ -172,6 +183,7 @@ tasks:
       - validate:ai-config
       - validate:workflows
       - validate:image-pins
+      - validate:env-coverage
     cmds:
       - echo "All validations passed."
 

@@ -210,7 +210,7 @@ jobs:
       # drifting apart is how a green `task validate` stops meaning anything
       # about the build.
       - name: Gate-script unit tests and coverage ratchet
-        run: coverage run --rcfile=.coveragerc scripts/tests/run.py
+        run: COVERAGE_REQUIRED=1 coverage run --rcfile=.coveragerc scripts/tests/run.py
       # A unit test says a gate computes the right answer on a fixture. A
       # positive control says the gate REJECTS the violation it exists to
       # catch, on the real tree: it asserts the gate is clean, introduces the
@@ -229,6 +229,12 @@ jobs:
       # a path no other gate exercises.
       - name: AI control-plane configuration is consistent
         run: ./scripts/check-ai-config.py
+      # An appset's selector decides which environments an addon lands on; its
+      # values files decide which it can render for. render-addons reads a
+      # missing delta as "not deployed here" and passes, so nothing compared
+      # the two until this gate.
+      - name: Addons render for every environment their appset reaches
+        run: ./scripts/check-env-coverage.py
       # This repo ships no package manifest, so the workflows are its whole
       # third-party surface. Offline, so the verdict is a function of the commit
       # rather than of what an upstream said today.
@@ -275,6 +281,17 @@ jobs:
       # pattern never runs against a file. And the built-in argocd manager can
       # *detect* a pin while deriving a package name that resolves to nothing.
       # Both leave a pin aging in silence with the config looking complete.
+      # check-renovate-coverage.py READS renovate.json and applies its regexes, so
+      # the config is a dependency of the gate. A manager Renovate would discard
+      # as malformed still parses here, and the gate would then report a pin as
+      # covered by a rule the tool never ran. Validate the config before trusting
+      # what the gate says about it.
+      #
+      # PARTIAL by design, and stated so rather than rounded up: this checks
+      # schema validity, not semantics. It accepts a datasourceTemplate naming a
+      # datasource that does not exist.
+      - name: Renovate config is well-formed
+        run: npx --yes --package renovate renovate-config-validator renovate.json
       - name: Every chart pin is watched
         run: ./scripts/check-renovate-coverage.py
 
