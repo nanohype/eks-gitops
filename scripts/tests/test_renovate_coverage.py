@@ -68,3 +68,40 @@ class RE2Rejection(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OciRepoUrlShape(unittest.TestCase):
+    """The repoURL/chart redundancy ArgoCD requires, asserted rather than described.
+
+    The gate reads the real tree, so these exercise the comparison itself
+    against the two spellings that matter — the pin as this catalog writes it,
+    and the tidied-up form that fails at sync.
+    """
+
+    def _last_segment(self, repo_url):
+        return repo_url.rstrip("/").rsplit("/", 1)[-1]
+
+    def test_pin_as_written_matches_its_chart(self):
+        self.assertEqual(
+            self._last_segment("ghcr.io/nanohype/eks-agent-platform/charts/operator"),
+            "operator")
+
+    def test_tidied_pin_no_longer_matches(self):
+        # Dropping the "redundant" trailing segment makes ArgoCD request
+        # .../charts/manifests/<version>, which is not a package.
+        self.assertNotEqual(
+            self._last_segment("ghcr.io/nanohype/eks-agent-platform/charts"),
+            "operator")
+
+    def test_gate_accepts_the_shipped_catalog(self):
+        # `failures` is module state shared across every test in this file, and
+        # it accumulates rather than resetting per call. Save and restore rather
+        # than clearing, so this test cannot change what a sibling observes
+        # depending on the order they run in.
+        saved = list(cov.failures)
+        self.addCleanup(lambda: cov.failures.__setitem__(slice(None), saved))
+        cov.failures.clear()
+        seen = cov.check_oci_repourl_shape()
+        self.assertGreater(seen, 0, "no OCI direct-source pin was examined")
+        self.assertEqual(cov.failures, [],
+                         f"the shipped catalog should pass: {cov.failures}")
