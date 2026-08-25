@@ -33,12 +33,22 @@ field that moved.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import pathlib
 import subprocess
 import sys
 
 import yaml
+
+# Shared precondition helper, loaded by path: these are hyphenated executables
+# run from varying working directories.
+_gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
+_gs = importlib.util.spec_from_file_location("gatelib", _gl)
+gatelib = importlib.util.module_from_spec(_gs)
+sys.modules["gatelib"] = gatelib
+_gs.loader.exec_module(gatelib)
+
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 APPSETS = ROOT / "applicationsets"
@@ -286,8 +296,10 @@ def main() -> int:
     if "--self-test" in sys.argv:
         return self_test()
     if "--sync" in sys.argv:
+        gatelib.require("helm")     # --sync resolves every chart upstream
         return sync()
     if "--live" in sys.argv:
+        gatelib.require("helm")     # --live fetches each pinned chart
         return check_live()
     return check_offline(pins(), load_records())
 

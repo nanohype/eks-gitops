@@ -202,6 +202,26 @@ jobs:
           python-version-file: .python-version
       - name: Install Python dependencies
         run: pip install --require-hashes -r requirements.txt
+      # The positive controls exercise every gate, and three of them shell out:
+      # check-policy-validity needs kustomize and kyverno, check-platform-crs
+      # and render-addons need helm. Without these the control cannot establish
+      # that the gate is clean before mutating, so it proves nothing — which is
+      # exactly what this job reported before they were installed.
+      #
+      # Those gates now exit 2 with a sentence when a tool is absent rather than
+      # raising FileNotFoundError, so a missing binary is distinguishable from a
+      # finding. Installing them here is the other half: a gate that CAN run
+      # should.
+      - name: Install Kyverno CLI
+        run: |
+          curl -fsSL -o /tmp/kyverno.tar.gz "https://github.com/kyverno/kyverno/releases/download/${KYVERNO_VERSION}/kyverno-cli_${KYVERNO_VERSION}_linux_x86_64.tar.gz"
+          echo "${KYVERNO_SHA256}  /tmp/kyverno.tar.gz" | sha256sum -c -
+          tar -xz -C /tmp -f /tmp/kyverno.tar.gz kyverno
+          sudo install -m 0755 /tmp/kyverno /usr/local/bin/kyverno
+      - name: Install kustomize
+        uses: imranismail/setup-kustomize@53f941b41dca13ed61874bbc6b4b6e1562877530 # v3
+      - name: Install Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
       # Every other gate in this workflow checks a manifest. This one checks
       # the gates: a canary proves a gate RAN, and nothing proves it computes
       # the right answer. stdlib unittest, no test dependency to install.

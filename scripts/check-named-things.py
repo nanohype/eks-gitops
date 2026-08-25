@@ -49,6 +49,7 @@ from __future__ import annotations
 import argparse
 import pathlib
 import re
+import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -199,12 +200,42 @@ def is_repo_path(ref: str, from_link: bool, rooted: tuple[str, ...]) -> bool:
     return ref.startswith(rooted)
 
 
+def tracked_files(root: pathlib.Path) -> list[pathlib.Path]:
+    """The files this repository OWNS, not whatever sits in the workspace.
+
+    CI checks sibling repositories and downloaded tools into the same directory
+    tree. A gate that walks the filesystem grades those too — and a finding in a
+    neighbour is correct and useless, because the seat it stops is not the seat
+    that can fix it.
+
+    `git ls-files` is the boundary. The fallback walk is for a fixture tree,
+    which is not a git repo; it keeps the same boundary by refusing to descend
+    into dot-directories and into a nested checkout.
+    """
+    out = subprocess.run(["git", "ls-files", "-z"], cwd=root,
+                         capture_output=True, text=True, timeout=120)
+    if out.returncode == 0 and out.stdout.strip("\0"):
+        return [root / rel for rel in out.stdout.split("\0")
+                if rel and (root / rel).is_file()]
+
+    files = []
+    for p in sorted(root.rglob("*")):
+        parts = p.relative_to(root).parts
+        if any(x.startswith(".") for x in parts) or "rendered" in parts:
+            continue
+        if any((root / pathlib.Path(*parts[:i + 1]) / ".git").exists()
+               for i in range(len(parts) - 1)):
+            continue                      # a nested checkout is not ours
+        if p.is_file():
+            files.append(p)
+    return files
+
+
 def index_by_name(root: pathlib.Path) -> dict[str, list[pathlib.Path]]:
     """basename -> files carrying it, so a bare-filename citation can resolve."""
     idx: dict[str, list[pathlib.Path]] = {}
-    for p in root.rglob("*"):
-        if p.is_file() and ".git" not in p.parts and "rendered" not in p.parts:
-            idx.setdefault(p.name, []).append(p)
+    for p in tracked_files(root):
+        idx.setdefault(p.name, []).append(p)
     return idx
 
 
@@ -232,8 +263,7 @@ def main() -> int:
     args = ap.parse_args()
     root = pathlib.Path(args.root).resolve()
 
-    docs = sorted(p for p in root.rglob("*.md")
-                  if ".git" not in p.parts and "rendered" not in p.parts)
+    docs = sorted(p for p in tracked_files(root) if p.suffix == ".md")
     if len(docs) < MIN_DOCS:
         print(f"FAIL  found {len(docs)} markdown file(s), fewer than the {MIN_DOCS} this "
               f"repo carries — the glob no longer matches the tree, so a pass here "

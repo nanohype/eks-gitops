@@ -38,6 +38,7 @@ Run ``render-addons.py`` to render every env, or ``--env staging`` for one.
 
 from __future__ import annotations
 
+import importlib.util
 import argparse
 import pathlib
 import re
@@ -46,6 +47,15 @@ import sys
 from dataclasses import dataclass, field
 
 import yaml
+
+# Shared precondition helper, loaded by path: these are hyphenated executables
+# run from varying working directories.
+_gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
+_gs = importlib.util.spec_from_file_location("gatelib", _gl)
+gatelib = importlib.util.module_from_spec(_gs)
+sys.modules["gatelib"] = gatelib
+_gs.loader.exec_module(gatelib)
+
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -297,6 +307,7 @@ def stale_skips(units: list[Unit], aliases: dict[str, str]) -> list[tuple[str, s
 
 
 def main() -> int:
+    gatelib.require('helm')
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--env", choices=ENVIRONMENTS, help="render one environment (default: all)")
     ap.add_argument("--list", action="store_true", help="print discovered units and exit")

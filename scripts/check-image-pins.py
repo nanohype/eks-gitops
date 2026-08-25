@@ -51,6 +51,15 @@ import re
 import subprocess
 import sys
 
+# Shared precondition helper, loaded by path: these are hyphenated executables
+# run from varying working directories.
+_gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
+_gs = importlib.util.spec_from_file_location("gatelib", _gl)
+gatelib = importlib.util.module_from_spec(_gs)
+sys.modules["gatelib"] = gatelib
+_gs.loader.exec_module(gatelib)
+
+
 # Reuse render-addons' discovery, repo setup and render path rather than
 # re-deriving which chart a path belongs to. Three earlier attempts at a local
 # resolver each got a different subset of the fleet: the matrix shape only, then
@@ -85,6 +94,7 @@ ALLOWED_MUTABLE: dict[str, str] = {}
 
 def inventory(env: str) -> tuple[dict[str, set[str]], list[tuple[str, str]]]:
     """(image -> charts that render it, [(path, why-not-scanned)])."""
+    gatelib.require('helm')
     units = render_addons.discover()
     aliases = render_addons.add_repos(units)
     images: dict[str, set[str]] = {}

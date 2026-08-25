@@ -531,6 +531,7 @@ def copy_tree(dest: pathlib.Path) -> None:
     """
     listed = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True,
                             text=True, check=True, timeout=GATE_TIMEOUT)
+    copied: list[str] = []
     for rel in listed.stdout.split("\0"):
         if not rel:
             continue
@@ -539,6 +540,21 @@ def copy_tree(dest: pathlib.Path) -> None:
             continue
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
+        copied.append(rel)
+
+    # The fixture is made a real git repository carrying exactly the files that
+    # were copied. Gates scoped to `git ls-files` — which is how a gate avoids
+    # grading a sibling checkout CI drops in the workspace — see nothing in a
+    # plain directory, so a fixture that is not a repo makes them report an
+    # empty tree and the control then proves nothing about them.
+    #
+    # `git add` takes the explicit list rather than `-A`: the fixture must
+    # contain what the harness put there, not whatever else a run left behind.
+    subprocess.run(["git", "init", "-q"], cwd=dest, capture_output=True,
+                   text=True, timeout=GATE_TIMEOUT)
+    for chunk in (copied[i:i + 500] for i in range(0, len(copied), 500)):
+        subprocess.run(["git", "add", "--", *chunk], cwd=dest,
+                       capture_output=True, text=True, timeout=GATE_TIMEOUT)
 
 
 # Flags a gate needs to be invoked the way CI invokes it. check-hardcoded-org

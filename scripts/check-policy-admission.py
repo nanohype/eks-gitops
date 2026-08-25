@@ -106,6 +106,15 @@ import tempfile
 
 import yaml
 
+# Shared precondition helper, loaded by path: these are hyphenated executables
+# run from varying working directories.
+_gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
+_gs = importlib.util.spec_from_file_location("gatelib", _gl)
+gatelib = importlib.util.module_from_spec(_gs)
+sys.modules["gatelib"] = gatelib
+_gs.loader.exec_module(gatelib)
+
+
 # Helm charts occasionally emit the YAML `=` default-value sentinel (e.g. `- =`
 # inside a ConfigMap payload). PyYAML's SafeLoader has no constructor for it and
 # raises; the rendered text is only inspected for kind/namespace here, so map the
@@ -655,6 +664,7 @@ def check_namespace_coverage(landed: set[str], excluded: set[str]) -> bool:
 
 
 def main() -> int:
+    gatelib.require('helm', 'kyverno')
     parity_ok, excluded, expected_rules = check_exclusion_parity()
 
     with tempfile.TemporaryDirectory() as tmp:
