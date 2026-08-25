@@ -398,7 +398,16 @@ def m_named_things(root):
                 marker=f"task {MARKER}-not-a-target")
 
 
+def m_ai_config(root):
+    """A ModelGateway route naming a model the Platform allowlist omits."""
+    return _sub(root, "addons/ai-platform/agent-platform/base/platform.yaml",
+                "      modelId: us.anthropic.claude-sonnet-5",
+                f"      modelId: us.anthropic.claude-opus-5  # {MARKER}",
+                marker=MARKER)
+
+
 CONTROLS = {
+    "check-ai-config.py": ("a route naming a model outside the allowlist", m_ai_config),
     "check-named-things.py": ("prose naming a target that does not exist", m_named_things),
     "check-chart-deprecation.py": ("a provenance record no pin claims", m_chart_deprecation),
     "check-label-values.py": ("a label value the API server rejects", m_label_values),

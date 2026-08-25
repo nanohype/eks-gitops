@@ -190,6 +190,12 @@ jobs:
       # the tree, and nothing else keeps those claims true as the tree moves.
       - name: Named things in prose resolve
         run: ./scripts/check-named-things.py
+      # The AI control plane's CRs reference each other, and nothing else reads
+      # those references. A route naming an un-allowlisted model, a dangling
+      # budget reference, or a bare foundation-model id each break at runtime on
+      # a path no other gate exercises.
+      - name: AI control-plane configuration is consistent
+        run: ./scripts/check-ai-config.py
 
   policy-validity:
     name: every rendered policy is one Kyverno will accept
