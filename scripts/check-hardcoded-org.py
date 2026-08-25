@@ -111,8 +111,9 @@ def main() -> int:
 
     appsets = args.root / "applicationsets"
     if not appsets.is_dir():
-        print(f"No applicationsets/ directory under {args.root} — nothing to check.")
-        return 0
+        print(f"FAIL  no applicationsets/ directory under {args.root} — this gate")
+        print(f"      examined nothing, which is not the same as finding nothing.")
+        return 2
 
     # NON-RECURSIVE by design: app-of-apps applies only the top level, so only
     # the top level can strand a fork. See the opt-in note in the docstring.
