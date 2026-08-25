@@ -74,6 +74,7 @@ NEEDS_NETWORK_PY = {
     "validate-dashboards.py": "urllib.request.urlopen",
     "render-addons.py": "subprocess.run",
     "check-policy-admission.py": "subprocess.run",
+    "check-image-pins.py": "subprocess.run",
 }
 
 # Shell gates: no syntax tree available, so this is a text check over the

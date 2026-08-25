@@ -41,13 +41,26 @@ echo "Scanning $count workflow file(s) with $(zizmor --version)"
 zizmor --offline --min-severity medium --format plain "$WORKFLOWS"
 status=$?
 
-if [ "$status" -ne 0 ]; then
+# A bare non-zero conflates two different facts. zizmor exits 14 when it audited
+# the workflows and found something, and 3 when the run itself failed — no
+# inputs collected, a file it could not parse. Printing the finding remedy for
+# the second case tells an operator to fix a `persist-credentials` line in a
+# file that never parsed, which costs them a search that cannot succeed.
+if [ "$status" -eq 14 ]; then
   echo
   echo "  A workflow finding at MEDIUM or above blocks. The common ones and their"
   echo "  fixes: artipacked -> set 'persist-credentials: false' on the checkout;"
   echo "  template-injection -> pass the expansion through 'env:' instead of"
   echo "  interpolating it into a script body."
   exit 1
+fi
+
+if [ "$status" -ne 0 ]; then
+  echo
+  echo "  zizmor exited $status without completing an audit, so the workflows were"
+  echo "  NOT checked — this is not a clean result. Its own output above says what"
+  echo "  went wrong; the usual cause is a workflow file that does not parse."
+  exit 2
 fi
 
 echo "✓ $count workflow file(s) clean at MEDIUM and above"

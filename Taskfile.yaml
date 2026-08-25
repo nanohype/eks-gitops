@@ -83,6 +83,11 @@ tasks:
       # be told the measurement failed, but CI and this target always measure.
       - coverage run --rcfile=.coveragerc scripts/tests/run.py
 
+  validate:image-pins:
+    desc: "Image-pin gate — every image the fleet renders carries an immutable reference"
+    cmds:
+      - ./scripts/check-image-pins.py
+
   validate:workflows:
     desc: "Workflow supply-chain gate — zizmor over .github/workflows, offline, MEDIUM+ blocks"
     cmds:
@@ -166,6 +171,7 @@ tasks:
       - validate:named-things
       - validate:ai-config
       - validate:workflows
+      - validate:image-pins
     cmds:
       - echo "All validations passed."
 

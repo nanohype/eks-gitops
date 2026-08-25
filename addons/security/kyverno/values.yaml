@@ -61,9 +61,18 @@ features:
     mutate: true
     generate: true
 
-# Webhook configuration
+# Webhook configuration.
+#
+# The chart leaves this image's tag unset, and its own values comment records
+# what that means: "Defaults to `latest` if omitted". A cluster would therefore
+# pull whatever ghcr.io/kyverno/readiness-checker points at on the day the hook
+# runs, while every other Kyverno image is pinned to the chart's appVersion.
+# Pinned here to that same appVersion so the hook moves with the chart bump that
+# is reviewed, not on its own schedule.
 webhooksCleanup:
   enabled: true
+  image:
+    tag: v1.18.2
 
 # Override the kubectl image the report-cleanup jobs run. The chart default is a
 # Bitnami image, whose free public catalog Broadcom archived; pin the maintained
@@ -80,3 +89,9 @@ cleanupJobs:
       registry: registry.k8s.io
       repository: kubectl
       tag: v1.36.3
+
+# The chart's test hook runs the same readiness-checker image and leaves its tag
+# unset for the same reason. Pinned alongside the cleanup hook above.
+test:
+  image:
+    tag: v1.18.2

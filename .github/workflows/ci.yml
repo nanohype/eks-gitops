@@ -390,6 +390,12 @@ jobs:
 
       - name: Render every addon across every environment
         run: ./scripts/render-addons.py
+      # Tag immutability is a fact about the commit under test, so it blocks.
+      # Whether a CVE landed in one of these images overnight is not, and that
+      # half stays scheduled — blocking a merge on the world changing is how a
+      # gate teaches people to route around it.
+      - name: Every rendered image carries an immutable reference
+        run: ./scripts/check-image-pins.py
 
   # ── Policy-admission gate ────────────────────────────────────────────
   # The best-practice / pod-security policies run in Enforce mode on staging and
