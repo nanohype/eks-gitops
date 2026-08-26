@@ -741,6 +741,24 @@ jobs:
       # MEDIUM and above hard-fails; .trivyignore.yaml carries the scoped,
       # justified exceptions (device-plugin root/hostPath, druid's
       # k8s-extensions Role, env-indirected config keys).
+      # setup-trivy treats an empty `version` as "install the latest release"
+      # rather than as an error, so an env key that is renamed or removed does
+      # not fail this step — it silently installs a different scanner than the
+      # one this workflow pins, and the job still reports a clean scan. Empty is
+      # a valid instruction to the receiver, which is the case no workflow linter
+      # models: the YAML, the shell and the expression are all well-formed.
+      #
+      # Asserted with a shell conditional rather than a tool, so no missing
+      # binary can delete the assertion.
+      - name: Assert the pinned trivy version resolved
+        run: |
+          if [ -z "${{ env.TRIVY_VERSION }}" ]; then
+            echo "TRIVY_VERSION expanded empty. setup-trivy reads that as 'latest',"
+            echo "so this job would scan with an unpinned trivy and pass. Restore"
+            echo "the TRIVY_VERSION key in this workflow's env block."
+            exit 1
+          fi
+
       - name: Install trivy
         uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
         with:

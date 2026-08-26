@@ -33,8 +33,20 @@ run() {
     sed -n '1,3p' "$OUT" | sed 's/^/          /'
     fail=$((fail+1)); return
   fi
-  if grep -qE "Traceback \(most recent call last\)|^panic: " "$OUT"; then
+  # grep answers four ways: 0 matched, 1 definitely did not, >=2 the search
+  # itself failed, 127 absent. An `if grep` has two branches, so everything
+  # above 1 lands in the did-not-match one and an absent grep would delete this
+  # crash check silently — the check that exists because a gate which CRASHES
+  # exits non-zero and is otherwise indistinguishable from one that rejected the
+  # tree. Require the definite outcome; treat anything else as harness failure
+  # and name the status.
+  grep -qE "Traceback \(most recent call last\)|^panic: " "$OUT"
+  local grc=$?
+  if [ "$grc" -eq 0 ]; then
     printf "  HARNESS %-50s rc=%s — CRASHED, not rejected\n" "$label" "$rc"
+    fail=$((fail+1)); return
+  elif [ "$grc" -ne 1 ]; then
+    printf "  HARNESS %-50s crash-scan itself failed (grep exited %s); no verdict\n" "$label" "$grc"
     fail=$((fail+1)); return
   fi
   if [ "$want" = "nonzero" ]; then

@@ -60,6 +60,10 @@ import subprocess
 import sys
 import tempfile
 
+
+# Exit code for "this did not run", shared with the gates (scripts/gatelib.py).
+CANNOT_RUN = 2
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 SCRIPTS = ROOT / "scripts"
 
@@ -823,9 +827,45 @@ def run_control(gate: str, what: str, mutate) -> tuple[bool, str]:
         return True, f"rejected {what} (exit {dirty.returncode}, names {hit.split('/')[-1]})"
 
 
+def population_authority() -> str | None:
+    """Why this run cannot establish its own corpus, or None.
+
+    git is not a tool these controls merely shell out to. copy_tree() takes the
+    file LIST from the index, and the gates under control scope themselves to
+    the tracked set — so git decides WHICH FILES every control in this run
+    examines. A tool that defines the population sits above the gates that read
+    it, and asserting it inside each gate is too late: by then the fixture is
+    already built, and a fixture built from an empty enumeration is a tree on
+    which every control passes for the same reason a clean one does.
+
+    Hence before the loop, once, for the whole run.
+    """
+    if shutil.which("git") is None:
+        return ("git is not on PATH. copy_tree() takes its file list from the index "
+                "and the gates scope to the tracked set, so without git this run "
+                "cannot say what population it exercised anything over.")
+    probe = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True,
+                           text=True, timeout=GATE_TIMEOUT)
+    if probe.returncode != 0:
+        err = (probe.stderr or "").strip().splitlines()
+        return (f"`git ls-files` failed in {ROOT} — "
+                f"{err[0] if err else f'exit {probe.returncode}'}. The corpus every "
+                f"fixture is cut from is unknown.")
+    if not [r for r in probe.stdout.split("\0") if r]:
+        return (f"`git ls-files` reports no tracked files in {ROOT}. Every fixture "
+                f"would be empty and every control would pass over nothing.")
+    return None
+
+
 def main() -> int:
     if self_test():
         return 1
+    blocked = population_authority()
+    if blocked:
+        print("── Population authority ──")
+        print(f"  CANNOT RUN  {blocked}")
+        print("\nPositive-control gate did NOT run. That is not a pass.")
+        return CANNOT_RUN
     problems = check_vacuity()
     if problems:
         print("── Control coverage ──")

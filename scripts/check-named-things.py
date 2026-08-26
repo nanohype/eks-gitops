@@ -47,10 +47,23 @@ they carry illustrative paths that deliberately do not exist ("addons/<category>
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
+
+
+# Shared helpers, loaded by path: these are hyphenated executables run from
+# varying working directories.
+_gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
+_gs = importlib.util.spec_from_file_location("gatelib", _gl)
+gatelib = importlib.util.module_from_spec(_gs)
+sys.modules["gatelib"] = gatelib
+_gs.loader.exec_module(gatelib)
+
+CANNOT_RUN = gatelib.CANNOT_RUN
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -201,33 +214,44 @@ def is_repo_path(ref: str, from_link: bool, rooted: tuple[str, ...]) -> bool:
 
 
 def tracked_files(root: pathlib.Path) -> list[pathlib.Path]:
-    """The files this repository OWNS, not whatever sits in the workspace.
+    """The files this repository OWNS, or exit 2 — never a filesystem walk.
 
     CI checks sibling repositories and downloaded tools into the same directory
     tree. A gate that walks the filesystem grades those too — and a finding in a
     neighbour is correct and useless, because the seat it stops is not the seat
     that can fix it.
 
-    `git ls-files` is the boundary. The fallback walk is for a fixture tree,
-    which is not a git repo; it keeps the same boundary by refusing to descend
-    into dot-directories and into a nested checkout.
+    `git ls-files` is the boundary, and it is the ONLY boundary. A walk kept as
+    a fallback for the non-repository case is that same defect behind a door
+    that opens on exactly the trees where nothing else establishes the boundary,
+    so it cannot be the safe branch — it is the unsafe one, taken unattended.
+
+    git therefore determines WHICH FILES this gate examines, which makes it an
+    authority over the population and not a tool the gate merely runs. Absent or
+    answering for a non-repository, the population is unknown; an unknown
+    population is not an empty one, and this exits 2 rather than reporting a
+    tree it could not enumerate.
     """
+    if shutil.which("git") is None:
+        print("Cannot run: git is not on PATH. This gate examines the tracked set, "
+              "so without git the population is unknown — which is not the same as "
+              "empty, and not something to substitute a filesystem walk for.")
+        sys.exit(CANNOT_RUN)
     out = subprocess.run(["git", "ls-files", "-z"], cwd=root,
                          capture_output=True, text=True, timeout=120)
-    if out.returncode == 0 and out.stdout.strip("\0"):
-        return [root / rel for rel in out.stdout.split("\0")
-                if rel and (root / rel).is_file()]
-
-    files = []
-    for p in sorted(root.rglob("*")):
-        parts = p.relative_to(root).parts
-        if any(x.startswith(".") for x in parts) or "rendered" in parts:
-            continue
-        if any((root / pathlib.Path(*parts[:i + 1]) / ".git").exists()
-               for i in range(len(parts) - 1)):
-            continue                      # a nested checkout is not ours
-        if p.is_file():
-            files.append(p)
+    if out.returncode != 0:
+        err = (out.stderr or "").strip().splitlines()
+        print(f"Cannot run: `git ls-files` failed in {root} — "
+              f"{err[0] if err else f'exit {out.returncode}'}")
+        print("This gate examines the tracked set and could not determine it, so it "
+              "has checked nothing.")
+        sys.exit(CANNOT_RUN)
+    files = [root / rel for rel in out.stdout.split("\0")
+             if rel and (root / rel).is_file()]
+    if not files:
+        print(f"Cannot run: `git ls-files` reports no tracked files in {root}. A gate "
+              f"over an empty population passes for the same reason a clean tree does.")
+        sys.exit(CANNOT_RUN)
     return files
 
 

@@ -29,6 +29,27 @@
 # question is being asked.
 set -uo pipefail
 
+# A count is an operand, and an absent or failed producer yields an EMPTY one,
+# not a zero. `[ "" -lt 100 ]` exits 2 with "integer expected", and an `if`
+# reads exit 2 as false — so the floor is not failed, it is SKIPPED, and
+# execution continues to the pass. The floor that exists to prove this gate
+# examined something is removed by the same absence it exists to survive.
+#
+# Asserting the operand is a digit string is direction-independent: it does not
+# depend on which way any particular comparison runs, so a later edit that flips
+# a threshold cannot silently turn a safe default into the passing value.
+require_count() {
+  case "$2" in
+    "" ) echo "Cannot run: $1 produced no count — its producer did not run. An"
+         echo "undetermined count is not a count of zero, and a floor that cannot"
+         echo "evaluate is a floor that did not run."
+         exit 2 ;;
+    *[!0-9]* ) echo "Cannot run: $1 produced a non-numeric count ($2)."
+         exit 2 ;;
+  esac
+}
+
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKFLOWS="${1:-$ROOT/.github/workflows}"
 
@@ -62,6 +83,7 @@ fi
 # tree with nothing wrong does, so the count is checked rather than inferred
 # from a quiet run.
 count=$(find "$WORKFLOWS" -maxdepth 1 -name '*.yml' -o -maxdepth 1 -name '*.yaml' 2>/dev/null | wc -l | tr -d ' ')
+require_count "the workflow-file count" "$count"
 if [ "$count" -lt 1 ]; then
   echo "Found no workflow files under $WORKFLOWS — nothing was scanned, and a pass"
   echo "here would report the same thing as a clean tree."
