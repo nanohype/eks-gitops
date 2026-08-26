@@ -9,8 +9,61 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 SP="$(mktemp -d)"
-trap 'rm -rf "$SP"' EXIT
+
+# Backups live OUTSIDE $SP, and that placement is the whole fix. This harness
+# plants defects in TRACKED files and restores them afterwards, so between mut
+# and res the only copy of a file's original content is the backup. Keeping that
+# copy inside the directory the cleanup removes meant the teardown destroyed the
+# means of restoration: interrupt the run in that window — a timeout is enough —
+# and the trap fired, deleted the scratch dir, and left a planted defect in the
+# working tree with nothing able to put it back.
+#
+# The recovery in practice was `git checkout --`, which works only because these
+# victims happen to be tracked. That is luck, not design, and it does not cover a
+# harness that mutates something untracked.
+BK="$(mktemp -d)"
 OUT=$SP/rv.out
+
+# Every file mutated this run, so restoration does not depend on reaching the
+# matching `res` call.
+MUT_FILES=()
+
+_slot() { printf '%s' "$1" | tr '/' '_'; }
+
+# Back a file up before mutating it. The first mutation of a file wins: a second
+# mut on the same path must not overwrite the pristine copy with a mutated one.
+mut() {
+  local f="$1" s
+  s="$(_slot "$f")"
+  [ -e "$BK/$s" ] || cp "$f" "$BK/$s"
+  case " ${MUT_FILES[*]:-} " in
+    *" $f "*) ;;
+    *) MUT_FILES+=("$f") ;;
+  esac
+}
+
+# Idempotent by construction: restoring from the pristine copy is repeatable, so
+# an explicit res followed by the trap's sweep is a no-op rather than a conflict.
+# Also recreates a file the harness DELETED, which one case does.
+res() {
+  local f="$1" s
+  s="$(_slot "$f")"
+  [ -e "$BK/$s" ] && cp "$BK/$s" "$f"
+  return 0
+}
+
+restore_all() {
+  [ "${#MUT_FILES[@]}" -eq 0 ] && return 0
+  local f
+  for f in "${MUT_FILES[@]}"; do res "$f"; done
+}
+
+# Restore BEFORE removing anything, and on the signals a timeout or a Ctrl-C
+# actually sends — not EXIT alone, which a killed shell never reaches for TERM.
+cleanup() { restore_all; rm -rf "$SP" "$BK"; }
+trap cleanup EXIT
+trap 'cleanup; exit 130' INT
+trap 'cleanup; exit 143' TERM
 pass=0; fail=0
 
 # run <want> <label> <cmd...>
@@ -83,8 +136,7 @@ run 0 "yamllint" yamllint -c .yamllint.yaml .
 echo
 echo "── Known-bad fed in: every gate must REJECT ──"
 
-mut() { cp "$1" "$SP/rv.bak"; }
-res() { cp "$SP/rv.bak" "$1"; }
+
 
 F=addons/security/kyverno/values.yaml; mut $F
 python3 - "$F" <<'PY'
