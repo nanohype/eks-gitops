@@ -372,13 +372,24 @@ def check(listing: bool, offline: bool) -> int:
             print(f"operator chart {version} → {', '.join(sorted(schemas))}")
 
         walked = 0
+        skipped_templates = 0
         for f in manifests():
+            # Chart source is Go-template text, identified structurally rather
+            # than by whatever happens to break the parser. A manifest that will
+            # not parse is a finding: skipping it removes a CR from the corpus
+            # this gate reports on, and a smaller corpus passes for the same
+            # reason a compliant one does.
+            if gatelib.is_helm_template(f):
+                skipped_templates += 1
+                continue
             try:
                 docs = list(yaml.safe_load_all(f.read_text()))
-            except yaml.YAMLError:
-                # Helm templates and kustomize patches are not always loadable YAML.
-                # Anything a cluster applies is, and this gate is about those.
-                continue
+            except yaml.YAMLError as exc:
+                first = str(exc).strip().splitlines()[0] if str(exc).strip() else exc.__class__.__name__
+                print(f"Cannot run: {f} is not parseable YAML — {first}")
+                print("It is not chart source, so this gate cannot skip it without")
+                print("shrinking the set of CRs it claims to have checked.")
+                return gatelib.CANNOT_RUN
             for doc in docs:
                 if not isinstance(doc, dict):
                     continue

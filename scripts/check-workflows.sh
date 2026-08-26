@@ -82,6 +82,19 @@ fi
 # Assert the corpus. A path that matches no workflow exits clean, exactly as a
 # tree with nothing wrong does, so the count is checked rather than inferred
 # from a quiet run.
+# find reports an absent or unreadable path on stderr and in its status; the
+# pipe to `wc -l` drops the status and the redirect drops the sentence, so a
+# path that was never opened arrives at the floor below as a count of zero and
+# passes require_count as a real measurement. A directory that could not be read
+# is a different fact from one holding no workflows, and only one of them is
+# fixed by looking at workflows.
+if [ ! -d "$WORKFLOWS" ] || [ ! -r "$WORKFLOWS" ] || [ ! -x "$WORKFLOWS" ]; then
+  echo "Cannot run: $WORKFLOWS is not a readable directory, so the workflow corpus"
+  echo "was never opened. An unopened path is not an empty one — the path is what"
+  echo "needs fixing, not the workflows."
+  exit 2
+fi
+
 count=$(find "$WORKFLOWS" -maxdepth 1 -name '*.yml' -o -maxdepth 1 -name '*.yaml' 2>/dev/null | wc -l | tr -d ' ')
 require_count "the workflow-file count" "$count"
 if [ "$count" -lt 1 ]; then
@@ -116,6 +129,36 @@ if [ "$have_zizmor" != "$WANT_ZIZMOR" ]; then
   echo "rule set the lockfile does not describe. Install the pinned version:"
   echo "  pip install --require-hashes -r requirements.txt"
   exit 2
+fi
+
+# Every job that runs must appear in the PR summary. The merge gate votes on
+# all of them, so a job missing here does not fail open — but the summary is
+# what a reviewer reads, and a table that silently covers a subset reports a
+# clean run over jobs it never mentioned. The two lists drifted to 11 of 17
+# before this assertion existed.
+#
+# Asserted against the job list itself rather than a maintained copy, so adding
+# a job and forgetting the summary fails here instead of going unreported.
+# Scoped to a tree that actually carries ci.yml: this gate also runs against
+# fixture workflow directories that hold a single probe file, and a missing
+# ci.yml there is the fixture's shape rather than a summary defect.
+if [ -f "$WORKFLOWS/ci.yml" ] && ! python3 - "$WORKFLOWS/ci.yml" <<'PYEOF'
+
+import sys, yaml
+doc = yaml.safe_load(open(sys.argv[1]))
+jobs = [j for j in doc["jobs"] if j not in ("pr-summary", "merge-gate")]
+needs = doc["jobs"]["pr-summary"].get("needs") or []
+missing = [j for j in jobs if j not in needs]
+if missing:
+    print("PR summary does not report on: " + ", ".join(missing))
+    print("The merge gate still votes on them, so this is under-reporting rather")
+    print("than a gate failing open — but the table a reviewer reads would show a")
+    print("clean run over jobs it never mentioned. Add them to pr-summary's needs")
+    print("and to its results map.")
+    sys.exit(1)
+PYEOF
+then
+  exit 1
 fi
 
 echo "Scanning $count workflow file(s) with zizmor $have_zizmor (pinned)"
@@ -154,9 +197,18 @@ fi
 # prints is the operand.
 audit_out=$(zizmor --offline --persona=auditor --format plain "$WORKFLOWS" 2>&1)
 below=$(printf '%s\n' "$audit_out" | sed -n 's/^\([0-9][0-9]*\) findings.*/\1/p' | tail -1)
-[ -n "$below" ] || below="an unknown number of"
 
 echo "✓ $count workflow file(s) clean at MEDIUM and above"
-echo "  $below low/informational finding(s) sit below the threshold — reported, not"
-echo "  blocking. See them with:"
-echo "    zizmor --offline --persona=auditor $WORKFLOWS"
+if [ -n "$below" ]; then
+  echo "  $below low/informational finding(s) sit below the threshold — reported, not"
+  echo "  blocking. See them with:"
+  echo "    zizmor --offline --persona=auditor $WORKFLOWS"
+else
+  # The extraction found no summary line. Substituting "an unknown number of"
+  # read as a successful audit with an unparsed tally, which is the same
+  # sentence a run that produced no output at all would print. What the
+  # producer actually said is the evidence; print it rather than prose about it.
+  echo "  The below-threshold tally could not be extracted from zizmor's output."
+  echo "  That is not a count of zero. Its output was:"
+  printf '%s\n' "$audit_out" | sed 's/^/    /'
+fi

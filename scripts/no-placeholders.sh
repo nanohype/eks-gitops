@@ -86,6 +86,19 @@ git ls-files -z 2>"$err" \
   | grep -E '\.(yaml|yml|tf|hcl|tfvars|json)$' \
   | grep -vE '\.example$|(^|/)(examples|testdata|test|vendor|node_modules)/' \
   > "$files"
+enum=("${PIPESTATUS[@]}")
+
+# The enumeration is a four-stage pipeline and its status was never read, so
+# every way it can fail arrived at the emptiness test below as "no files" —
+# indistinguishable from a tree that genuinely holds none. git's status is the
+# one that matters: grep exiting 1 means the filters selected nothing, which the
+# floor below already reports, but git failing means the population is unknown.
+if [ "${enum[0]}" -ne 0 ]; then
+  echo "Cannot run: git ls-files exited ${enum[0]} while enumerating the tracked set."
+  printf '%s\n' "$(cat "$err")" | sed 's/^/    /'
+  echo "The population could not be determined, which is not the same as it being empty."
+  exit 2
+fi
 
 if [ ! -s "$files" ]; then
   echo "Placeholder scan enumerated no files to scan."

@@ -97,3 +97,25 @@ def require(*tools: str) -> None:
     print("nothing. Install the tool(s) and re-run; the versions CI pins are in")
     print("the env block at the top of .github/workflows/ci.yml.")
     sys.exit(CANNOT_RUN)
+
+
+def is_helm_template(path) -> bool:
+    """True for a file that is Go-template text rather than a YAML manifest.
+
+    Detected STRUCTURALLY, not by a path list and not by catching the parse
+    error: a file under a directory named `templates` whose parent holds a
+    `Chart.yaml` is chart source, and Helm renders it before anything applies
+    it. Every other tracked YAML file in this repo is a manifest or a values
+    file and must parse.
+
+    The distinction matters because the alternative — `except YAMLError:
+    continue` — silently removes a file from a gate's corpus, and a corpus that
+    quietly shrinks reports exactly what a clean one reports. A gate may skip
+    what it can justify structurally; it may not skip whatever happens to
+    break its parser.
+    """
+    path = pathlib.Path(path)
+    for parent in path.parents:
+        if parent.name == "templates" and (parent.parent / "Chart.yaml").is_file():
+            return True
+    return False
