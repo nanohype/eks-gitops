@@ -90,7 +90,26 @@ if [ "$count" -lt 1 ]; then
   exit 2
 fi
 
-have_zizmor="$(zizmor --version 2>/dev/null | awk '{print $NF}')"
+# `command -v` above proves a file exists and is executable, not that it RUNS.
+# A zizmor that is present but cannot start — a broken interpreter link, a
+# missing shared library — fails here, and the two things that used to hide it
+# were one construction: `2>/dev/null` threw away the sentence naming the cause,
+# and the pipe destroyed the status so nothing noticed. The version comparison
+# then fired with an EMPTY left-hand side and printed "zizmor on PATH is  but
+# requirements.txt pins X" — blaming a version mismatch for a tool that never
+# ran, with the real cause already discarded.
+#
+# Keep both streams and the status, and separate "does not execute" from "wrong
+# version": they are different failures and only one is fixed by installing a pin.
+version_out="$(zizmor --version 2>&1)"
+version_status=$?
+if [ "$version_status" -ne 0 ] || [ -z "$version_out" ]; then
+  echo "Cannot run: 'zizmor --version' exited $version_status without reporting a"
+  echo "version, so zizmor is on PATH but does not execute. Its own output:"
+  printf '%s\n' "$version_out" | sed 's/^/    /'
+  exit 2
+fi
+have_zizmor="$(printf '%s\n' "$version_out" | awk '{print $NF}')"
 if [ "$have_zizmor" != "$WANT_ZIZMOR" ]; then
   echo "zizmor on PATH is $have_zizmor but requirements.txt pins $WANT_ZIZMOR."
   echo "Different releases run different audits, so this run would report on a"
