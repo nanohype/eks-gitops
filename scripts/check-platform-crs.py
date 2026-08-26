@@ -115,13 +115,34 @@ def pinned_chart_version() -> str:
 
 def crd_schemas(version: str, workdir: Path) -> dict[str, dict]:
     """kind -> spec schema, from the operator chart's shipped CRDs."""
-    subprocess.run(
+    # An unreachable registry used to raise CalledProcessError here: exit 1 with
+    # a traceback, which is the SAME status this gate uses for "a catalog CR is
+    # inadmissible". The operator could not tell whether their manifests were
+    # rejected or whether the chart never arrived — and helm's explanation was
+    # captured and thrown away. Those are different worlds and the discrimination
+    # is the fix.
+    pull = subprocess.run(
         ["helm", "pull", CHART, "--version", version, "--untar", "--untardir", str(workdir)],
-        check=True,
         capture_output=True,
         text=True,
         timeout=NETWORK_TIMEOUT,
     )
+    if pull.returncode != 0:
+        err = ((pull.stderr or "") + (pull.stdout or "")).strip()
+        low = err.lower()
+        unreachable = ("dial tcp", "no such host", "connection refused", "i/o timeout",
+                       "timeout exceeded", "network is unreachable", "tls handshake",
+                       "proxyconnect", "connect: ", "eof")
+        if any(tok in low for tok in unreachable) or "not found" not in low:
+            print(f"Cannot run: could not pull operator chart {version} from {CHART}.")
+            print(err)
+            print("No CR was checked. An unreachable registry is not a statement about")
+            print("the catalog's admissibility.")
+            sys.exit(gatelib.CANNOT_RUN)
+        print(f"operator chart {version} does not exist at {CHART}:")
+        print(err)
+        print("The pin names a chart the registry does not have — a finding about this repo.")
+        sys.exit(1)
     crd_dir = workdir / "operator" / "crds"
     if not crd_dir.is_dir():
         sys.exit(f"operator chart {version} ships no crds/ directory")
