@@ -49,12 +49,17 @@ run() {
     printf "  HARNESS %-50s crash-scan itself failed (grep exited %s); no verdict\n" "$label" "$grc"
     fail=$((fail+1)); return
   fi
+  # On a FAIL the captured output is the only thing that can name a cause: the
+  # branch itself carries a label and an integer, and `run 0 "task validate"`
+  # fronts an aggregate of parallel gates where rc=1 does not say which one
+  # rejected. $OUT is truncated by the next `run` and removed by the EXIT trap,
+  # so a status printed without it is the last chance to know why.
   if [ "$want" = "nonzero" ]; then
     if [ "$rc" -ne 0 ]; then printf "  ok    %-52s rc=%s\n" "$label" "$rc"; pass=$((pass+1));
-    else printf "  FAIL  %-52s rc=0 (wanted non-zero)\n" "$label"; fail=$((fail+1)); fi
+    else printf "  FAIL  %-52s rc=0 (wanted non-zero)\n" "$label"; sed 's/^/          /' "$OUT"; fail=$((fail+1)); fi
   else
     if [ "$rc" -eq "$want" ]; then printf "  ok    %-52s rc=%s\n" "$label" "$rc"; pass=$((pass+1));
-    else printf "  FAIL  %-52s rc=%s (wanted %s)\n" "$label" "$rc" "$want"; fail=$((fail+1)); fi
+    else printf "  FAIL  %-52s rc=%s (wanted %s)\n" "$label" "$rc" "$want"; sed 's/^/          /' "$OUT"; fail=$((fail+1)); fi
   fi
 }
 

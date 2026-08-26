@@ -214,11 +214,13 @@ def called_names(src: str) -> set[str]:
             return ".".join(reversed(parts))
         return None
 
-    try:
-        tree = ast.parse(src)
-    except SyntaxError:
-        return set()
-    return {name for n in ast.walk(tree)
+    # A SyntaxError here used to become an empty set, and that set is the SOLE
+    # input to the network-exemption assertion. So a gate this harness could not
+    # parse was a gate whose exempted network call "was not present" — the
+    # exemption then read as stale and the floor went blind to the very file it
+    # could not read. Let it out: an unparseable gate is a fact about the tree,
+    # not an empty answer about its contents.
+    return {name for n in ast.walk(ast.parse(src))
             if isinstance(n, ast.Call) and (name := dotted(n.func))}
 
 
@@ -617,7 +619,20 @@ def check_vacuity() -> list[str]:
         p = SCRIPTS / gate
         if not p.exists():
             continue
-        if call not in called_names(p.read_text()):
+        try:
+            calls = called_names(p.read_text())
+        except SyntaxError as exc:
+            # Reported as its own problem rather than as an absent call. These
+            # are different facts and they used to print the same sentence: an
+            # unparseable gate yielded an empty call set, which read as "the
+            # exemption is stale" and pointed the reader at the exemption list
+            # instead of at the file that will not parse.
+            problems.append(
+                f"{gate} could not be parsed ({exc.msg} at line {exc.lineno}), so its "
+                f"network exemption could not be checked. That is not the same as the "
+                f"exemption being stale.")
+            continue
+        if call not in calls:
             problems.append(
                 f"{gate} is exempted as network-dependent, but its syntax tree contains "
                 f"no call to {call}(). If the remote call is gone the gate is testable "

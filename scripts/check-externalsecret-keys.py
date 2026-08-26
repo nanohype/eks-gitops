@@ -39,6 +39,7 @@ the reason the bug was possible.
 
 from __future__ import annotations
 
+import importlib.util
 import pathlib
 import re
 import sys
@@ -47,6 +48,12 @@ try:
     import yaml
 except ImportError:  # pragma: no cover
     sys.exit("PyYAML required: pip install pyyaml")
+
+_gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
+_gs = importlib.util.spec_from_file_location("gatelib", _gl)
+gatelib = importlib.util.module_from_spec(_gs)
+sys.modules["gatelib"] = gatelib
+_gs.loader.exec_module(gatelib)
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 APPSETS = ROOT / "applicationsets"
@@ -167,8 +174,22 @@ def patched_paths() -> dict[str, dict[str, set[str]]]:
                     continue
                 try:
                     ops = yaml.safe_load(body)
-                except yaml.YAMLError:
-                    continue
+                except yaml.YAMLError as exc:
+                    # This patch is what DELIVERS the remote-secret name the
+                    # gate goes on to assert. Skipping an unparseable one drops
+                    # its replace ops from the map, so the ExternalSecret it
+                    # targets is then checked against a patch set that silently
+                    # lost a member — and the gate reports on a delivery it
+                    # never read. The parser's mark is relative to the patch
+                    # body, so name the appset and the target too.
+                    first = str(exc).strip().splitlines()[0] if str(exc).strip() else exc.__class__.__name__
+                    tgt = patch.get("target") or {}
+                    print(f"Cannot run: an inline kustomize patch in {path} is not parseable "
+                          f"YAML — {first}")
+                    print(f"  target: {tgt or '(none declared)'}")
+                    print("  The patch's replace ops decide which remote secret this gate")
+                    print("  asserts against, so dropping it would check a delivery it never read.")
+                    sys.exit(gatelib.CANNOT_RUN)
                 if not isinstance(ops, list):
                     continue  # a strategic-merge patch, not JSON6902
                 for op in ops:

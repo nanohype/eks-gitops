@@ -223,19 +223,30 @@ def wired_datasource_refs(root: pathlib.Path) -> set[str]:
 
 def extract_dashboard_json(text: str):
     """Pull the `json: |` literal block out of a GrafanaDashboard and parse it."""
+    # Returns (dashboard, reason). A bare None used to mean two structurally
+    # different things — no `json: |` block at all, and a block that is present
+    # but holds invalid JSON — and the caller emitted one fixed sentence for
+    # both. The first is a shape problem, the second is a syntax error with a
+    # line number, and only one of them is fixed by looking at the literal
+    # block.
     m = JSON_BLOCK.search(text)
     if not m:
-        return None
+        return None, "no `json: |` literal block was found"
     indent = len(m.group(1)) + 2
     body = []
     for line in text[m.end():].splitlines():
         if line.strip() and not line.startswith(" " * indent):
             break
         body.append(line[indent:] if len(line) >= indent else "")
+    block = "\n".join(body)
     try:
-        return json.loads("\n".join(body))
-    except json.JSONDecodeError:
-        return None
+        return json.loads(block), None
+    except json.JSONDecodeError as exc:
+        # exc.lineno is relative to the block; translate it to the file so the
+        # reader is sent to a line that exists in the file they opened.
+        file_line = text[:m.end()].count("\n") + exc.lineno
+        return None, (f"the `json: |` block is present but is not valid JSON — "
+                      f"{exc.msg} at file line {file_line}")
 
 
 def walk_datasources(node, out: list[str]) -> None:
@@ -275,7 +286,7 @@ def check_local_dashboards(root: pathlib.Path) -> list[str]:
         if "kind: GrafanaDashboard" not in text:
             continue
         rel = path.relative_to(root)
-        dash = extract_dashboard_json(text)
+        dash, reason = extract_dashboard_json(text)
         if dash is None:
             # A grafana.com-sourced dashboard carries no inline JSON — its
             # content is a `grafanaCom.id` the checks above already validate
@@ -292,9 +303,9 @@ def check_local_dashboards(root: pathlib.Path) -> list[str]:
             # parser below — and every assertion here silently stopped applying
             # to it while the run stayed green.
             problems.append(
-                f"{rel}: is a GrafanaDashboard but its dashboard JSON could not be read. "
-                "Expected a `json: |` literal block holding valid JSON; a quoted or folded "
-                "scalar parses as YAML and is invisible to every check below."
+                f"{rel}: is a GrafanaDashboard but its dashboard JSON could not be read — "
+                f"{reason}. Expected a `json: |` literal block holding valid JSON; a quoted "
+                "or folded scalar parses as YAML and is invisible to every check below."
             )
             continue
 

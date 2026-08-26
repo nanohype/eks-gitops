@@ -36,11 +36,21 @@ unconstrained, which is where a genuine `org/name` belongs.
 
 from __future__ import annotations
 
+import importlib.util
 import re
 import sys
 from pathlib import Path
 
 import yaml
+
+
+# Shared helpers, loaded by path: these are hyphenated executables run from
+# varying working directories.
+_gl = Path(__file__).resolve().parent / "gatelib.py"
+_gs = importlib.util.spec_from_file_location("gatelib", _gl)
+gatelib = importlib.util.module_from_spec(_gs)
+sys.modules["gatelib"] = gatelib
+_gs.loader.exec_module(gatelib)
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -156,13 +166,23 @@ def main() -> int:
         if not any(part in SKIP_DIRS for part in p.parts)
     )
 
+    # A file dropped from the corpus because its parser choked is a corpus that
+    # quietly shrank, and a shrunken corpus reports exactly what a clean one
+    # reports. Chart source is skipped because it is STRUCTURALLY not a
+    # manifest; anything else that will not parse is a defect this gate names.
+    skipped_templates = 0
     for path in files:
+        if gatelib.is_helm_template(path):
+            skipped_templates += 1
+            continue
         try:
             docs = list(yaml.safe_load_all(path.read_text()))
-        except yaml.YAMLError:
-            # Helm templates and other non-YAML-parseable files are the concern
-            # of the render gates, not this one.
-            continue
+        except yaml.YAMLError as exc:
+            first = str(exc).strip().splitlines()[0] if str(exc).strip() else exc.__class__.__name__
+            print(f"Cannot run: {path.relative_to(REPO)} is not parseable YAML — {first}")
+            print("It is not chart source, so this gate cannot skip it: dropping it would")
+            print("shrink the corpus silently and still report a clean tree.")
+            sys.exit(gatelib.CANNOT_RUN)
 
         rel = path.relative_to(REPO)
         for doc in docs:

@@ -780,7 +780,26 @@ jobs:
     name: PR Summary
     runs-on: ubuntu-latest
     if: always() && github.event_name == 'pull_request'
-    needs: [placeholders, lint, dashboards, kyverno, fork-safety, helm-render, policy-admission, appsets, appset-render, secrets, validate]
+    needs:
+      [
+        placeholders,
+        lint,
+        dashboards,
+        kyverno,
+        fork-safety,
+        helm-render,
+        policy-admission,
+        appsets,
+        appset-render,
+        secrets,
+        validate,
+        renovate-coverage,
+        policy-validity,
+        gate-tests,
+        serviceaccount-bindings,
+        platform-crs,
+        catalog-revision,
+      ]
     permissions:
       pull-requests: write
     steps:
@@ -802,6 +821,12 @@ jobs:
               'Appset render (Karpenter subnet selector)': '${{ needs.appset-render.result }}',
               'Secret scan (gitleaks)': '${{ needs.secrets.result }}',
               'Render + assert + schema + misconfig (all environments)': '${{ needs.validate.result }}',
+              'Renovate manager coverage': '${{ needs.renovate-coverage.result }}',
+              'Policy validity (kustomize + kyverno)': '${{ needs.policy-validity.result }}',
+              'The gates themselves are tested': '${{ needs.gate-tests.result }}',
+              'Pods name ServiceAccounts that exist': '${{ needs.serviceaccount-bindings.result }}',
+              'Catalog CRs admissible against the operator chart': '${{ needs.platform-crs.result }}',
+              'Catalog source reads its revision': '${{ needs.catalog-revision.result }}',
             };
             const rows = Object.entries(results)
               .map(([check, r]) => `| ${check} | ${icon(r)} ${r} |`)
