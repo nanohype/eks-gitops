@@ -211,6 +211,51 @@ def discover() -> list[Unit]:
     return units
 
 
+CANNOT_RUN = gatelib.CANNOT_RUN
+
+
+# A chart step that fails has told you nothing about the chart's CONTENT. It
+# either could not REACH the registry, or it reached it and the pinned version
+# is not there — and those are different worlds for the operator. The first is
+# transient and says nothing about this repo; the second is a finding about a
+# pin somebody wrote. Collapsing them into one non-zero exit, with helm's
+# explanation captured and discarded, made an unreachable registry read as a
+# verdict on the catalogue.
+#
+# Matched on helm's own words rather than on its exit status, which is 1 for
+# both. The default when the text matches neither is CANNOT_RUN: an
+# unrecognised failure is not evidence of a defect in this repo.
+_UNREACHABLE = (
+    "dial tcp", "no such host", "connection refused", "i/o timeout",
+    "timeout exceeded", "network is unreachable", "tls handshake",
+    "temporary failure in name resolution", "proxyconnect",
+    "connect: ", "eof",
+)
+_NOT_FOUND = (
+    "not found", "no chart version found", "404", "chart not found",
+    "could not find",
+)
+
+
+def helm_or_exit(cmd: list[str], what: str) -> subprocess.CompletedProcess:
+    """Run a helm command; on failure exit with the RIGHT kind of complaint."""
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=NETWORK_TIMEOUT)
+    if proc.returncode == 0:
+        return proc
+    err = ((proc.stderr or "") + (proc.stdout or "")).strip()
+    low = err.lower()
+    if any(t in low for t in _NOT_FOUND) and not any(t in low for t in _UNREACHABLE):
+        print(f"{what}: the registry answered and the pinned chart is not there.")
+        print(err)
+        print("This is a pin that does not resolve — a finding about this repo.")
+        sys.exit(1)
+    print(f"Cannot run: {what} could not reach its chart registry.")
+    print(err)
+    print("Nothing was rendered, which is not the same as nothing being wrong.")
+    print("An unreachable registry is a fact about the network, not about the catalogue.")
+    sys.exit(CANNOT_RUN)
+
+
 def add_repos(units: list[Unit]) -> dict[str, str]:
     """``helm repo add`` every unique https chart repo; return url -> alias."""
     aliases: dict[str, str] = {}
@@ -219,13 +264,10 @@ def add_repos(units: list[Unit]) -> dict[str, str]:
             continue
         alias = "r-" + re.sub(r"[^a-z0-9]+", "-", u.repo.lower()).strip("-")
         aliases[u.repo] = alias
-        subprocess.run(
-            ["helm", "repo", "add", alias, u.repo],
-            check=True, capture_output=True, text=True, timeout=NETWORK_TIMEOUT,
-        )
+        helm_or_exit(["helm", "repo", "add", alias, u.repo],
+                     f"adding chart repo {u.repo}")
     if aliases:
-        subprocess.run(["helm", "repo", "update"], check=True, capture_output=True,
-                       text=True, timeout=NETWORK_TIMEOUT)
+        helm_or_exit(["helm", "repo", "update"], "refreshing the chart repo index")
     return aliases
 
 
