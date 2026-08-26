@@ -13,6 +13,27 @@
 # examples, test fixtures, and vendored copies.
 set -uo pipefail
 
+# A count is an operand, and an absent or failed producer yields an EMPTY one,
+# not a zero. `[ "" -lt 100 ]` exits 2 with "integer expected", and an `if`
+# reads exit 2 as false — so the floor is not failed, it is SKIPPED, and
+# execution continues to the pass. The floor that exists to prove this gate
+# examined something is removed by the same absence it exists to survive.
+#
+# Asserting the operand is a digit string is direction-independent: it does not
+# depend on which way any particular comparison runs, so a later edit that flips
+# a threshold cannot silently turn a safe default into the passing value.
+require_count() {
+  case "$2" in
+    "" ) echo "Cannot run: $1 produced no count — its producer did not run. An"
+         echo "undetermined count is not a count of zero, and a floor that cannot"
+         echo "evaluate is a floor that did not run."
+         exit 2 ;;
+    *[!0-9]* ) echo "Cannot run: $1 produced a non-numeric count ($2)."
+         exit 2 ;;
+  esac
+}
+
+
 # "changeit" is the JVM keystore default password — a well-known credential,
 # gated here like any other fill-me sentinel.
 # Floor on the corpus size, well below the real count so ordinary additions and
@@ -35,6 +56,31 @@ SENTINELS='PLACEHOLDER|REPLACE_ME|REPLACEME|CHANGEME|CHANGE_ME|changeit|FILL_ME|
 files=$(mktemp); err=$(mktemp)
 trap 'rm -f "$files" "$err"' EXIT
 
+# git DEFINES the population this gate scans, which puts it above the tools a
+# gate merely runs: with it absent the file list is empty and the empty-corpus
+# floor below does stop the run — but it reports "nothing matched the scanned
+# extensions", sending the reader to the extension list instead of to the tool
+# nobody installed. Asserting it by name is what makes the sentence true.
+if ! command -v git >/dev/null 2>&1; then
+  echo "Cannot run: git is not on PATH. This gate scans the tracked set, so"
+  echo "without git the population is unknown — which is not an empty one."
+  exit 2
+fi
+
+# grep runs in BOTH halves of this gate: it filters the population below and it
+# produces the verdict at the scan. The verdict half survives its absence on its
+# own — that status is read directly and 127 is >= 2, the did-not-run branch. The
+# enumeration half does not: an absent grep empties the file list, the
+# empty-corpus floor fires, and its sentence blames the extension globs while the
+# real cause is a tool nobody installed. Naming it here is what makes every
+# message downstream true.
+if ! command -v grep >/dev/null 2>&1; then
+  echo "Cannot run: grep is not on PATH. It both selects the files this gate"
+  echo "scans and produces the verdict, so nothing was searched — which is not"
+  echo "the same as finding nothing."
+  exit 2
+fi
+
 git ls-files -z 2>"$err" \
   | tr '\0' '\n' \
   | grep -E '\.(yaml|yml|tf|hcl|tfvars|json)$' \
@@ -51,6 +97,7 @@ if [ ! -s "$files" ]; then
 fi
 
 scanned=$(wc -l < "$files" | tr -d ' ')
+require_count "the scanned-file count" "$scanned"
 
 # grep's exit codes are three-valued: 0 found, 1 none found, >=2 the search
 # itself failed. Reading only the captured text collapses the third case into

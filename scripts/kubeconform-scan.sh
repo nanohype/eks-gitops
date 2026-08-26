@@ -34,6 +34,17 @@ SKIP="${KUBECONFORM_SKIP-$DEFAULT_SKIP}"
 
 DATREE='https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
 
+# kubeconform decides whether anything was validated at all, so its absence is
+# a refusal and not a finding. Without this, `exec` fails with 127 and a raw
+# shell message: non-zero, so CI does stop, but the status is the same shape a
+# schema violation produces and the sentence names no tool to install.
+if ! command -v kubeconform >/dev/null 2>&1; then
+  echo "Cannot run: kubeconform is not on PATH. No manifest was validated —"
+  echo "that is different from every manifest validating. Install it (CI pins"
+  echo "the version in the env block at the top of .github/workflows/ci.yml)."
+  exit 2
+fi
+
 args=(-strict -summary -schema-location default -schema-location "$DATREE")
 [ -n "${KUBECONFORM_CACHE:-}" ] && args+=(-cache "$KUBECONFORM_CACHE")
 [ -n "$SKIP" ] && args+=(-skip "$SKIP")
