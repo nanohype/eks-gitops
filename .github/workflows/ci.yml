@@ -288,6 +288,27 @@ jobs:
       - name: Every rendered policy overlay is valid
         run: ./scripts/check-policy-validity.py
 
+  falco-rule-floor:
+    name: every Falco rule set installed is one Falco loads
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      # Downloading a rule set and loading it are different things, and the
+      # values file is where both look correct. falcoctl writes each ref to the
+      # root of rulesfilesDir; Falco reads only what falco.rules_files names. A
+      # ref added without a matching entry is pulled onto every node and never
+      # evaluated, and the download succeeding means nothing else reports it.
+      #
+      # The gate resolves each ref against ghcr.io, so it needs the network and
+      # carries no positive control — it is exempted in scripts/tests/controls.py
+      # instead. An unreachable registry exits 2, a pinned major the registry
+      # does not have exits 1: a network outage is not a verdict about this repo.
+      - name: Every installed rule set is read, at a priority that loads it
+        run: ./scripts/check-falco-rule-floor.py
+
   log-volume-budget:
     name: the Loki volume warns before it stops accepting writes
     runs-on: ubuntu-latest
@@ -818,6 +839,7 @@ jobs:
         validate,
         renovate-coverage,
         log-volume-budget,
+        falco-rule-floor,
         policy-validity,
         gate-tests,
         serviceaccount-bindings,
@@ -847,6 +869,7 @@ jobs:
               'Render + assert + schema + misconfig (all environments)': '${{ needs.validate.result }}',
               'Renovate manager coverage': '${{ needs.renovate-coverage.result }}',
               'Loki volume warns before cutoff': '${{ needs.log-volume-budget.result }}',
+              'Falco loads every rule set it installs': '${{ needs.falco-rule-floor.result }}',
               'Policy validity (kustomize + kyverno)': '${{ needs.policy-validity.result }}',
               'The gates themselves are tested': '${{ needs.gate-tests.result }}',
               'Pods name ServiceAccounts that exist': '${{ needs.serviceaccount-bindings.result }}',
@@ -881,6 +904,7 @@ jobs:
         placeholders,
         renovate-coverage,
         log-volume-budget,
+        falco-rule-floor,
         policy-validity,
         gate-tests,
         lint,
