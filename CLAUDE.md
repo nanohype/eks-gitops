@@ -102,6 +102,7 @@ task validate:externalsecret-keys  # Each ExternalSecret names its remote secret
 task validate:dashboards           # grafana.com dashboard ids exist and are AMG-saveable
 task validate:athena-panel-columns # Every column a CUR panel names is one the export delivers
 task validate:fork-safety          # No hardcoded catalog repoURL in applied ApplicationSets (report-only locally)
+task validate:log-volume-budget    # Loki declares the fraction at which it stops ingesting, and the alert leads it
 ```
 
 ### Local `task validate` is a subset of CI

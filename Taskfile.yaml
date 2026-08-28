@@ -118,6 +118,11 @@ tasks:
     cmds:
       - ./scripts/check-policy-validity.py
 
+  validate:log-volume-budget:
+    desc: "Log-volume gate — the Loki ingestion cutoff is declared and the fill alert leads it"
+    cmds:
+      - ./scripts/check-log-volume-budget.py
+
   validate:renovate-coverage:
     desc: "Renovate coverage gate — every chart pin in applicationsets/ is watched by a manager that resolves"
     cmds:
@@ -170,6 +175,7 @@ tasks:
       - validate:dashboards
       - validate:fork-safety
       - validate:renovate-coverage
+      - validate:log-volume-budget
       - validate:policy-validity
       - validate:gate-tests
       - validate:gate-controls
