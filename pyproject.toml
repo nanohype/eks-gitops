@@ -1,0 +1,43 @@
+# Python tooling for the gate scripts. There is no package here — the gates are
+# standalone hyphenated executables — so this file exists only to configure the
+# linter and the type checker.
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+# scripts/ holds every executable; scripts/tests/ holds the harness. Both are in
+# scope: a fixture that drifts from the gate it exercises is the failure the type
+# checker exists to catch, and it is invisible if tests are excluded.
+include = ["scripts/**/*.py"]
+
+[tool.ruff.lint]
+# Beyond the default E/F: bugbear catches the mutable-default and loop-variable
+# capture classes, pyupgrade keeps syntax at the pinned interpreter, isort keeps
+# import order one way, and flake8-comprehensions catches the rebuilt-collection
+# shapes that read as intent but are not.
+select = ["E", "F", "W", "B", "UP", "I", "C4", "SIM", "RET", "PIE"]
+ignore = [
+  # Line length is not enforced. The gates print multi-line diagnostics written as
+  # paragraphs a human reads at a failure, and their prose is governed by the
+  # documentation-voice standard rather than by a column count. The code itself
+  # already sits inside the limit without a rule — p99 of every line under
+  # scripts/ is 97 characters — so E501 would find no defect and would force churn
+  # on the one part of these files that is deliberately hand-wrapped.
+  "E501",
+]
+
+[tool.mypy]
+python_version = "3.13"
+# Both halves, per testing-rubric `typecheck-includes-tests`: a test file that
+# drifts from the gate it covers is exactly the drift a type checker sees and a
+# test run does not.
+files = ["scripts"]
+ignore_missing_imports = true
+warn_unused_ignores = true
+# Not strict mode. These are scripts with pragmatic dict-shaped YAML flowing
+# through them; demanding full annotation would produce noise rather than signal.
+# What is enabled is the class that has actually bitten: a None flowing into
+# something that cannot take one.
+strict_optional = true
+warn_no_return = true
+warn_redundant_casts = true

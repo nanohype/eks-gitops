@@ -60,7 +60,6 @@ import subprocess
 import sys
 import tempfile
 
-
 # Exit code for "this did not run", shared with the gates (scripts/gatelib.py).
 CANNOT_RUN = 2
 
@@ -89,7 +88,19 @@ IDENTIFIES = {
 # Sentinel for a mutation that removes a file rather than editing one. Some
 # gates ask whether a path exists, and for those an emptied file is a mutation
 # that changes bytes without changing meaning.
-DELETED = object()
+#
+# A named class rather than a bare object() so the "deleted" case is a type the
+# reader and the checker can both see: mutation_landed guards on it before
+# treating its argument as text, and that guard is what makes the rest of the
+# function total.
+class _Deleted:
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "DELETED"
+
+
+DELETED = _Deleted()
 
 # A floor on CONTROLS ACTUALLY EXECUTED, not on registry keys being present.
 #
@@ -650,8 +661,8 @@ def check_vacuity() -> list[str]:
     return problems
 
 
-def mutation_landed(rel, before: str, after: str, on_disk: str,
-                    marker: str) -> str | None:
+def mutation_landed(rel, before: str, after: str | _Deleted,
+                    on_disk: str | _Deleted, marker: str) -> str | None:
     """Why this mutation does not count as landed, or None if it does.
 
     Three ways a mutation reports success without having changed the meaning,
@@ -668,13 +679,13 @@ def mutation_landed(rel, before: str, after: str, on_disk: str,
     the declared marker must be present now and absent before. A leading "-"
     inverts the last pair for mutations that delete rather than plant.
     """
-    if after is DELETED:
-        if on_disk is not DELETED:
+    if isinstance(after, _Deleted):
+        if not isinstance(on_disk, _Deleted):
             return (f"control claims to delete {rel}, but the file is still present — "
                     f"the mutation proved nothing.")
         return None
 
-    if on_disk is DELETED:
+    if isinstance(on_disk, _Deleted):
         return f"{rel} was deleted, but the control did not declare a deletion."
 
     if on_disk == before:
@@ -703,7 +714,7 @@ def mutation_landed(rel, before: str, after: str, on_disk: str,
 
 def self_test() -> int:
     """Try to fool the mutation contract. A harness untested is a harness trusted."""
-    cases = [
+    cases: list[tuple[str, str, str, str, str, str | None]] = [
         ("no-op", "a: 1\n", "a: 1\n", "a: 1\n", "b: 2", "did not change"),
         ("off-target", "a: 1\n", "a: 2\n", "a: 3\n", "a: 2", "differs from what"),
         ("pre-existing marker", "a: 1\nb: 2\n", "a: 9\nb: 2\n", "a: 9\nb: 2\n", "b: 2",
@@ -768,10 +779,10 @@ def self_test() -> int:
     print()
 
     print("\u2500\u2500 Mutation-contract self-test \u2500\u2500")
-    for name, before, after, disk, marker, want in cases:
-        got = mutation_landed("fixture.yaml", before, after, disk, marker)
-        ok = (got is None) if want is None else (got is not None and want in got)
-        print(f"  {'ok  ' if ok else 'FAIL'}  {name}: {got or 'accepted'}")
+    for case, before, after, disk, marker, expect in cases:
+        why = mutation_landed("fixture.yaml", before, after, disk, marker)
+        ok = (why is None) if expect is None else (why is not None and expect in why)
+        print(f"  {'ok  ' if ok else 'FAIL'}  {case}: {why or 'accepted'}")
         bad += 0 if ok else 1
     print()
     if bad:

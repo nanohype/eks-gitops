@@ -111,6 +111,7 @@ class TheRealCatalogIsWalkedWhole(unittest.TestCase):
 
     def test_every_list_generator_in_the_catalog_contributes(self):
         import pathlib
+
         import yaml
 
         root = pathlib.Path(gatelib.__file__).resolve().parent.parent

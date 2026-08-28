@@ -51,9 +51,9 @@ honest about having checked nothing.
 
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import pathlib
-import argparse
 import re
 import subprocess
 import sys
@@ -64,6 +64,7 @@ from pathlib import Path
 # run from varying working directories.
 _gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
 _gs = importlib.util.spec_from_file_location("gatelib", _gl)
+assert _gs and _gs.loader, f"{_gl} is not loadable as a module"
 gatelib = importlib.util.module_from_spec(_gs)
 sys.modules["gatelib"] = gatelib
 _gs.loader.exec_module(gatelib)
@@ -266,13 +267,12 @@ def check_type(value, schema, path, kind, source, problems):
     if allowed is None or value is None:
         return
     # A bool is an int in Python; nothing else may borrow that.
-    if isinstance(value, bool) != (want == "boolean"):
-        if want != "boolean" and isinstance(value, bool):
-            problems.append(
-                f"{source}: {kind} {path} is a boolean and the CRD declares {want} — the API "
-                f"server rejects the object with `{path.lstrip('.')}: Invalid value`"
-            )
-            return
+    if want != "boolean" and isinstance(value, bool):
+        problems.append(
+            f"{source}: {kind} {path} is a boolean and the CRD declares {want} — the API "
+            f"server rejects the object with `{path.lstrip('.')}: Invalid value`"
+        )
+        return
     if not isinstance(value, allowed):
         got = _json_type_name(value)
         hint = ""
