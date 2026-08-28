@@ -45,27 +45,32 @@ MIN_TESTS = 31
 # reaches, so coverage cannot fall silently, and raising one is what lands with
 # the tests that earn it.
 #
-# The org testing-rubric asks for 75% lines and 60% branches. This suite reaches
-# neither and the gap is stated rather than papered over: of the 20 gate files
-# the run measures, 16 report zero and 4 carry any coverage at all. The number
-# cannot move without writing tests for the rest.
+# The org testing-rubric asks for 75% lines and 60% branches. COMBINED_FLOOR
+# sitting far below that is the record of the gap, kept rather than papered over:
+# most gate files carry no unit tests at all, and the floor cannot rise without
+# writing them. Read the current standing with
 #
-# TOTAL_FLOOR is compared against what coverage.report() returns, which with
+#     COVERAGE_REQUIRED=1 coverage run --rcfile=.coveragerc scripts/tests/run.py
+#     coverage report --rcfile=.coveragerc --include="scripts/*.py"
+#
+# rather than from a number written here, which would be accurate on the day and
+# a confident falsehood after the next test lands.
+#
+# COMBINED_FLOOR is compared against what coverage.report() returns, which with
 # branch=True is a COMBINED statement-and-branch figure, not line coverage. The
-# two differ enough to matter — statements 6.6%, branches 4.7%, combined 6.0% —
-# so the name below says combined and the printed line says so too. Calling a
-# combined figure "line coverage" would be a measurement mislabelled as the one
-# the rubric asks about.
+# two differ enough to matter, so the name below says combined and the printed
+# line says so too. Calling a combined figure "line coverage" would be a
+# measurement mislabelled as the one the rubric asks about.
 #
 # What the number does NOT capture: scripts/tests/controls.py runs every gate
 # end to end as a subprocess against a mutated tree, so every gate has
 # behavioural coverage that this line count cannot see. Neither figure
 # substitutes for the other — the controls prove a gate rejects, the unit tests
 # prove it computes the right answer on a case the real tree does not contain.
-COMBINED_FLOOR = 5
+COMBINED_FLOOR = 10
 PER_GATE_FLOORS = {
     "scripts/check-named-things.py": 35,
-    "scripts/check-renovate-coverage.py": 30,
+    "scripts/check-renovate-coverage.py": 55,
     "scripts/check-label-values.py": 33,
     "scripts/check-sync-waves.py": 10,
 }
