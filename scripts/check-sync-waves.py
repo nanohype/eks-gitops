@@ -48,13 +48,13 @@ import importlib.util
 import pathlib
 import re
 import sys
-
-import yaml
+from typing import Any
 
 # Shared helpers, loaded by path: these are hyphenated executables run from
 # varying working directories.
 _gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
 _gs = importlib.util.spec_from_file_location("gatelib", _gl)
+assert _gs and _gs.loader, f"{_gl} is not loadable as a module"
 gatelib = importlib.util.module_from_spec(_gs)
 sys.modules["gatelib"] = gatelib
 _gs.loader.exec_module(gatelib)
@@ -138,7 +138,7 @@ FILE_CATEGORY = {
 # Every `*-crds.yaml` ApplicationSet must appear here, with an empty consumer map
 # and a `note` if it has none — so adding a CRD Application without thinking about
 # who depends on it fails rather than passing silently.
-CRD_PRECEDENCE = {
+CRD_PRECEDENCE: dict[str, dict[str, Any]] = {
     "argo-workflows-crds.yaml": {
         "group": "argoproj.io",
         "consumers": {
@@ -270,6 +270,9 @@ def documented_waves_exist(apps) -> list[str]:
 def main() -> int:
     appset_waves: dict[str, int] = {}
     apps: list[tuple[str, str, str, int]] = []  # appset, category, addon, wave
+    # Applications whose wave cannot be read at all. Collected here and folded
+    # into `errors` below, where that list exists.
+    unannotated: list[str] = []
 
     for appset_file in sorted(APPSET_DIR.glob("*.yaml")):
         docs = gatelib.read_yaml_all(appset_file)
@@ -288,7 +291,7 @@ def main() -> int:
                 path = el.get("path")
                 cat = _category(name, path)
                 addon = (path or el.get("appName", "")).rsplit("/", 1)[-1]
-                apps.append((name, cat, addon, int(el["syncWave"])))
+                apps.append((name, cat or "", addon, int(el["syncWave"])))
         else:
             path = _single_path(spec)
             cat = _category(name, path)
@@ -297,9 +300,17 @@ def main() -> int:
             )
             wave = tmpl_ann.get(WAVE_ANNOTATION, ann.get(WAVE_ANNOTATION))
             addon = (path or name).rsplit("/", 1)[-1]
-            apps.append((name, cat, addon, int(wave)))
+            if wave is None:
+                unannotated.append(name)
+                continue
+            apps.append((name, cat or "", addon, int(wave)))
 
     errors: list[str] = []
+    errors.extend(
+        f"{n}: single-source Application carries no {WAVE_ANNOTATION} annotation, "
+        f"so its band cannot be checked"
+        for n in unannotated
+    )
     errors.extend(documented_waves_exist(apps))
 
     # A. Category ordering.

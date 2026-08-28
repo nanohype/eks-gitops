@@ -5,3 +5,8 @@ pyyaml
 yamllint
 coverage
 zizmor
+# Linter and type checker for the gate scripts. types-PyYAML is what makes the
+# type check see through yaml.safe_load, which every gate calls.
+ruff
+mypy
+types-PyYAML

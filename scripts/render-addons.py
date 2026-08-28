@@ -38,8 +38,8 @@ Run ``render-addons.py`` to render every env, or ``--env staging`` for one.
 
 from __future__ import annotations
 
-import importlib.util
 import argparse
+import importlib.util
 import pathlib
 import re
 import subprocess
@@ -52,6 +52,7 @@ import yaml
 # run from varying working directories.
 _gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
 _gs = importlib.util.spec_from_file_location("gatelib", _gl)
+assert _gs and _gs.loader, f"{_gl} is not loadable as a module"
 gatelib = importlib.util.module_from_spec(_gs)
 sys.modules["gatelib"] = gatelib
 _gs.loader.exec_module(gatelib)
@@ -297,10 +298,8 @@ def render(unit: Unit, env: str | None, aliases: dict[str, str]) -> tuple[bool, 
             return (True, "no env delta")  # addon not deployed to this env
         value_files.append(env_file)
 
-    if unit.is_oci:
-        chart_ref = [unit.oci_ref()]
-    else:
-        chart_ref = [f"{aliases[unit.repo]}/{unit.chart}"]
+    chart_ref = ([unit.oci_ref()] if unit.is_oci
+                 else [f"{aliases[unit.repo]}/{unit.chart}"])
 
     # Render into the namespace ArgoCD will actually sync into. `helm template`
     # otherwise reports `.Release.Namespace` as "default", so anything keyed on

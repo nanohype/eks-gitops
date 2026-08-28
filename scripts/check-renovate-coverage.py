@@ -46,15 +46,16 @@ them would pass here and match nothing in production.
 from __future__ import annotations
 
 import importlib.util
-import json
 import pathlib
 import re
 import sys
+from typing import NoReturn
 
 # Shared helpers, loaded by path: these are hyphenated executables run from
 # varying working directories.
 _gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
 _gs = importlib.util.spec_from_file_location("gatelib", _gl)
+assert _gs and _gs.loader, f"{_gl} is not loadable as a module"
 gatelib = importlib.util.module_from_spec(_gs)
 sys.modules["gatelib"] = gatelib
 _gs.loader.exec_module(gatelib)
@@ -156,7 +157,7 @@ class Pin:
         return self.repo.startswith("oci://")
 
 
-def _cannot_run(rel, detail: str) -> None:
+def _cannot_run(rel, detail: str) -> NoReturn:
     """Exit 2, not 1: a shape this cannot read is not a tree it examined.
 
     An uncaught AttributeError on a manifest that parses but nests something
@@ -252,7 +253,7 @@ def _literal(field: str, value, rel, what: str) -> str | None:
 
 
 def rendered_pins() -> list[Pin]:
-    """Every chart pin in the top level of applicationsets/, as ArgoCD renders it.
+    r"""Every chart pin in the top level of applicationsets/, as ArgoCD renders it.
 
     Top level because that is the scope Renovate's own managerFilePatterns reach
     (`^applicationsets/[^/]+\.ya?ml$`); a pin below it is watched by nothing, and
@@ -280,9 +281,10 @@ def rendered_pins() -> list[Pin]:
                 keys = _templated_keys(src, rel)
                 if not keys:
                     what = "its chart source"
-                    vals = [_literal(f, src.get(f), rel, what) for f in COORDS]
-                    if None not in vals:
-                        pins.append(Pin(path.name, rel, text, *vals, False))
+                    repo, chart, ver = (_literal(f, src.get(f), rel, what)
+                                        for f in COORDS)
+                    if None not in (repo, chart, ver):
+                        pins.append(Pin(path.name, rel, text, repo, chart, ver, False))
                     continue
 
                 elements = _list_elements(spec, rel)
@@ -310,7 +312,8 @@ def rendered_pins() -> list[Pin]:
                             vals.append(_literal(field, src.get(field), rel, what))
                     if None in vals:
                         continue
-                    pins.append(Pin(path.name, rel, text, *vals, True))
+                    repo, chart, ver = vals
+                    pins.append(Pin(path.name, rel, text, repo, chart, ver, True))
     return pins
 
 

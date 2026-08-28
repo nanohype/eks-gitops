@@ -288,6 +288,29 @@ jobs:
       - name: Every rendered policy overlay is valid
         run: ./scripts/check-policy-validity.py
 
+  python-lint:
+    name: the gate scripts lint and typecheck, tests included
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - name: Install Python dependencies
+        run: pip install --require-hashes -r requirements.txt
+      # 3,044 statements carrying 221 annotation-bearing lines had nothing
+      # checking either. scripts/tests is in scope deliberately: a fixture that
+      # drifts from the gate it exercises is invisible to a passing test run and
+      # visible to a type checker. Neither step is `|| true`.
+      - name: Lint
+        run: ruff check .
+      - name: Typecheck
+        run: mypy
+
   falco-rule-floor:
     name: every Falco rule set installed is one Falco loads
     runs-on: ubuntu-latest
@@ -840,6 +863,7 @@ jobs:
         renovate-coverage,
         log-volume-budget,
         falco-rule-floor,
+        python-lint,
         policy-validity,
         gate-tests,
         serviceaccount-bindings,
@@ -870,6 +894,7 @@ jobs:
               'Renovate manager coverage': '${{ needs.renovate-coverage.result }}',
               'Loki volume warns before cutoff': '${{ needs.log-volume-budget.result }}',
               'Falco loads every rule set it installs': '${{ needs.falco-rule-floor.result }}',
+              'Gate scripts lint and typecheck': '${{ needs.python-lint.result }}',
               'Policy validity (kustomize + kyverno)': '${{ needs.policy-validity.result }}',
               'The gates themselves are tested': '${{ needs.gate-tests.result }}',
               'Pods name ServiceAccounts that exist': '${{ needs.serviceaccount-bindings.result }}',
@@ -905,6 +930,7 @@ jobs:
         renovate-coverage,
         log-volume-budget,
         falco-rule-floor,
+        python-lint,
         policy-validity,
         gate-tests,
         lint,

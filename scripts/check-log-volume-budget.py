@@ -65,6 +65,7 @@ import yaml
 
 _gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
 _gs = importlib.util.spec_from_file_location("gatelib", _gl)
+assert _gs and _gs.loader, f"{_gl} is not loadable as a module"
 gatelib = importlib.util.module_from_spec(_gs)
 sys.modules["gatelib"] = gatelib
 _gs.loader.exec_module(gatelib)
@@ -146,7 +147,7 @@ def alert_threshold() -> float | None:
         for rule in ((doc.get("spec") or {}).get("rules") or []):
             if rule.get("uid") != FILL_RULE:
                 continue
-            queries = [d for d in rule.get("data") or []]
+            queries = list(rule.get("data") or [])
             exprs = [(d.get("model") or {}).get("expr", "") for d in queries]
             joined = " ".join(e for e in exprs if e)
             if GAUGE not in joined:

@@ -45,6 +45,7 @@ import yaml
 # run from varying working directories.
 _gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
 _gs = importlib.util.spec_from_file_location("gatelib", _gl)
+assert _gs and _gs.loader, f"{_gl} is not loadable as a module"
 gatelib = importlib.util.module_from_spec(_gs)
 sys.modules["gatelib"] = gatelib
 _gs.loader.exec_module(gatelib)
@@ -93,7 +94,7 @@ def pins() -> dict[str, dict]:
                     continue
                 if "{{" in chart or "{{" in version or "{{" in repo:
                     continue
-                if not (repo.startswith("http://") or repo.startswith("https://") or repo.startswith("oci://")):
+                if not repo.startswith(("http://", "https://", "oci://")):
                     continue
                 prior = found.get(chart)
                 if prior and (prior["repo"], prior["version"]) != (repo, version):
@@ -255,20 +256,25 @@ def self_test() -> int:
 
     breaks = []
     # a pinned chart with no record
-    p = dict(real_pins); p["ghost-chart"] = {"repo": "https://example.invalid", "version": "1.0.0", "source": "x.yaml"}
+    p = dict(real_pins)
+    p["ghost-chart"] = {"repo": "https://example.invalid", "version": "1.0.0", "source": "x.yaml"}
     breaks.append(("a pinned chart with no provenance record", p, real_records))
     # a record for a chart nobody pins
-    r = dict(real_records); r["retired-chart"] = {"repo": "https://example.invalid", "description": "x", "deprecated": False}
+    r = dict(real_records)
+    r["retired-chart"] = {"repo": "https://example.invalid", "description": "x", "deprecated": False}
     breaks.append(("a record for a chart no longer pinned", real_pins, r))
     # the recorded repo disagrees with the pin
     name = sorted(real_pins)[0]
-    r2 = json.loads(json.dumps(real_records)); r2[name]["repo"] = "https://somewhere.else.invalid"
+    r2 = json.loads(json.dumps(real_records))
+    r2[name]["repo"] = "https://somewhere.else.invalid"
     breaks.append(("the recorded repository differs from the pin", real_pins, r2))
     # a record marked deprecated but still pinned
-    r3 = json.loads(json.dumps(real_records)); r3[name]["deprecated"] = True
+    r3 = json.loads(json.dumps(real_records))
+    r3[name]["deprecated"] = True
     breaks.append(("a chart recorded deprecated but still pinned", real_pins, r3))
     # a record with no description to compare
-    r4 = json.loads(json.dumps(real_records)); r4[name]["description"] = ""
+    r4 = json.loads(json.dumps(real_records))
+    r4[name]["description"] = ""
     breaks.append(("a record with no description", real_pins, r4))
 
     failures = []

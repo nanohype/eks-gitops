@@ -59,11 +59,13 @@ import sys
 import tarfile
 import urllib.error
 import urllib.request
+from typing import NoReturn
 
 import yaml
 
 _gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
 _gs = importlib.util.spec_from_file_location("gatelib", _gl)
+assert _gs and _gs.loader, f"{_gl} is not loadable as a module"
 gatelib = importlib.util.module_from_spec(_gs)
 sys.modules["gatelib"] = gatelib
 _gs.loader.exec_module(gatelib)
@@ -118,7 +120,7 @@ def fail(msg: str) -> None:
     failures.append(msg)
 
 
-def cannot_run(*lines: str) -> None:
+def cannot_run(*lines: str) -> NoReturn:
     for line in lines:
         print(line)
     print("This gate examined nothing, which is not the same as finding nothing.")
@@ -234,9 +236,12 @@ def rulesfile(ref: str) -> dict[str, str] | None:
     out: dict[str, str] = {}
     with tarfile.open(fileobj=io.BytesIO(blob)) as tf:
         for member in tf.getmembers():
-            if member.isfile():
-                out[pathlib.PurePosixPath(member.name).name] = \
-                    tf.extractfile(member).read().decode()
+            if not member.isfile():
+                continue
+            handle = tf.extractfile(member)
+            if handle is None:
+                continue
+            out[pathlib.PurePosixPath(member.name).name] = handle.read().decode()
     return out
 
 

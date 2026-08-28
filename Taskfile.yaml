@@ -118,6 +118,14 @@ tasks:
     cmds:
       - ./scripts/check-policy-validity.py
 
+  lint:python:
+    desc: "Python lint + typecheck — ruff and mypy over scripts/ INCLUDING scripts/tests"
+    cmds:
+      - ruff check .
+      # Tests are in scope on purpose: a fixture that drifts from the gate it
+      # exercises is exactly the drift a type checker sees and a test run does not.
+      - mypy
+
   validate:falco-rule-floor:
     desc: "Falco rule gate — every installed rule set is read, and the priority floor loads it"
     cmds:
@@ -168,6 +176,7 @@ tasks:
     desc: Run all validations (lint, build, helm-render, appset schema, sync waves, label values, appset render, policy admission, externalsecret keys, athena panel columns, dashboard/fork-safety)
     deps:
       - lint:yaml
+      - lint:python
       - kustomize:build
       - validate:helm-render
       - validate:appset-schema

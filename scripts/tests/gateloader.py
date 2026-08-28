@@ -26,6 +26,7 @@ def load(script: str):
         )
     name = "gate_" + script.replace("-", "_")
     spec = importlib.util.spec_from_file_location(name, path)
+    assert spec and spec.loader, f"{path} is not loadable as a module"
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
     spec.loader.exec_module(module)

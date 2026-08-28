@@ -74,8 +74,8 @@ def main() -> int:
 
     if not APPSETS.is_dir():
         print(f"FAIL  no applicationsets/ under {ROOT} — this gate examined nothing,")
-        print(f"      which is not the same as finding nothing. The directory was")
-        print(f"      renamed or this ran outside the repo.")
+        print("      which is not the same as finding nothing. The directory was")
+        print("      renamed or this ran outside the repo.")
         return 2
 
     # Non-recursive, matching check-hardcoded-org.py: app-of-apps applies only the

@@ -54,11 +54,11 @@ import shutil
 import subprocess
 import sys
 
-
 # Shared helpers, loaded by path: these are hyphenated executables run from
 # varying working directories.
 _gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
 _gs = importlib.util.spec_from_file_location("gatelib", _gl)
+assert _gs and _gs.loader, f"{_gl} is not loadable as a module"
 gatelib = importlib.util.module_from_spec(_gs)
 sys.modules["gatelib"] = gatelib
 _gs.loader.exec_module(gatelib)
@@ -174,9 +174,9 @@ def candidates(text: str):
     for lineno, line in enumerate(body.splitlines(), 1):
         for m in LINK.finditer(line):
             yield lineno, m.group(1), True
-        m = LINK_DEF.match(line)
-        if m:
-            yield lineno, m.group(1), True
+        link_def = LINK_DEF.match(line)
+        if link_def:
+            yield lineno, link_def.group(1), True
         for m in CODE_SPAN.finditer(line):
             yield lineno, m.group(1), False
 
