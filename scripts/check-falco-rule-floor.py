@@ -240,6 +240,15 @@ def rulesfile(ref: str) -> dict[str, str] | None:
     return out
 
 
+def reachable(path: str, files: set[str], dirs: set[str]) -> bool:
+    """Falco reads `path` because rules_files names it, or a directory above it.
+
+    Anchored on a separator rather than a prefix: `/etc/falco/rules.d` must not
+    make `/etc/falco/rules.disabled` reachable, and a containment test would.
+    """
+    return path in files or any(path.startswith(d + "/") for d in dirs)
+
+
 def read_paths(falco: dict, env: str) -> tuple[set[str], set[str]]:
     """The files and directories `rules_files` names, as absolute paths."""
     listed = falco.get("rules_files")
@@ -295,14 +304,13 @@ def main() -> int:
             sets += 1
             for fname, text in contents.items():
                 path = f"{FALCO_DIR}/{fname}"
-                reachable = path in files or any(
-                    path.startswith(d + "/") for d in dirs)
+                is_read = reachable(path, files, dirs)
                 rules = [i for i in yaml.safe_load(text)
                          if isinstance(i, dict) and "rule" in i]
                 passing = [r for r in rules if 0 <= rank(str(r.get("priority", "")))
                            <= rank(str(floor))]
                 installed += len(rules)
-                if reachable:
+                if is_read:
                     loaded += len(passing)
                 else:
                     fail(f"{rel}: ref {ref!r} installs {path}, which falco.rules_files "
