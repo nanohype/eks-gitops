@@ -64,12 +64,29 @@ MIN_TESTS = 31
 # line says so too. Calling a combined figure "line coverage" would be a
 # measurement mislabelled as the one the rubric asks about.
 #
-# What the number does NOT capture: scripts/tests/controls.py runs every gate
-# end to end as a subprocess against a mutated tree, so every gate has
-# behavioural coverage that this line count cannot see. Neither figure
-# substitutes for the other — the controls prove a gate rejects, the unit tests
-# prove it computes the right answer on a case the real tree does not contain.
+# What the number does NOT capture: scripts/tests/controls.py runs most gates end
+# to end as a subprocess against a mutated tree, so those gates have behavioural
+# coverage this line count cannot see. Neither figure substitutes for the other —
+# the controls prove a gate rejects, the unit tests prove it computes the right
+# answer on a case the real tree does not contain.
+#
+# MOST, and the exceptions are the ones that matter to this floor. controls.py
+# exempts every gate that reaches a chart registry or an API, and its own run
+# prints the split. Those gates have neither kind of coverage, they are the
+# largest in the tree, and among them are the gates on the paths testing-rubric
+# calls security-critical. So this figure being low is not offset by behavioural
+# coverage for precisely the files where that offset was being claimed.
 COMBINED_FLOOR = 12
+
+# A ceiling on gate scripts carrying NO unit coverage at all, complementing the
+# floors below. The floors stop a covered file regressing; nothing stopped a NEW
+# gate arriving with no tests, and most of this tree arrived that way.
+#
+# Ratchets downward only. Adding a gate without tests fails here rather than
+# diluting the combined figure by a percentage point nobody notices, which is how
+# a suite reaches this state one honest commit at a time.
+MAX_UNCOVERED_GATES = 17
+
 PER_GATE_FLOORS = {
     "scripts/check-named-things.py": 35,
     "scripts/check-renovate-coverage.py": 55,
@@ -165,6 +182,25 @@ def check_coverage() -> int:
         if pct < floor:
             failures.append(f"{rel} at {pct:.0f}% is below its {floor}% floor")
 
+    # Gate scripts with no unit coverage whatsoever. Counted from what coverage
+    # measured rather than from a list here, so a gate added tomorrow is in the
+    # population without anyone remembering to add it.
+    gates = sorted((root / "scripts").glob("*.py"))
+    uncovered = []
+    for gate in gates:
+        path = str(gate)
+        if path not in data.measured_files():
+            uncovered.append(gate.name)
+            continue
+        if cov._analyze(path).numbers.pc_covered == 0:
+            uncovered.append(gate.name)
+    if len(uncovered) > MAX_UNCOVERED_GATES:
+        failures.append(
+            f"{len(uncovered)} of {len(gates)} gate scripts carry no unit coverage, "
+            f"above the ceiling of {MAX_UNCOVERED_GATES}: "
+            f"{', '.join(uncovered[:4])}{' …' if len(uncovered) > 4 else ''}"
+        )
+
     if failures:
         print()
         for f in failures:
@@ -174,9 +210,10 @@ def check_coverage() -> int:
         return 1
 
     print(f"coverage ratchet OK: {total:.1f}% combined statement+branch "
-          f"(floor {COMBINED_FLOOR}%), {len(PER_GATE_FLOORS)} per-gate floor(s) held. "
-          f"Well under the rubric's 75% lines / 60% branches — see the note in "
-          f"this file.")
+          f"(floor {COMBINED_FLOOR}%), {len(PER_GATE_FLOORS)} per-gate floor(s) held, "
+          f"{len(uncovered)} of {len(gates)} gate script(s) with no unit coverage "
+          f"(ceiling {MAX_UNCOVERED_GATES}). Well under the rubric's 75% lines / "
+          f"60% branches — see the note in this file.")
     return 0
 
 
