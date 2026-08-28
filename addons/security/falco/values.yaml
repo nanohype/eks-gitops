@@ -9,12 +9,62 @@ driver:
     cpusForEachBuffer: 4
     bufSizePreset: 4
 
+# falcoctl fetches the rule sets as OCI artifacts into an emptyDir the Falco
+# container sees as /etc/falco. The chart's default is the stable tier alone;
+# container escape, cryptominer execution, privileged-container launch and IMDS
+# access from a container are all defined in the incubating and sandbox tiers,
+# so a stable-only install runs the eBPF probe on every node and never evaluates
+# them.
+#
+# `refs` under falcoctl.config.artifact — NOT under falcoctl.artifact, which
+# carries the containers' own settings and accepts no refs key. The chart ships
+# no values.schema.json, so a ref list on the wrong path is dropped without a
+# render error.
+#
+# The chart appends the k8smeta and container plugin refs to install.refs, so
+# overriding the list here does not drop them. follow.refs carries rule sets
+# only; falcoctl does not follow plugins.
+falcoctl:
+  config:
+    artifact:
+      install:
+        refs:
+          - falco-rules:5
+          - falco-incubating-rules:6
+          - falco-sandbox-rules:6
+      follow:
+        refs:
+          - falco-rules:5
+          - falco-incubating-rules:6
+          - falco-sandbox-rules:6
+
 falco:
   json_output: true
   log_stderr: true
   log_syslog: false
-  priority: warning
+  # Falco loads a rule only when its priority is at least this severe. The
+  # privileged-container and IMDS-access rules are INFO, so anything above
+  # `info` leaves them installed on disk and unloaded.
+  priority: info
   rule_matching: first
+  # An installed rule set is inert until this list names it: falcoctl writes each
+  # artifact to the root of the shared directory, and Falco reads only the files
+  # and directories enumerated here, so a ref added above without an entry here
+  # is downloaded to every node and never evaluated.
+  #
+  # Order is load order, and it decides two different things. Rules are matched
+  # first-to-last under `rule_matching: first`, which is why the stable tier
+  # leads. A list or macro that a later file redefines REPLACES the earlier
+  # definition for every rule that consumes it, including rules in files already
+  # read — the tiers each carry a standalone copy of the shared ones, and those
+  # copies are not always identical, so a suppression list can narrow under this
+  # order. Local overrides sort last so they win outright.
+  rules_files:
+    - /etc/falco/falco_rules.yaml
+    - /etc/falco/falco-incubating_rules.yaml
+    - /etc/falco/falco-sandbox_rules.yaml
+    - /etc/falco/falco_rules.local.yaml
+    - /etc/falco/rules.d
   # falco_libs (not libs) is the real config key for libsinspector tuning.
   falco_libs:
     thread_table_auto_purging_interval_s: 120
