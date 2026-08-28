@@ -288,6 +288,29 @@ jobs:
       - name: Every rendered policy overlay is valid
         run: ./scripts/check-policy-validity.py
 
+  log-volume-budget:
+    name: the Loki volume warns before it stops accepting writes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      # Loki bounds nothing by stored bytes: retention reacts to the age of a
+      # chunk, never to the size of the volume. The only disk-aware control is
+      # the ingester's WAL threshold, and crossing it rejects every push on the
+      # cluster at once. The gate renders the chart, so it needs the network —
+      # which is also why it carries no positive control and is exempted in
+      # scripts/tests/controls.py instead.
+      #
+      # It deliberately does NOT assert the volume is large enough. The PVC size
+      # in values.yaml sits under ignoreDifferences and is never reconciled, and
+      # counted bytes reach disk gzipped at a ratio that is a property of the
+      # logs rather than the config. A green capacity claim built on either would
+      # read as proof the volume fits.
+      - name: The cutoff is declared and the alert leads it
+        run: ./scripts/check-log-volume-budget.py
+
   renovate-coverage:
     name: every chart pin is watched by a manager that resolves
     runs-on: ubuntu-latest
@@ -794,6 +817,7 @@ jobs:
         secrets,
         validate,
         renovate-coverage,
+        log-volume-budget,
         policy-validity,
         gate-tests,
         serviceaccount-bindings,
@@ -822,6 +846,7 @@ jobs:
               'Secret scan (gitleaks)': '${{ needs.secrets.result }}',
               'Render + assert + schema + misconfig (all environments)': '${{ needs.validate.result }}',
               'Renovate manager coverage': '${{ needs.renovate-coverage.result }}',
+              'Loki volume warns before cutoff': '${{ needs.log-volume-budget.result }}',
               'Policy validity (kustomize + kyverno)': '${{ needs.policy-validity.result }}',
               'The gates themselves are tested': '${{ needs.gate-tests.result }}',
               'Pods name ServiceAccounts that exist': '${{ needs.serviceaccount-bindings.result }}',
@@ -855,6 +880,7 @@ jobs:
       [
         placeholders,
         renovate-coverage,
+        log-volume-budget,
         policy-validity,
         gate-tests,
         lint,

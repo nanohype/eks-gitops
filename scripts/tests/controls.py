@@ -129,6 +129,7 @@ NEEDS_NETWORK_PY = {
     "render-addons.py": "subprocess.run",
     "check-policy-admission.py": "subprocess.run",
     "check-image-pins.py": "subprocess.run",
+    "check-log-volume-budget.py": "subprocess.run",
 }
 
 # Shell gates: no syntax tree available, so this is a text check over the

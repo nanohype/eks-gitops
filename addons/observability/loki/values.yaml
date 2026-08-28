@@ -31,6 +31,30 @@ loki:
   # hard to see: deploymentMode SingleBinary renders `-target=all`, and Loki's
   # All target includes Compactor. So the pod list, the logs and index
   # compaction all look correct — only deletion is off.
+  # Loki bounds nothing by stored bytes — retention is time-based only, and the
+  # whole config surface carries no store-size cap or per-tenant volume quota.
+  # The one disk-aware control is this threshold: every 10s the ingester statfs's
+  # its WAL directory, and at or above this fraction it rejects EVERY push with
+  # ErrReadOnly. Because common.path_prefix puts the WAL at /var/loki/wal, that
+  # statfs measures the singleBinary PVC, so this is the real ceiling on the
+  # volume — reached, it stops ingestion for every workload at once.
+  #
+  # Pinned at the upstream default rather than inherited, so the alert that has
+  # to fire before it has a declared operand to be checked against. Raise it and
+  # the gate fails, because the warning would no longer lead the cutoff.
+  #
+  # Two properties make this a poor thing to discover at runtime: the rejection
+  # text is "Ingester is shutting down", which names neither the disk nor the
+  # threshold, and loki_ingester_wal_disk_full_failures_total counts the
+  # TRANSITION into the throttled state rather than the rejected writes — so a
+  # cluster throttled for a week increments it once and a rate() alert on it
+  # reads as quiet. loki_ingester_wal_disk_usage_percent is the gauge to watch;
+  # it is set on every tick regardless of state.
+  ingester:
+    wal:
+      flush_on_shutdown: true
+      disk_full_threshold: 0.9
+
   compactor:
     # Under the existing /var/loki PVC mount, so no volume change is needed.
     working_directory: /var/loki/compactor
@@ -70,6 +94,16 @@ singleBinary:
 
 # Loki canary (DaemonSet)
 lokiCanary:
+  # The canary writes to Loki every second and reports what never came back, so
+  # loki_canary_missing_entries_total is the only end-to-end read on the write
+  # path — the one signal that distinguishes "Loki is rejecting writes" from
+  # "nothing is being written". Without these annotations the kubernetes-pods
+  # scrape job does not select the canary pods, and the probe runs on every node
+  # producing a metric nothing collects.
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "3500"
+    prometheus.io/path: /metrics
   resources:
     requests:
       cpu: 10m
