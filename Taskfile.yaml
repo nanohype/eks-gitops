@@ -118,6 +118,11 @@ tasks:
     cmds:
       - ./scripts/check-policy-validity.py
 
+  validate:falco-rule-floor:
+    desc: "Falco rule gate — every installed rule set is read, and the priority floor loads it"
+    cmds:
+      - ./scripts/check-falco-rule-floor.py
+
   validate:log-volume-budget:
     desc: "Log-volume gate — the Loki ingestion cutoff is declared and the fill alert leads it"
     cmds:
@@ -176,6 +181,7 @@ tasks:
       - validate:fork-safety
       - validate:renovate-coverage
       - validate:log-volume-budget
+      - validate:falco-rule-floor
       - validate:policy-validity
       - validate:gate-tests
       - validate:gate-controls
