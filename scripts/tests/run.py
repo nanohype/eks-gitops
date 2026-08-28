@@ -35,6 +35,7 @@ EXPECTED = (
     "test_kyverno_corpus",
     "test_named_things",
     "test_falco_rule_floor",
+    "test_gatelib",
 )
 
 # A floor well under the real count. It catches "discovery found almost nothing",
@@ -68,12 +69,13 @@ MIN_TESTS = 31
 # behavioural coverage that this line count cannot see. Neither figure
 # substitutes for the other — the controls prove a gate rejects, the unit tests
 # prove it computes the right answer on a case the real tree does not contain.
-COMBINED_FLOOR = 10
+COMBINED_FLOOR = 12
 PER_GATE_FLOORS = {
     "scripts/check-named-things.py": 35,
     "scripts/check-renovate-coverage.py": 55,
     "scripts/check-label-values.py": 33,
     "scripts/check-sync-waves.py": 10,
+    "scripts/gatelib.py": 55,
 }
 
 

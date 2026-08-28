@@ -99,6 +99,45 @@ def require(*tools: str) -> None:
     sys.exit(CANNOT_RUN)
 
 
+def matrix_generators(doc: dict):
+    """Every generator an ApplicationSet declares, matrix members flattened.
+
+    A `matrix` combines axes and contributes its inner generators; a bare
+    generator contributes itself.
+    """
+    for gen in (doc.get("spec") or {}).get("generators") or []:
+        if not isinstance(gen, dict):
+            continue
+        if "matrix" in gen:
+            for inner in (gen.get("matrix") or {}).get("generators") or []:
+                if isinstance(inner, dict):
+                    yield inner
+        else:
+            yield gen
+
+
+def list_elements(doc: dict) -> list[dict]:
+    """Elements of EVERY list generator in `doc`, not the first one found.
+
+    An ApplicationSet may declare more than one — this catalog already ships one
+    that does — and each contributes its own Applications. A walker that returns
+    on the first match drops the rest, and the failure is invisible from the
+    outside: the gate's own count is derived from the same truncated list, so a
+    run that examined half the Applications prints the same sentence, and the
+    same total, as a run that examined all of them.
+
+    That is the shape a copy of this walk had in two gates at once. It lives here
+    so the next gate to need it inherits the fixed one rather than the paragraph
+    explaining why the broken one looked fine.
+    """
+    out: list[dict] = []
+    for gen in matrix_generators(doc):
+        for el in (gen.get("list") or {}).get("elements") or []:
+            if isinstance(el, dict):
+                out.append(el)
+    return out
+
+
 def is_helm_template(path) -> bool:
     """True for a file that is Go-template text rather than a YAML manifest.
 
