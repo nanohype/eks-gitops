@@ -151,13 +151,14 @@ def _path_from_valuefiles(helm: dict) -> str | None:
 
 
 def _list_elements(spec: dict) -> list[dict]:
-    """Elements of the matrix's ``list`` generator, if any."""
-    for gen in spec.get("generators", []) or []:
-        for inner in (gen.get("matrix", {}) or {}).get("generators", []) or []:
-            lst = inner.get("list")
-            if lst and lst.get("elements"):
-                return lst["elements"]
-    return []
+    """Every list-generator element, via the shared walk.
+
+    This returned on the FIRST list generator, so an appset declaring two had the
+    second one's addons silently absent from the render corpus — and the
+    "Rendered N addon×env combinations" line is computed from the same list, so
+    the undercount reported itself as a full run.
+    """
+    return gatelib.list_elements({"spec": spec})
 
 
 def discover() -> list[Unit]:

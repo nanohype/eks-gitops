@@ -72,13 +72,9 @@ SECRET_TYPE = "argocd.argoproj.io/secret-type"
 MIN_PAIRS = 20
 
 
-def matrix_generators(doc: dict):
-    gens = (doc.get("spec") or {}).get("generators") or []
-    for g in gens:
-        if "matrix" in g:
-            yield from (g["matrix"].get("generators") or [])
-        else:
-            yield g
+# The walk this gate got right, now shared so the gates that got it wrong
+# inherit it. See gatelib.list_elements for what the truncating form cost.
+matrix_generators = gatelib.matrix_generators
 
 
 def reach(doc: dict, name: str) -> tuple[set[str] | None, str]:

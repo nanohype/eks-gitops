@@ -182,12 +182,14 @@ def _category(appset_file: str, path: str | None) -> str | None:
 
 
 def _list_elements(spec: dict) -> list[dict]:
-    for gen in spec.get("generators", []) or []:
-        for inner in (gen.get("matrix", {}) or {}).get("generators", []) or []:
-            lst = inner.get("list")
-            if lst and lst.get("elements"):
-                return lst["elements"]
-    return []
+    """Every list-generator element, via the shared walk.
+
+    This returned on the FIRST list generator, and one appset here declares two —
+    so the second generator's Applications were never band-checked. The count
+    this gate prints is derived from the same list, so the omission could not
+    show up in its own success line.
+    """
+    return gatelib.list_elements({"spec": spec})
 
 
 def _target_revision(appset_file: pathlib.Path) -> str | None:
