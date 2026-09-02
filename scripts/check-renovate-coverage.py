@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Every chart pin in applicationsets/ is watched by something that resolves.
+"""Every version this repo pins is watched by a manager that resolves it.
+
+Two populations, derived rather than listed. The chart pins come from the
+Application ArgoCD renders; the toolchain pins come from what a workflow step
+actually consumes — a `uses:` reference, a file a setup action reads as the
+version to install, a lockfile a job installs from. A list of files to look in is
+a list of the pins somebody remembered, and the pin nobody remembered is the one
+that ages.
 
 A Renovate manager that detects a pin is not the same as a manager that can look
 it up. Both failures are silent in opposite ways:
@@ -49,7 +56,9 @@ import importlib.util
 import pathlib
 import re
 import sys
-from typing import NoReturn
+from typing import NamedTuple, NoReturn
+
+import yaml
 
 # Shared helpers, loaded by path: these are hyphenated executables run from
 # varying working directories.
@@ -375,6 +384,222 @@ def covered_by_custom(text: str, chart: str, ver: str, patterns) -> bool:
     return False
 
 
+# ── The toolchain a job runs on ──────────────────────────────────────────────
+#
+# Derived from the workflows rather than listed here, because a list of files to
+# look in is a list of the pins somebody remembered. What a workflow RESOLVES is
+# a fact about the workflow: `uses:` is an action reference GitHub resolves,
+# `python-version-file:` and `go-version-file:` name files the setup actions read
+# as the version to install, and `pip install -r` names a lockfile the job
+# installs from. Adding a step that pins something new therefore adds a pin here
+# without an edit to this gate.
+#
+# Each derived pin carries the MANAGER that would have to see it. That mapping is
+# the part a reader has to check, so it is stated per family below and asserted
+# in both directions: a pin no enabled manager claims fails, and an enabled
+# manager no pin is attributed to fails.
+
+# Renovate managers whose own defaultConfig sets NO managerFilePatterns. Enabling
+# one without configuring patterns adds a manager that reads nothing, and neither
+# `renovate-config-validator` nor a Dependency Dashboard reports it — the config
+# is schema-valid and the manager simply matches no file.
+#
+# Read out of the shipped package rather than remembered:
+#
+#     node -e 'import("renovate/dist/modules/manager/pip-compile/index.js")
+#              .then(m => console.log(m.defaultConfig.managerFilePatterns))'
+MANAGERS_NEEDING_EXPLICIT_PATTERNS = {
+    "pip-compile": "its defaultConfig.managerFilePatterns is []",
+}
+
+# What a `uses:` reference looks like once GitHub has resolved it: owner/repo,
+# optionally with a subdirectory, at a ref.
+#
+# Two other `uses:` forms resolve to no upstream action and are excluded by
+# shape rather than by hoping they never appear. A local step (`./path`) is this
+# repository, so there is nothing upstream to watch. A container step
+# (`docker://image@digest`) is an image reference — the digest after the `@` is
+# not a ref, `docker://image` is not a package Renovate's github-actions manager
+# looks up, and admitting one would put a pin in the population that no manager
+# can ever claim.
+USES_PIN = re.compile(r"^(?!\.|docker://)(?P<dep>[^@\s]+)@(?P<ver>\S+)$")
+
+# `pip install --require-hashes -r requirements.txt` — the lockfile a job installs.
+PIP_REQUIREMENTS = re.compile(r"pip install[^\n]*?-r\s+(?P<path>[\w./-]+)")
+
+# A pinned distribution in a pip-compile lockfile.
+PIP_PIN = re.compile(r"^(?P<dep>[A-Za-z0-9][\w.-]*)==(?P<ver>[^\s\\]+)", re.M)
+
+# The `go` directive, which is the toolchain the appset-render job builds with —
+# separate from the tab-indented requires the Go module family already reads.
+GO_DIRECTIVE = re.compile(r"^go\s+(?P<ver>[0-9]+\.[0-9]+(?:\.[0-9]+)?)\s*$", re.M)
+
+
+class DerivedPin(NamedTuple):
+    family: str
+    manager: str
+    source: str   # the file the pin is written in
+    via: str      # the workflow step or key that resolves it
+    dep: str
+    version: str
+
+
+def workflow_files() -> list[pathlib.Path]:
+    return sorted(p for p in (ROOT / ".github" / "workflows").glob("*.y*ml")
+                  if p.is_file())
+
+
+def _steps(doc: dict):
+    """Every step of every job, which is what GitHub actually runs."""
+    for job in (doc.get("jobs") or {}).values():
+        if not isinstance(job, dict):
+            continue
+        for step in job.get("steps") or []:
+            if isinstance(step, dict):
+                yield step
+
+
+def workflow_pins() -> list[DerivedPin]:
+    """Every version a workflow resolves, derived from what its steps consume."""
+    pins: list[DerivedPin] = []
+    for wf in workflow_files():
+        rel = str(wf.relative_to(ROOT))
+        try:
+            doc = yaml.safe_load(wf.read_text())
+        except yaml.YAMLError as exc:
+            _toolchain_cannot_run(rel, f"is not parseable YAML — {str(exc).splitlines()[0]}")
+        if not isinstance(doc, dict):
+            _toolchain_cannot_run(rel, "does not parse to a workflow mapping")
+
+        for step in _steps(doc):
+            uses = step.get("uses")
+            if isinstance(uses, str):
+                m = USES_PIN.match(uses.strip())
+                if m:
+                    pins.append(DerivedPin(
+                        "GitHub Action", "github-actions", rel,
+                        f"uses: {m.group('dep')}", m.group("dep"), m.group("ver")))
+
+            with_ = step.get("with") or {}
+            if isinstance(with_, dict):
+                vf = with_.get("python-version-file")
+                if isinstance(vf, str):
+                    pins.extend(_interpreter_pins(rel, vf))
+                gvf = with_.get("go-version-file")
+                if isinstance(gvf, str):
+                    pins.extend(_go_toolchain_pins(rel, gvf))
+
+            run = step.get("run")
+            if isinstance(run, str):
+                for m in PIP_REQUIREMENTS.finditer(run):
+                    pins.extend(_python_package_pins(rel, m.group("path")))
+    # One pin resolved by twelve steps is one pin. Deduplicated on what is
+    # pinned rather than on which step reached it, so the count below is the
+    # population a manager has to watch and not the number of times a job asked
+    # for it. `via` is dropped from the key for the same reason and the first
+    # resolver is kept, so a failure still names a step a reader can open.
+    seen: dict[tuple[str, str, str, str], DerivedPin] = {}
+    for pin in pins:
+        seen.setdefault((pin.family, pin.manager, pin.dep, pin.version), pin)
+    return list(seen.values())
+
+
+def _read_pin_source(workflow_rel: str, rel: str) -> str:
+    path = ROOT / rel
+    if not path.is_file():
+        _toolchain_cannot_run(workflow_rel, f"names {rel} as a version source and no such file "
+                                  f"exists, so what that step installs is unknown")
+    return path.read_text()
+
+
+def _interpreter_pins(workflow_rel: str, rel: str) -> list[DerivedPin]:
+    """The interpreter setup-python installs, read from the file the step names."""
+    version = _read_pin_source(workflow_rel, rel).strip()
+    if not version:
+        _toolchain_cannot_run(workflow_rel, f"names {rel} as its python-version-file and that "
+                                  f"file is empty")
+    return [DerivedPin("Python interpreter", "pyenv", rel,
+                       f"{workflow_rel} python-version-file", "python", version)]
+
+
+def _python_package_pins(workflow_rel: str, rel: str) -> list[DerivedPin]:
+    """Every distribution the job installs, read from the lockfile it names."""
+    text = _read_pin_source(workflow_rel, rel)
+    pins = [DerivedPin("Python package", "pip-compile", rel,
+                       f"{workflow_rel} pip install -r", m.group("dep"), m.group("ver"))
+            for m in PIP_PIN.finditer(text)]
+    if not pins:
+        _toolchain_cannot_run(workflow_rel, f"installs from {rel} and no pinned distribution was "
+                                  f"found in it, so the job's dependencies are unknown")
+    return pins
+
+
+def _go_toolchain_pins(workflow_rel: str, rel: str) -> list[DerivedPin]:
+    """The Go toolchain setup-go installs, read from the go.mod the step names."""
+    m = GO_DIRECTIVE.search(_read_pin_source(workflow_rel, rel))
+    if not m:
+        _toolchain_cannot_run(workflow_rel, f"names {rel} as its go-version-file and that file "
+                                  f"carries no `go` directive")
+    return [DerivedPin("Go toolchain", "gomod", rel,
+                       f"{workflow_rel} go-version-file", "go", m.group("ver"))]
+
+
+def _toolchain_cannot_run(rel: str, detail: str) -> NoReturn:
+    print(f"Cannot run: {rel} {detail}.")
+    print("The toolchain a job runs on could not be derived, so this gate examined")
+    print("less than it reports on — which is not the same as finding nothing.")
+    sys.exit(gatelib.CANNOT_RUN)
+
+
+def check_derived_pins(pins: list[DerivedPin]) -> int:
+    """Every derived pin is claimed by an enabled manager, and every manager claims one.
+
+    Both directions, because they fail for opposite reasons. An unclaimed pin
+    ages with nothing watching it. A manager claiming nothing is config that
+    reads as coverage — `renovate-config-validator` accepts it, the Dependency
+    Dashboard shows no lookup for it, and the only symptom is a version that
+    never moves.
+    """
+    enabled = enabled_managers()
+    if not enabled:
+        fail("renovate.json declares no enabledManagers, so no manager reads "
+             "anything and every pin below is unwatched.")
+        return 0
+    if not pins:
+        fail("no toolchain pin was derived from any workflow — no step carries a "
+             "`uses:`, a version-file or a pip install, so this gate's claim over "
+             "the toolchain is vacuous.")
+        return 0
+
+    cfg = gatelib.read_json(ROOT / "renovate.json")
+    for manager, why in sorted(MANAGERS_NEEDING_EXPLICIT_PATTERNS.items()):
+        if manager not in enabled:
+            continue
+        if not ((cfg.get(manager) or {}).get("managerFilePatterns")):
+            fail(f"renovate.json enables the {manager} manager and configures no "
+                 f"managerFilePatterns for it, but {why} — so it matches no file and "
+                 f"watches nothing. Every pin attributed to it below is unwatched.")
+
+    claimed: set[str] = set()
+    for pin in pins:
+        if pin.manager not in enabled:
+            fail(f"{pin.source}: {pin.family} {pin.dep} {pin.version} needs the "
+                 f"{pin.manager} manager, which renovate.json does not enable. "
+                 f"Resolved by {pin.via}, and watched by nothing.")
+            continue
+        claimed.add(pin.manager)
+
+    # A manager reading nothing is the same defect one layer up, and it is the
+    # one an enabledManagers allowlist makes easy: the name stays after the thing
+    # it read is gone.
+    unclaimed = sorted(enabled - claimed - {"argocd", "custom.regex"})
+    for manager in unclaimed:
+        fail(f"renovate.json enables the {manager} manager and no pin in this repo is "
+             f"attributed to it. A manager that reads nothing is config that reads as "
+             f"coverage.")
+    return len(pins)
+
+
 # Version pins outside applicationsets/ chart elements. Each family names the
 # file that carries it and a regex for the pin; every match must be covered by
 # some manager, and a family whose regex matches nothing fails.
@@ -584,6 +809,7 @@ def main() -> int:
 
     others = check_other_families(patterns)
     oci = check_oci_repourl_shape(pins)
+    derived = check_derived_pins(workflow_pins())
 
     if failures:
         report()
@@ -604,6 +830,10 @@ def main() -> int:
           f"every one watched by a manager that resolves. {oci} of the chart pins "
           f"are OCI and also assert repoURL repeats their chart name; "
           f"{len(NO_PINS)} file(s) are asserted to pin nothing")
+    print(f"toolchain OK: {derived} pin(s) derived from what the workflows resolve — "
+          f"every action reference, every version-file a setup step reads and every "
+          f"distribution a job installs is claimed by an enabled manager, and every "
+          f"enabled manager claims one")
     return 0
 
 

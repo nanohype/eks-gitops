@@ -6,18 +6,26 @@
   "description": [
     "Currency management for the catalog, layered on the org preset at nanohype/.github.",
     "What stays local is the manager scoping and the custom managers. Renovate watches every Helm chart version pinned in applicationsets/ (and the git-pinned Gateway API CRDs), the Go module behind the appset-render gate, the CLI tools the CI workflow downloads, and the GitHub Actions in .github/workflows/ \u2014 the helm-render, schema and policy CI gates then validate each bump before merge.",
-    "enabledManagers is an allowlist rather than a default because this repo is a manifest catalog: without it Renovate would try to read every values.yaml as a Helm chart it owns."
+    "enabledManagers is an allowlist rather than a default because this repo is a manifest catalog: without it Renovate would try to read every values.yaml as a Helm chart it owns.",
+    "An allowlist has a failure mode a default does not: a manager stays on the list after the thing it read is gone, and a manager whose file patterns match nothing looks identical to one with nothing to do. scripts/check-renovate-coverage.py asserts both directions — every pin the workflows resolve is claimed by a manager on this list, and every manager on this list is claimed by a pin."
   ],
   "enabledManagers": [
     "argocd",
     "gomod",
     "custom.regex",
     "github-actions",
-    "pip-compile"
+    "pip-compile",
+    "pyenv"
   ],
   "argocd": {
     "managerFilePatterns": [
       "/^applicationsets/[^/]+\\.ya?ml$/"
+    ]
+  },
+  "pip-compile": {
+    "description": "The pip-compile manager ships an EMPTY defaultConfig.managerFilePatterns, so enabling it without this block adds a manager that matches no file. renovate-config-validator accepts that config and the Dependency Dashboard shows no lookup for it, so the only symptom is that every distribution in requirements.txt stops moving. requirements.txt is the lockfile every Python CI job installs from with --require-hashes; requirements.in is its source and pip-compile regenerates the hashes with the version.",
+    "managerFilePatterns": [
+      "/^requirements\\.txt$/"
     ]
   },
   "customManagers": [

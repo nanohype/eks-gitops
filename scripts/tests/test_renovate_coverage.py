@@ -6,11 +6,19 @@ watches it — because that failure is silent in exactly the way the gate exists
 to prevent. These tests therefore concentrate on the negative direction.
 """
 
+import contextlib
+import io
+import json
+import pathlib
+import tempfile
 import unittest
 
+import yaml
 from gateloader import load
 
 cov = load("check-renovate-coverage")
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 
 
 class SubstringFalsePositive(unittest.TestCase):
@@ -299,6 +307,240 @@ class VersionsAreNotCoerced(unittest.TestCase):
         self.assertFalse(any("has no targetRevision" in f for f in failures),
                          "a present field was reported as missing, sending the "
                          "reader to the wrong line")
+
+
+class DerivingTheToolchainPins(unittest.TestCase):
+    """What a workflow resolves is read off the workflow, not off a file list.
+
+    A list of files to look in is a list of the pins somebody remembered. These
+    plant each shape a step can pin something through, and one shape that looks
+    like a pin and is not.
+    """
+
+    def workspace(self, workflow: dict, files=None):
+        """A repo root holding one workflow and whatever files it names."""
+        root = pathlib.Path(tempfile.mkdtemp())
+        (root / ".github" / "workflows").mkdir(parents=True)
+        (root / ".github" / "workflows" / "ci.yml").write_text(yaml.safe_dump(workflow))
+        for rel, body in (files or {}).items():
+            path = root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(body)
+        return root
+
+    def pins(self, workflow, files=None):
+        original = cov.ROOT
+        cov.ROOT = self.workspace(workflow, files)
+        try:
+            return cov.workflow_pins()
+        finally:
+            cov.ROOT = original
+
+    def steps(self, *steps):
+        return {"jobs": {"a": {"runs-on": "ubuntu-latest", "steps": list(steps)}}}
+
+    def test_an_action_reference_is_a_pin(self):
+        pins = self.pins(self.steps({"uses": "actions/checkout@" + "a" * 40}))
+        self.assertEqual([(p.family, p.manager, p.dep, p.version) for p in pins],
+                         [("GitHub Action", "github-actions", "actions/checkout",
+                           "a" * 40)])
+
+    def test_an_action_in_a_subdirectory_keeps_its_path(self):
+        """`owner/repo/path@ref` is how a composite action inside a repo is named."""
+        pins = self.pins(self.steps({"uses": "nanohype/.github/actions/merge-gate@v1"}))
+        self.assertEqual(pins[0].dep, "nanohype/.github/actions/merge-gate")
+
+    def test_a_local_action_is_not_a_pin(self):
+        """`./` resolves inside this repo — there is no upstream to watch."""
+        self.assertEqual(self.pins(self.steps({"uses": "./.github/actions/x"})), [])
+
+    def test_a_container_step_is_not_a_pin(self):
+        """`docker://image@digest` carries an `@` and is not an action reference.
+
+        Admitted, it would put a pin in the population that no manager can claim
+        — and the claim check would then report the repo unwatched for a step
+        Renovate's github-actions manager never looks up as an action.
+        """
+        self.assertEqual(
+            self.pins(self.steps({"uses": "docker://alpine@sha256:" + "0" * 64})), [])
+
+    def test_a_step_with_no_uses_contributes_nothing(self):
+        self.assertEqual(self.pins(self.steps({"run": "echo hi"})), [])
+
+    def test_a_python_version_file_is_the_interpreter_pin(self):
+        """setup-python installs what the file says, so the file is the pin."""
+        pins = self.pins(
+            self.steps({"uses": "actions/setup-python@" + "b" * 40,
+                        "with": {"python-version-file": ".python-version"}}),
+            {".python-version": "3.13\n"})
+        interpreter = [p for p in pins if p.family == "Python interpreter"]
+        self.assertEqual(len(interpreter), 1)
+        self.assertEqual((interpreter[0].manager, interpreter[0].dep,
+                          interpreter[0].version), ("pyenv", "python", "3.13"))
+
+    def test_a_go_version_file_is_the_toolchain_pin(self):
+        pins = self.pins(
+            self.steps({"uses": "actions/setup-go@" + "c" * 40,
+                        "with": {"go-version-file": "go.mod"}}),
+            {"go.mod": "module x\n\ngo 1.26.3\n"})
+        toolchain = [p for p in pins if p.family == "Go toolchain"]
+        self.assertEqual([(p.manager, p.dep, p.version) for p in toolchain],
+                         [("gomod", "go", "1.26.3")])
+
+    def test_an_installed_lockfile_contributes_every_distribution(self):
+        pins = self.pins(
+            self.steps({"run": "pip install --require-hashes -r requirements.txt"}),
+            {"requirements.txt": "pyyaml==6.0.2 \\\n    --hash=sha256:aa\nruff==0.9.1\n"})
+        packages = sorted((p.dep, p.version) for p in pins
+                          if p.family == "Python package")
+        self.assertEqual(packages, [("pyyaml", "6.0.2"), ("ruff", "0.9.1")])
+
+    def test_one_pin_resolved_by_many_steps_is_one_pin(self):
+        """Twelve jobs asking for the same interpreter is one thing to watch."""
+        step = {"uses": "actions/setup-python@" + "b" * 40,
+                "with": {"python-version-file": ".python-version"}}
+        pins = self.pins(self.steps(step, step, step), {".python-version": "3.13\n"})
+        self.assertEqual(len([p for p in pins if p.family == "Python interpreter"]), 1)
+
+    def test_a_version_file_that_does_not_exist_refuses_to_run(self):
+        """What that step installs is unknown, which is not the same as unpinned."""
+        with self.assertRaises(SystemExit) as caught, \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.pins(self.steps({"with": {"python-version-file": ".gone"}}))
+        self.assertEqual(caught.exception.code, cov.gatelib.CANNOT_RUN)
+
+    def test_a_lockfile_with_no_pins_refuses_to_run(self):
+        with self.assertRaises(SystemExit) as caught, \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.pins(self.steps({"run": "pip install -r requirements.txt"}),
+                      {"requirements.txt": "# nothing pinned here\n"})
+        self.assertEqual(caught.exception.code, cov.gatelib.CANNOT_RUN)
+
+
+class ClaimingEveryDerivedPin(unittest.TestCase):
+    """Both directions, planted. Each fails for the opposite reason.
+
+    An unclaimed pin ages with nothing watching it. A manager claiming nothing is
+    config that reads as coverage: renovate-config-validator accepts it, the
+    Dependency Dashboard shows no lookup for it, and the only symptom is a
+    version that never moves.
+    """
+
+    def pin(self, manager="github-actions", family="GitHub Action",
+            dep="actions/checkout", version="a" * 40):
+        return cov.DerivedPin(family, manager, ".github/workflows/ci.yml",
+                              f"uses: {dep}", dep, version)
+
+    def verdict(self, pins, enabled, config=None):
+        root = pathlib.Path(tempfile.mkdtemp())
+        body = {"enabledManagers": list(enabled)}
+        body.update(config or {})
+        (root / "renovate.json").write_text(json.dumps(body))
+        original, cov.ROOT = cov.ROOT, root
+        cov.failures.clear()
+        try:
+            count = cov.check_derived_pins(pins)
+        finally:
+            cov.ROOT = original
+        return count, list(cov.failures)
+
+    def tearDown(self):
+        cov.failures.clear()
+
+    def test_a_claimed_pin_passes(self):
+        count, failures = self.verdict([self.pin()], ["github-actions"])
+        self.assertEqual(count, 1)
+        self.assertEqual(failures, [])
+
+    def test_a_pin_whose_manager_is_not_enabled_is_reported(self):
+        """The `.python-version` shape: a real pin, and no manager reads the file."""
+        _, failures = self.verdict(
+            [self.pin(manager="pyenv", family="Python interpreter",
+                      dep="python", version="3.13")],
+            ["github-actions"])
+        self.assertEqual(len(failures), 2)
+        joined = " ".join(failures)
+        self.assertIn("needs the pyenv manager, which renovate.json does not enable",
+                      joined)
+        self.assertIn("watched by nothing", joined)
+
+    def test_a_manager_no_pin_claims_is_reported(self):
+        _, failures = self.verdict([self.pin()], ["github-actions", "npm"])
+        self.assertEqual(len(failures), 1)
+        self.assertIn("enables the npm manager and no pin in this repo is attributed",
+                      failures[0])
+
+    def test_an_empty_manager_list_is_reported(self):
+        _, failures = self.verdict([self.pin()], [])
+        self.assertIn("declares no enabledManagers", failures[0])
+
+    def test_deriving_no_pins_at_all_is_reported(self):
+        """A verdict over an empty population reports what a healthy one reports."""
+        _, failures = self.verdict([], ["github-actions"])
+        self.assertEqual(len(failures), 1)
+        self.assertIn("no toolchain pin was derived", failures[0])
+        self.assertIn("vacuous", failures[0])
+
+    def test_a_manager_with_no_default_patterns_and_no_config_is_reported(self):
+        """pip-compile ships an empty defaultConfig.managerFilePatterns, so
+        enabling it without configuring one adds a manager that reads nothing."""
+        _, failures = self.verdict(
+            [self.pin(manager="pip-compile", family="Python package",
+                      dep="pyyaml", version="6.0.2")],
+            ["pip-compile"])
+        self.assertEqual(len(failures), 1)
+        self.assertIn("configures no managerFilePatterns", failures[0])
+        self.assertIn("watches nothing", failures[0])
+
+    def test_configuring_the_patterns_clears_it(self):
+        count, failures = self.verdict(
+            [self.pin(manager="pip-compile", family="Python package",
+                      dep="pyyaml", version="6.0.2")],
+            ["pip-compile"],
+            {"pip-compile": {"managerFilePatterns": ["/^requirements\\.txt$/"]}})
+        self.assertEqual(failures, [])
+        self.assertEqual(count, 1)
+
+    def test_the_generic_managers_are_not_required_to_claim_a_derived_pin(self):
+        """argocd reads chart pins and custom.regex the annotated env block; both
+        are asserted over their own populations rather than this one."""
+        _, failures = self.verdict([self.pin()],
+                                   ["github-actions", "argocd", "custom.regex"])
+        self.assertEqual(failures, [])
+
+
+class TheShippedToolchainIsWatched(unittest.TestCase):
+    """Over the tree, so a workflow edit that strands a pin fails here."""
+
+    def test_every_derived_pin_is_claimed(self):
+        cov.failures.clear()
+        try:
+            count = cov.check_derived_pins(cov.workflow_pins())
+            self.assertEqual(cov.failures, [])
+            self.assertGreater(count, 0)
+        finally:
+            cov.failures.clear()
+
+    def test_the_interpreter_every_python_job_runs_on_is_a_derived_pin(self):
+        pins = cov.workflow_pins()
+        interpreter = [p for p in pins if p.family == "Python interpreter"]
+        self.assertTrue(interpreter,
+                        "no workflow step names a python-version-file, so the "
+                        "interpreter every Python job runs on is outside this "
+                        "gate's population")
+
+    def test_every_action_the_workflows_use_is_a_derived_pin(self):
+        """Counted against the files rather than a number, so a workflow added
+        without its actions being claimed fails here."""
+        seen = {p.dep for p in cov.workflow_pins() if p.family == "GitHub Action"}
+        for wf in cov.workflow_files():
+            doc = yaml.safe_load(wf.read_text())
+            for step in cov._steps(doc):
+                uses = step.get("uses")
+                if not isinstance(uses, str) or uses.startswith("./"):
+                    continue
+                with self.subTest(uses=uses):
+                    self.assertIn(uses.split("@", 1)[0], seen)
 
 
 if __name__ == "__main__":

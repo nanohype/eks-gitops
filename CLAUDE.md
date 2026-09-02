@@ -122,6 +122,13 @@ dashboards, fork-safety). CI runs those plus several gates that have **no local
   of the shipped config, so a manager Renovate would discard as malformed fails
   there too. What only the validator catches is an unknown or misspelled Renovate
   KEY, which is why it still runs somewhere.
+
+  Neither catches a manager that is spelled correctly and reads nothing. A
+  built-in manager whose own `defaultConfig.managerFilePatterns` is empty matches
+  no file until this repo configures one, and the config is schema-valid either
+  way — so `check-renovate-coverage.py` asserts that too, alongside the two-way
+  claim between the pins the workflows resolve and the managers `enabledManagers`
+  turns on.
 - **Kyverno unit tests + verify-images signing-identity contract** —
   `kyverno test policies/kyverno/tests` and `scripts/check-image-verification.py`
   (CI job `kyverno`)
