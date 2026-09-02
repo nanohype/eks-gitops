@@ -62,7 +62,9 @@ advisories:
       - otel/opentelemetry-collector-contrib
       - prom/memcached-exporter
       - quay.io/argoproj/argo-events
+      - quay.io/argoproj/argo-rollouts
       - quay.io/argoproj/argocli
+      - quay.io/argoproj/kubectl-argo-rollouts
       - quay.io/argoproj/workflow-controller
       - quay.io/cilium/cilium
       - quay.io/jetstack/cert-manager-cainjector

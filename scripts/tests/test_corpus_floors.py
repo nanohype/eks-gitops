@@ -26,9 +26,11 @@ from gateloader import load
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 
+render_addons = load("render-addons")
 fork_safety = load("check-hardcoded-org")
 platform_crs = load("check-platform-crs")
 policy_admission = load("check-policy-admission")
+image_pins = load("check-image-pins")
 image_vulns = load("check-image-vulnerabilities")
 
 
@@ -40,7 +42,6 @@ class EveryFloorIsAboveZero(unittest.TestCase):
             ("check-hardcoded-org MIN_APPSETS", fork_safety.MIN_APPSETS),
             ("check-platform-crs MIN_CRS", platform_crs.MIN_CRS),
             ("check-policy-admission MIN_RENDERED", policy_admission.MIN_RENDERED),
-            ("check-image-vulnerabilities MIN_IMAGES", image_vulns.MIN_IMAGES),
         ):
             with self.subTest(floor=label):
                 self.assertGreater(floor, 0)
@@ -73,14 +74,38 @@ class EveryFloorIsBelowTheCorpusItGuards(unittest.TestCase):
                            "tree, so check-platform-crs.py cannot pass")
 
     def test_the_discovered_addons_clear_the_policy_admission_floor(self):
-        """One unit renders at least one manifest, so units bound the render below."""
+        """The render is one manifest per unit per environment it reaches, so the
+        unit count times the environments bounds it above — and a floor above
+        THAT is one no render can clear."""
         units = policy_admission.discover()
         self.assertGreater(len(units), 0)
-        self.assertGreaterEqual(
-            policy_admission.MIN_RENDERED, len(units),
-            "MIN_RENDERED sits below the number of addon units discovered, so it "
-            "would pass a render that produced one manifest per unit and nothing "
-            "for the environments — which is the shape it exists to catch")
+        reachable = len(units) * len(render_addons.ENVIRONMENTS)
+        self.assertLess(
+            policy_admission.MIN_RENDERED, reachable,
+            "MIN_RENDERED is at or above the largest render this catalog can "
+            "produce, so check-policy-admission.py is red on every run and the "
+            "gate gets routed around")
+
+    def test_the_policy_admission_floor_exceeds_a_degenerate_render(self):
+        """A different property, and the reason the floor is not merely > 0: a
+        render producing one manifest per unit and nothing per environment is
+        the shape the floor exists to catch, so it must sit above that."""
+        units = policy_admission.discover()
+        self.assertGreaterEqual(policy_admission.MIN_RENDERED, len(units))
+
+    def test_the_imageless_charts_are_charts_the_fleet_renders(self):
+        """The image floor is per chart, so its exemption is where it can rot.
+
+        A chart declared imageless that the catalog no longer pins is an entry
+        excusing nothing, and the per-chart floor is exactly as strong as that
+        list is short.
+        """
+        charts = {u.chart for u in render_addons.discover()}
+        for chart in image_pins.IMAGELESS_CHARTS:
+            with self.subTest(chart=chart):
+                self.assertIn(chart, charts,
+                              f"{chart} is declared to render no image but the fleet "
+                              f"does not pin it — the entry outlived its chart")
 
 
 class TheFloorsGuardTheRightQuantity(unittest.TestCase):
@@ -102,9 +127,15 @@ class TheFloorsGuardTheRightQuantity(unittest.TestCase):
         source = (ROOT / "scripts" / "check-policy-admission.py").read_text()
         self.assertIn("if count < MIN_RENDERED:", source)
 
-    def test_the_image_floor_is_read_off_the_inventory(self):
+    def test_the_image_floor_is_derived_per_chart(self):
+        """Not a constant: every chart the render covers must contribute an image,
+        which is the shape a total cannot see."""
         source = (ROOT / "scripts" / "check-image-vulnerabilities.py").read_text()
-        self.assertIn("if len(images) < MIN_IMAGES:", source)
+        self.assertIn("coverage = image_pins.chart_coverage(images, units)", source)
+        self.assertIn("if len(images) < len(units):", source)
+        self.assertNotIn("MIN_IMAGES", source,
+                         "the picked constant is back; the per-chart derivation is "
+                         "what catches an extractor that stopped seeing a shape")
 
 
 if __name__ == "__main__":

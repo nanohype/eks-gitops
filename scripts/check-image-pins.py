@@ -51,6 +51,8 @@ import re
 import subprocess
 import sys
 
+import yaml
+
 # Shared precondition helper, loaded by path: these are hyphenated executables
 # run from varying working directories.
 _gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
@@ -78,6 +80,15 @@ assert _spec and _spec.loader, f"{_ra_path} is not loadable as a module"
 render_addons = importlib.util.module_from_spec(_spec)
 sys.modules["render_addons"] = render_addons
 _spec.loader.exec_module(render_addons)
+
+# Helm charts occasionally emit the YAML `=` default-value sentinel (e.g. `- =`
+# inside a ConfigMap payload). PyYAML's SafeLoader has no constructor for it and
+# raises, which would drop a whole chart's render out of the walk below — so map
+# the sentinel to its literal scalar rather than lose the chart.
+yaml.SafeLoader.add_constructor(
+    "tag:yaml.org,2002:value",
+    lambda loader, node: loader.construct_scalar(node),  # type: ignore[arg-type]
+)
 
 ROOT = render_addons.REPO_ROOT
 NETWORK_TIMEOUT = 300
@@ -126,9 +137,188 @@ def inventory(env: str) -> tuple[dict[str, set[str]], list[tuple[str, str]]]:
         if proc.returncode != 0:
             unscannable.append((u.path, (proc.stderr.strip() or proc.stdout.strip())[:200]))
             continue
-        for m in IMAGE.finditer(proc.stdout):
-            images.setdefault(m.group(1), set()).add(u.chart)
+        for ref_str in extract_images(proc.stdout, u.chart, unscannable):
+            images.setdefault(ref_str, set()).add(u.chart)
     return images, unscannable
+
+
+# Kinds that own a pod template, and the path from the document to its podSpec.
+# The deployable surface: every container the cluster starts comes from one of
+# these, so this is the population any question about "what runs" reads.
+POD_OWNERS = {
+    "Pod": ("spec",),
+    "Deployment": ("spec", "template", "spec"),
+    "StatefulSet": ("spec", "template", "spec"),
+    "DaemonSet": ("spec", "template", "spec"),
+    "ReplicaSet": ("spec", "template", "spec"),
+    "ReplicationController": ("spec", "template", "spec"),
+    "Job": ("spec", "template", "spec"),
+    "CronJob": ("spec", "jobTemplate", "spec", "template", "spec"),
+}
+
+CONTAINER_LISTS = ("initContainers", "containers", "ephemeralContainers")
+
+# Images that reach a cluster without ever appearing as a YAML `image:` key,
+# because a controller reads them out of a string payload it is handed. Neither
+# structural walk can see one, so the text scan is what finds them — and an entry
+# here is asserted in both directions below: one a structural walk DOES find is
+# stale, and an image only the text scan finds that is not listed means a walk
+# stopped seeing a shape.
+TEXT_ONLY_IMAGES = {
+    "docker.io/envoyproxy/ratelimit": "the Envoy Gateway controller reads the rate-limit "
+                                      "image out of its own EnvoyGateway ConfigMap, so it "
+                                      "is a string inside a config blob rather than a "
+                                      "container in a pod template",
+}
+
+
+# Charts that render no container image because they ship only CustomResource
+# definitions. Asserted in both directions by chart_coverage below: one that
+# starts shipping a workload fails here, and one that is named and no longer
+# rendered fails too.
+IMAGELESS_CHARTS = {
+    "ai-gateway-crds-helm": "the Envoy AI Gateway CRDs, applied ahead of the "
+                            "controller that renders one of their kinds",
+    "prometheus-operator-crds": "the Prometheus operator CRDs, applied ahead of "
+                                "the charts that render ServiceMonitors",
+}
+
+
+def chart_coverage(images: dict[str, set[str]], units) -> list[str]:
+    """Every chart the render covered contributed an image, or is declared not to.
+
+    A per-chart floor rather than a total, because a total cannot see the shape
+    that actually happened: an extractor missed the ordinary `- image:` list-item
+    spelling, two charts' entire workloads fell out of the inventory, and the
+    count stayed large enough to look healthy. One image per chart is derived
+    from the corpus — no constant to pick, and it moves with the catalog.
+    """
+    problems: list[str] = []
+    rendered = {u.chart for u in units if u.chart not in getattr(
+        render_addons, "SKIP_CHARTS", {})}
+    contributing = set().union(*images.values()) if images else set()
+
+    for chart in sorted(rendered - contributing):
+        if chart in IMAGELESS_CHARTS:
+            continue
+        problems.append(
+            f"{chart} rendered and contributed no image. Every chart shipping a "
+            f"workload contributes at least one, so either the extraction stopped "
+            f"seeing a shape this chart uses, or the chart ships only CRDs and "
+            f"belongs in IMAGELESS_CHARTS with the reason.")
+
+    for chart, reason in sorted(IMAGELESS_CHARTS.items()):
+        if chart not in rendered:
+            problems.append(
+                f"{chart} is declared imageless but the fleet no longer renders it — "
+                f"the entry outlived its chart. (recorded: {reason})")
+        elif chart in contributing:
+            problems.append(
+                f"{chart} is declared imageless and now contributes an image. It "
+                f"ships a workload; delete the entry so its images are scanned like "
+                f"every other chart's. (recorded: {reason})")
+    return problems
+
+
+def bare_name(ref: str) -> str:
+    """A reference with tag and digest removed, which is what an entry names.
+
+    The tag separator is the last colon in the FINAL path segment: a registry
+    with a port carries a colon that is not one, and cutting there produces a key
+    no entry can match and no reader can recognise.
+    """
+    ref = ref.split("@", 1)[0]
+    name = ref.rsplit("/", 1)[-1]
+    return ref.rsplit(":", 1)[0] if ":" in name else ref
+
+
+def _podspec(doc: dict, path: tuple[str, ...]) -> dict | None:
+    cur: object = doc
+    for key in path:
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(key)
+    return cur if isinstance(cur, dict) else None
+
+
+def podspec_images(docs: list) -> set[str]:
+    """Every container image the rendered documents start, walked structurally."""
+    found: set[str] = set()
+    for doc in docs:
+        if not isinstance(doc, dict):
+            continue
+        kind = doc.get("kind")
+        if not isinstance(kind, str):
+            continue
+        path = POD_OWNERS.get(kind)
+        if path is None:
+            continue
+        spec = _podspec(doc, path)
+        if spec is None:
+            continue
+        for key in CONTAINER_LISTS:
+            for container in spec.get(key) or []:
+                if isinstance(container, dict) and isinstance(container.get("image"), str):
+                    found.add(container["image"])
+    return found
+
+
+def keyed_images(node) -> set[str]:
+    """Every `image:` key anywhere in the documents, whatever declares it.
+
+    A custom resource can name an image its operator then runs — the agent
+    platform's eval-runner is one — and no pod template in this render carries
+    it. Restricting the walk to pod owners would drop it.
+    """
+    found: set[str] = set()
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "image" and isinstance(value, str):
+                found.add(value)
+            else:
+                found |= keyed_images(value)
+    elif isinstance(node, list):
+        for value in node:
+            found |= keyed_images(value)
+    return found
+
+
+def extract_images(rendered: str, chart: str,
+                   unscannable: list[tuple[str, str]]) -> set[str]:
+    """Every image one chart's render deploys, and an assertion that it is every one.
+
+    Structural first, because a pattern is a claim about spelling. IMAGE is
+    anchored on `image:` preceded only by whitespace, so the ordinary list-item
+    form `- image: <ref>` never matched it: against this catalog's render the
+    pattern yielded 55 images where the pod specs hold 57, and the four it missed
+    were the whole workload of two charts. A scanner that omits images silently
+    is worse than none, because its green result becomes evidence.
+
+    The text scan is kept as an independent floor under the walks rather than
+    replaced. A parser and a pattern fail on different inputs, so a structural
+    walk that stops seeing a shape is caught by the one that reads the bytes —
+    and an image ONLY the pattern finds is either a string payload a controller
+    reads (declared in TEXT_ONLY_IMAGES) or a walk that has drifted.
+    """
+    try:
+        docs = list(yaml.safe_load_all(rendered))
+    except yaml.YAMLError as exc:
+        first = str(exc).strip().splitlines()[0]
+        unscannable.append((chart, f"rendered YAML this gate could not parse — {first}"))
+        return set()
+
+    structural = podspec_images(docs) | keyed_images(docs)
+    textual = {m.group(1) for m in IMAGE.finditer(rendered)}
+
+    for ref_str in sorted(textual - structural):
+        if bare_name(ref_str) not in TEXT_ONLY_IMAGES:
+            unscannable.append((
+                chart,
+                f"{ref_str} appears in the rendered text and in no pod template or "
+                f"`image:` key — either a structural walk stopped seeing a shape, or "
+                f"a controller reads it out of a payload and it belongs in "
+                f"TEXT_ONLY_IMAGES with the reason"))
+    return structural | textual
 
 
 def classify(ref: str) -> str:
@@ -165,7 +355,7 @@ def main() -> int:
             print(f"        {path}: {err}")
         return 2
 
-    failures = []
+    failures = chart_coverage(images, render_addons.discover())
     mutable_seen: set[str] = set()
 
     for ref in sorted(images):

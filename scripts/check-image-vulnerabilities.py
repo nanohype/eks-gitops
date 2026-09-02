@@ -24,11 +24,24 @@ upstream chart images accumulate advisories rather than on anything the commit
 changed.
 
 That leaves a real objection, and the answer to it is the advisory file rather
-than a softer bar. Whether a CVE landed overnight is not a fact about the commit,
-so a new CRITICAL can turn a pull request red for a reason the pull request did
-not cause. What it cannot do is turn it red silently or permanently: the failure
-names the image, the CVE and the fixed version, and clears by bumping the chart
-or by recording why the finding stands. Both are decisions with an author.
+than a softer bar. What this gate reads is not a function of the commit alone: it
+is the commit against a vulnerability database and against whatever the pinned
+tags resolve to today. Both move, and they move in both directions.
+
+A database that GAINS an advisory turns a tree red that passed yesterday. The
+failure names the image, the CVE and the fixed version, and clears by bumping the
+chart or by recording why the finding stands.
+
+A database that LOSES one — a reclassification, a withdrawn advisory — turns a
+tree red that passed for the opposite reason: rules 3 and 4 fire, the entry
+acknowledging it no longer matches any scanned image, and the clearing action is
+deleting an entry. The same happens with no database change at all, because this
+fleet is pinned by version tag and a tag is not immutable (see
+check-image-pins.py on what counts as pinned): a publisher re-pushing the same
+tag on a patched base removes the finding underneath a standing entry.
+
+Neither direction is silent and neither is permanent, and both are decisions with
+an author. That is the whole of what the advisory file buys.
 
 THE ADVISORY FILE IS ASSERTED IN FOUR DIRECTIONS
 
@@ -104,11 +117,12 @@ SCAN_TIMEOUT = 600
 BLOCKING_SEVERITY = "CRITICAL"
 REPORTED_SEVERITIES = ["CRITICAL", "HIGH"]
 
-# A floor on IMAGES SCANNED, not on findings. Printing a denominator is not
-# gating on it: with no floor, a render that produced two images would report the
-# fleet clean. Set well under what the catalog renders, so it catches "scanned
-# almost nothing" rather than "a chart was removed".
-MIN_IMAGES = 40
+# The floor on images scanned is DERIVED, not picked: one image per chart the
+# render covers, asserted per chart by check-image-pins.chart_coverage. A total
+# cannot see the shape that actually happened — an extractor missed the ordinary
+# `- image:` list-item spelling, two charts' whole workloads left the inventory,
+# and the count stayed large enough to look healthy. The per-chart form catches
+# exactly that, and it moves with the catalog rather than with a constant.
 
 # A digest-pinned image with historical CRITICALs that have published fixes.
 # Alpine 3.10 is end-of-life, so these cannot be patched away underneath the
@@ -205,8 +219,18 @@ def verdict(findings: list[Finding], advisories: list[dict]) -> list[str]:
 
     by_key: dict[tuple[str, str], dict] = {}
     for entry in advisories:
+        if not isinstance(entry, dict):
+            problems.append(
+                f"image-advisories.yaml: an entry under `advisories:` is a "
+                f"{type(entry).__name__}, not a mapping — nothing can be read from it, "
+                f"and the findings it was meant to acknowledge are unacknowledged.")
+            continue
         key = (str(entry.get("id", "")), str(entry.get("package", "")))
-        if not entry.get("reason", "").strip():
+        # str() around the read, not just the strip: a `reason:` key written and
+        # left empty parses as None, and `None.strip()` raises — reaching a
+        # traceback instead of the sentence two lines below, which is written for
+        # exactly this case. id and package were already read defensively.
+        if not str(entry.get("reason") or "").strip():
             problems.append(
                 f"image-advisories.yaml: {key[0]} in {key[1]} is acknowledged with no "
                 f"reason recorded, so nothing states what would let it be removed.")
@@ -214,7 +238,6 @@ def verdict(findings: list[Finding], advisories: list[dict]) -> list[str]:
 
     # 1. A blocking finding nothing acknowledges — the gate's own question.
     # 2. A blocking finding on an image its entry does not name.
-    covered: set[tuple[str, str, str]] = set()
     for f in blocking:
         key = (f.id, f.package)
         acknowledged = by_key.get(key)
@@ -232,7 +255,6 @@ def verdict(findings: list[Finding], advisories: list[dict]) -> list[str]:
                 f"not list {f.bare}. An acknowledgement covers the images it names — a "
                 f"new image acquiring a known CRITICAL is a decision, not an inheritance.")
             continue
-        covered.add((f.id, f.package, f.bare))
 
     # 3. An entry no image carries. 4. An entry listing an image with no such finding.
     carried = {(f.id, f.package, f.bare) for f in blocking}
@@ -254,7 +276,6 @@ def verdict(findings: list[Finding], advisories: list[dict]) -> list[str]:
                 problems.append(
                     f"image-advisories.yaml: {key[0]} in {key[1]} lists {img}, which no "
                     f"longer carries it. Drop that image from the entry.")
-    del covered
     return list(dict.fromkeys(problems))
 
 
@@ -302,10 +323,17 @@ def main() -> int:
                    "the scan below would cover part of the fleet and report on all of "
                    "it.",
                    *(f"  {path}: {err}" for path, err in unrendered))
-    if len(images) < MIN_IMAGES:
-        cannot_run(f"Cannot run: the render produced {len(images)} image(s), under the "
-                   f"floor of {MIN_IMAGES}. A scan over almost nothing reports the same "
-                   f"as a scan over a clean fleet.")
+    units = image_pins.render_addons.discover()
+    coverage = image_pins.chart_coverage(images, units)
+    if coverage:
+        cannot_run("Cannot run: the image population is smaller than the charts that "
+                   "rendered it, so a scan over it says less than it appears to:",
+                   *(f"  {problem}" for problem in coverage))
+    if len(images) < len(units):
+        cannot_run(f"Cannot run: the render produced {len(images)} image(s) from "
+                   f"{len(units)} chart(s). Every chart shipping a workload "
+                   f"contributes at least one, so the walk got smaller rather than "
+                   f"the catalog.")
 
     findings: list[Finding] = []
     unscannable: list[str] = []

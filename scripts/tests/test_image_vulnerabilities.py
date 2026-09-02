@@ -186,13 +186,11 @@ class TheShippedAdvisoryFile(unittest.TestCase):
 class TheFloorsThatStopAVacuousPass(unittest.TestCase):
     """A scan over almost nothing reports the same as a scan over a clean fleet."""
 
-    def test_a_floor_on_images_scanned_exists(self):
-        """Zero is the vacuous pass with a constant in front of it.
-
-        Whether it sits below the catalog's real render is asserted against the
-        tree in test_corpus_floors.py, not against a number written here.
-        """
-        self.assertGreater(gate.MIN_IMAGES, 0)
+    def test_the_floor_on_images_scanned_is_derived_per_chart(self):
+        """A constant can be set above the render and make the gate always red,
+        or below it and let a shrunken walk through. One image per chart the
+        render covers is neither: it moves with the catalog."""
+        self.assertFalse(hasattr(gate, "MIN_IMAGES"))
 
     def test_the_canary_is_pinned_by_digest(self):
         """A tag can be repointed at a rebuilt, clean image, and then the canary

@@ -37,6 +37,7 @@ EXPECTED = (
     "test_falco_rule_floor",
     "test_gatelib",
     "test_image_vulnerabilities",
+    "test_image_extraction",
     "test_corpus_floors",
 )
 
@@ -78,7 +79,7 @@ MIN_TESTS = 31
 # largest in the tree, and among them are the gates on the paths testing-rubric
 # calls security-critical. So this figure being low is not offset by behavioural
 # coverage for precisely the files where that offset was being claimed.
-COMBINED_FLOOR = 12
+COMBINED_FLOOR = 20
 
 # A ceiling on gate scripts carrying NO unit coverage at all, complementing the
 # floors below. The floors stop a covered file regressing; nothing stopped a NEW
@@ -105,7 +106,8 @@ PER_GATE_FLOORS = {
     "scripts/check-label-values.py": 33,
     "scripts/check-sync-waves.py": 10,
     "scripts/gatelib.py": 55,
-    "scripts/check-image-vulnerabilities.py": 45,
+    "scripts/check-image-vulnerabilities.py": 41,
+    "scripts/check-image-pins.py": 47,
 }
 
 
