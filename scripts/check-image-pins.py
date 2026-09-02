@@ -102,16 +102,34 @@ IMAGE = re.compile(r'^\s*image:\s*"?([^"\s]+)"?\s*$', re.M)
 # Exemptions, asserted against the real render. An entry naming an image the
 # fleet no longer renders mutably FAILS: an exemption that matches nothing is a
 # description that rots, and it rots toward permissive.
-ALLOWED_MUTABLE: dict[str, str] = {}
+ALLOWED_MUTABLE: dict[str, str] = {
+    "ghcr.io/kyverno/kyverno":
+        "the kyverno chart carries this in a ConfigMap as the CLI image for "
+        "`kyverno` invocations, with no values key to pin it. Invisible until "
+        "controller-supplied references entered the population. Clears when the "
+        "chart exposes the tag, or when this catalog stops shipping that "
+        "ConfigMap.",
+    "natsio/prometheus-nats-exporter":
+        "an argo-events eventbus default the controller passes to the NATS "
+        "StatefulSet it creates. The chart pins two other tags of this image and "
+        "leaves the exporter's unset. Clears on a chart version that pins it.",
+}
 
 
-def inventory(env: str) -> tuple[dict[str, set[str]], list[tuple[str, str]]]:
-    """(image -> charts that render it, [(path, why-not-scanned)])."""
+def inventory(env: str, seen: set[str] | None = None
+              ) -> tuple[dict[str, set[str]], list[tuple[str, str]]]:
+    """(image -> charts that render it, [(path, why-not-scanned)]).
+
+    `seen`, if given, collects every image-shaped reference the render carried —
+    including the ones excluded from the population — so a declaration can be
+    checked against what the render contains rather than against what survived.
+    """
     gatelib.require('helm')
     units = render_addons.discover()
     aliases = render_addons.add_repos(units)
     images: dict[str, set[str]] = {}
     unscannable: list[tuple[str, str]] = []
+    seen = set() if seen is None else seen
 
     for u in units:
         if u.chart in getattr(render_addons, "SKIP_CHARTS", {}):
@@ -137,38 +155,65 @@ def inventory(env: str) -> tuple[dict[str, set[str]], list[tuple[str, str]]]:
         if proc.returncode != 0:
             unscannable.append((u.path, (proc.stderr.strip() or proc.stdout.strip())[:200]))
             continue
-        for ref_str in extract_images(proc.stdout, u.chart, unscannable):
+        for ref_str in extract_images(proc.stdout, u.chart, unscannable, seen):
             images.setdefault(ref_str, set()).add(u.chart)
     return images, unscannable
 
 
-# Kinds that own a pod template, and the path from the document to its podSpec.
-# The deployable surface: every container the cluster starts comes from one of
-# these, so this is the population any question about "what runs" reads.
-POD_OWNERS = {
-    "Pod": ("spec",),
-    "Deployment": ("spec", "template", "spec"),
-    "StatefulSet": ("spec", "template", "spec"),
-    "DaemonSet": ("spec", "template", "spec"),
-    "ReplicaSet": ("spec", "template", "spec"),
-    "ReplicationController": ("spec", "template", "spec"),
-    "Job": ("spec", "template", "spec"),
-    "CronJob": ("spec", "jobTemplate", "spec", "template", "spec"),
+# An image reference as a controller is handed one: in a flag, a ConfigMap value,
+# a CR field. Requires a path separator, which is what separates an image from
+# the host:port strings that fill a rendered config — `loki.monitoring.svc:3100`
+# and `127.0.0.1:8080` are addresses, not images, and no grammar that admits them
+# can be read by a human.
+IMAGE_REF = re.compile(
+    r"\b((?:[a-z0-9][a-z0-9._-]*(?:\.[a-z0-9._-]+)+(?::\d+)?/)?"
+    r"[a-z0-9][a-z0-9._-]*(?:/[a-z0-9][a-z0-9._-]*)+:[a-zA-Z0-9][\w.-]*)\b")
+
+# Images a CONTROLLER starts, which no pod template in this render declares. The
+# controller is handed the reference and creates the pod later, so the deployable
+# surface is strictly larger than what `helm template` shows as a container.
+#
+# Whether a given string is one of these is a fact about a controller's behaviour,
+# and this gate reads manifests. So it is declared rather than inferred, and the
+# declaration is what the assertion is against: every image-shaped string the
+# render carries must be in the structural population, on this list, or on
+# NOT_A_CONTAINER. An unclassified one is reported, so the answer to "is this
+# deployed?" is never silence.
+CONTROLLER_IMAGES = {
+    "docker.io/envoyproxy/ratelimit":
+        "the Envoy Gateway controller reads it from its own EnvoyGateway "
+        "ConfigMap and creates the rate-limit Deployment",
+    "docker.io/envoyproxy/ai-gateway-extproc":
+        "the AI Gateway controller injects it as the ext-proc sidecar on every "
+        "gateway pod it manages",
+    "ghcr.io/aquasecurity/node-collector":
+        "trivy-operator creates one node-collector pod per node scan",
+    "quay.io/argoproj/argoexec":
+        "the workflow controller injects it as the init and wait container of "
+        "every workflow step pod",
+    "quay.io/jetstack/cert-manager-acmesolver":
+        "cert-manager creates one solver pod per HTTP-01 challenge",
+    "natsio/nats-server-config-reloader":
+        "the argo-events eventbus controller creates the NATS StatefulSet with "
+        "this sidecar",
+    "natsio/prometheus-nats-exporter":
+        "the same controller, same StatefulSet",
+    "ghcr.io/kyverno/kyverno":
+        "the chart's own CLI image reference, carried in a ConfigMap for "
+        "`kyverno` invocations rather than as a container",
 }
 
-CONTAINER_LISTS = ("initContainers", "containers", "ephemeralContainers")
-
-# Images that reach a cluster without ever appearing as a YAML `image:` key,
-# because a controller reads them out of a string payload it is handed. Neither
-# structural walk can see one, so the text scan is what finds them — and an entry
-# here is asserted in both directions below: one a structural walk DOES find is
-# stale, and an image only the text scan finds that is not listed means a walk
-# stopped seeing a shape.
-TEXT_ONLY_IMAGES = {
-    "docker.io/envoyproxy/ratelimit": "the Envoy Gateway controller reads the rate-limit "
-                                      "image out of its own EnvoyGateway ConfigMap, so it "
-                                      "is a string inside a config blob rather than a "
-                                      "container in a pod template",
+# Image-shaped strings that are not container images. An OCI artifact reference
+# resolves through a registry and looks identical, and pulling one starts no
+# container — so scanning it for a running-container CVE would report on
+# something nothing runs.
+NOT_A_CONTAINER = {
+    "ghcr.io/falcosecurity/plugins/plugin/container":
+        "a falcoctl rules/plugin OCI artifact, unpacked into an emptyDir",
+    "ghcr.io/falcosecurity/plugins/plugin/k8smeta":
+        "the same, the k8smeta plugin",
+    "mirror.gcr.io/aquasec/trivy-checks":
+        "the trivy checks bundle, an OCI artifact trivy-operator downloads",
 }
 
 
@@ -184,7 +229,8 @@ IMAGELESS_CHARTS = {
 }
 
 
-def chart_coverage(images: dict[str, set[str]], units) -> list[str]:
+def chart_coverage(images: dict[str, set[str]], units,
+                   seen: set[str] | None = None) -> list[str]:
     """Every chart the render covered contributed an image, or is declared not to.
 
     A per-chart floor rather than a total, because a total cannot see the shape
@@ -194,6 +240,11 @@ def chart_coverage(images: dict[str, set[str]], units) -> list[str]:
     from the corpus — no constant to pick, and it moves with the catalog.
     """
     problems: list[str] = []
+    # Keyed by chart NAME, which is what `images` records, and this catalog pins
+    # opentelemetry-collector three times — otel-agent, otel-gateway and
+    # otel-gateway-floor. Any one of those can render nothing while the other two
+    # keep the name contributing, so the floor is per chart name and says so
+    # rather than reading as per render unit.
     rendered = {u.chart for u in units if u.chart not in getattr(
         render_addons, "SKIP_CHARTS", {})}
     contributing = set().union(*images.values()) if images else set()
@@ -206,6 +257,9 @@ def chart_coverage(images: dict[str, set[str]], units) -> list[str]:
             f"workload contributes at least one, so either the extraction stopped "
             f"seeing a shape this chart uses, or the chart ships only CRDs and "
             f"belongs in IMAGELESS_CHARTS with the reason.")
+
+    problems += declaration_rot(seen if seen is not None
+                                else {bare_name(ref) for ref in images})
 
     for chart, reason in sorted(IMAGELESS_CHARTS.items()):
         if chart not in rendered:
@@ -232,43 +286,37 @@ def bare_name(ref: str) -> str:
     return ref.rsplit(":", 1)[0] if ":" in name else ref
 
 
-def _podspec(doc: dict, path: tuple[str, ...]) -> dict | None:
-    cur: object = doc
-    for key in path:
-        if not isinstance(cur, dict):
-            return None
-        cur = cur.get(key)
-    return cur if isinstance(cur, dict) else None
+def string_scalars(node) -> list[str]:
+    """Every string a rendered document carries, at any depth.
 
-
-def podspec_images(docs: list) -> set[str]:
-    """Every container image the rendered documents start, walked structurally."""
-    found: set[str] = set()
-    for doc in docs:
-        if not isinstance(doc, dict):
-            continue
-        kind = doc.get("kind")
-        if not isinstance(kind, str):
-            continue
-        path = POD_OWNERS.get(kind)
-        if path is None:
-            continue
-        spec = _podspec(doc, path)
-        if spec is None:
-            continue
-        for key in CONTAINER_LISTS:
-            for container in spec.get(key) or []:
-                if isinstance(container, dict) and isinstance(container.get("image"), str):
-                    found.add(container["image"])
-    return found
+    A controller is handed an image the same way it is handed anything else — a
+    flag in `args`, a value in a ConfigMap, a field on a custom resource — so the
+    surface an image can arrive through is every string, not a key name.
+    """
+    out: list[str] = []
+    if isinstance(node, dict):
+        for value in node.values():
+            out.extend(string_scalars(value))
+    elif isinstance(node, list):
+        for value in node:
+            out.extend(string_scalars(value))
+    elif isinstance(node, str):
+        out.append(node)
+    return out
 
 
 def keyed_images(node) -> set[str]:
     """Every `image:` key anywhere in the documents, whatever declares it.
 
-    A custom resource can name an image its operator then runs — the agent
-    platform's eval-runner is one — and no pod template in this render carries
-    it. Restricting the walk to pod owners would drop it.
+    Structure, not text. The pattern this replaced was anchored on `image:`
+    preceded only by whitespace, so the ordinary list-item form `- image: <ref>`
+    under `containers:` never matched it and two charts' entire workloads were
+    absent from a scan reporting fifty-five images.
+
+    Deliberately not restricted to pod templates. A walk over pod owners is a
+    strict SUBSET of this one — every container's image is an `image:` key — so
+    it would be mechanism with no effect, and it would drop the custom resources
+    that name an image an operator then runs.
     """
     found: set[str] = set()
     if isinstance(node, dict):
@@ -284,7 +332,8 @@ def keyed_images(node) -> set[str]:
 
 
 def extract_images(rendered: str, chart: str,
-                   unscannable: list[tuple[str, str]]) -> set[str]:
+                   unscannable: list[tuple[str, str]],
+                   seen: set[str] | None = None) -> set[str]:
     """Every image one chart's render deploys, and an assertion that it is every one.
 
     Structural first, because a pattern is a claim about spelling. IMAGE is
@@ -307,18 +356,55 @@ def extract_images(rendered: str, chart: str,
         unscannable.append((chart, f"rendered YAML this gate could not parse — {first}"))
         return set()
 
-    structural = podspec_images(docs) | keyed_images(docs)
+    structural = keyed_images(docs)
     textual = {m.group(1) for m in IMAGE.finditer(rendered)}
+    candidates = {c for s in string_scalars(docs) for c in IMAGE_REF.findall(s)}
+    if seen is not None:
+        # Every image-shaped reference the render carried, including the ones
+        # excluded below. A declaration is about what the render CONTAINS, so
+        # checking it against the surviving population would report every
+        # NOT_A_CONTAINER entry as stale by construction.
+        seen |= {bare_name(r) for r in structural | textual | candidates}
 
-    for ref_str in sorted(textual - structural):
-        if bare_name(ref_str) not in TEXT_ONLY_IMAGES:
-            unscannable.append((
-                chart,
-                f"{ref_str} appears in the rendered text and in no pod template or "
-                f"`image:` key — either a structural walk stopped seeing a shape, or "
-                f"a controller reads it out of a payload and it belongs in "
-                f"TEXT_ONLY_IMAGES with the reason"))
-    return structural | textual
+    # Compared on the bare name, because the same image reaches a render twice:
+    # once as a container reference carrying a digest, and once as a bare
+    # `repo:tag` in an annotation or a config value. Those are one image, and
+    # reporting the second as unreachable would be reporting the first.
+    structural_bare = {bare_name(r) for r in structural}
+    controller: set[str] = set()
+    for ref_str in sorted((textual | candidates) - structural):
+        bare = bare_name(ref_str)
+        if bare in structural_bare or bare in NOT_A_CONTAINER:
+            continue
+        if bare in CONTROLLER_IMAGES:
+            controller.add(ref_str)
+            continue
+        unscannable.append((
+            chart,
+            f"{ref_str} is image-shaped and reaches no pod template or `image:` key. "
+            f"Either a structural walk stopped seeing a shape, or a controller is "
+            f"handed it and starts a pod later — in which case it belongs in "
+            f"CONTROLLER_IMAGES with the controller that starts it, or in "
+            f"NOT_A_CONTAINER if pulling it runs nothing"))
+    return structural | textual | controller
+
+
+def declaration_rot(seen: set[str]) -> list[str]:
+    """Declarations the render no longer supports.
+
+    Both lists say something about images this catalog renders. An entry for one
+    it does not is an excuse for nothing, and an exemption list nobody re-reads
+    only ever widens.
+    """
+    problems = []
+    for table, label in ((CONTROLLER_IMAGES, "started by a controller"),
+                         (NOT_A_CONTAINER, "not a container image")):
+        for bare, reason in sorted(table.items()):
+            if bare not in seen:
+                problems.append(
+                    f"{bare} is declared {label} and the fleet renders no reference to "
+                    f"it — the declaration outlived its image. (recorded: {reason})")
+    return problems
 
 
 def classify(ref: str) -> str:
@@ -338,7 +424,8 @@ def main() -> int:
     ap.add_argument("--env", default="production")
     args = ap.parse_args()
 
-    images, unscannable = inventory(args.env)
+    seen: set[str] = set()
+    images, unscannable = inventory(args.env, seen)
 
     if args.list:
         for ref in sorted(images):
@@ -355,7 +442,7 @@ def main() -> int:
             print(f"        {path}: {err}")
         return 2
 
-    failures = chart_coverage(images, render_addons.discover())
+    failures = chart_coverage(images, render_addons.discover(), seen)
     mutable_seen: set[str] = set()
 
     for ref in sorted(images):

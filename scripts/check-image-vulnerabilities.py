@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Every image the pinned charts reference is scanned, and a CRITICAL is a decision.
+"""Every image the production render carries is scanned, and a CRITICAL is a decision.
 
     scripts/check-image-vulnerabilities.py             # blocking gate
     scripts/check-image-vulnerabilities.py --list      # print every finding
@@ -67,6 +67,17 @@ So every run first scans a digest-pinned image with historical, fixed CRITICALs
 and requires them to come back. A canary that comes back clean exits 2: it is a
 statement about the scanner, not about the catalogue, and the two must not print
 the same thing.
+
+ONE ENVIRONMENT, SAID PLAINLY
+
+The population is the production render. render-addons produces four —
+development, staging, production and hub — and nothing here asserts they agree,
+so a component enabled only in development or on the hub is deployed by this
+fleet and is not scanned. That is a narrower claim than "every image the fleet
+renders", and it is the claim this gate holds: every image the PRODUCTION render
+carries. Widening it means four scans of seventy images per run, which is a cost
+decision rather than a technical one, and until it is taken the boundary belongs
+in writing rather than in the reader's assumption.
 
 UNSCANNABLE IS NOT CLEAN
 
@@ -258,7 +269,10 @@ def verdict(findings: list[Finding], advisories: list[dict]) -> list[str]:
 
     # 3. An entry no image carries. 4. An entry listing an image with no such finding.
     carried = {(f.id, f.package, f.bare) for f in blocking}
-    for entry in advisories:
+    # The mappings only: a non-mapping entry is already reported above, and
+    # reaching `.get` on it here is the traceback that sentence exists to
+    # replace.
+    for entry in [e for e in advisories if isinstance(e, dict)]:
         key = (str(entry.get("id", "")), str(entry.get("package", "")))
         listed = [str(i) for i in (entry.get("images") or [])]
         if not listed:
@@ -317,14 +331,15 @@ def main() -> int:
     if args.self_test:
         return 0
 
-    images, unrendered = image_pins.inventory(args.env)
+    seen: set[str] = set()
+    images, unrendered = image_pins.inventory(args.env, seen)
     if unrendered:
         cannot_run("Cannot run: charts that did not render contributed no images, so "
                    "the scan below would cover part of the fleet and report on all of "
                    "it.",
                    *(f"  {path}: {err}" for path, err in unrendered))
     units = image_pins.render_addons.discover()
-    coverage = image_pins.chart_coverage(images, units)
+    coverage = image_pins.chart_coverage(images, units, seen)
     if coverage:
         cannot_run("Cannot run: the image population is smaller than the charts that "
                    "rendered it, so a scan over it says less than it appears to:",

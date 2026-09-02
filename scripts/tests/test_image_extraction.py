@@ -82,7 +82,7 @@ spec:
         self.assertEqual(found, {"init:1", "main:2", "debug:3"})
 
     def test_a_cronjob_pod_template_is_reached(self):
-        """Its podSpec sits two levels deeper than every other owner's."""
+        """Nesting depth is not a case the walk has to know about."""
         rendered = """
 apiVersion: batch/v1
 kind: CronJob
@@ -97,18 +97,6 @@ spec:
 """
         found, _ = self.images(rendered)
         self.assertEqual(found, {"aws-cli:2"})
-
-    def test_every_pod_owner_kind_is_walked(self):
-        for kind in sorted(gate.POD_OWNERS):
-            with self.subTest(kind=kind):
-                path = gate.POD_OWNERS[kind]
-                spec: dict = {"containers": [{"name": "c", "image": "x:1"}]}
-                for key in reversed(path[1:]):
-                    spec = {key: spec}
-                import yaml
-                doc = yaml.safe_dump({"apiVersion": "v1", "kind": kind, "spec": spec})
-                found, _ = self.images(doc)
-                self.assertEqual(found, {"x:1"})
 
     def test_an_image_key_outside_a_pod_template_is_found(self):
         """A custom resource can name an image its operator then runs."""
@@ -141,8 +129,10 @@ data:
         self.assertEqual(len(problems), 1)
         self.assertIn("stopped seeing a shape", problems[0][1])
 
-    def test_a_declared_text_only_image_is_not_reported(self):
-        declared = next(iter(gate.TEXT_ONLY_IMAGES))
+    def test_a_declared_controller_image_is_not_reported(self):
+        """A controller is handed the reference and creates the pod later, so no
+        pod template in this render declares it."""
+        declared = next(iter(gate.CONTROLLER_IMAGES))
         rendered = f"""
 apiVersion: v1
 kind: ConfigMap
@@ -152,6 +142,42 @@ data:
 """
         found, problems = self.images(rendered)
         self.assertIn(f"{declared}:abc123", found)
+        self.assertEqual(problems, [])
+
+    def test_an_image_in_a_controller_flag_is_a_candidate(self):
+        """The shape neither the key walk nor the line-anchored pattern can see.
+
+        A controller handed `--worker-image=<ref>` creates the pod later; the
+        reference is an argument, not a key, and it is not at line start.
+        """
+        rendered = """
+apiVersion: apps/v1
+kind: Deployment
+spec:
+  template:
+    spec:
+      containers:
+        - name: c
+          image: ghcr.io/example/app:1.0.0
+          args: ["--worker-image=ghcr.io/example/undeclared-worker:2.0"]
+"""
+        found, problems = self.images(rendered)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("ghcr.io/example/undeclared-worker:2.0", problems[0][1])
+        self.assertIn("a controller is handed it", problems[0][1])
+
+    def test_a_host_and_port_is_not_an_image(self):
+        """A rendered config is full of addresses; a grammar admitting them
+        cannot be read, and every one would demand a declaration."""
+        rendered = """
+apiVersion: v1
+kind: ConfigMap
+data:
+  cfg: |
+    endpoint: loki.monitoring.svc.cluster.local:3100
+    bind: 127.0.0.1:8080
+"""
+        found, problems = self.images(rendered)
         self.assertEqual(problems, [])
 
     def test_a_render_that_will_not_parse_is_reported_not_dropped(self):
@@ -173,12 +199,22 @@ data:
 class EveryChartContributesAnImage(unittest.TestCase):
     """A per-chart floor, because a total cannot see two charts falling out."""
 
-    def coverage(self, images, charts):
-        """Every declared imageless chart is rendered unless a case says otherwise,
-        so a fixture does not trip the exemption's own rot rule by omission."""
+    def coverage(self, images, charts, seen=None):
+        """Every declared imageless chart is rendered, and every declared image
+        is seen, unless a case says otherwise — so a fixture does not trip a rot
+        rule it is not about.
+        """
         units = [Unit(c) for c in charts] + [
             Unit(c) for c in gate.IMAGELESS_CHARTS if c not in charts]
-        return gate.chart_coverage(images, units)
+        if seen is None:
+            seen = set(gate.CONTROLLER_IMAGES) | set(gate.NOT_A_CONTAINER)
+        return gate.chart_coverage(images, units, seen)
+
+    def test_declaration_rot_reaches_the_verdict(self):
+        """chart_coverage is where the rot rule is consulted, so gutting the call
+        must fail here and not only where the rule itself is tested."""
+        problems = self.coverage({"x:1": {"a"}}, ["a"], seen=set())
+        self.assertTrue(any("outlived its image" in p for p in problems))
 
     def test_a_chart_contributing_nothing_is_reported(self):
         problems = self.coverage({"x:1": {"a"}}, ["a", "b"])
@@ -196,7 +232,8 @@ class EveryChartContributesAnImage(unittest.TestCase):
     def test_a_declared_chart_the_fleet_stopped_rendering_is_reported(self):
         """The exemption is where a per-chart floor rots: an entry excusing a
         chart nobody pins excuses nothing and reads as considered."""
-        problems = gate.chart_coverage({"x:1": {"a"}}, [Unit("a")])
+        seen = set(gate.CONTROLLER_IMAGES) | set(gate.NOT_A_CONTAINER)
+        problems = gate.chart_coverage({"x:1": {"a"}}, [Unit("a")], seen)
         self.assertEqual(len(problems), len(gate.IMAGELESS_CHARTS))
         self.assertIn("outlived its chart", problems[0])
 
@@ -213,3 +250,37 @@ class EveryChartContributesAnImage(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DeclarationsMatchTheRender(unittest.TestCase):
+    """Both declaration tables say something about images this catalog renders.
+
+    An entry for one it does not is an excuse for nothing, and an exemption list
+    nobody re-reads only ever widens. This is the reverse direction the
+    controller-image comment claims and did not have.
+    """
+
+    def test_a_controller_image_the_render_dropped_is_reported(self):
+        declared = next(iter(gate.CONTROLLER_IMAGES))
+        problems = gate.declaration_rot(
+            (set(gate.CONTROLLER_IMAGES) | set(gate.NOT_A_CONTAINER)) - {declared})
+        self.assertEqual(len(problems), 1)
+        self.assertIn(declared, problems[0])
+        self.assertIn("outlived its image", problems[0])
+
+    def test_a_non_container_declaration_the_render_dropped_is_reported(self):
+        declared = next(iter(gate.NOT_A_CONTAINER))
+        problems = gate.declaration_rot(
+            (set(gate.CONTROLLER_IMAGES) | set(gate.NOT_A_CONTAINER)) - {declared})
+        self.assertEqual(len(problems), 1)
+        self.assertIn(declared, problems[0])
+
+    def test_every_declaration_matched_passes(self):
+        self.assertEqual(
+            gate.declaration_rot(set(gate.CONTROLLER_IMAGES) | set(gate.NOT_A_CONTAINER)),
+            [])
+
+    def test_an_empty_render_reports_every_declaration(self):
+        problems = gate.declaration_rot(set())
+        self.assertEqual(len(problems),
+                         len(gate.CONTROLLER_IMAGES) + len(gate.NOT_A_CONTAINER))

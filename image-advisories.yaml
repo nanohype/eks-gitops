@@ -46,6 +46,7 @@ advisories:
       image as chart pins move to versions built against 0.55.0 or later.
     images:
       - docker.io/envoyproxy/ai-gateway-controller
+      - docker.io/envoyproxy/ai-gateway-extproc
       - docker.io/envoyproxy/gateway
       - docker.io/falcosecurity/falcoctl
       - docker.io/grafana/loki
@@ -59,11 +60,13 @@ advisories:
       - ghcr.io/kedacore/keda-metrics-apiserver
       - ghcr.io/opencost/opencost
       - mirror.gcr.io/aquasec/trivy-operator
+      - natsio/prometheus-nats-exporter
       - otel/opentelemetry-collector-contrib
       - prom/memcached-exporter
       - quay.io/argoproj/argo-events
       - quay.io/argoproj/argo-rollouts
       - quay.io/argoproj/argocli
+      - quay.io/argoproj/argoexec
       - quay.io/argoproj/kubectl-argo-rollouts
       - quay.io/argoproj/workflow-controller
       - quay.io/cilium/cilium
@@ -90,6 +93,9 @@ advisories:
       toolchain. Fixed in Go 1.24.13, 1.25.7 and 1.26.0-rc.3.
     images:
       - docker.io/falcosecurity/k8s-metacollector
+      - ghcr.io/aquasecurity/node-collector
+      - natsio/nats-server-config-reloader
+      - natsio/prometheus-nats-exporter
       - quay.io/argoproj/argo-events
       - registry.k8s.io/metrics-server/metrics-server
       - us-docker.pkg.dev/fairwinds-ops/oss/goldilocks
@@ -102,6 +108,8 @@ advisories:
       1.21.11 and 1.22.4. The falco chart pin is what moves it.
     images:
       - docker.io/falcosecurity/k8s-metacollector
+      - natsio/nats-server-config-reloader
+      - natsio/prometheus-nats-exporter
 
   - id: CVE-2026-33186
     package: google.golang.org/grpc
@@ -137,6 +145,7 @@ advisories:
       OpenSSL in the goldilocks image's Alpine base, fixed in 3.5.6-r0. A base
       layer this catalog does not build; it moves with the goldilocks chart pin.
     images:
+      - ghcr.io/aquasecurity/node-collector
       - us-docker.pkg.dev/fairwinds-ops/oss/goldilocks
 
   - id: CVE-2026-31789
@@ -145,6 +154,7 @@ advisories:
       The same OpenSSL advisory against the sibling package in the same base
       layer, cleared by the same chart bump as the libcrypto3 entry.
     images:
+      - ghcr.io/aquasecurity/node-collector
       - us-docker.pkg.dev/fairwinds-ops/oss/goldilocks
 
   - id: CVE-2026-59873
@@ -156,3 +166,89 @@ advisories:
       repository can take on its own.
     images:
       - ghcr.io/nanohype/eks-agent-platform/eval-runner
+
+  # ── Images a controller starts ────────────────────────────────────────
+  #
+  # Every entry below was invisible until the population took in the images a
+  # controller is handed rather than only the containers a pod template declares.
+  # None of them appears in any pod spec this catalog renders; each is a
+  # reference an operator reads and then creates a pod from.
+
+  - id: CVE-2026-22039
+    package: github.com/kyverno/kyverno
+    reason: >-
+      A CRITICAL in the policy engine itself, on the CLI image the kyverno chart
+      carries in a ConfigMap — the same reference ALLOWED_MUTABLE records as
+      untagged. Fixed in 1.15.3 and 1.16.3; the catalog pins chart 3.8.2, whose
+      appVersion is 1.18.2, so the ConfigMap's `:latest` is what carries the
+      finding rather than the running controllers. Clears on a chart that pins
+      that reference.
+    images:
+      - ghcr.io/kyverno/kyverno
+
+  - id: CVE-2025-30215
+    package: github.com/nats-io/nats-server/v2
+    reason: >-
+      The NATS server compiled into the exporter image the argo-events eventbus
+      controller starts. Fixed in 2.11.1 and 2.10.27; the argo-events chart
+      leaves this image's tag unset, so it moves only when the chart does.
+    images:
+      - natsio/prometheus-nats-exporter
+
+  - id: CVE-2022-48174
+    package: busybox
+    reason: >-
+      The Alpine base of the NATS config-reloader sidecar the eventbus controller
+      creates. Fixed in 1.36.1-r1; this catalog does not build the image and the
+      argo-events chart pins the tag.
+    images:
+      - natsio/nats-server-config-reloader
+
+  - id: CVE-2022-48174
+    package: busybox-binsh
+    reason: >-
+      The same advisory against the sibling package in the same base layer,
+      cleared by the same chart bump.
+    images:
+      - natsio/nats-server-config-reloader
+
+  - id: CVE-2022-48174
+    package: ssl_client
+    reason: >-
+      The third package of the same busybox advisory in the same base layer.
+    images:
+      - natsio/nats-server-config-reloader
+
+  - id: CVE-2022-37434
+    package: zlib
+    reason: >-
+      zlib in the same NATS config-reloader base layer, fixed in 1.2.12-r2. The
+      image is pinned old by the argo-events chart; nothing here rebuilds it.
+    images:
+      - natsio/nats-server-config-reloader
+
+  - id: CVE-2022-23806
+    package: stdlib
+    reason: >-
+      The Go standard library compiled into the NATS exporter, fixed in 1.16.14
+      and 1.17.7. Moves when the argo-events chart ships an image built on a
+      patched toolchain.
+    images:
+      - natsio/prometheus-nats-exporter
+
+  - id: CVE-2023-24538
+    package: stdlib
+    reason: >-
+      The same shape against both NATS images the eventbus controller starts,
+      fixed in Go 1.19.8 and 1.20.3.
+    images:
+      - natsio/nats-server-config-reloader
+      - natsio/prometheus-nats-exporter
+
+  - id: CVE-2023-24540
+    package: stdlib
+    reason: >-
+      The same two images and the same remedy, fixed in Go 1.19.9 and 1.20.4.
+    images:
+      - natsio/nats-server-config-reloader
+      - natsio/prometheus-nats-exporter
