@@ -248,6 +248,10 @@ NOT_GATES = {
     "tests/reverify-gates.sh": "the Tier-1 re-verification harness; it drives the "
                                "gates rather than checking the tree, and asserts "
                                "its own pass/fail totals",
+    "tests/reverify-tests.sh": "the unit-test re-verification harness; it reverts a "
+                               "gate behaviour and requires the suite to name it, "
+                               "asserts the tree is green before and after, and "
+                               "carries its own probe floor",
 }
 
 
