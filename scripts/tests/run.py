@@ -40,7 +40,7 @@ EXPECTED = (
     # The gates the positive-control sweep exempts, because they reach a chart
     # registry or an API. A control cannot be written for them, so a unit test on
     # the half that decides the verdict is the only thing that proves they say
-    # anything — and they are the largest files in the tree.
+    # anything.
     "test_policy_admission",
     "test_platform_crs",
     "test_dashboards",
@@ -64,10 +64,15 @@ MIN_TESTS = 31
 # A gate with neither has been read by nobody and asserts nothing that anything
 # has checked. controls.py exempts every gate that reaches a chart registry or an
 # API — the exemption is honest, because a control cannot be written for a gate
-# whose input arrives over the network — and those are the largest files in the
-# tree. Among them is check-policy-admission.py, an approval gate in the sense
-# testing-rubric's `security-critical-100` uses the term. For exactly these, a
-# unit test is the only proof available.
+# whose input arrives over the network — and for exactly those a unit test is the
+# only proof available.
+#
+# One of them, check-policy-admission.py, is an approval gate in the sense
+# testing-rubric's `security-critical-100` uses the term, and that rule
+# (severity: reject) asks for a per-file 100% override. Its floor below is 50.
+# The rule is UNMET and saying so is the point of naming it: a floor set where
+# the tests reach is a ratchet, and a rule cited without its requirement reads as
+# satisfied.
 #
 # `control_exempt_gates` below reads that exemption list out of controls.py
 # rather than repeating it, and check_coverage fails on any gate in both it and
@@ -99,7 +104,7 @@ MIN_TESTS = 31
 # two differ enough to matter, so the name here says combined and the printed
 # line says so too. Calling a combined figure "line coverage" would be a
 # measurement mislabelled as the one the rubric asks about.
-COMBINED_FLOOR = 29
+COMBINED_FLOOR = 30
 
 # A ceiling on gate scripts carrying NO unit coverage at all, complementing the
 # floors below. The floors stop a covered file regressing; nothing stopped a NEW
@@ -117,9 +122,9 @@ PER_GATE_FLOORS = {
     "scripts/gatelib.py": 55,
     # The control-exempt gates. Their floors are what keeps the verdict half
     # covered after the module that covers it is edited.
-    "scripts/check-policy-admission.py": 50,
+    "scripts/check-policy-admission.py": 63,
     "scripts/check-platform-crs.py": 50,
-    "scripts/validate-dashboards.py": 45,
+    "scripts/validate-dashboards.py": 49,
     "scripts/render-addons.py": 40,
     "scripts/check-image-pins.py": 38,
     "scripts/check-log-volume-budget.py": 58,

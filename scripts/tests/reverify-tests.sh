@@ -109,9 +109,9 @@ rejects() {
 # edit <file> <<'PY' … PY
 #
 # The mutation is a Python string replacement over a backed-up copy, and it
-# asserts its own anchor. reverify-gates.sh records why: sed address ranges,
-# in-place flags and character classes differ between BSD and GNU, so a mutation
-# written with them lands on one platform and no-ops on the other while
+# asserts its own anchor. scripts/tests/controls.py records why: sed address
+# ranges, in-place flags and character classes differ between BSD and GNU, so a
+# mutation written with them lands on one platform and no-ops on the other while
 # reporting the same result on both. A mutation that silently fails to apply
 # hands the suite an unchanged file, the suite correctly passes, and the pass is
 # recorded as evidence the probe worked.
@@ -128,7 +128,7 @@ if [ $? -ne 0 ]; then
   sed -n '1,40p' "$OUT" | sed 's/^/          /'
   exit 1
 fi
-echo "  ok    all six modules green on the unmodified tree"
+echo "  ok    all $(echo $ALL_MODULES | wc -w | tr -d ' ') modules green on the unmodified tree"
 echo
 
 echo "── One behaviour reverted at a time; the suite must name it ──"
@@ -264,6 +264,28 @@ rejects "datasources: glob the directory, not the kustomization" test_dashboards
   test_a_datasource_file_absent_from_resources_is_not_wired
 res $F
 
+# The verdicts, as opposed to the extractors they compose. Each of these empties
+# a decision rather than changing how a helper behaves, which is the shape a
+# coverage figure cannot see and a return-nothing assertion does not catch.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("def check_local_dashboards(root: pathlib.Path) -> list[str]:\n"
+              "    wired = wired_datasource_refs(root)",
+              "def check_local_dashboards(root: pathlib.Path) -> list[str]:\n"
+              "    return []\n"
+              "    wired = wired_datasource_refs(root)", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "offline verdict: report nothing, whatever the tree holds" test_dashboards \
+  test_a_panel_naming_an_unwired_datasource_is_reported \
+  test_an_undeclared_template_variable_is_reported \
+  test_a_locally_authored_board_whose_json_cannot_be_read_is_reported \
+  test_a_declared_variable_nothing_references_reports_a_broken_parser \
+  test_every_detection_is_reported_from_one_pass
+res $F
+
 F=scripts/render-addons.py
 edit $F <<'PY'
 import pathlib, sys
@@ -299,6 +321,35 @@ p.write_text(m)
 PY
 rejects "addon path: take it from any values file" test_render_addons \
   test_a_per_environment_file_alone_does_not_supply_the_path
+res $F
+
+F=scripts/check-policy-admission.py
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+line = [ln for ln in s.splitlines() if "Exclusion-list parity" in ln][0]
+m = s.replace(line, line + "\n    return True, set(), set()", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "parity verdict: agree, whatever the four policies hold" test_policy_admission \
+  test_four_identical_lists_agree \
+  test_one_list_missing_a_namespace_is_a_mismatch \
+  test_one_list_carrying_an_extra_namespace_is_a_mismatch \
+  test_the_namespaces_returned_are_the_shared_baseline \
+  test_the_shipped_policies_agree
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('for entry in rule["exclude"]["any"]:',
+              'for entry in rule["exclude"]["any"][:1]:', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "parity: read only the first exclude.any entry" test_policy_admission \
+  test_the_union_of_both_entries_is_the_list
 res $F
 
 F=scripts/check-image-pins.py
@@ -361,7 +412,7 @@ if [ $? -ne 0 ]; then
   sed -n '1,40p' "$OUT" | sed 's/^/          /'
   fail=$((fail+1))
 else
-  echo "  ok    all six modules green again"
+  echo "  ok    all $(echo $ALL_MODULES | wc -w | tr -d ' ') modules green again"
 fi
 
 echo
@@ -370,7 +421,7 @@ echo "RESULT pass=$pass fail=$fail"
 # The floor this harness owes for the same reason the gates owe theirs: with
 # every `rejects` line deleted it would report pass=0 fail=0 and exit 0, which is
 # a green run over nothing planted.
-MIN_PROBES=17
+MIN_PROBES=20
 total=$((pass + fail))
 if [ "$total" -lt "$MIN_PROBES" ]; then
   echo "FAIL  ran $total probe(s), under the floor of $MIN_PROBES — this harness"

@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import contextlib
 import io
+import pathlib
 import subprocess
+import tempfile
 import unittest
 
 import yaml
@@ -315,10 +317,136 @@ class ExclusionCoverage(unittest.TestCase):
         self.assertTrue(verdict)
 
     def test_an_exclusion_list_wider_than_the_fleet_is_not_this_check(self):
-        """Parity between the four lists is asserted elsewhere; breadth is not a
-        failure here — a namespace excluded before its addon arrives is normal."""
+        """Breadth is not a failure here: a namespace excluded before its addon
+        arrives is normal. Whether the four lists agree with each other is
+        check_exclusion_parity's question, planted against in ExclusionListParity."""
         verdict, _ = quietly(gate.check_namespace_coverage, set(), {"monitoring"})
         self.assertTrue(verdict)
+
+
+class ExclusionListParity(unittest.TestCase):
+    """The four lists must agree, against a policy tree carrying a divergence.
+
+    The exclusion list is what makes the fleet admissible at all, and it is
+    hand-maintained across four files. A divergence is invisible to every other
+    gate: each policy is individually valid, renders, and passes kyverno's own
+    unit tests. It surfaces on a vended Enforce cluster, as one workload denied
+    where its three siblings were admitted.
+
+    So the divergence is planted rather than the agreement asserted. `ok` is a
+    bool, and a function that returns True unconditionally satisfies every
+    assertion a healthy tree can make about it.
+    """
+
+    def policies(self, lists):
+        """A POLICY_DIR holding the four exclusion-bearing policies.
+
+        `lists` maps each (group, filename) pair to the namespaces its single
+        rule excludes, so a caller states the divergence directly.
+        """
+        root = pathlib.Path(tempfile.mkdtemp())
+        for (group, fname), namespaces in lists.items():
+            base = root / group / "base"
+            base.mkdir(parents=True, exist_ok=True)
+            (base / fname).write_text(yaml.safe_dump({
+                "apiVersion": "kyverno.io/v1",
+                "kind": "ClusterPolicy",
+                "metadata": {"name": fname.removesuffix(".yaml")},
+                "spec": {"rules": [{
+                    "name": "rule",
+                    "exclude": {"any": [
+                        {"resources": {"namespaces": list(namespaces)}}]},
+                }]},
+            }))
+        return root
+
+    def parity(self, lists):
+        original = gate.POLICY_DIR
+        gate.POLICY_DIR = self.policies(lists)
+        try:
+            return quietly(gate.check_exclusion_parity)
+        finally:
+            gate.POLICY_DIR = original
+
+    def agreeing(self, namespaces=("monitoring", "kyverno")):
+        return dict.fromkeys(gate.EXCLUSION_POLICIES, namespaces)
+
+    def test_four_identical_lists_agree(self):
+        (ok, excluded, keys), _ = self.parity(self.agreeing())
+        self.assertTrue(ok)
+        self.assertEqual(excluded, {"monitoring", "kyverno"})
+        self.assertEqual(len(keys), len(gate.EXCLUSION_POLICIES))
+
+    def test_one_list_missing_a_namespace_is_a_mismatch(self):
+        """The shape that admits three workloads and denies the fourth."""
+        lists = dict(self.agreeing())
+        lists[gate.EXCLUSION_POLICIES[2]] = ("monitoring",)
+        (ok, _, _), out = self.parity(lists)
+        self.assertFalse(ok)
+        self.assertIn("MISMATCH", out)
+        self.assertIn("missing: ['kyverno']", out)
+        self.assertIn("exclusion lists diverge", out)
+
+    def test_one_list_carrying_an_extra_namespace_is_a_mismatch(self):
+        lists = dict(self.agreeing())
+        lists[gate.EXCLUSION_POLICIES[1]] = ("monitoring", "kyverno", "falco")
+        (ok, _, _), out = self.parity(lists)
+        self.assertFalse(ok)
+        self.assertIn("extra:   ['falco']", out)
+
+    def test_order_alone_is_not_a_divergence(self):
+        """Kyverno ORs the entries; the lists are sets, not sequences."""
+        lists = dict(self.agreeing())
+        lists[gate.EXCLUSION_POLICIES[3]] = ("kyverno", "monitoring")
+        (ok, _, _), _ = self.parity(lists)
+        self.assertTrue(ok)
+
+    def test_the_namespaces_returned_are_the_shared_baseline(self):
+        """The functional half checks its coverage against this set, so a wrong
+        one reports namespaces as excluded that no policy excludes."""
+        (_, excluded, _), _ = self.parity(self.agreeing(("a", "b", "c")))
+        self.assertEqual(excluded, {"a", "b", "c"})
+
+    def test_a_rule_key_is_returned_per_rule(self):
+        """The canary must trip every key, read off the policies rather than
+        restated — so a rule added without extending the canary fails."""
+        (_, _, keys), _ = self.parity(self.agreeing())
+        self.assertIn("require-probes/rule", keys)
+
+
+class ASecondExcludeEntryIsPartOfTheList(unittest.TestCase):
+    """Kyverno ORs every `exclude.any` entry, so reading any[0] drops the rest."""
+
+    def policy_with_two_entries(self, first, second):
+        root = pathlib.Path(tempfile.mkdtemp())
+        for group, fname in gate.EXCLUSION_POLICIES:
+            base = root / group / "base"
+            base.mkdir(parents=True, exist_ok=True)
+            entries = [{"resources": {"namespaces": list(first)}}]
+            if fname == gate.EXCLUSION_POLICIES[0][1]:
+                entries.append({"resources": {"namespaces": list(second)}})
+            (base / fname).write_text(yaml.safe_dump({
+                "apiVersion": "kyverno.io/v1",
+                "kind": "ClusterPolicy",
+                "metadata": {"name": fname.removesuffix(".yaml")},
+                "spec": {"rules": [{"name": "rule",
+                                    "exclude": {"any": entries}}]},
+            }))
+        return root
+
+    def test_the_union_of_both_entries_is_the_list(self):
+        original = gate.POLICY_DIR
+        gate.POLICY_DIR = self.policy_with_two_entries(("monitoring",), ("falco",))
+        try:
+            (ok, _, _), out = quietly(gate.check_exclusion_parity)
+        finally:
+            gate.POLICY_DIR = original
+        # The first policy excludes {monitoring, falco}; the other three exclude
+        # {monitoring}. Reading only any[0] would make all four agree.
+        self.assertFalse(ok, "a second exclude.any entry was dropped from the "
+                             "parity comparison, so four lists that differ were "
+                             "reported as identical")
+        self.assertIn("falco", out)
 
 
 class TheExclusionCorpusIsReal(unittest.TestCase):
@@ -332,6 +460,12 @@ class TheExclusionCorpusIsReal(unittest.TestCase):
                                 f"{path} is named as an exclusion-bearing policy "
                                 f"but does not exist, so the parity check compares "
                                 f"three lists and reports agreement")
+
+    def test_the_shipped_policies_agree(self):
+        (ok, excluded, keys), _ = quietly(gate.check_exclusion_parity)
+        self.assertTrue(ok)
+        self.assertTrue(excluded)
+        self.assertTrue(keys)
 
 
 if __name__ == "__main__":

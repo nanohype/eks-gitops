@@ -5,11 +5,13 @@ sweep exempts it. Its offline half is where the failures are quiet: a dashboard
 is data, so a panel naming a datasource nothing wires renders an error forever
 in front of whoever opened the board, and nothing in the sync path reports it.
 
-Every extractor below has the same failure mode — matching less than it should
-and comparing an empty set, which passes. The variable regex had exactly that:
-anchored on `${name}` alone it matched none of the bare `$name` references every
-dashboard here actually writes, so the undeclared-variable check compared an
-always-empty set against the declared list and passed over every board.
+Every extractor below has the same failure mode: matching less than it should and
+comparing an empty set, which passes. The variable regex is where that bites
+hardest, because `used - declared` is satisfied by an empty `used` on every
+board — so a pattern covering only `${name}` would report nothing while the tree
+writes `$name`. TEMPLATE_VAR carries all four of Grafana's spellings and each is
+exercised here; check_local_dashboards carries a floor that fails when the whole
+corpus declares variables and references none.
 """
 
 from __future__ import annotations
@@ -208,6 +210,131 @@ class WiredDatasources(unittest.TestCase):
     def test_a_tree_with_no_kustomization_wires_nothing(self):
         self.assertEqual(gate.wired_datasource_refs(pathlib.Path(tempfile.mkdtemp())),
                          set())
+
+
+class TheOfflineVerdict(unittest.TestCase):
+    """Each detection, against a tree carrying the violation it names.
+
+    check_local_dashboards is the whole of this gate's offline half, and the only
+    thing it produces is a list. Asserting that list is empty on a healthy tree is
+    a control against false positives; it is satisfied by every implementation
+    that reports nothing, `return []` included. So each detection below is planted
+    and the message it produces is named.
+    """
+
+    def tree(self, dashboards, wired=("managed-loki",)):
+        """A repo root holding a wired datasource and the dashboards given.
+
+        Datasource files carry no `kind: GrafanaDashboard`, so the walk skips
+        them — they exist here only to populate the wired set.
+        """
+        root = pathlib.Path(tempfile.mkdtemp())
+        base = root / "dashboards" / "base"
+        (base / "datasources").mkdir(parents=True)
+        (base / "kustomization.yaml").write_text(
+            "resources:\n" + "".join(f"  - datasources/{u}.yaml\n" for u in wired))
+        for uid in wired:
+            (base / "datasources" / f"{uid}.yaml").write_text(
+                f"spec:\n  datasource:\n    uid: {uid}\n")
+        (root / "dashboards" / "platform").mkdir(parents=True)
+        for name, body in dashboards.items():
+            (root / "dashboards" / "platform" / name).write_text(body)
+        return root
+
+    def board(self, dash, block=True):
+        """A GrafanaDashboard carrying `dash` as its JSON payload."""
+        payload = json.dumps(dash, indent=1)
+        if not block:
+            # A quoted scalar: semantically identical YAML, invisible to the
+            # block parser, and every check below silently stops applying.
+            return ("kind: GrafanaDashboard\nspec:\n  json: "
+                    + json.dumps(payload) + "\n")
+        indented = "\n".join("    " + line for line in payload.splitlines())
+        return f"kind: GrafanaDashboard\nspec:\n  json: |\n{indented}\n"
+
+    def test_a_healthy_tree_reports_nothing(self):
+        """The control against false positives — necessary, and not evidence."""
+        root = self.tree({"ok.yaml": self.board({
+            "templating": {"list": [{"name": "ns"}]},
+            "panels": [{"datasource": "managed-loki",
+                        "targets": [{"expr": 'x{namespace="$ns"}'}]}]})})
+        self.assertEqual(gate.check_local_dashboards(root), [])
+
+    def test_a_panel_naming_an_unwired_datasource_is_reported(self):
+        """A dashboard is data: the operator applies it and Grafana discovers the
+        missing datasource at view time, in front of whoever opened the board."""
+        root = self.tree({"finance.yaml": self.board({
+            "panels": [{"datasource": "athena-cur"}]})})
+        problems = gate.check_local_dashboards(root)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("panel datasource 'athena-cur' is not wired", problems[0])
+        self.assertIn("dashboards/platform/finance.yaml", problems[0])
+
+    def test_a_datasource_chosen_by_a_template_variable_is_not_reported(self):
+        root = self.tree({"ok.yaml": self.board({
+            "templating": {"list": [{"name": "ds"}]},
+            "panels": [{"datasource": "$ds"}]})})
+        self.assertEqual(gate.check_local_dashboards(root), [])
+
+    def test_an_undeclared_template_variable_is_reported(self):
+        """The interpolation expands to nothing and the query is malformed."""
+        root = self.tree({"finance.yaml": self.board({
+            "panels": [{"datasource": "managed-loki",
+                        "targets": [{"rawSql": "SELECT * FROM ${cost_database}.cur"}]}]})})
+        problems = gate.check_local_dashboards(root)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("uses $cost_database but declares no such template variable",
+                      problems[0])
+
+    def test_a_declared_variable_is_not_reported(self):
+        root = self.tree({"ok.yaml": self.board({
+            "templating": {"list": [{"name": "cost_database"}]},
+            "panels": [{"datasource": "managed-loki",
+                        "targets": [{"rawSql": "SELECT * FROM ${cost_database}.cur"}]}]})})
+        self.assertEqual(gate.check_local_dashboards(root), [])
+
+    def test_a_locally_authored_board_whose_json_cannot_be_read_is_reported(self):
+        """Skipping it quietly is how the check reports success having looked at
+        nothing: a quoted scalar is identical YAML and invisible to every check."""
+        root = self.tree({"quoted.yaml": self.board(
+            {"panels": [{"datasource": "athena-cur"}]}, block=False)})
+        problems = gate.check_local_dashboards(root)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("dashboard JSON could not be read", problems[0])
+        self.assertIn("no `json: |` literal block", problems[0])
+
+    def test_a_grafana_com_board_carrying_no_inline_json_is_not_reported(self):
+        """Its content is an id the network checks validate; there is nothing here."""
+        root = self.tree({"pulled.yaml":
+                          "kind: GrafanaDashboard\nspec:\n  grafanaCom:\n    id: 1860\n"})
+        self.assertEqual(gate.check_local_dashboards(root), [])
+
+    def test_a_declared_variable_nothing_references_reports_a_broken_parser(self):
+        """An empty `used` satisfies `used - declared` on every board, so a regex
+        that stops matching turns the check above into a silent no-op."""
+        root = self.tree({"ok.yaml": self.board({
+            "templating": {"list": [{"name": "ns"}]},
+            "panels": [{"datasource": "managed-loki"}]})})
+        problems = gate.check_local_dashboards(root)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("not one reference was found", problems[0])
+        self.assertIn("TEMPLATE_VAR has stopped matching", problems[0])
+
+    def test_every_detection_is_reported_from_one_pass(self):
+        """A verdict that returns on the first problem hides the rest behind a fix."""
+        root = self.tree({
+            "quoted.yaml": self.board({"panels": []}, block=False),
+            "finance.yaml": self.board({
+                "panels": [{"datasource": "athena-cur",
+                            "targets": [{"rawSql": "FROM ${cost_database}.t"}]}]}),
+        })
+        problems = gate.check_local_dashboards(root)
+        self.assertEqual(len(problems), 3)
+
+    def test_a_tree_with_no_dashboards_directory_reports_nothing(self):
+        """Not a finding: the caller's floor is what refuses an absent corpus."""
+        self.assertEqual(
+            gate.check_local_dashboards(pathlib.Path(tempfile.mkdtemp())), [])
 
 
 class TheShippedDashboards(unittest.TestCase):
