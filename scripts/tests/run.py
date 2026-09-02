@@ -37,6 +37,10 @@ EXPECTED = (
     "test_named_things",
     "test_falco_rule_floor",
     "test_gatelib",
+    # The harness layer. controls.py excuses four executables from carrying a
+    # positive control because each asserts its own outcome when it runs, and
+    # the reader deciding whether anything runs them is covered nowhere else.
+    "test_controls",
     # The gates the positive-control sweep exempts, because they reach a chart
     # registry or an API. A control cannot be written for them, so a unit test on
     # the half that decides the verdict is the only thing that proves they say

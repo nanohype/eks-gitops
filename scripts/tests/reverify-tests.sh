@@ -62,7 +62,7 @@ pass=0; fail=0
 # module that stops being loaded would otherwise drop out of the clean-tree and
 # restored-tree checks without either of them failing.
 ALL_MODULES="test_policy_admission test_platform_crs test_dashboards \
-  test_render_addons test_image_pins test_log_volume_budget"
+  test_render_addons test_image_pins test_log_volume_budget test_controls"
 
 # Bytecode caching keys on (mtime, size). A restore and the next mutation inside
 # the same second can hand the run the PREVIOUS mutant's module, and the suite
@@ -404,6 +404,107 @@ rejects "alert: accept a rule keyed on the edge counter" test_log_volume_budget 
   test_a_rule_querying_both_still_fails_on_the_edge_counter
 res $F
 
+# The harness layer. controls.py excuses four executables from a positive
+# control on the grounds that each asserts its own outcome when it runs, and
+# these revert the reader that decides whether anything runs them.
+F=scripts/tests/controls.py
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    wanted = {f"scripts/{rel}", f"./scripts/{rel}"}\n'
+              '    commands, _unreadable = caller_commands(root)\n'
+              '    return any(word in wanted for command in commands '
+              'for word in command_words(command))\n',
+              '    return bool(rel)\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "invocation: answer yes for any name at all" test_controls \
+  test_a_yaml_comment_in_the_taskfile_does_not_count \
+  test_a_task_description_does_not_count \
+  test_a_step_name_does_not_count \
+  test_a_harness_this_repo_does_not_run_is_reported
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    wanted = {f"scripts/{rel}", f"./scripts/{rel}"}\n'
+              '    commands, _unreadable = caller_commands(root)\n'
+              '    return any(word in wanted for command in commands '
+              'for word in command_words(command))\n',
+              '    needle = f"scripts/{rel}"\n'
+              '    return any(needle in c.read_text() for c in caller_files(root))\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "invocation: search the caller's text, not its commands" test_controls \
+  test_a_yaml_comment_in_the_taskfile_does_not_count \
+  test_a_task_description_does_not_count \
+  test_a_step_name_does_not_count \
+  test_a_shell_comment_inside_a_run_block_does_not_count \
+  test_a_quoted_mention_inside_a_command_does_not_count
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('                for step in job.get("steps") or []:',
+              '                for step in []:', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "callers: read the Taskfile's commands and no workflow's" test_controls \
+  test_a_workflow_run_step_counts \
+  test_a_command_below_a_comment_naming_it_still_counts
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    text = blank_comments(command)\n', '    text = command\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "words: read a run block's shell comments as command text" test_controls \
+  test_a_shell_comment_inside_a_run_block_does_not_count
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        return shlex.split(text)\n', '        return text.split()\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "words: split on whitespace, ignoring quoting" test_controls \
+  test_a_quoted_mention_inside_a_command_does_not_count
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        except yaml.YAMLError as exc:\n',
+              '        except yaml.YAMLError:\n            continue\n        if False:\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "callers: read an unparseable caller as one running nothing" test_controls \
+  test_the_unparseable_caller_is_named
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    invoked = invoked_anywhere if invoked is None else invoked\n',
+              '    invoked = (lambda _name: True) if invoked is None else invoked\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "rule: reach a constant instead of the reader" test_controls \
+  test_a_harness_this_repo_does_not_run_is_reported
+res $F
+
 echo
 echo "── Restored tree must be green again ──"
 _suite $ALL_MODULES
@@ -421,7 +522,7 @@ echo "RESULT pass=$pass fail=$fail"
 # The floor this harness owes for the same reason the gates owe theirs: with
 # every `rejects` line deleted it would report pass=0 fail=0 and exit 0, which is
 # a green run over nothing planted.
-MIN_PROBES=20
+MIN_PROBES=27
 total=$((pass + fail))
 if [ "$total" -lt "$MIN_PROBES" ]; then
   echo "FAIL  ran $total probe(s), under the floor of $MIN_PROBES — this harness"

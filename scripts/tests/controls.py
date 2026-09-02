@@ -244,7 +244,9 @@ def called_names(src: str) -> set[str]:
 # no longer exists fails, a present executable on no list fails, and an entry
 # nothing in the repo invokes fails.
 NOT_GATES = {
-    "tests/controls.py": "the control harness; self_test() runs on every invocation",
+    "tests/controls.py": "the control harness; self_test() runs on every "
+                         "invocation, and test_controls.py holds the reader "
+                         "this rule asks",
     "tests/run.py": "the unit-test runner; asserts its own module list and floors",
     "tests/reverify-gates.sh": "the Tier-1 re-verification harness; it drives the "
                                "gates rather than checking the tree, and asserts "
@@ -607,15 +609,125 @@ def run_gate(gate: str, cwd: pathlib.Path) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=GATE_TIMEOUT)
 
 
-def invoked_anywhere(rel: str) -> bool:
-    """Whether the Taskfile or a workflow names `scripts/<rel>` as something to run.
+def caller_files(root: pathlib.Path) -> list[pathlib.Path]:
+    """The files that decide what runs: the Taskfile and every workflow."""
+    return [p for p in (root / "Taskfile.yaml",
+                        *sorted((root / ".github" / "workflows").glob("*.y*ml")))
+            if p.is_file()]
 
-    Searched as the path a caller would write, so a mention inside prose about
-    the file does not count as an invocation of it.
+
+def _task_commands(task) -> list[str]:
+    """The command strings one Taskfile task executes.
+
+    `{task: other}` is not one: it names another task, whose own commands are
+    read when that task is walked. `{cmd: ...}` and `{defer: ...}` are.
     """
-    needle = f"scripts/{rel}"
-    callers = [ROOT / "Taskfile.yaml", *sorted((ROOT / ".github" / "workflows").glob("*.y*ml"))]
-    return any(p.is_file() and needle in p.read_text() for p in callers)
+    if isinstance(task, str):
+        return [task]
+    if isinstance(task, list):
+        entries = task
+    elif isinstance(task, dict):
+        entries = task.get("cmds") or []
+    else:
+        return []
+    out = []
+    for entry in entries:
+        if isinstance(entry, str):
+            out.append(entry)
+        elif isinstance(entry, dict):
+            for key in ("cmd", "defer"):
+                if isinstance(entry.get(key), str):
+                    out.append(entry[key])
+    return out
+
+
+def caller_commands(root: pathlib.Path) -> tuple[list[str], list[str]]:
+    """(every command the callers execute, callers that would not parse).
+
+    Taken from the parsed documents at the positions a runner reads a command
+    from — a task's `cmds:` entries, a workflow step's `run:` script. Every
+    other string in either file is prose as far as this reader is concerned,
+    and a comment is not in the parse at all.
+
+    `status:` and `preconditions:` hold commands too and are deliberately
+    absent. They decide whether a task's work runs; a harness reached only
+    through one of them asserts nothing about the tree.
+
+    A caller that will not parse is returned as its own fact rather than as a
+    caller with no commands in it. Those are the same value to `any()` and
+    different facts to a reader: one says nothing runs the harness, the other
+    says this file could not be asked.
+    """
+    import yaml
+
+    commands: list[str] = []
+    unreadable: list[str] = []
+    for path in caller_files(root):
+        try:
+            doc = yaml.safe_load(path.read_text())
+        except yaml.YAMLError as exc:
+            detail = str(exc).strip().splitlines()
+            unreadable.append(f"{path.relative_to(root)}: "
+                              f"{detail[0] if detail else exc.__class__.__name__}")
+            continue
+        if not isinstance(doc, dict):
+            continue
+        tasks = doc.get("tasks")
+        if isinstance(tasks, dict):
+            for task in tasks.values():
+                commands += _task_commands(task)
+        jobs = doc.get("jobs")
+        if isinstance(jobs, dict):
+            for job in jobs.values():
+                if not isinstance(job, dict):
+                    continue
+                for step in job.get("steps") or []:
+                    if isinstance(step, dict) and isinstance(step.get("run"), str):
+                        commands.append(step["run"])
+    return commands, unreadable
+
+
+def command_words(command: str) -> list[str]:
+    """The words `command` would execute, shell comments and quoting resolved.
+
+    A second parse, for the reason the first one happened: inside a `run: |`
+    block the runner is a shell, and a `#` comment there is prose exactly as a
+    YAML comment is. Quoting is read too, so a path inside a quoted string is a
+    word of that string rather than a word of the command.
+    """
+    import shlex
+
+    text = blank_comments(command)
+    try:
+        return shlex.split(text)
+    except ValueError:
+        # An unbalanced quote leaves no argv to read. Splitting on whitespace is
+        # a weaker view — it cannot tell a word from part of a quoted string —
+        # and it is named as weaker here rather than handed back as the same
+        # answer.
+        return text.split()
+
+
+def invoked_anywhere(rel: str, root: pathlib.Path = ROOT) -> bool:
+    """Whether a command the task runner or a workflow executes runs `scripts/<rel>`.
+
+    Asked of the commands, not of the files. The callers are parsed, the
+    commands are taken from the positions a runner takes them from, and each
+    command is split into the words it would execute. A comment naming the
+    path, a `desc:` describing it and a quoted mention inside a command reach
+    none of those — which is the point, because this rule exists to reject a
+    harness nothing runs and text naming a harness is the cheapest way to look
+    like running one.
+
+    Two limits, both toward reporting a harness as UN-invoked. A path assembled
+    at run time from a variable is not resolved, so a caller that built one
+    fails here. And a word this finds is not proved to be the command's
+    executable — an unquoted `echo scripts/x.sh` counts — so what it separates
+    is prose from command text, not one word of a command from another.
+    """
+    wanted = {f"scripts/{rel}", f"./scripts/{rel}"}
+    commands, _unreadable = caller_commands(root)
+    return any(word in wanted for command in commands for word in command_words(command))
 
 
 def vacuity_problems(present: set[str], controls, network, not_gates,
@@ -667,6 +779,16 @@ def check_vacuity() -> list[str]:
     """The suite cannot shrink quietly, and no exemption may match nothing."""
     present = set(gate_files())
     problems = vacuity_problems(present, CONTROLS, NEEDS_NETWORK, NOT_GATES)
+
+    # The harness-invocation rule reads what the callers run. A caller that will
+    # not parse runs nothing as far as that rule can tell, and every harness in
+    # it then reads as one nobody invokes — which points the reader at the
+    # exemption list instead of at the one file to fix.
+    for unreadable in caller_commands(ROOT)[1]:
+        problems.append(
+            f"{unreadable} — this file decides what runs, and it could not be "
+            f"parsed. The harness-invocation rule examined nothing in it, which "
+            f"is not the same as it invoking nothing.")
 
     for gate, call in sorted(NEEDS_NETWORK_PY.items()):
         p = SCRIPTS / gate
