@@ -166,6 +166,47 @@ spec:
         self.assertIn("ghcr.io/example/undeclared-worker:2.0", problems[0][1])
         self.assertIn("a controller is handed it", problems[0][1])
 
+    def test_a_single_segment_official_image_is_a_candidate(self):
+        """`nats:2.10.10` is the whole reference — no registry, no organisation.
+
+        The argo-events event-bus controller declares exactly this beside the two
+        natsio/* sidecars it starts in the same StatefulSet, so requiring a path
+        separator scanned the helpers and left the main container silent.
+        """
+        rendered = """
+apiVersion: v1
+kind: ConfigMap
+data:
+  controller-config.yaml: |
+    nats:
+      versions:
+        - natsImage: nats:2.10.10
+        - natsImage: undeclared-single-segment:9.9.9
+"""
+        found, problems = self.images(rendered)
+        # `nats` is declared in CONTROLLER_IMAGES, so it enters the population.
+        self.assertIn("nats:2.10.10", found)
+        # An undeclared one is reported rather than silently absent.
+        self.assertEqual(len(problems), 1)
+        self.assertIn("undeclared-single-segment:9.9.9", problems[0][1])
+
+    def test_an_rbac_name_is_not_an_image(self):
+        """`kyverno:admission-controller` has the shape and is a role name; the
+        tag is the discriminator."""
+        rendered = ("apiVersion: v1\nkind: ConfigMap\ndata:\n"
+                    "  x: |\n    role: kyverno:admission-controller\n"
+                    "    other: system:auth-delegator\n")
+        found, problems = self.images(rendered)
+        self.assertEqual(problems, [])
+
+    def test_a_hostname_does_not_yield_its_last_label(self):
+        """Without an anchor the alternative starts after a dot and
+        `vault.example.com:8200` yields `com:8200`."""
+        rendered = ("apiVersion: v1\nkind: ConfigMap\ndata:\n"
+                    "  x: |\n    server: vault.example.com:8200\n")
+        found, problems = self.images(rendered)
+        self.assertEqual(problems, [])
+
     def test_a_host_and_port_is_not_an_image(self):
         """A rendered config is full of addresses; a grammar admitting them
         cannot be read, and every one would demand a declaration."""

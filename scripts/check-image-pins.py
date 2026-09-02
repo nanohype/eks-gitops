@@ -109,6 +109,11 @@ ALLOWED_MUTABLE: dict[str, str] = {
         "controller-supplied references entered the population. Clears when the "
         "chart exposes the tag, or when this catalog stops shipping that "
         "ConfigMap.",
+    "nats-streaming":
+        "the argo-events version table's oldest streaming row carries `latest`, "
+        "alongside rows that pin. An eventbus asking for that version gets a "
+        "moving image; nothing in this catalog selects it, and nothing here can "
+        "pin it. Clears on a chart that pins the row.",
     "natsio/prometheus-nats-exporter":
         "an argo-events eventbus default the controller passes to the NATS "
         "StatefulSet it creates. The chart pins two other tags of this image and "
@@ -165,9 +170,34 @@ def inventory(env: str, seen: set[str] | None = None
 # the host:port strings that fill a rendered config — `loki.monitoring.svc:3100`
 # and `127.0.0.1:8080` are addresses, not images, and no grammar that admits them
 # can be read by a human.
+# Two alternatives, because an official image carries neither a registry nor an
+# organisation: `nats:2.10.10` is the whole reference. Requiring a path separator
+# made that shape invisible, and the argo-events event-bus controller declares
+# exactly it — `natsImage` beside the two `natsio/*` sidecars in the same rows,
+# so one StatefulSet had its helpers scanned and its main container silent.
+#
+# The single-segment alternative needs two discriminators the prefixed one does
+# not, because a rendered config is full of strings with that shape:
+#
+#   * the match may not begin part-way through a longer token. Without that the
+#     alternative starts after a dot and `vault.example.com:8200` yields
+#     `com:8200`, which is a hostname's last label and a port.
+#   * the NAME must start with a letter and carry no dot. That excludes a
+#     timestamp (`00:00Z`), an address (`10.0.0.5:8080`,
+#     `telemetry.monitoring.svc.cluster.local:4318`), an IPv6 fragment and a
+#     ratio (`1:1`).
+#   * the TAG must be `latest` or begin with a digit, optionally after a `v`.
+#     That excludes the RBAC names — `kyverno:admission-controller`,
+#     `system:auth-delegator` — which are the shape's other common occupant.
+#
+# Together they admit every official-image reference this fleet pins and no
+# string in the render that is not one.
 IMAGE_REF = re.compile(
-    r"\b((?:[a-z0-9][a-z0-9._-]*(?:\.[a-z0-9._-]+)+(?::\d+)?/)?"
-    r"[a-z0-9][a-z0-9._-]*(?:/[a-z0-9][a-z0-9._-]*)+:[a-zA-Z0-9][\w.-]*)\b")
+    r"(?<![a-z0-9._:/-])(?:"
+    r"((?:[a-z0-9][a-z0-9._-]*(?:\.[a-z0-9._-]+)+(?::\d+)?/)?"
+    r"[a-z0-9][a-z0-9._-]*(?:/[a-z0-9][a-z0-9._-]*)+:[a-zA-Z0-9][\w.-]*)"
+    r"|([a-z][a-z0-9]*(?:[_-][a-z0-9]+)*:(?:latest|v?[0-9][\w.-]*))"
+    r")\b")
 
 # Images a CONTROLLER starts, which no pod template in this render declares. The
 # controller is handed the reference and creates the pod later, so the deployable
@@ -180,6 +210,13 @@ IMAGE_REF = re.compile(
 # NOT_A_CONTAINER. An unclassified one is reported, so the answer to "is this
 # deployed?" is never silence.
 CONTROLLER_IMAGES = {
+    "nats":
+        "the NATS server the argo-events eventbus controller starts, declared as "
+        "`natsImage` in its own version table beside the two natsio/* sidecars it "
+        "creates in the same StatefulSet",
+    "nats-streaming":
+        "the same table's streaming variant, for eventbus resources that ask for "
+        "it",
     "docker.io/envoyproxy/ratelimit":
         "the Envoy Gateway controller reads it from its own EnvoyGateway "
         "ConfigMap and creates the rate-limit Deployment",
@@ -208,6 +245,23 @@ CONTROLLER_IMAGES = {
 # container — so scanning it for a running-container CVE would report on
 # something nothing runs.
 NOT_A_CONTAINER = {
+    "falco-rules":
+        "a falcoctl rulesfile OCI artifact; check-falco-rule-floor.py resolves "
+        "these against the registry and asserts Falco loads what they install",
+    "falco-incubating-rules":
+        "the same, the incubating tier",
+    "falco-sandbox-rules":
+        "the same, the sandbox tier",
+    "sha256":
+        "the digest half of a reference the walk already holds whole — `image@"
+        "sha256:<hex>` splits at the `@` and the tail has the single-segment "
+        "shape",
+    "localhost":
+        "a memcached address in a Loki config value; `localhost:11211` is a host "
+        "and a port",
+    "hubble-relay":
+        "a Kubernetes Service address in a Cilium config value — `hubble-relay:80` "
+        "has the shape of a single-segment image and is a host and a port",
     "ghcr.io/falcosecurity/plugins/plugin/container":
         "a falcoctl rules/plugin OCI artifact, unpacked into an emptyDir",
     "ghcr.io/falcosecurity/plugins/plugin/k8smeta":
@@ -358,7 +412,8 @@ def extract_images(rendered: str, chart: str,
 
     structural = keyed_images(docs)
     textual = {m.group(1) for m in IMAGE.finditer(rendered)}
-    candidates = {c for s in string_scalars(docs) for c in IMAGE_REF.findall(s)}
+    candidates = {c for s in string_scalars(docs)
+                  for groups in IMAGE_REF.findall(s) for c in groups if c}
     if seen is not None:
         # Every image-shaped reference the render carried, including the ones
         # excluded below. A declaration is about what the render CONTAINS, so

@@ -91,9 +91,13 @@ CRD_VERSION = "v1alpha1"
 SKIP_DIRS = {".git", "node_modules", "rendertest", "__pycache__", ".task"}
 
 
-# A floor on platform CRs walked. Set under what the catalog declares, so it
-# catches a walk that matched almost nothing rather than one CR being retired.
-MIN_CRS = 5
+# A floor on platform CRs walked. Set low on purpose: `walked` counts documents
+# whose KIND the pinned operator chart ships a schema for, so the number depends
+# on what that chart resolves to in the environment running the gate — a
+# reviewer measured three where this tree walks eight. A floor above the smallest
+# resolution makes the gate red somewhere it should be green, which is the
+# failure a floor above the corpus always is.
+MIN_CRS = 2
 
 
 def pinned_chart_version() -> str:

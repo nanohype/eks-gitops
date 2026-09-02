@@ -60,6 +60,8 @@ advisories:
       - ghcr.io/kedacore/keda-metrics-apiserver
       - ghcr.io/opencost/opencost
       - mirror.gcr.io/aquasec/trivy-operator
+      - nats
+      - nats-streaming
       - natsio/prometheus-nats-exporter
       - otel/opentelemetry-collector-contrib
       - prom/memcached-exporter
@@ -94,6 +96,8 @@ advisories:
     images:
       - docker.io/falcosecurity/k8s-metacollector
       - ghcr.io/aquasecurity/node-collector
+      - nats
+      - nats-streaming
       - natsio/nats-server-config-reloader
       - natsio/prometheus-nats-exporter
       - quay.io/argoproj/argo-events
@@ -108,6 +112,8 @@ advisories:
       1.21.11 and 1.22.4. The falco chart pin is what moves it.
     images:
       - docker.io/falcosecurity/k8s-metacollector
+      - nats
+      - nats-streaming
       - natsio/nats-server-config-reloader
       - natsio/prometheus-nats-exporter
 
@@ -193,6 +199,7 @@ advisories:
       controller starts. Fixed in 2.11.1 and 2.10.27; the argo-events chart
       leaves this image's tag unset, so it moves only when the chart does.
     images:
+      - nats-streaming
       - natsio/prometheus-nats-exporter
 
   - id: CVE-2022-48174
@@ -225,6 +232,7 @@ advisories:
       zlib in the same NATS config-reloader base layer, fixed in 1.2.12-r2. The
       image is pinned old by the argo-events chart; nothing here rebuilds it.
     images:
+      - nats
       - natsio/nats-server-config-reloader
 
   - id: CVE-2022-23806
@@ -234,6 +242,7 @@ advisories:
       and 1.17.7. Moves when the argo-events chart ships an image built on a
       patched toolchain.
     images:
+      - nats-streaming
       - natsio/prometheus-nats-exporter
 
   - id: CVE-2023-24538
@@ -242,6 +251,8 @@ advisories:
       The same shape against both NATS images the eventbus controller starts,
       fixed in Go 1.19.8 and 1.20.3.
     images:
+      - nats
+      - nats-streaming
       - natsio/nats-server-config-reloader
       - natsio/prometheus-nats-exporter
 
@@ -250,5 +261,7 @@ advisories:
     reason: >-
       The same two images and the same remedy, fixed in Go 1.19.9 and 1.20.4.
     images:
+      - nats
+      - nats-streaming
       - natsio/nats-server-config-reloader
       - natsio/prometheus-nats-exporter

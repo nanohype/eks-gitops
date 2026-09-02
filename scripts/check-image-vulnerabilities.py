@@ -68,6 +68,16 @@ and requires them to come back. A canary that comes back clean exits 2: it is a
 statement about the scanner, not about the catalogue, and the two must not print
 the same thing.
 
+CHART-SOURCED APPLICATIONS ONLY, SAID PLAINLY
+
+The population comes from check-image-pins.inventory, which walks the
+ApplicationSets that pin a Helm chart. A kustomize-sourced Application renders
+workloads through no chart and contributes nothing — check-policy-admission.py
+names one by path in KUSTOMIZE_WORKLOADS (dashboards/base, the grafana-operator
+namespace), and its images run on every full-tier cluster and are not scanned
+here. Taking them in means a second render path; until that lands the boundary is
+written down, the same way the environment one below is.
+
 ONE ENVIRONMENT, SAID PLAINLY
 
 The population is the production render. render-addons produces four —
