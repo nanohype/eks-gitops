@@ -69,7 +69,11 @@ MIN_TESTS = 31
 #
 # One of them, check-policy-admission.py, is an approval gate in the sense
 # testing-rubric's `security-critical-100` uses the term, and that rule
-# (severity: reject) asks for a per-file 100% override. Its floor below is 50.
+# (severity: reject) asks for a per-file 100% override. PER_GATE_FLOORS below
+# sets it far under that, and the gap is the finding: a floor set where the
+# tests reach is a ratchet, not the rule. Read the number from the table rather
+# than from this sentence — a figure written twice drifts, and the reader who
+# trusts the prose edits the table down to match it and unratchets the gate.
 # The rule is UNMET and saying so is the point of naming it: a floor set where
 # the tests reach is a ratchet, and a rule cited without its requirement reads as
 # satisfied.

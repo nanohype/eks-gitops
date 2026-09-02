@@ -243,8 +243,8 @@ jobs:
       # reject a reverted behaviour, and requires the assertion that catches each
       # one to be the assertion that names it — a non-zero exit says the suite
       # noticed something, not that the test describing the behaviour is what
-      # noticed. Offline and about eleven seconds, so it runs on every PR rather
-      # than by hand.
+      # noticed. It runs here rather than by hand because it is offline and its
+      # cost is one test module per probe — no render, no registry, no cluster.
       - name: Reverted gate behaviour is named by the test that holds it
         run: ./scripts/tests/reverify-tests.sh
       # Prose that names a path, a task target or a file:line is a claim about

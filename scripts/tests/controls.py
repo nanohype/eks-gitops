@@ -618,12 +618,19 @@ def invoked_anywhere(rel: str) -> bool:
     return any(p.is_file() and needle in p.read_text() for p in callers)
 
 
-def check_vacuity() -> list[str]:
-    """The suite cannot shrink quietly, and no exemption may match nothing."""
-    problems = []
-    present = set(gate_files())
+def vacuity_problems(present: set[str], controls, network, not_gates,
+                     invoked=None) -> list[str]:
+    """The list rules, over lists supplied rather than read off the tree.
 
-    for name, reason in sorted(NOT_GATES.items()):
+    Separated from check_vacuity so each rule can be planted against: every one
+    is a statement about which name appears on which list, and supplying the
+    lists is how a violation is introduced without editing the repository the
+    rest of this file is running inside.
+    """
+    invoked = invoked_anywhere if invoked is None else invoked
+    problems = []
+
+    for name, reason in sorted(not_gates.items()):
         if name not in present:
             problems.append(
                 f"{name} is exempted as a harness rather than a gate, but no such "
@@ -634,25 +641,32 @@ def check_vacuity() -> list[str]:
         # invocation, which is a claim about a thing that gets invoked. One
         # nothing runs makes the exemption an excuse for an executable that never
         # executes, and its recorded reason is free text nothing else checks.
-        if not invoked_anywhere(name):
+        if not invoked(name):
             problems.append(
                 f"{name} is exempted as a harness that asserts its own outcome, but "
                 f"neither Taskfile.yaml nor a workflow under .github/workflows/ runs "
                 f"it. A harness nothing invokes asserts nothing. (recorded: {reason})")
 
     for gate in sorted(present):
-        if gate in NOT_GATES:
+        if gate in not_gates:
             continue
-        if gate not in CONTROLS and gate not in NEEDS_NETWORK:
+        if gate not in controls and gate not in network:
             problems.append(
                 f"{gate} ships no positive control and is on no exemption list. A gate "
                 f"nobody has shown to fail is an untested assertion about the tree.")
 
-    for gate in sorted(set(CONTROLS) | set(NEEDS_NETWORK)):
+    for gate in sorted(set(controls) | set(network)):
         if gate not in present:
             problems.append(
                 f"{gate} is named by a control or an exemption but no longer exists in "
                 f"scripts/ — the reference outlived the gate.")
+    return problems
+
+
+def check_vacuity() -> list[str]:
+    """The suite cannot shrink quietly, and no exemption may match nothing."""
+    present = set(gate_files())
+    problems = vacuity_problems(present, CONTROLS, NEEDS_NETWORK, NOT_GATES)
 
     for gate, call in sorted(NEEDS_NETWORK_PY.items()):
         p = SCRIPTS / gate
@@ -801,6 +815,41 @@ def self_test() -> int:
         ok = got is want
         print(f"  {'ok  ' if ok else 'FAIL'}  {name}: "
               f"{'found' if got else 'absent'}")
+        bad += 0 if ok else 1
+    print()
+
+    # check_vacuity's own verdicts, which decide this file's exit code and which
+    # nothing else reaches. Each is a rule about a LIST \u2014 a gate on no list, an
+    # exemption naming a file that is gone, a harness nothing runs \u2014 so each is
+    # planted by supplying the lists rather than by editing the tree.
+    #
+    # This is the shape one level down from the one the harness-invocation rule
+    # was added to reject: a branch that is correct and asserted by nobody. The
+    # NOT_GATES reason for this file says its self-test runs on every invocation,
+    # and until these cases existed that sentence covered everything except the
+    # branch it was written beside.
+    print("\u2500\u2500 Vacuity-rule self-test \u2500\u2500")
+    vacuity_cases: list[tuple[str, set[str], set[str], dict, dict, str | None]] = [
+        ("a gate on no list at all",
+         {"check-x.py"}, set(), {}, {}, "ships no positive control"),
+        ("a control naming a gate that is gone",
+         set(), {"check-x.py"}, {}, {}, "the reference outlived the gate"),
+        ("an exemption naming a harness that is gone",
+         set(), set(), {}, {"tests/gone.py": "a reason"},
+         "the exemption outlived its file"),
+        ("a harness nothing invokes",
+         {"tests/gone.py"}, set(), {}, {"tests/gone.py": "a reason"},
+         "A harness nothing invokes asserts nothing"),
+        ("a gate covered by a control",
+         {"check-x.py"}, {"check-x.py"}, {}, {}, None),
+    ]
+    for name, present_, controls_, network_, not_gates_, expect_ in vacuity_cases:
+        found = vacuity_problems(present_, controls_, network_, not_gates_,
+                                 invoked=lambda _name: False)
+        shown = " ".join(found)
+        ok = (not found) if expect_ is None else any(expect_ in p for p in found)
+        print(f"  {'ok  ' if ok else 'FAIL'}  {name}: "
+              f"{(shown[:70] + chr(8230)) if shown else 'accepted'}")
         bad += 0 if ok else 1
     print()
 
