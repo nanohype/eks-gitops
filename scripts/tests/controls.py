@@ -149,6 +149,7 @@ NEEDS_NETWORK_PY = {
 # from an invocation, which is a real gap and not a design choice.
 NEEDS_NETWORK_SH = {
     "kubeconform-scan.sh": "kubeconform",
+    "kyverno-test.sh": "kyverno",
 }
 
 NEEDS_NETWORK = {**NEEDS_NETWORK_PY, **NEEDS_NETWORK_SH}

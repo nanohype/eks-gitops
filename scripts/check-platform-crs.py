@@ -90,15 +90,22 @@ CHART = "oci://ghcr.io/nanohype/eks-agent-platform/charts/operator"
 # corpus are distinguishable from a clean one.
 OPERATOR_API_SUFFIX = ".nanohype.dev"
 
-# A floor on CRs found. A constant, and the reason is worth stating rather than
-# dressing up: every quantity this gate could derive a floor from comes out of
+# A floor on CRs found. Set low on purpose: `candidates` counts documents whose
+# API group the operator owns, but the WALK keeps only kinds the pinned chart
+# ships a schema for, so what a healthy run reports depends on what that chart
+# resolves to where the gate runs — a reviewer measured four where this tree
+# walks eight. A floor above the smallest resolution is red somewhere it should
+# be green, which is what a floor above its corpus always is.
+#
+# A constant rather than a derivation, and the reason is worth stating rather
+# than dressing up: every quantity this gate could derive a floor from comes out of
 # the same walk over the same files, so a corpus that shrinks shrinks the floor
 # with it. A completeness assertion — candidates by API group against candidates
 # by schema kind — was written and is circular for exactly that reason: both
 # filters read the documents the walk found. There is no second enumerator of
 # this repo's custom resources, so the floor is a number, and
 # scripts/tests/test_corpus_floors.py holds it against the tree from both sides.
-MIN_CRS = 5
+MIN_CRS = 2
 
 CRD_VERSION = "v1alpha1"
 

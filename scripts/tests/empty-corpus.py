@@ -65,6 +65,24 @@ GATE_TIMEOUT = 300
 # the directory it no longer reads and would pass.
 CORPUS_DIRS = ("applicationsets", "addons", "policies", "dashboards", "catalog", "docs")
 
+# Gates this repository runs that are not executables under scripts/. The
+# workflow blocks the same merges on them, so a probe named for flooring every
+# corpus that skipped them would have a population quietly narrower than its
+# name. Each names the command as its caller runs it and the corpus it reads.
+#
+# All three passed over an absent corpus when this list was written: `kyverno
+# test` printed that no tests are available and exited 0; `trivy config` over an
+# empty render exited 0; and the render loop matched no overlays and printed
+# "All manifests built successfully", which is the sentence a reader takes as
+# proof the fleet renders.
+COMMAND_GATES = {
+    "kyverno test": (["./scripts/kyverno-test.sh"], "policies"),
+    "trivy config": (["trivy", "config", "--exit-code", "1", "--severity",
+                      "MEDIUM,HIGH,CRITICAL", "--ignorefile", ".trivyignore.yaml",
+                      "rendered"], "rendered"),
+    "kustomize build loop": (["task", "kustomize:build"], "addons"),
+}
+
 # Gates that answer about something other than the catalog's manifests, so
 # emptying the corpus above leaves their real subject in place and the probe
 # would assert nothing about them. Each names what it reads instead, and is
@@ -91,7 +109,13 @@ GATE_ARGS = {
 
 # A floor on gates PROBED. With the glob answering nothing this would report that
 # every gate refuses an empty corpus, over no gates.
-MIN_PROBED = 20
+#
+# And a floor on THAT, because a floor of zero is the shape this whole harness
+# exists to reject, one level up: set MIN_PROBED to 0 and the tree stays green
+# over a probe that examined nothing. The lower bound is not a second constant —
+# it is the size of the population the probe is named for, so it cannot be
+# lowered without deleting gates.
+MIN_PROBED = 23
 
 CRASH_MARKERS = ("Traceback (most recent call last)", "\npanic: ")
 
@@ -180,6 +204,28 @@ def probe(gate: pathlib.Path, tree: pathlib.Path) -> tuple[bool, str, bool]:
     return True, "", on_derivation
 
 
+def probe_command(label: str, argv: list[str], corpus: str,
+                  tree: pathlib.Path) -> tuple[bool, str]:
+    """Whether a command this repo runs as a gate refuses its corpus emptied.
+
+    Not an executable under scripts/, so it carries none of the conventions the
+    gates share — no CANNOT_RUN, no diagnostic naming the input. The question is
+    the same one: does it report success having read nothing.
+    """
+    if shutil.which(argv[0]) is None:
+        return True, ""            # the tool is absent; that is not a verdict
+    try:
+        proc = subprocess.run(argv, cwd=tree, capture_output=True, text=True,
+                              timeout=GATE_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return False, f"did not finish in {GATE_TIMEOUT}s"
+    out = proc.stdout + proc.stderr
+    if proc.returncode != 0:
+        return True, ""
+    last = out.strip().splitlines()[-1][:110] if out.strip() else "silently"
+    return False, (f"exited 0 with {corpus}/ emptied — {last}")
+
+
 def gatelib_cannot_run() -> int:
     """The shared "this did not run" status, read from gatelib rather than 2."""
     text = (ROOT / "scripts" / "gatelib.py").read_text()
@@ -232,8 +278,28 @@ def main() -> int:
             else:
                 print(f"  FAIL  {gate.name}: {why}")
                 problems.append(f"{gate.name} {why}")
+
+        for label, (argv, corpus) in sorted(COMMAND_GATES.items()):
+            probed += 1
+            ok, why = probe_command(label, argv, corpus, tree)
+            print(f"  {'ok  ' if ok else 'FAIL'}  {label}"
+                  + ("" if ok else f": {why}"))
+            if not ok:
+                problems.append(f"{label} {why}")
     print()
 
+    # The floor's own floor. A probe population of 25 with MIN_PROBED at 0 reports
+    # success over nothing, and nothing else in the tree reads this constant.
+    if MIN_PROBED < 1:
+        problems.append(
+            f"MIN_PROBED is {MIN_PROBED}, so this harness would report every gate "
+            f"refusing an empty corpus over a population of none. A floor of zero is "
+            f"the shape this harness exists to reject.")
+    elif len(gates) < MIN_PROBED:
+        problems.append(
+            f"MIN_PROBED is {MIN_PROBED} and scripts/ holds {len(gates)} gate(s), so "
+            f"this harness cannot pass on any tree. A floor above its corpus fails "
+            f"every run, which is the other way a floor is wrong.")
     if probed < MIN_PROBED:
         problems.append(f"only {probed} gate(s) were probed, under the floor of "
                         f"{MIN_PROBED} — the population this harness reads shrank, and "
