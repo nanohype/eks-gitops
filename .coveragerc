@@ -5,10 +5,9 @@
 # and it is not a floor under the correctness of a gate the controls cover.
 #
 # Most, not every: controls.py exempts the gates whose input arrives over the
-# network, and prints the split on every run. Those are the largest files in the
-# tree, and for them a unit test is the only proof available — so run.py asserts
-# that each one carries unit coverage, reading the exemption list out of
-# controls.py rather than repeating it.
+# network, and prints the split on every run. For those a unit test is the only
+# proof available, so run.py asserts that each one carries unit coverage, reading
+# the exemption list out of controls.py rather than repeating it.
 #
 # The two tiers answer different questions and neither substitutes for the other.
 # A control proves a gate rejects a supplied violation; a unit test proves the

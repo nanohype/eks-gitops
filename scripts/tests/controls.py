@@ -238,10 +238,11 @@ def called_names(src: str) -> set[str]:
 
 
 # The harnesses, which cannot control themselves: a suite asserting its own
-# ability to reject would be the thing under test and the thing testing it. Both
-# are covered instead by their own self-tests, which run on every ordinary
+# ability to reject would be the thing under test and the thing testing it. Each
+# is covered instead by its own self-assertions, which run on every ordinary
 # invocation. Asserted like every other exemption — an entry naming a file that
-# no longer exists fails.
+# no longer exists fails, a present executable on no list fails, and an entry
+# nothing in the repo invokes fails.
 NOT_GATES = {
     "tests/controls.py": "the control harness; self_test() runs on every invocation",
     "tests/run.py": "the unit-test runner; asserts its own module list and floors",
@@ -606,6 +607,17 @@ def run_gate(gate: str, cwd: pathlib.Path) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=GATE_TIMEOUT)
 
 
+def invoked_anywhere(rel: str) -> bool:
+    """Whether the Taskfile or a workflow names `scripts/<rel>` as something to run.
+
+    Searched as the path a caller would write, so a mention inside prose about
+    the file does not count as an invocation of it.
+    """
+    needle = f"scripts/{rel}"
+    callers = [ROOT / "Taskfile.yaml", *sorted((ROOT / ".github" / "workflows").glob("*.y*ml"))]
+    return any(p.is_file() and needle in p.read_text() for p in callers)
+
+
 def check_vacuity() -> list[str]:
     """The suite cannot shrink quietly, and no exemption may match nothing."""
     problems = []
@@ -617,6 +629,16 @@ def check_vacuity() -> list[str]:
                 f"{name} is exempted as a harness rather than a gate, but no such "
                 f"executable exists under scripts/ — the exemption outlived its file. "
                 f"(recorded: {reason})")
+            continue
+        # A harness excuses itself by asserting its own outcome on every ordinary
+        # invocation, which is a claim about a thing that gets invoked. One
+        # nothing runs makes the exemption an excuse for an executable that never
+        # executes, and its recorded reason is free text nothing else checks.
+        if not invoked_anywhere(name):
+            problems.append(
+                f"{name} is exempted as a harness that asserts its own outcome, but "
+                f"neither Taskfile.yaml nor a workflow under .github/workflows/ runs "
+                f"it. A harness nothing invokes asserts nothing. (recorded: {reason})")
 
     for gate in sorted(present):
         if gate in NOT_GATES:

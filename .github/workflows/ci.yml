@@ -239,6 +239,14 @@ jobs:
       # asserted exemption fails this step, so the suite cannot shrink quietly.
       - name: Positive controls — every gate can reject
         run: ./scripts/tests/controls.py
+      # A control proves a GATE rejects a planted defect. This proves the TESTS
+      # reject a reverted behaviour, and requires the assertion that catches each
+      # one to be the assertion that names it — a non-zero exit says the suite
+      # noticed something, not that the test describing the behaviour is what
+      # noticed. Offline and about eleven seconds, so it runs on every PR rather
+      # than by hand.
+      - name: Reverted gate behaviour is named by the test that holds it
+        run: ./scripts/tests/reverify-tests.sh
       # Prose that names a path, a task target or a file:line is a claim about
       # the tree, and nothing else keeps those claims true as the tree moves.
       - name: Named things in prose resolve

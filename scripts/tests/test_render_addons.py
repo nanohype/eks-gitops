@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import unittest
 
+import yaml
 from gateloader import load
 
 gate = load("render-addons")
@@ -180,11 +181,51 @@ class TheDiscoveredCorpus(unittest.TestCase):
     def setUpClass(cls):
         cls.units = gate.discover()
 
-    def test_the_walk_finds_units(self):
-        self.assertTrue(self.units,
-                        "discovery matched no ApplicationSet, so this gate and the "
-                        "two that import it would each report a complete run over "
-                        "an empty corpus")
+    def test_every_appset_declaring_a_chart_contributes_a_unit(self):
+        """Non-emptiness is not a floor: one unit satisfies it, and the omission
+        this walk can produce is partial rather than total.
+
+        Derived per file rather than counted, so the assertion holds as the
+        catalog grows and fails on the appset that stops being seen.
+        """
+        contributing = {u.appset for u in self.units}
+        missed = []
+        for path in sorted(gate.APPSET_DIR.glob("*.yaml")):
+            doc = yaml.safe_load(path.read_text())
+            if not doc or doc.get("kind") != "ApplicationSet":
+                continue
+            spec = doc.get("spec") or {}
+            sources = ((spec.get("template") or {}).get("spec") or {}).get("sources") or []
+            if gate._chart_source(sources) is None:
+                continue  # kustomize / git-sourced — not this gate's corpus
+            if path.name not in contributing:
+                missed.append(path.name)
+        self.assertEqual(missed, [],
+                         "these ApplicationSets pin a Helm chart and produced no "
+                         "render unit, so this gate and the two importing its "
+                         "discover() never examine them")
+
+    def test_every_matrix_element_pinning_a_chart_becomes_a_unit(self):
+        """A matrix appset contributes one unit per list element, and dropping
+        one is the shape that leaves the other gates' counts looking whole."""
+        for path in sorted(gate.APPSET_DIR.glob("*.yaml")):
+            doc = yaml.safe_load(path.read_text())
+            if not doc or doc.get("kind") != "ApplicationSet":
+                continue
+            spec = doc.get("spec") or {}
+            sources = ((spec.get("template") or {}).get("spec") or {}).get("sources") or []
+            src = gate._chart_source(sources)
+            if src is None or not gate._is_template(src.get("chart")):
+                continue
+            elements = [e for e in gate._list_elements(spec) if "chart" in e]
+            got = [u for u in self.units if u.appset == path.name]
+            with self.subTest(appset=path.name):
+                self.assertEqual(
+                    sorted(u.chart for u in got),
+                    sorted(str(e["chart"]) for e in elements),
+                    "the units discovered for this appset are not its list "
+                    "elements — an element was dropped from the corpus three "
+                    "gates share")
 
     def test_every_unit_names_a_directory_that_exists(self):
         """A typo in an element's `path` removes the addon from three gates."""
