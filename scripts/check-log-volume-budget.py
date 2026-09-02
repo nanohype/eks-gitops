@@ -172,6 +172,53 @@ def alert_threshold() -> float | None:
     return None
 
 
+def environment_verdict(cfg: dict, warn: float | None,
+                        rel: str) -> tuple[list[str], bool]:
+    """Everything wrong with one environment's rendered Loki config.
+
+    Separate from the render because the render reaches a chart repository and
+    this does not. The three assertions are what decide the gate's outcome, so
+    they are reachable with a config supplied directly rather than only through a
+    network round trip.
+
+    Returns the problems found and whether the alert leads a declared cutoff —
+    the second is what the closing line counts, so an environment that failed the
+    comparison is not also reported as one the comparison covered.
+    """
+    wal = ((cfg.get("ingester") or {}).get("wal") or {})
+    limits = cfg.get("limits_config") or {}
+    comp = cfg.get("compactor") or {}
+    problems: list[str] = []
+    leads = False
+
+    cutoff = wal.get("disk_full_threshold")
+    if cutoff is None:
+        problems.append(
+            f"{rel}: the render sets no ingester.wal.disk_full_threshold, so the "
+            f"fraction at which Loki stops accepting every push is an upstream "
+            f"default. The alert's lead time then depends on a number that can "
+            f"move under a chart bump with nothing here to compare against.")
+    elif warn is not None and not warn < float(cutoff):
+        problems.append(
+            f"{rel}: the fill alert fires at {warn} but ingestion stops at "
+            f"{cutoff}. There is no window in which to act — and no remedy is "
+            f"fast: a retention cut must sync, wait a compaction interval, then "
+            f"clear retention_delete_delay before a byte is freed, and the volume "
+            f"cannot be grown through this repo at all.")
+    else:
+        leads = True
+
+    if limits.get("retention_period") is None:
+        problems.append(
+            f"{rel}: the render sets no limits_config.retention_period. Nothing "
+            f"then deletes on a schedule, and the volume reaches the cutoff.")
+    if comp.get("retention_enabled") is not True:
+        problems.append(
+            f"{rel}: compactor.retention_enabled is not true, so retention_period "
+            f"deletes nothing however it is set and the cutoff arrives regardless.")
+    return problems, leads
+
+
 def main() -> int:
     repo, version = chart_pin()
     warn = alert_threshold()
@@ -183,32 +230,11 @@ def main() -> int:
     checked = 0
     for env in envs:
         cfg = render(repo, version, env)
-        wal = ((cfg.get("ingester") or {}).get("wal") or {})
-        limits = cfg.get("limits_config") or {}
-        comp = cfg.get("compactor") or {}
         rel = f"addons/observability/loki/values-{env}.yaml"
-
-        cutoff = wal.get("disk_full_threshold")
-        if cutoff is None:
-            fail(f"{rel}: the render sets no ingester.wal.disk_full_threshold, so the "
-                 f"fraction at which Loki stops accepting every push is an upstream "
-                 f"default. The alert's lead time then depends on a number that can "
-                 f"move under a chart bump with nothing here to compare against.")
-        elif warn is not None and not warn < float(cutoff):
-            fail(f"{rel}: the fill alert fires at {warn} but ingestion stops at "
-                 f"{cutoff}. There is no window in which to act — and no remedy is "
-                 f"fast: a retention cut must sync, wait a compaction interval, then "
-                 f"clear retention_delete_delay before a byte is freed, and the volume "
-                 f"cannot be grown through this repo at all.")
-        else:
-            checked += 1
-
-        if limits.get("retention_period") is None:
-            fail(f"{rel}: the render sets no limits_config.retention_period. Nothing "
-                 f"then deletes on a schedule, and the volume reaches the cutoff.")
-        if comp.get("retention_enabled") is not True:
-            fail(f"{rel}: compactor.retention_enabled is not true, so retention_period "
-                 f"deletes nothing however it is set and the cutoff arrives regardless.")
+        problems, leads = environment_verdict(cfg, warn, rel)
+        for problem in problems:
+            fail(problem)
+        checked += 1 if leads else 0
 
     if failures:
         for f in failures:

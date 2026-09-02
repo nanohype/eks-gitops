@@ -142,6 +142,49 @@ def classify(ref: str) -> str:
     return "mutable" if tag.lower() in MUTABLE_TAGS else "tag"
 
 
+def bare_name(ref: str) -> str:
+    """A reference with its tag removed, which is what an exemption names.
+
+    Split on the last colon only when it sits in the final path segment: a
+    registry with a port (`registry:5000/x/y`) carries a colon that is not a tag
+    separator, and cutting there would produce a key no exemption can match and
+    no reader can recognise.
+    """
+    name = ref.rsplit("/", 1)[-1]
+    return ref.rsplit(":", 1)[0] if ":" in name else ref
+
+
+def verdict(images: dict[str, set[str]], allowed: dict[str, str]) -> list[str]:
+    """Every image-pin problem, over an inventory and an exemption list.
+
+    Two directions, and the second is the one that rots. A mutable reference with
+    no exemption is the defect the gate exists for. An exemption the fleet no
+    longer renders mutably is a description that outlived its reason, and an
+    exemption list nobody re-checks only ever widens.
+    """
+    failures = []
+    mutable_seen: set[str] = set()
+
+    for ref in sorted(images):
+        if classify(ref) != "mutable":
+            continue
+        bare = bare_name(ref)
+        mutable_seen.add(bare)
+        if bare in allowed:
+            continue
+        failures.append(
+            f"{ref} (via {', '.join(sorted(images[ref]))}) resolves to a moving target. "
+            f"Pin it in the addon's values.yaml to the chart's appVersion or a digest.")
+
+    for bare, reason in sorted(allowed.items()):
+        if bare not in mutable_seen:
+            failures.append(
+                f"{bare} is on the mutable-tag exemption list but the fleet no longer "
+                f"renders it mutably — the exemption outlived its reason. Delete it. "
+                f"(recorded: {reason[:100]})")
+    return failures
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--list", action="store_true", help="print the image inventory")
@@ -165,27 +208,7 @@ def main() -> int:
             print(f"        {path}: {err}")
         return 2
 
-    failures = []
-    mutable_seen: set[str] = set()
-
-    for ref in sorted(images):
-        if classify(ref) != "mutable":
-            continue
-        name = ref.rsplit("/", 1)[-1]
-        bare = ref.rsplit(":", 1)[0] if ":" in name else ref
-        mutable_seen.add(bare)
-        if bare in ALLOWED_MUTABLE:
-            continue
-        failures.append(
-            f"{ref} (via {', '.join(sorted(images[ref]))}) resolves to a moving target. "
-            f"Pin it in the addon's values.yaml to the chart's appVersion or a digest.")
-
-    for bare, reason in sorted(ALLOWED_MUTABLE.items()):
-        if bare not in mutable_seen:
-            failures.append(
-                f"{bare} is on the mutable-tag exemption list but the fleet no longer "
-                f"renders it mutably — the exemption outlived its reason. Delete it. "
-                f"(recorded: {reason[:100]})")
+    failures = verdict(images, ALLOWED_MUTABLE)
 
     # Reported whatever the verdict: a chart that did not render contributed no
     # images, and counting the rest as the whole fleet is how a partial scan

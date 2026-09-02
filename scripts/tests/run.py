@@ -19,6 +19,7 @@ file, or the floor becomes something people lower to make a run go green.
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import pathlib
 import sys
@@ -36,21 +37,56 @@ EXPECTED = (
     "test_named_things",
     "test_falco_rule_floor",
     "test_gatelib",
+    # The gates the positive-control sweep exempts, because they reach a chart
+    # registry or an API. A control cannot be written for them, so a unit test on
+    # the half that decides the verdict is the only thing that proves they say
+    # anything — and they are the largest files in the tree.
+    "test_policy_admission",
+    "test_platform_crs",
+    "test_dashboards",
+    "test_render_addons",
+    "test_image_pins",
+    "test_log_volume_budget",
 )
 
 # A floor well under the real count. It catches "discovery found almost nothing",
 # not "somebody removed one test".
 MIN_TESTS = 31
 
-# Line coverage floors over the gate scripts, enforced when `coverage` is
-# available. A ratchet, not a target: each is set just under what the suite
-# reaches, so coverage cannot fall silently, and raising one is what lands with
+# THE ASSERTION THAT IS NOT A NUMBER
+#
+# Every gate carries at least one kind of proof that it says something:
+#
+#   * a positive control in controls.py, which supplies the violation the gate
+#     names and requires a rejection; or
+#   * unit tests over the decision that produces the verdict.
+#
+# A gate with neither has been read by nobody and asserts nothing that anything
+# has checked. controls.py exempts every gate that reaches a chart registry or an
+# API — the exemption is honest, because a control cannot be written for a gate
+# whose input arrives over the network — and those are the largest files in the
+# tree. Among them is check-policy-admission.py, an approval gate in the sense
+# testing-rubric's `security-critical-100` uses the term. For exactly these, a
+# unit test is the only proof available.
+#
+# `control_exempt_gates` below reads that exemption list out of controls.py
+# rather than repeating it, and check_coverage fails on any gate in both it and
+# the uncovered set. A gate added to the exemption must arrive with tests, and
+# cannot be excused by a percentage that moves a point.
+#
+# The floors that follow are the weaker half. They stop a covered file
+# regressing; they cannot state what is covered, and a count loose enough to
+# survive an honest refactor is loose enough to miss a decision going untested.
+
+# Combined statement+branch coverage floor over the gate scripts, enforced when
+# `coverage` is available. A ratchet, not a target: set just under what the suite
+# reaches, so coverage cannot fall silently, and raising it is what lands with
 # the tests that earn it.
 #
-# The org testing-rubric asks for 75% lines and 60% branches. COMBINED_FLOOR
-# sitting far below that is the record of the gap, kept rather than papered over:
-# most gate files carry no unit tests at all, and the floor cannot rise without
-# writing them. Read the current standing with
+# The org testing-rubric asks for 75% lines and 60% branches, and this sits under
+# that. What the gap is made of is readable rather than asserted here: the gates
+# still carrying no unit tests are the ones controls.py DOES cover, so each of
+# them has been observed to reject the violation it names. Read the standing with
 #
 #     COVERAGE_REQUIRED=1 coverage run --rcfile=.coveragerc scripts/tests/run.py
 #     coverage report --rcfile=.coveragerc --include="scripts/*.py"
@@ -60,32 +96,18 @@ MIN_TESTS = 31
 #
 # COMBINED_FLOOR is compared against what coverage.report() returns, which with
 # branch=True is a COMBINED statement-and-branch figure, not line coverage. The
-# two differ enough to matter, so the name below says combined and the printed
+# two differ enough to matter, so the name here says combined and the printed
 # line says so too. Calling a combined figure "line coverage" would be a
 # measurement mislabelled as the one the rubric asks about.
-#
-# What the number does NOT capture: scripts/tests/controls.py runs most gates end
-# to end as a subprocess against a mutated tree, so those gates have behavioural
-# coverage this line count cannot see. Neither figure substitutes for the other —
-# the controls prove a gate rejects, the unit tests prove it computes the right
-# answer on a case the real tree does not contain.
-#
-# MOST, and the exceptions are the ones that matter to this floor. controls.py
-# exempts every gate that reaches a chart registry or an API, and its own run
-# prints the split. Those gates have neither kind of coverage, they are the
-# largest in the tree, and among them are the gates on the paths testing-rubric
-# calls security-critical. So this figure being low is not offset by behavioural
-# coverage for precisely the files where that offset was being claimed.
-COMBINED_FLOOR = 12
+COMBINED_FLOOR = 29
 
 # A ceiling on gate scripts carrying NO unit coverage at all, complementing the
 # floors below. The floors stop a covered file regressing; nothing stopped a NEW
-# gate arriving with no tests, and most of this tree arrived that way.
+# gate arriving with no tests.
 #
 # Ratchets downward only. Adding a gate without tests fails here rather than
-# diluting the combined figure by a percentage point nobody notices, which is how
-# a suite reaches this state one honest commit at a time.
-MAX_UNCOVERED_GATES = 17
+# diluting the combined figure by a percentage point nobody notices.
+MAX_UNCOVERED_GATES = 11
 
 PER_GATE_FLOORS = {
     "scripts/check-named-things.py": 35,
@@ -93,6 +115,15 @@ PER_GATE_FLOORS = {
     "scripts/check-label-values.py": 33,
     "scripts/check-sync-waves.py": 10,
     "scripts/gatelib.py": 55,
+    # The control-exempt gates. Their floors are what keeps the verdict half
+    # covered after the module that covers it is edited.
+    "scripts/check-policy-admission.py": 50,
+    "scripts/check-platform-crs.py": 50,
+    "scripts/validate-dashboards.py": 45,
+    "scripts/render-addons.py": 40,
+    "scripts/check-image-pins.py": 38,
+    "scripts/check-log-volume-budget.py": 58,
+    "scripts/check-falco-rule-floor.py": 28,
 }
 
 
@@ -117,6 +148,36 @@ def main() -> int:
     print(f"gate-script tests OK: {result.testsRun} tests across "
           f"{len(EXPECTED)} modules")
     return check_coverage()
+
+
+def control_exempt_gates() -> tuple[list[str], str]:
+    """Python gates controls.py exempts from a positive control, and why it might not.
+
+    Read out of controls.py rather than repeated here. A second copy of an
+    exemption list is a copy that drifts, and the direction it drifts is
+    permissive: the gate added to one list and not the other is excused by both.
+
+    A list that cannot be read is reported rather than treated as empty — an
+    empty exemption set makes the assertion above vacuously true, which is the
+    shape this whole suite exists to reject.
+    """
+    path = HERE / "controls.py"
+    try:
+        spec = importlib.util.spec_from_file_location("controls", path)
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["controls"] = module
+        spec.loader.exec_module(module)
+        exempt = sorted(module.NEEDS_NETWORK_PY)
+    except Exception as exc:                    # noqa: BLE001 — reported, not raised
+        return [], (f"{path.name} could not be read for its control exemptions "
+                    f"({type(exc).__name__}: {exc}), so no gate could be checked for "
+                    f"having neither kind of proof")
+    if not exempt:
+        return [], (f"{path.name} exempts no gate from a positive control, so the "
+                    f"assertion that every exempt gate carries unit tests holds over "
+                    f"an empty set and states nothing")
+    return exempt, ""
 
 
 def check_coverage() -> int:
@@ -201,6 +262,19 @@ def check_coverage() -> int:
             f"{', '.join(uncovered[:4])}{' …' if len(uncovered) > 4 else ''}"
         )
 
+    exempt, exempt_problem = control_exempt_gates()
+    if exempt_problem:
+        failures.append(exempt_problem)
+    unproven = sorted(set(exempt) & set(uncovered))
+    if unproven:
+        failures.append(
+            f"{len(unproven)} gate(s) have neither a positive control nor unit "
+            f"coverage: {', '.join(unproven)}. controls.py exempts them because "
+            f"their input arrives over the network, so a unit test on the half "
+            f"that decides the verdict is the only proof available that they say "
+            f"anything at all"
+        )
+
     if failures:
         print()
         for f in failures:
@@ -212,8 +286,11 @@ def check_coverage() -> int:
     print(f"coverage ratchet OK: {total:.1f}% combined statement+branch "
           f"(floor {COMBINED_FLOOR}%), {len(PER_GATE_FLOORS)} per-gate floor(s) held, "
           f"{len(uncovered)} of {len(gates)} gate script(s) with no unit coverage "
-          f"(ceiling {MAX_UNCOVERED_GATES}). Well under the rubric's 75% lines / "
-          f"60% branches — see the note in this file.")
+          f"(ceiling {MAX_UNCOVERED_GATES}). Under the rubric's 75% lines / 60% "
+          f"branches — see the note in this file.")
+    print(f"control-exempt gates: all {len(exempt)} carry unit coverage. "
+          f"scripts/tests/controls.py holds the other half of the claim — that "
+          f"every gate it does NOT exempt rejects the violation it names.")
     return 0
 
 
