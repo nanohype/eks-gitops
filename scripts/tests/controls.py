@@ -248,6 +248,9 @@ NOT_GATES = {
     "tests/reverify-gates.sh": "the Tier-1 re-verification harness; it drives the "
                                "gates rather than checking the tree, and asserts "
                                "its own pass/fail totals",
+    "tests/empty-corpus.py": "the vacuity harness; it runs every gate against an "
+                             "emptied corpus rather than checking the tree, and "
+                             "asserts its own probe floor and exemptions",
 }
 
 

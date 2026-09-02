@@ -322,7 +322,7 @@ def check_exclusion_parity() -> tuple[bool, set[str], set[str]]:
     print("── Exclusion-list parity ──────────────────────────────────────────")
     lists: dict[str, list[str]] = {}
     for group, fname in EXCLUSION_POLICIES:
-        doc = yaml.safe_load((POLICY_DIR / group / "base" / fname).read_text())
+        doc = gatelib.read_yaml(POLICY_DIR / group / "base" / fname)
         for rule in doc["spec"]["rules"]:
             key = f"{doc['metadata']['name']}/{rule['name']}"
             # A rule's exclusion is the union of every `exclude.any` entry's

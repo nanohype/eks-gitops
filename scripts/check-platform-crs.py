@@ -99,6 +99,11 @@ def pinned_chart_version() -> str:
     whose repoURL is the operator chart; its sibling `targetRevision: main` is
     the catalog's own git revision and must not be mistaken for it.
     """
+    if not OPERATOR_APPSET.is_file():
+        print(f"Cannot run: {OPERATOR_APPSET.relative_to(ROOT)} does not exist, so the "
+              f"operator chart version this gate resolves its CRDs from is unknown. "
+              f"An unreadable pin is not the same as a catalog with no CRs in it.")
+        sys.exit(gatelib.CANNOT_RUN)
     text = OPERATOR_APPSET.read_text()
     m = re.search(
         r"repoURL:\s*\S*ghcr\.io/nanohype/eks-agent-platform/charts.*?targetRevision:\s*(\S+)",
