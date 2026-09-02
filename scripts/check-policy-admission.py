@@ -166,6 +166,12 @@ POLICY_GROUPS = ["best-practices", "pod-security-standards"]
 # Enforce runs on staging + production; both flip the base policies to Enforce.
 ENFORCE_ENVS = ["staging", "production"]
 
+# A floor on addon×env manifests rendered into the resource file. Set well under
+# what the catalog produces, so it catches "discovery matched almost nothing"
+# rather than "an addon was retired".
+MIN_RENDERED = 40
+
+
 # Kinds Kyverno's workload policies (and their autogen pod-controller variants)
 # evaluate. Namespace-scoped, so they must carry metadata.namespace for the
 # exclusion match to fire — helm -n stamps it on most charts; this backfills any
@@ -682,6 +688,16 @@ def main() -> int:
             return 1
         print(f"  rendered {count} addon×env manifests into their namespaces, "
               f"plus the canary\n")
+        # A floor on what was RENDERED, not on what was found. `count` was
+        # printed and compared only against a render failure, so a discovery
+        # that matched almost nothing produced a fleet of a handful of manifests
+        # and the run still reported that no addon would be denied.
+        if count < MIN_RENDERED:
+            print(f"  FAIL  {count} manifest(s) rendered, below the floor of "
+                  f"{MIN_RENDERED}. The policies were evaluated against a fleet "
+                  f"this catalog does not have, and 'no addon flagged' is a "
+                  f"statement about that fleet rather than this one.\n")
+            return 2
 
         coverage_ok = check_namespace_coverage(landed, excluded)
 

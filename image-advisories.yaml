@@ -1,0 +1,156 @@
+# Fixed CRITICAL vulnerabilities this catalog knowingly ships, and why.
+#
+# scripts/check-image-vulnerabilities.py scans every image the pinned charts
+# render and blocks on any CRITICAL with a published fix. An entry here says a
+# human read that finding and decided the pin stands for now. Nothing else grants
+# that: an image with no entry fails the gate, and an entry that stops matching
+# the scan fails it too.
+#
+# Every entry is checked in four directions on every run, so this file cannot
+# quietly become a permanent waiver:
+#
+#   * a finding whose (id, package) no entry names   -> unacknowledged, blocks
+#   * a finding on an image its entry does not list  -> the entry does not cover it
+#   * an entry no scanned image carries              -> the entry outlived its reason
+#   * an entry listing an image with no such finding -> the same, per image
+#
+# So the way to clear an entry is to move the chart pin to a version whose image
+# carries the fixed package. Deleting the entry without doing that fails the
+# first rule; doing it and leaving the entry behind fails the third or fourth.
+#
+# `images` name the image WITHOUT a tag. The acknowledgement is about the image;
+# the tag moves with every chart bump, and a file that had to be edited on every
+# bump would be edited without being read.
+#
+# ── What this catalog can and cannot do about these ──
+#
+# Every image below except one is built by the upstream project whose chart this
+# catalog pins. This repo chooses a chart version; it does not build the image,
+# and it cannot rebuild it against a patched dependency. The lever it has is the
+# pin, and the pin moves when upstream publishes a chart whose image carries the
+# fix — which Renovate opens a pull request for, and which this gate then either
+# clears or does not.
+#
+# The exception is ghcr.io/nanohype/eks-agent-platform/eval-runner, which is
+# built in this organisation. Its entry is a request to that repo's build, not to
+# a chart pin here.
+
+advisories:
+  - id: CVE-2026-56854
+    package: golang.org/x/crypto
+    reason: >-
+      Present in every Go-built image the fleet renders, because it is in the
+      module graph of almost every controller upstream ships. Fixed in
+      golang.org/x/crypto 0.55.0, which each project picks up on its own release
+      cadence; this catalog carries no build for any of them. Clears image by
+      image as chart pins move to versions built against 0.55.0 or later.
+    images:
+      - docker.io/envoyproxy/ai-gateway-controller
+      - docker.io/envoyproxy/gateway
+      - docker.io/falcosecurity/falcoctl
+      - docker.io/grafana/loki
+      - docker.io/grafana/loki-canary
+      - docker.io/grafana/tempo
+      - docker.io/velero/velero
+      - ghcr.io/external-secrets/external-secrets
+      - ghcr.io/grafana/grafana-operator
+      - ghcr.io/kedacore/keda
+      - ghcr.io/kedacore/keda-admission-webhooks
+      - ghcr.io/kedacore/keda-metrics-apiserver
+      - ghcr.io/opencost/opencost
+      - mirror.gcr.io/aquasec/trivy-operator
+      - otel/opentelemetry-collector-contrib
+      - prom/memcached-exporter
+      - quay.io/argoproj/argo-events
+      - quay.io/argoproj/argocli
+      - quay.io/argoproj/workflow-controller
+      - quay.io/cilium/cilium
+      - quay.io/jetstack/cert-manager-cainjector
+      - quay.io/jetstack/cert-manager-controller
+      - quay.io/jetstack/cert-manager-startupapicheck
+      - quay.io/jetstack/cert-manager-webhook
+      - reg.kyverno.io/kyverno/background-controller
+      - reg.kyverno.io/kyverno/cleanup-controller
+      - reg.kyverno.io/kyverno/kyverno
+      - reg.kyverno.io/kyverno/kyverno-cli
+      - reg.kyverno.io/kyverno/kyvernopre
+      - reg.kyverno.io/kyverno/reports-controller
+      - registry.k8s.io/descheduler/descheduler
+      - registry.k8s.io/external-dns/external-dns
+      - registry.k8s.io/kube-state-metrics/kube-state-metrics
+      - registry.k8s.io/metrics-server/metrics-server
+
+  - id: CVE-2025-68121
+    package: stdlib
+    reason: >-
+      The Go standard library compiled into the binary, not a dependency the
+      image can update separately — it moves when upstream rebuilds on a patched
+      toolchain. Fixed in Go 1.24.13, 1.25.7 and 1.26.0-rc.3.
+    images:
+      - docker.io/falcosecurity/k8s-metacollector
+      - quay.io/argoproj/argo-events
+      - registry.k8s.io/metrics-server/metrics-server
+      - us-docker.pkg.dev/fairwinds-ops/oss/goldilocks
+
+  - id: CVE-2024-24790
+    package: stdlib
+    reason: >-
+      The same shape as CVE-2025-68121 and on the same image, against an older
+      toolchain: k8s-metacollector 0.1.1 is built on Go 1.21.1, and the fix is in
+      1.21.11 and 1.22.4. The falco chart pin is what moves it.
+    images:
+      - docker.io/falcosecurity/k8s-metacollector
+
+  - id: CVE-2026-33186
+    package: google.golang.org/grpc
+    reason: >-
+      A transitive module in three upstream controllers, fixed in grpc-go 1.79.3.
+      Not separable from the binary; it moves when each project rebuilds.
+    images:
+      - docker.io/falcosecurity/k8s-metacollector
+      - quay.io/argoproj/argo-events
+      - registry.k8s.io/metrics-server/metrics-server
+
+  - id: CVE-2026-33815
+    package: github.com/jackc/pgx/v5
+    reason: >-
+      The Postgres driver argo-events links for its Postgres event source, fixed
+      in pgx 5.9.0. This catalog does not enable that event source, but the
+      package is in the shipped binary either way, so the finding is real and the
+      remedy is the same — the argo-events chart pin.
+    images:
+      - quay.io/argoproj/argo-events
+
+  - id: CVE-2026-33816
+    package: github.com/jackc/pgx/v5
+    reason: >-
+      The second advisory against the same driver version in the same binary,
+      with the same fixed version and the same remedy as CVE-2026-33815.
+    images:
+      - quay.io/argoproj/argo-events
+
+  - id: CVE-2026-31789
+    package: libcrypto3
+    reason: >-
+      OpenSSL in the goldilocks image's Alpine base, fixed in 3.5.6-r0. A base
+      layer this catalog does not build; it moves with the goldilocks chart pin.
+    images:
+      - us-docker.pkg.dev/fairwinds-ops/oss/goldilocks
+
+  - id: CVE-2026-31789
+    package: libssl3
+    reason: >-
+      The same OpenSSL advisory against the sibling package in the same base
+      layer, cleared by the same chart bump as the libcrypto3 entry.
+    images:
+      - us-docker.pkg.dev/fairwinds-ops/oss/goldilocks
+
+  - id: CVE-2026-59873
+    package: tar
+    reason: >-
+      The one first-party image in this list. eval-runner is built in
+      nanohype/eks-agent-platform, so the remedy is a rebuild on a base carrying
+      tar 7.5.19 and a new operator chart version here — not a decision this
+      repository can take on its own.
+    images:
+      - ghcr.io/nanohype/eks-agent-platform/eval-runner

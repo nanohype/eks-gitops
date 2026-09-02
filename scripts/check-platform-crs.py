@@ -91,6 +91,11 @@ CRD_VERSION = "v1alpha1"
 SKIP_DIRS = {".git", "node_modules", "rendertest", "__pycache__", ".task"}
 
 
+# A floor on platform CRs walked. Set under what the catalog declares, so it
+# catches a walk that matched almost nothing rather than one CR being retired.
+MIN_CRS = 5
+
+
 def pinned_chart_version() -> str:
     """The operator chart version this catalog installs.
 
@@ -437,6 +442,16 @@ def check(listing: bool, offline: bool) -> int:
             file=sys.stderr,
         )
         return 1
+
+    # A floor on CRs WALKED. The walk skips any document whose kind is not in
+    # the resolved schema set, so a renamed kind, a moved manifest or an
+    # apiVersion bump takes its CRs out of the population — and an empty
+    # population prints the same sentence as a compliant one.
+    if walked < MIN_CRS:
+        print(f"\nFAIL  walked {walked} platform CR(s), below the floor of {MIN_CRS}. "
+              f"The catalog's CRs were not matched against the chart's schemas, which "
+              f"is not the same as their being admissible.", file=sys.stderr)
+        return 2
 
     print(f"\nok: {walked} platform CR(s) admissible against operator chart {version}")
     return 0

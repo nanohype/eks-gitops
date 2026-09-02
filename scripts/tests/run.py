@@ -36,6 +36,8 @@ EXPECTED = (
     "test_named_things",
     "test_falco_rule_floor",
     "test_gatelib",
+    "test_image_vulnerabilities",
+    "test_corpus_floors",
 )
 
 # A floor well under the real count. It catches "discovery found almost nothing",
@@ -85,7 +87,17 @@ COMBINED_FLOOR = 12
 # Ratchets downward only. Adding a gate without tests fails here rather than
 # diluting the combined figure by a percentage point nobody notices, which is how
 # a suite reaches this state one honest commit at a time.
-MAX_UNCOVERED_GATES = 17
+#
+# Two of the files this counts as covered are covered by IMPORT, not by tests.
+# check-image-vulnerabilities.py loads check-image-pins.py by path so the two
+# cannot disagree about what the fleet is, and that loads render-addons.py in
+# turn; a test module importing the first executes the module bodies of all
+# three. Coverage cannot tell that from a test, so both read as non-zero while
+# carrying no assertions of their own. The ceiling is lowered anyway, because a
+# ratchet that declines to move is one nobody can regress against — but it is
+# the weaker half of this file's claim, and the per-gate floors and the controls
+# in scripts/tests/controls.py are where the real one lives.
+MAX_UNCOVERED_GATES = 15
 
 PER_GATE_FLOORS = {
     "scripts/check-named-things.py": 35,
@@ -93,6 +105,7 @@ PER_GATE_FLOORS = {
     "scripts/check-label-values.py": 33,
     "scripts/check-sync-waves.py": 10,
     "scripts/gatelib.py": 55,
+    "scripts/check-image-vulnerabilities.py": 45,
 }
 
 

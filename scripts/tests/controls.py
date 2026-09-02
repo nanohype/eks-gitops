@@ -142,6 +142,7 @@ NEEDS_NETWORK_PY = {
     "check-image-pins.py": "subprocess.run",
     "check-log-volume-budget.py": "subprocess.run",
     "check-falco-rule-floor.py": "subprocess.run",
+    "check-image-vulnerabilities.py": "subprocess.run",
 }
 
 # Shell gates: no syntax tree available, so this is a text check over the

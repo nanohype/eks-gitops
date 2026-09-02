@@ -93,6 +93,14 @@ tasks:
     cmds:
       - ./scripts/check-image-pins.py
 
+  validate:image-vulnerabilities:
+    desc: "Image-CVE gate — every fixed CRITICAL in a rendered image is acknowledged in image-advisories.yaml"
+    cmds:
+      # Pulls and scans every image the pinned charts render, so it is slower
+      # than the structural gates and is NOT in `task validate`. CI runs it as
+      # its own blocking job; run it here before moving a chart pin.
+      - ./scripts/check-image-vulnerabilities.py
+
   validate:workflows:
     desc: "Workflow supply-chain gate — zizmor over .github/workflows, offline, MEDIUM+ blocks"
     cmds:
