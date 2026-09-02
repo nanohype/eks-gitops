@@ -26,9 +26,21 @@ the traceback names a pathlib internal rather than the file that is missing.
 
 WHAT THIS DOES NOT ESTABLISH
 
+Two things, both stated rather than implied by a green run.
+
 That a gate examined the RIGHT population — only that it noticed an absent one.
 A gate reading one file of thirty passes here. That is the corpus-completeness
 question, and it belongs with each gate's own tests.
+
+And WHY a gate refused. Several derive their coordinates from an ApplicationSet
+— which chart to render, which environments exist — and emptying every corpus at
+once takes that input away too, so they exit 2 naming the appset rather than
+saying anything about the corpus they check. Those runs are marked below. A
+two-pass probe keeping applicationsets/ was tried and does not separate the
+cases: for a gate whose corpus IS applicationsets/, the same file is both. What
+would separate them is per-gate knowledge of which input is which, which is the
+hand-maintained map this harness exists to avoid, so the limit is recorded
+instead of papered over.
 """
 
 from __future__ import annotations
@@ -60,7 +72,21 @@ CORPUS_DIRS = ("applicationsets", "addons", "policies", "dashboards", "catalog",
 # whose stated subject is no longer part of the tree.
 OTHER_SUBJECT = {
     "check-workflows.sh": ".github/workflows",
-    "kubeconform-scan.sh": ".github/workflows",
+}
+
+# Gates whose corpus is an argument, not a default. Run with no argv a gate like
+# this reads stdin or its own default and says nothing about the tree, so the
+# probe hands it the argv its callers do — the same reason
+# scripts/tests/controls.py carries GATE_ARGS.
+#
+# kubeconform-scan.sh was exempted here as answering about .github/workflows. It
+# does not read that directory: Taskfile.yaml and ci.yml pass it
+# `applicationsets/` and `rendered`. Both halves of that exemption's assertion
+# held — the file exists, the directory exists — while the claim was false, which
+# is what an exemption asserted on the wrong operand looks like.
+GATE_ARGS = {
+    "kubeconform-scan.sh": ["applicationsets/"],
+    "check-hardcoded-org.py": ["--blocking"],
 }
 
 # A floor on gates PROBED. With the glob answering nothing this would report that
@@ -94,8 +120,8 @@ def tracked_files() -> list[str]:
     return [p for p in proc.stdout.split("\0") if p]
 
 
-def emptied_tree(dest: pathlib.Path) -> int:
-    """A copy of the tracked tree with every corpus file removed."""
+def emptied_tree(dest: pathlib.Path, keep: tuple[str, ...] = ()) -> int:
+    """A copy of the tracked tree with the corpus removed, `keep` left intact."""
     for rel in tracked_files():
         src = ROOT / rel
         if not src.is_file():
@@ -105,7 +131,7 @@ def emptied_tree(dest: pathlib.Path) -> int:
         shutil.copy2(src, out)
 
     removed = 0
-    for name in CORPUS_DIRS:
+    for name in [d for d in CORPUS_DIRS if d not in keep]:
         for path in sorted((dest / name).rglob("*")):
             if path.is_file() and path.suffix != ".py":
                 path.unlink()
@@ -122,14 +148,22 @@ def emptied_tree(dest: pathlib.Path) -> int:
     return removed
 
 
-def probe(gate: pathlib.Path, tree: pathlib.Path) -> tuple[bool, str]:
-    """Whether `gate` refused the emptied tree, and why not if it did not."""
+def probe(gate: pathlib.Path, tree: pathlib.Path) -> tuple[bool, str, bool]:
+    """(refused, why not, refused-on-a-derivation-input).
+
+    The third value is what keeps CANNOT_RUN meaningful. A gate that exits 2
+    because an ApplicationSet it reads to learn its coordinates is gone has said
+    nothing about its corpus, and scoring that as a corpus refusal is the
+    collapse this repo avoids everywhere else.
+    """
     rel = gate.relative_to(SCRIPTS)
     try:
-        proc = subprocess.run([str(tree / "scripts" / rel)], cwd=tree,
-                              capture_output=True, text=True, timeout=GATE_TIMEOUT)
+        proc = subprocess.run([str(tree / "scripts" / rel), *GATE_ARGS.get(gate.name, [])],
+                              cwd=tree, capture_output=True, text=True,
+                              timeout=GATE_TIMEOUT, env={**os.environ,
+                                                         "KUBECONFORM_SKIP": ""})
     except subprocess.TimeoutExpired:
-        return False, f"did not finish in {GATE_TIMEOUT}s against an empty corpus"
+        return False, f"did not finish in {GATE_TIMEOUT}s against an empty corpus", False
     out = proc.stdout + proc.stderr
     if any(marker in out for marker in CRASH_MARKERS):
         first = next((ln for ln in out.splitlines() if "Error" in ln or "panic:" in ln),
@@ -137,10 +171,22 @@ def probe(gate: pathlib.Path, tree: pathlib.Path) -> tuple[bool, str]:
         return False, (f"CRASHED rather than refusing (exit {proc.returncode}) — "
                        f"{first[:120]}. A crash exits non-zero, so by status alone it "
                        f"is a finding; the traceback then names a library internal "
-                       f"rather than the input that is absent")
+                       f"rather than the input that is absent"), False
     if proc.returncode == 0:
-        return False, (f"exited 0 over an empty corpus — {out.strip().splitlines()[-1][:120] if out.strip() else 'silently'}")
-    return True, ""
+        last = out.strip().splitlines()[-1][:120] if out.strip() else "silently"
+        return False, f"exited 0 over an empty corpus — {last}", False
+    on_derivation = (proc.returncode == gatelib_cannot_run()
+                     and any(f"{d}/" in out for d in CORPUS_DIRS))
+    return True, "", on_derivation
+
+
+def gatelib_cannot_run() -> int:
+    """The shared "this did not run" status, read from gatelib rather than 2."""
+    text = (ROOT / "scripts" / "gatelib.py").read_text()
+    for line in text.splitlines():
+        if line.startswith("CANNOT_RUN"):
+            return int(line.split("=", 1)[1].strip())
+    return 2
 
 
 def main() -> int:
@@ -161,6 +207,7 @@ def main() -> int:
                             f"is not a directory in this tree — the exemption names a "
                             f"subject the repo does not have.")
 
+    probed = 0
     with tempfile.TemporaryDirectory() as tmp:
         tree = pathlib.Path(tmp) / "tree"
         removed = emptied_tree(tree)
@@ -171,19 +218,21 @@ def main() -> int:
         print(f"── {len(gates)} gate(s) against a tree with {removed} corpus file(s) "
               f"removed ──\n")
 
-        probed = 0
         for gate in gates:
             if gate.name in OTHER_SUBJECT:
                 print(f"  skip  {gate.name}: answers about {OTHER_SUBJECT[gate.name]}, "
                       f"which this probe does not empty")
                 continue
             probed += 1
-            ok, why = probe(gate, tree)
+            ok, why, on_derivation = probe(gate, tree)
             if ok:
-                print(f"  ok    {gate.name}")
+                print(f"  ok    {gate.name}"
+                      + ("  (refused on a derivation input, not on its corpus)"
+                         if on_derivation else ""))
             else:
                 print(f"  FAIL  {gate.name}: {why}")
                 problems.append(f"{gate.name} {why}")
+    print()
 
     if probed < MIN_PROBED:
         problems.append(f"only {probed} gate(s) were probed, under the floor of "

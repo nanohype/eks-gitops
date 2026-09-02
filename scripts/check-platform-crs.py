@@ -85,6 +85,21 @@ ROOT = Path(__file__).resolve().parent.parent
 NETWORK_TIMEOUT = 300
 OPERATOR_APPSET = ROOT / "applicationsets" / "addons-agent-operator.yaml"
 CHART = "oci://ghcr.io/nanohype/eks-agent-platform/charts/operator"
+# The API-group suffix the operator chart's CRDs share. Used to count candidate
+# CRs independently of the schema set, so an empty schema resolution and an empty
+# corpus are distinguishable from a clean one.
+OPERATOR_API_SUFFIX = ".nanohype.dev"
+
+# A floor on CRs found. A constant, and the reason is worth stating rather than
+# dressing up: every quantity this gate could derive a floor from comes out of
+# the same walk over the same files, so a corpus that shrinks shrinks the floor
+# with it. A completeness assertion — candidates by API group against candidates
+# by schema kind — was written and is circular for exactly that reason: both
+# filters read the documents the walk found. There is no second enumerator of
+# this repo's custom resources, so the floor is a number, and
+# scripts/tests/test_corpus_floors.py holds it against the tree from both sides.
+MIN_CRS = 5
+
 CRD_VERSION = "v1alpha1"
 
 # Directories with no bearing on what a cluster applies.
@@ -399,6 +414,11 @@ def check(listing: bool, offline: bool) -> int:
 
         walked = 0
         skipped_templates = 0
+        # Every CR carrying an operator API group, and every one the walk
+        # reached. Two filters over one corpus: the walk keeps kinds the chart
+        # defines, this keeps the group the chart owns.
+        candidates: set[str] = set()
+        reached: set[str] = set()
         for f in manifests():
             # Chart source is Go-template text, identified structurally rather
             # than by whatever happens to break the parser. A manifest that will
@@ -420,14 +440,20 @@ def check(listing: bool, offline: bool) -> int:
                 if not isinstance(doc, dict):
                     continue
                 kind = doc.get("kind")
-                if kind not in schemas:
-                    continue
-                if not str(doc.get("apiVersion", "")).endswith("/" + CRD_VERSION):
-                    continue
+                api = str(doc.get("apiVersion", ""))
                 rel = f.relative_to(ROOT)
                 name = (doc.get("metadata") or {}).get("name", "<unnamed>")
+                ident = f"{rel}: {kind}/{name}"
+                if (api.endswith("/" + CRD_VERSION)
+                        and api.split("/", 1)[0].endswith(OPERATOR_API_SUFFIX)):
+                    candidates.add(ident)
+                if kind not in schemas:
+                    continue
+                if not api.endswith("/" + CRD_VERSION):
+                    continue
+                reached.add(ident)
                 if listing:
-                    print(f"  {rel}: {kind}/{name}")
+                    print(f"  {ident}")
                 walk(doc.get("spec") or {}, schemas[kind], "spec", kind, f"{rel} ({name})", problems)
                 walked += 1
 
@@ -441,6 +467,27 @@ def check(listing: bool, offline: bool) -> int:
             "from the operator chart the catalog pins.",
             file=sys.stderr,
         )
+        return 1
+
+    # A completeness assertion rather than a floor. `candidates` is the same
+    # corpus filtered by API GROUP, which is independent of the schema-kind
+    # filter the walk uses — so a schema set that resolved short, a renamed kind
+    # or a moved manifest shows up as candidates the walk did not reach, and an
+    # empty corpus shows up as no candidates at all. A number picked here could
+    # be wrong in either direction; this cannot.
+    if len(candidates) < MIN_CRS:
+        print(f"\nFAIL  {len(candidates)} custom resource(s) carry an operator API "
+              f"group, below the floor of {MIN_CRS}. This gate walked almost nothing, "
+              f"which is not the same as the catalog's CRs being admissible.",
+              file=sys.stderr)
+        return gatelib.CANNOT_RUN
+    missed = sorted(candidates - reached)
+    if missed:
+        print(f"\nFAIL  {len(missed)} custom resource(s) carry an operator API group "
+              f"and were not walked — the operator chart shipped no schema for their "
+              f"kind, so nothing checked them:", file=sys.stderr)
+        for item in missed:
+            print(f"  - {item}", file=sys.stderr)
         return 1
 
     print(f"\nok: {walked} platform CR(s) admissible against operator chart {version}")

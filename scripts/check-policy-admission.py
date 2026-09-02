@@ -166,6 +166,11 @@ POLICY_GROUPS = ["best-practices", "pod-security-standards"]
 # Enforce runs on staging + production; both flip the base policies to Enforce.
 ENFORCE_ENVS = ["staging", "production"]
 
+# A floor on addon×env manifests rendered. Set well under what the catalog
+# produces; see the note at the comparison for why it is a number rather than a
+# quantity derived from the same walk.
+MIN_RENDERED = 40
+
 # Kinds Kyverno's workload policies (and their autogen pod-controller variants)
 # evaluate. Namespace-scoped, so they must carry metadata.namespace for the
 # exclusion match to fire — helm -n stamps it on most charts; this backfills any
@@ -682,6 +687,21 @@ def main() -> int:
             return 1
         print(f"  rendered {count} addon×env manifests into their namespaces, "
               f"plus the canary\n")
+        # A constant, not a derivation. Bounding the render by the discovered
+        # units was written first and is circular: discover() reads the same
+        # ApplicationSets the render does, so a discovery that matched almost
+        # nothing lowers the bound by exactly as much as it lowers the count and
+        # the comparison holds. Nothing else in the tree enumerates the fleet.
+        #
+        # The canary and the runtime pod keep every rule-coverage assertion green
+        # regardless of how much fleet was rendered, so without a floor here a run
+        # over almost no fleet is indistinguishable from a clean one.
+        if count < MIN_RENDERED:
+            print(f"  FAIL  {count} manifest(s) rendered, below the floor of "
+                  f"{MIN_RENDERED}. The policies were evaluated against a fleet "
+                  f"this catalog does not have, and 'no addon flagged' is a "
+                  f"statement about that fleet rather than this one.\n")
+            return gatelib.CANNOT_RUN
 
         coverage_ok = check_namespace_coverage(landed, excluded)
 
