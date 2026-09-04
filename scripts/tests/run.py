@@ -37,7 +37,7 @@ EXPECTED = (
     "test_named_things",
     "test_falco_rule_floor",
     "test_gatelib",
-    # The harness layer. controls.py excuses four executables from carrying a
+    # The harness layer. controls.py excuses the harnesses from carrying a
     # positive control because each asserts its own outcome when it runs, and
     # the reader deciding whether anything runs them is covered nowhere else.
     "test_controls",
@@ -51,6 +51,9 @@ EXPECTED = (
     "test_render_addons",
     "test_image_pins",
     "test_log_volume_budget",
+    # The floors that keep an emptied corpus from reading as a clean one,
+    # asserted apart from the gates that carry them.
+    "test_corpus_floors",
 )
 
 # A floor well under the real count. It catches "discovery found almost nothing",
@@ -112,7 +115,7 @@ MIN_TESTS = 31
 # two differ enough to matter, so the name here says combined and the printed
 # line says so too. Calling a combined figure "line coverage" would be a
 # measurement mislabelled as the one the rubric asks about.
-COMBINED_FLOOR = 30
+COMBINED_FLOOR = 31
 
 # A ceiling on gate scripts carrying NO unit coverage at all, complementing the
 # floors below. The floors stop a covered file regressing; nothing stopped a NEW
@@ -131,7 +134,7 @@ PER_GATE_FLOORS = {
     # The control-exempt gates. Their floors are what keeps the verdict half
     # covered after the module that covers it is edited.
     "scripts/check-policy-admission.py": 63,
-    "scripts/check-platform-crs.py": 50,
+    "scripts/check-platform-crs.py": 51,
     "scripts/validate-dashboards.py": 49,
     "scripts/render-addons.py": 40,
     "scripts/check-image-pins.py": 38,

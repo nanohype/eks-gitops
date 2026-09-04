@@ -82,6 +82,12 @@ import sys
 ORG = "nanohype"
 CATALOG = "eks-gitops"  # THIS repo — the vended catalog. NOT the product repos.
 
+# A floor on applied ApplicationSets read. Set well under what the catalog ships,
+# so it catches "the glob matched almost nothing" — a renamed directory, a wrong
+# --root, a working tree that never checked out — and never "one appset was
+# retired".
+MIN_APPSETS = 20
+
 # A repoURL whose value points at the CATALOG repo, over either transport ArgoCD
 # accepts. Anchored on `repoURL:` so image refs, oci:// chart repos, and the
 # Kyverno subjectRegExp are structurally out of scope; pinned to the catalog repo
@@ -118,6 +124,18 @@ def main() -> int:
     # NON-RECURSIVE by design: app-of-apps applies only the top level, so only
     # the top level can strand a fork. See the opt-in note in the docstring.
     files = sorted(p for p in appsets.glob("*.y*ml") if p.is_file())
+
+    # A floor on what was EXAMINED. The directory existing is not the same as it
+    # holding the fleet: with the glob answering nothing, this printed
+    # "Scanned 0 applied ApplicationSet(s)" and its success line, and exited 0
+    # under --blocking. Every other outcome of this gate is a sentence about what
+    # it read; that one was a sentence about a set it never had.
+    if len(files) < MIN_APPSETS:
+        print(f"FAIL  found {len(files)} applied ApplicationSet(s) under "
+              f"{appsets.relative_to(args.root)}, below the floor of {MIN_APPSETS}.")
+        print("      A scan over almost nothing reports the same as a scan over a")
+        print("      catalog with no hardcoded repoURL in it.")
+        return 2
 
     violations: list[tuple[pathlib.Path, int, str]] = []
     for path in files:

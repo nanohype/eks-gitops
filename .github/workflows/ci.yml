@@ -239,6 +239,12 @@ jobs:
       # asserted exemption fails this step, so the suite cannot shrink quietly.
       - name: Positive controls — every gate can reject
         run: ./scripts/tests/controls.py
+      # A control proves a gate rejects a violation it was handed. This proves it
+      # rejects the ABSENCE of the thing it reads — a renamed directory, a
+      # narrowed glob, a filter that stopped matching. Every gate is probed, from
+      # the tree rather than a list, so the class stays closed as gates are added.
+      - name: No gate reports success over an absent corpus
+        run: ./scripts/tests/empty-corpus.py
       # A control proves a GATE rejects a planted defect. This proves the TESTS
       # reject a reverted behaviour, and requires the assertion that catches each
       # one to be the assertion that names it — a non-zero exit says the suite
@@ -408,7 +414,7 @@ jobs:
           kyverno version
 
       - name: Run policy unit tests
-        run: kyverno test policies/kyverno/tests
+        run: ./scripts/kyverno-test.sh policies/kyverno/tests
 
       # `kyverno test` cannot reach Fulcio/Rekor, so it never verifies a Cosign
       # signature offline — the unit tests above only pin verify-images' match/

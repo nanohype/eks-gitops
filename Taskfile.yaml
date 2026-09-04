@@ -113,6 +113,11 @@ tasks:
     cmds:
       - ./scripts/tests/controls.py
 
+  validate:empty-corpus:
+    desc: "Vacuity gate — no gate reports success over a corpus that is not there"
+    cmds:
+      - ./scripts/tests/empty-corpus.py
+
   validate:reverify-tests:
     desc: "Mutation harness — revert a gate behaviour and require the suite to name it"
     cmds:
@@ -204,6 +209,7 @@ tasks:
       - validate:policy-validity
       - validate:gate-tests
       - validate:gate-controls
+      - validate:empty-corpus
       - validate:reverify-tests
       - validate:named-things
       - validate:ai-config

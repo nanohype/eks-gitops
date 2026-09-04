@@ -61,8 +61,15 @@ pass=0; fail=0
 # Every module this harness plants against. Named rather than discovered: a
 # module that stops being loaded would otherwise drop out of the clean-tree and
 # restored-tree checks without either of them failing.
+# The modules whose assertions this harness reverts behaviour against, plus the
+# one holding the vacuity floors those same gates carry. check-platform-crs.py,
+# check-policy-admission.py and validate-dashboards.py each assert a floor under
+# their corpus AND the verdict over it; a mutant reverting the floor half is held
+# by test_corpus_floors and by nothing in the list below, so without it that
+# mutant reads as a miss when a test does in fact catch it.
 ALL_MODULES="test_policy_admission test_platform_crs test_dashboards \
-  test_render_addons test_image_pins test_log_volume_budget test_controls"
+  test_render_addons test_image_pins test_log_volume_budget test_controls \
+  test_corpus_floors"
 
 # Bytecode caching keys on (mtime, size). A restore and the next mutation inside
 # the same second can hand the run the PREVIOUS mutant's module, and the suite
@@ -128,7 +135,7 @@ if [ $? -ne 0 ]; then
   sed -n '1,40p' "$OUT" | sed 's/^/          /'
   exit 1
 fi
-echo "  ok    all $(echo $ALL_MODULES | wc -w | tr -d ' ') modules green on the unmodified tree"
+echo "  ok    all $(echo $ALL_MODULES | wc -w | tr -d ' ') module(s) this harness mutates against are green on the unmodified tree"
 echo
 
 echo "── One behaviour reverted at a time; the suite must name it ──"
@@ -219,6 +226,59 @@ rejects "list identity: check only the top level" test_platform_crs \
   test_a_set_list_identifies_a_scalar_by_itself \
   test_an_absent_key_participates_in_the_identity \
   test_three_entries_sharing_an_identity_report_each_repeat
+res $F
+
+# The version the pin resolves is upstream of every schema assertion above: read
+# the wrong source and the CRDs come from a chart the fleet does not install,
+# read no source and there is nothing to check against. Both are refusals rather
+# than empty answers, and an emptied corpus produces the first.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("    if not OPERATOR_APPSET.is_file():", "    if False:", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "pin: an absent ApplicationSet resolves nothing and walks on" test_platform_crs \
+  test_an_absent_appset_cannot_run
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('''              f"An unreadable pin is not the same as a catalog with no CRs in it.")
+        sys.exit(gatelib.CANNOT_RUN)''',
+              '''              f"An unreadable pin is not the same as a catalog with no CRs in it.")
+        sys.exit(1)''', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "pin: an absent ApplicationSet is the tree's fault, not a refusal" test_platform_crs \
+  test_an_absent_appset_cannot_run
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace(r'        r"repoURL:\s*\S*ghcr\.io/nanohype/eks-agent-platform/charts.*?targetRevision:\s*(\S+)",',
+              r'        r"targetRevision:\s*(\S+)",', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "pin: read any source's targetRevision, not the operator's" test_platform_crs \
+  test_the_operator_source_is_the_one_read \
+  test_an_appset_with_no_operator_source_stops
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('''    return m.group(1).strip().strip("\\"'")''', "    return m.group(1).strip()", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "pin: keep the quotes a YAML scalar carries" test_platform_crs \
+  test_a_quoted_revision_is_unquoted
 res $F
 
 F=scripts/validate-dashboards.py
@@ -513,7 +573,7 @@ if [ $? -ne 0 ]; then
   sed -n '1,40p' "$OUT" | sed 's/^/          /'
   fail=$((fail+1))
 else
-  echo "  ok    all $(echo $ALL_MODULES | wc -w | tr -d ' ') modules green again"
+  echo "  ok    all $(echo $ALL_MODULES | wc -w | tr -d ' ') module(s) green again"
 fi
 
 echo
@@ -522,7 +582,7 @@ echo "RESULT pass=$pass fail=$fail"
 # The floor this harness owes for the same reason the gates owe theirs: with
 # every `rejects` line deleted it would report pass=0 fail=0 and exit 0, which is
 # a green run over nothing planted.
-MIN_PROBES=27
+MIN_PROBES=31
 total=$((pass + fail))
 if [ "$total" -lt "$MIN_PROBES" ]; then
   echo "FAIL  ran $total probe(s), under the floor of $MIN_PROBES — this harness"

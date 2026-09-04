@@ -16,6 +16,10 @@ about the walk rather than about whatever the pinned chart currently ships.
 
 from __future__ import annotations
 
+import contextlib
+import io
+import pathlib
+import tempfile
 import unittest
 
 from gateloader import load
@@ -269,6 +273,72 @@ class TheManifestCorpus(unittest.TestCase):
         self.assertTrue(found,
                         "no manifest in the walk declares a Platform, so this gate "
                         "examined none of the CRs it exists to check")
+
+
+class TheVersionThePinResolves(unittest.TestCase):
+    """The CRD schemas are resolved from the version the catalog pins, so what
+    the pin reads is upstream of every assertion in this file.
+
+    Both refusals rather than one: a pin that cannot be READ and a pin that
+    cannot be FOUND are different repairs, and neither is the same answer as a
+    catalog with no CRs in it. The first is the one an emptied corpus produces,
+    which is why the gate stops rather than resolving nothing and walking it.
+    """
+
+    def with_appset(self, body):
+        """The gate reading `body` as the operator ApplicationSet, or no file."""
+        root = pathlib.Path(tempfile.mkdtemp())
+        path = root / "addons-agent-operator.yaml"
+        if body is not None:
+            path.write_text(body)
+        original = gate.OPERATOR_APPSET
+        original_root = gate.ROOT
+        gate.OPERATOR_APPSET, gate.ROOT = path, root
+        self.addCleanup(setattr, gate, "OPERATOR_APPSET", original)
+        self.addCleanup(setattr, gate, "ROOT", original_root)
+        return path
+
+    # The catalog's own git source FIRST, because that ordering is what the
+    # assertion is about: a pattern reading the first `targetRevision:` in the
+    # file resolves `main` here and finds a chart version that does not exist.
+    PINNED = """
+      sources:
+        - repoURL: https://github.com/nanohype/eks-gitops
+          targetRevision: main
+        - repoURL: oci://ghcr.io/nanohype/eks-agent-platform/charts/operator
+          chart: operator
+          targetRevision: 0.6.7
+"""
+
+    def test_the_operator_source_is_the_one_read(self):
+        """Its sibling pins the catalog's own git revision; reading that would
+        resolve CRDs from a chart version nothing installs."""
+        self.with_appset(self.PINNED)
+        self.assertEqual(gate.pinned_chart_version(), "0.6.7")
+
+    def test_an_absent_appset_cannot_run(self):
+        """Exit 2. The corpus this gate walks is the catalog's CRs; the pin is a
+        derivation input, and losing it makes the answer unknown rather than
+        empty."""
+        self.with_appset(None)
+        with self.assertRaises(SystemExit) as caught, \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            gate.pinned_chart_version()
+        self.assertEqual(caught.exception.code, gate.gatelib.CANNOT_RUN)
+        self.assertIn("is not the same as a catalog with no CRs in it", out.getvalue())
+
+    def test_an_appset_with_no_operator_source_stops(self):
+        self.with_appset("sources:\n  - repoURL: https://example.com\n"
+                         "    targetRevision: main\n")
+        with self.assertRaises(SystemExit) as caught:
+            gate.pinned_chart_version()
+        self.assertIn("could not find the operator chart's targetRevision",
+                      str(caught.exception.code))
+
+    def test_a_quoted_revision_is_unquoted(self):
+        self.with_appset(self.PINNED.replace("targetRevision: 0.6.7",
+                                             'targetRevision: "0.6.7"'))
+        self.assertEqual(gate.pinned_chart_version(), "0.6.7")
 
 
 if __name__ == "__main__":
