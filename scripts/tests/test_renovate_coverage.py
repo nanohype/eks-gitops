@@ -959,12 +959,20 @@ class AVersionFileRuntimeNobodyWroteAReaderFor(unittest.TestCase):
             {"jobs": {"a": {"runs-on": "ubuntu-latest",
                             "steps": [{"uses": "actions/setup-x@" + "a" * 40,
                                        "with": with_}]}}}))
-        (root / ".node-version").write_text("24\n")
+        (root / ".ruby-version").write_text("3.4.1\n")
         return root
 
     def test_an_unrecognised_runtime_refuses_to_run(self):
+        """A runtime this repository does not pin, so no reader names it.
+
+        Which runtime is incidental — the point is that the KEY is recognised by
+        shape and the runtime is not, so the step is seen and unattributable
+        rather than invisible. Every runtime in VERSION_FILE_RUNTIMES is a
+        runtime some workflow here installs; one that stops being installed is
+        removed with its reader, and this case keeps holding.
+        """
         original, cov.ROOT = cov.ROOT, self.workspace(
-            {"node-version-file": ".node-version"})
+            {"ruby-version-file": ".ruby-version"})
         try:
             with self.assertRaises(SystemExit) as caught, \
                     contextlib.redirect_stdout(io.StringIO()) as out:
@@ -972,8 +980,42 @@ class AVersionFileRuntimeNobodyWroteAReaderFor(unittest.TestCase):
         finally:
             cov.ROOT = original
         self.assertEqual(caught.exception.code, cov.gatelib.CANNOT_RUN)
-        self.assertIn("which Renovate manager reads a node version file is not known",
+        self.assertIn("which Renovate manager reads a ruby version file is not known",
                       out.getvalue())
+
+    SOURCES = {
+        "python": (".python-version", "3.13\n"),
+        "go": ("go.mod", "module x\n\ngo 1.26.3\n"),
+        "node": (".node-version", "24.20.0\n"),
+    }
+
+    def test_every_runtime_with_a_reader_attributes_to_an_enabled_manager(self):
+        """Enumerated from the mapping, so a runtime added later is covered here.
+
+        A reader naming a manager renovate.json does not enable derives a pin
+        nothing claims. That fails, but one layer down and with a message about
+        the pin — the reader is where the wrong name was written.
+        """
+        enabled = set(json.loads((ROOT / "renovate.json").read_text())["enabledManagers"])
+        self.assertEqual(set(cov.VERSION_FILE_RUNTIMES), set(self.SOURCES),
+                         "a runtime gained or lost a reader and this case did not "
+                         "gain or lose the file it reads")
+        root = pathlib.Path(tempfile.mkdtemp())
+        original, cov.ROOT = cov.ROOT, root
+        try:
+            for runtime, reader in sorted(cov.VERSION_FILE_RUNTIMES.items()):
+                rel, body = self.SOURCES[runtime]
+                (root / rel).write_text(body)
+                with self.subTest(runtime=runtime):
+                    pins = reader(".github/workflows/ci.yml", rel)
+                    self.assertEqual(len(pins), 1)
+                    self.assertIn(pins[0].manager, enabled,
+                                  f"the {runtime} reader attributes its pin to the "
+                                  f"{pins[0].manager} manager, which renovate.json "
+                                  f"does not enable")
+                    self.assertEqual(pins[0].source, rel)
+        finally:
+            cov.ROOT = original
 
     def test_a_recognised_runtime_is_read(self):
         """The same shape, one runtime along, so the refusal above is about the

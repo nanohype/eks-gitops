@@ -15,7 +15,8 @@
     "custom.regex",
     "github-actions",
     "pip-compile",
-    "pyenv"
+    "pyenv",
+    "nodenv"
   ],
   "argocd": {
     "managerFilePatterns": [
@@ -182,6 +183,16 @@
       "description": "Python tooling the gates and CI run, locked with hashes in requirements.txt. pip-compile regenerates the lockfile so the hashes move with the version.",
       "matchManagers": [
         "pip-compile"
+      ],
+      "labels": [
+        "dependencies",
+        "ci"
+      ]
+    },
+    {
+      "description": "The Node the renovate-coverage job runs on, read from .node-version. The Renovate package declares an engines.node floor and its own code uses language features that decide whether it loads at all, so this pin is what makes the config validator and the manager-default drift check able to run.",
+      "matchManagers": [
+        "nodenv"
       ],
       "labels": [
         "dependencies",

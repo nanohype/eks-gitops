@@ -141,6 +141,16 @@ dashboards, fork-safety). CI runs those plus several gates that have **no local
   stale transcript fails the build rather than certifying pins against a pattern
   Renovate does not use. Re-record it with
   `node scripts/check-renovate-defaults.mjs --write`.
+
+  That script needs a Node satisfying the package's own `engines.node`: Renovate
+  uses language features newer than some runtimes ship, and below the floor it
+  throws while loading, so a job inheriting the runner's Node refuses on every
+  run — and a gate that always refuses gates nothing. `.node-version` at the repo
+  root is the pin the `renovate-coverage` job installs from, watched by the
+  `nodenv` manager like every other pin here. The script asserts the floor in
+  both directions: a runtime below it cannot run (exit 2), and a `.node-version`
+  below it is a finding (exit 1), so the next CI run failing is reported by the
+  run before it.
 - **Kyverno unit tests + verify-images signing-identity contract** —
   `kyverno test policies/kyverno/tests` and `scripts/check-image-verification.py`
   (CI job `kyverno`)

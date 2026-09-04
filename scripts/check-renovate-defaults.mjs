@@ -19,6 +19,23 @@
 //
 // Exit 1 for a record that disagrees with the package. Exit 2 for a package this
 // cannot import — that is a run that checked nothing, which is not a pass.
+//
+// WHERE THE ANSWER COMES FROM
+//
+// Renovate's manager registry, in one import. The package ships no `exports`
+// map and documents no API for this, so every answer about a manager's defaults
+// comes from inside `dist/` whichever path is taken; what a single entry point
+// buys is one place to repair when the layout moves rather than one per enabled
+// manager, and the registry's own `isKnownManager` — which separates a manager
+// name this repository misspelled from a layout that moved, two failures that
+// look identical from a failed import of a per-manager path.
+//
+// The package also declares `engines.node`, and its own code uses language
+// features newer than some runtimes ship. Running it below that floor throws
+// inside Renovate rather than in this script, which is why the CI job reads
+// .node-version instead of inheriting the runner's Node: no entry point into
+// this package avoids the floor, so a supported Node is the precondition and
+// not a property of how the import is spelled.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -27,6 +44,35 @@ import { dirname, join } from "node:path";
 const SCRIPTS = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SCRIPTS, "..");
 const RECORD = join(SCRIPTS, "renovate-manager-defaults.json");
+const NODE_VERSION_FILE = join(ROOT, ".node-version");
+
+// The `engines.node` forms this reads. A range in any other form REFUSES rather
+// than being guessed at: misread one way it passes a Node the package cannot
+// run on, misread the other it fails one it can, and both answers are worse
+// than saying the range was not understood.
+const ENGINE_FLOOR = /^(?<op>\^|>=)\s*(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$/;
+const VERSION = /^v?(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)/;
+
+const parseFloor = (range) => {
+  const m = ENGINE_FLOOR.exec((range ?? "").trim());
+  if (!m) return null;
+  return {
+    caret: m.groups.op === "^",
+    major: +m.groups.major,
+    minor: +m.groups.minor,
+    patch: +m.groups.patch,
+    text: range.trim(),
+  };
+};
+
+const satisfies = (version, floor) => {
+  const m = VERSION.exec((version ?? "").trim());
+  if (!m) return false;
+  const [major, minor, patch] = [+m.groups.major, +m.groups.minor, +m.groups.patch];
+  if (major !== floor.major) return floor.caret ? false : major > floor.major;
+  if (minor !== floor.minor) return minor > floor.minor;
+  return patch >= floor.patch;
+};
 
 const write = process.argv.includes("--write");
 
@@ -37,19 +83,21 @@ if (enabled.length === 0) {
   process.exit(2);
 }
 
-// `custom.regex` lives under manager/custom/regex; every built-in is its own name.
-const modulePath = (m) =>
-  `renovate/dist/modules/manager/${m.startsWith("custom.") ? "custom/" + m.slice(7) : m}/index.js`;
+// The one internal path this script depends on.
+const REGISTRY = "renovate/dist/modules/manager/index.js";
 
 // Resolved before anything is compared, and inside the same refusal as the
 // manager imports below: a package that is not there is a run that checked
 // nothing, and an uncaught resolution error would exit 1 — the status this
 // script uses for a record that disagrees with a package it did read.
 let installed;
+let installedEngines;
 try {
-  installed = JSON.parse(
+  const pkg = JSON.parse(
     readFileSync(new URL(import.meta.resolve("renovate/package.json")), "utf8")
-  ).version;
+  );
+  installed = pkg.version;
+  installedEngines = pkg.engines?.node;
 } catch (err) {
   console.error(
     `Cannot run: the renovate package is not resolvable from ${SCRIPTS} — ` +
@@ -59,22 +107,67 @@ try {
   process.exit(2);
 }
 
+// The package's declared floor, checked against the Node running this and
+// against the Node the workflow installs. Both, because they fail differently:
+// a run below the floor resolves nothing at all, while a .node-version below it
+// is a tree that will fail the next time CI runs even though this machine is
+// fine. Checked BEFORE the import, so the answer names the floor and the file to
+// raise rather than surfacing as a language error thrown inside the package.
+const floor = parseFloor(installedEngines);
+if (installedEngines && !floor) {
+  console.error(
+    `Cannot run: renovate declares engines.node ${JSON.stringify(installedEngines)}, ` +
+      `a range form this script does not implement, so whether a given Node ` +
+      `satisfies it is unknown here.`
+  );
+  process.exit(2);
+}
+if (floor && !satisfies(process.versions.node, floor)) {
+  console.error(
+    `Cannot run: renovate ${installed} declares engines.node ${floor.text} and this ` +
+      `is node ${process.versions.node}. Below that floor the package throws while ` +
+      `loading rather than reporting anything.`
+  );
+  console.error("No default was resolved, which is not the same as one that matches.");
+  process.exit(2);
+}
+
+let pinnedNode = null;
+try {
+  pinnedNode = readFileSync(NODE_VERSION_FILE, "utf8").trim();
+} catch {
+  pinnedNode = null;
+}
+
+let registry;
+try {
+  registry = await import(REGISTRY);
+} catch (err) {
+  console.error(
+    `Cannot run: ${REGISTRY} is not importable — ${err.message.split("\n")[0]}.`
+  );
+  console.error(
+    `This node (${process.versions.node}) satisfies the package's declared ` +
+      `engines.node ${installedEngines ?? "unknown"}, so the module layout moved ` +
+      `rather than the runtime being too old.`
+  );
+  console.error("No default was resolved, which is not the same as one that matches.");
+  process.exit(2);
+}
+
 const shipped = {};
 // Sorted, so the record's diff shows a default that moved rather than a
 // reordering of enabledManagers.
 for (const manager of [...enabled].sort()) {
-  let mod;
-  try {
-    mod = await import(modulePath(manager));
-  } catch (err) {
+  if (!registry.isKnownManager?.(manager)) {
     console.error(
-      `Cannot run: renovate.json enables the ${manager} manager and ` +
-        `${modulePath(manager)} is not importable — ${err.message.split("\n")[0]}.`
+      `Cannot run: renovate.json enables the ${manager} manager and this Renovate ` +
+        `does not know that name — it is misspelled here, or the manager was removed.`
     );
     console.error("No default was resolved, which is not the same as one that matches.");
     process.exit(2);
   }
-  shipped[manager] = mod.defaultConfig?.managerFilePatterns ?? null;
+  shipped[manager] = registry.get(manager, "defaultConfig")?.managerFilePatterns ?? null;
 }
 
 if (write) {
@@ -116,6 +209,22 @@ for (const [manager, patterns] of Object.entries(shipped)) {
     );
   }
 }
+if (floor && pinnedNode !== null && !satisfies(pinnedNode, floor)) {
+  problems.push(
+    `.node-version pins node ${pinnedNode} and renovate ${installed} declares ` +
+      `engines.node ${floor.text}. The job that installs from that file would run ` +
+      `the package below its floor, where it throws while loading — so this check ` +
+      `and the config validator beside it would resolve nothing.`
+  );
+}
+if (floor && pinnedNode === null) {
+  problems.push(
+    `renovate ${installed} declares engines.node ${floor.text} and .node-version ` +
+      `does not exist, so the job installs whatever Node the runner ships and the ` +
+      `floor is satisfied by luck rather than by a pin.`
+  );
+}
+
 for (const manager of Object.keys(recorded)) {
   if (!(manager in shipped)) {
     problems.push(
@@ -133,3 +242,9 @@ console.log(
   `renovate manager defaults OK: ${Object.keys(shipped).length} enabled manager(s) ` +
     `match scripts/renovate-manager-defaults.json`
 );
+if (floor) {
+  console.log(
+    `node OK: .node-version pins ${pinnedNode}, which satisfies the engines.node ` +
+      `${floor.text} renovate ${installed} declares`
+  );
+}

@@ -20,6 +20,9 @@
     "gomod": [
       "/(^|/)go\\.mod$/"
     ],
+    "nodenv": [
+      "/(^|/)\\.node-version$/"
+    ],
     "pip-compile": [],
     "pyenv": [
       "/(^|/)\\.python-version$/"

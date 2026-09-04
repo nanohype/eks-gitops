@@ -30,6 +30,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 # it, and nothing else in the suite would notice.
 EXPECTED = (
     "test_renovate_coverage",
+    "test_renovate_defaults",
     "test_label_values",
     "test_sync_waves",
     "test_kyverno_corpus",

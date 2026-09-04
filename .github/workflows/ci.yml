@@ -387,6 +387,16 @@ jobs:
       # schema validity, not semantics. It accepts a datasourceTemplate naming a
       # datasource that does not exist.
       #
+      # The Renovate package declares `engines.node`, and its own code uses
+      # language features that decide whether it loads at all — so the Node this
+      # job runs is part of what makes the two steps below meaningful. Inherited
+      # from the runner it is whatever the image ships and moves without this
+      # repository changing; read from .node-version it is a pin like the others,
+      # and the renovate-coverage gate below asserts a manager watches it.
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
       # Installed rather than run through `npx --package`, because two steps
       # below need the same resolved package: the validator, and the drift check
       # that imports each manager's defaultConfig out of it. Resolving it twice

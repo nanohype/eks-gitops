@@ -242,26 +242,44 @@ res $F
 
 # A version file for a runtime nobody wrote a reader for. Recognised by shape,
 # so it is SEEN and unattributable — which is a different answer from absent and
-# exits 2 rather than passing over it.
+# exits 2 rather than passing over it. Ruby because this repository installs no
+# Ruby: every runtime with a reader is one a workflow here resolves, so a probe
+# has to name one that is not.
 F=.github/workflows/ci.yml; mut $F
-add_file .node-version
-printf '24\n' > .node-version
+add_file .ruby-version
+printf '3.4.1\n' > .ruby-version
 python3 - "$F" <<'PY'
 import pathlib,sys
 p=pathlib.Path(sys.argv[1]); s=p.read_text()
 a="      - name: No unfilled placeholders in deploy config\n"
 assert a in s, "step anchor not found"
-step=("      - name: Probe node setup\n"
-      "        uses: actions/setup-node@v9\n"
+step=("      - name: Probe ruby setup\n"
+      "        uses: ruby/setup-ruby@v1\n"
       "        with:\n"
-      "          node-version-file: .node-version\n\n")
+      "          ruby-version-file: .ruby-version\n\n")
 m=s.replace(a, step+a, 1)
 assert m!=s, "mutation did not land"
 p.write_text(m)
-print("   added: a setup-node step reading .node-version")
+print("   added: a setup-ruby step reading .ruby-version")
 PY
-run nonzero "renovate-coverage: a version file for an unread runtime" ./scripts/check-renovate-coverage.py
-drop_file .node-version
+run 2 "renovate-coverage: a version file for an unread runtime" ./scripts/check-renovate-coverage.py
+drop_file .ruby-version
+res $F
+
+# The refusal, kept as its own probe because it is the one that holds when
+# everything else is unavailable. scripts/check-renovate-defaults.mjs needs the
+# Renovate package, which this repository does not vendor — so here it can
+# resolve nothing, and the answer must be EXACTLY 2. Exit 0 would be a green run
+# over nothing compared; exit 1 would call it a defect in a tree it never read.
+run 2 "renovate-defaults: nothing resolved is a refusal, not a verdict" \
+  node scripts/check-renovate-defaults.mjs
+
+# The Node the renovate-coverage job installs is read from .node-version, and
+# the coverage gate derives a pin from it. Delete the file the workflow names
+# and what that step installs is unknown, which is not the same as unpinned.
+F=.node-version; mut $F; rm -f $F
+run 2 "renovate-coverage: the version file a setup step names is gone" \
+  ./scripts/check-renovate-coverage.py
 res $F
 
 F=addons/ai-platform/agent-platform/base/platform.yaml; mut $F
@@ -371,7 +389,7 @@ echo "RESULT pass=$pass fail=$fail"
 # The harness owes the same assertion it demands of the gates: with every `run`
 # line deleted it would report pass=0 fail=0 and exit 0, which is a green run
 # over nothing checked.
-MIN_CHECKS=30
+MIN_CHECKS=32
 total=$((pass + fail))
 if [ "$total" -lt "$MIN_CHECKS" ]; then
   echo "FAIL  ran $total check(s), under the floor of $MIN_CHECKS — this harness"

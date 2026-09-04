@@ -755,6 +755,16 @@ def _python_package_pins(workflow_rel: str, rel: str) -> list[DerivedPin]:
     return pins
 
 
+def _node_toolchain_pins(workflow_rel: str, rel: str) -> list[DerivedPin]:
+    """The Node runtime setup-node installs, read from the file the step names."""
+    version = _read_pin_source(workflow_rel, rel).strip().lstrip("v")
+    if not version:
+        _toolchain_cannot_run(workflow_rel, f"names {rel} as its node-version-file and "
+                                            f"that file is empty")
+    return [DerivedPin("Node runtime", "nodenv", rel,
+                       f"{workflow_rel} node-version-file", "node", version)]
+
+
 def _go_toolchain_pins(workflow_rel: str, rel: str) -> list[DerivedPin]:
     """The Go toolchain setup-go installs, read from the go.mod the step names."""
     m = GO_DIRECTIVE.search(_read_pin_source(workflow_rel, rel))
@@ -773,6 +783,7 @@ def _go_toolchain_pins(workflow_rel: str, rel: str) -> list[DerivedPin]:
 VERSION_FILE_RUNTIMES = {
     "python": _interpreter_pins,
     "go": _go_toolchain_pins,
+    "node": _node_toolchain_pins,
 }
 
 
