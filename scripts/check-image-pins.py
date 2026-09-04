@@ -35,11 +35,32 @@ is the one that catches real drift: a reference with no tag, or an explicitly
 mutable one (`latest`, `main`, `master`, `edge`, `stable`, `dev`), resolves to
 something different tomorrow with nothing in this repo changing.
 
-UNSCANNABLE IS REPORTED, NEVER COUNTED CLEAN
+WHAT CANNOT BE READ IS NOT THEREFORE ABSENT
 
-A chart that fails to render is named in the output and its images are absent
-from the inventory. A gate that silently skipped it would report the remaining
-charts as the whole fleet.
+Two ways this gate can fail to see an image, each with its own verdict, because
+a run that examined less than it reports on is not a clean run.
+
+A chart that fails to render contributes no images, so exit 2: the images that
+DID render carry an immutable reference, and that is a result over part of the
+fleet rather than over the fleet.
+
+A reference the classifier cannot place is a chart that rendered perfectly well
+and carries a string this gate owes an answer about. It is a failure, exit 1,
+naming the two declarations that resolve it — the controller that starts it, or
+the reason pulling it runs nothing. Reported as an aside it reached no verdict
+at all, and the run's correctness rested on a sibling gate reading the same list
+as a refusal; a gate whose result depends on another gate's reading of its
+output has not stated its own.
+
+THE REFERENCE FORMS THIS READS
+
+An `image:` key is read whole, in every spelling and at every depth, so a
+digest, a tag or a bare name reaches the classifier as written. Under that walk
+sits a pattern over every string a render carries, which is how an image handed
+to a controller in a flag or a ConfigMap is found — and it admits the digest
+form, `<repo>@sha256:<hex>`, with or without a tag alongside it. That is the
+form this gate's own remediation text recommends, so being blind to it would be
+recommending the one spelling the completeness floor could not see.
 """
 
 from __future__ import annotations
@@ -122,8 +143,16 @@ ALLOWED_MUTABLE: dict[str, str] = {
 
 
 def inventory(env: str, seen: set[str] | None = None
-              ) -> tuple[dict[str, set[str]], list[tuple[str, str]]]:
-    """(image -> charts that render it, [(path, why-not-scanned)]).
+              ) -> tuple[dict[str, set[str]], list[tuple[str, str]], list[tuple[str, str]]]:
+    """(image -> charts that render it, charts not rendered, references not placed).
+
+    Two lists rather than one, because they are two facts with two repairs and
+    two verdicts. A chart that did not render leaves the fleet's image set
+    unknown — the gate examined less than it reports on. A reference the
+    classifier cannot place is a chart that rendered perfectly well and carries
+    something this gate cannot answer for; the repair is to classify it. Held in
+    one list, the second printed under the first's heading and reached no
+    verdict at all.
 
     `seen`, if given, collects every image-shaped reference the render carried —
     including the ones excluded from the population — so a declaration can be
@@ -133,16 +162,17 @@ def inventory(env: str, seen: set[str] | None = None
     units = render_addons.discover()
     aliases = render_addons.add_repos(units)
     images: dict[str, set[str]] = {}
-    unscannable: list[tuple[str, str]] = []
+    unrendered: list[tuple[str, str]] = []
+    unclassified: list[tuple[str, str]] = []
     seen = set() if seen is None else seen
 
     for u in units:
         if u.chart in getattr(render_addons, "SKIP_CHARTS", {}):
-            unscannable.append((u.path, "chart is on render-addons' SKIP_CHARTS list"))
+            unrendered.append((u.path, "chart is on render-addons' SKIP_CHARTS list"))
             continue
         d = ROOT / u.path
         if not d.is_dir():
-            unscannable.append((u.path, "path does not exist"))
+            unrendered.append((u.path, "path does not exist"))
             continue
         vf = []
         if (d / "values.yaml").exists():
@@ -158,11 +188,11 @@ def inventory(env: str, seen: set[str] | None = None
         cmd += vf
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=NETWORK_TIMEOUT)
         if proc.returncode != 0:
-            unscannable.append((u.path, (proc.stderr.strip() or proc.stdout.strip())[:200]))
+            unrendered.append((u.path, (proc.stderr.strip() or proc.stdout.strip())[:200]))
             continue
-        for ref_str in extract_images(proc.stdout, u.chart, unscannable, seen):
+        for ref_str in extract_images(proc.stdout, u.chart, unrendered, unclassified, seen):
             images.setdefault(ref_str, set()).add(u.chart)
-    return images, unscannable
+    return images, unrendered, unclassified
 
 
 # An image reference as a controller is handed one: in a flag, a ConfigMap value,
@@ -192,9 +222,26 @@ def inventory(env: str, seen: set[str] | None = None
 #
 # Together they admit every official-image reference this fleet pins and no
 # string in the render that is not one.
+#
+# A THIRD alternative for the digest form, which the two tag alternatives cannot
+# spell and which is the one this gate's own remediation text tells an operator
+# to write. `<repo>@sha256:<hex>` carries no tag for them to match, so the whole
+# reference yielded nothing but its `sha256:<hex>` tail — a single-segment shape
+# whose bare name is `sha256`, and an entry by that name swallowed it. A
+# reference the walk cannot spell is not therefore absent, and one this gate
+# recommends is the worst shape to be blind to.
+#
+# Tried first, so `<repo>:<tag>@sha256:<hex>` is captured whole rather than as
+# its `repo:tag` head, and the digest a container actually runs is what reaches
+# the classifier. The 64-hex suffix is discriminator enough on its own, so the
+# path separator and the tag restrictions the tag alternatives need are not
+# repeated here: nothing else in a render has that shape.
 IMAGE_REF = re.compile(
     r"(?<![a-z0-9._:/-])(?:"
     r"((?:[a-z0-9][a-z0-9._-]*(?:\.[a-z0-9._-]+)+(?::\d+)?/)?"
+    r"[a-z0-9][a-z0-9._-]*(?:/[a-z0-9][a-z0-9._-]*)*"
+    r"(?::[a-zA-Z0-9][\w.-]*)?@sha256:[0-9a-f]{64})"
+    r"|((?:[a-z0-9][a-z0-9._-]*(?:\.[a-z0-9._-]+)+(?::\d+)?/)?"
     r"[a-z0-9][a-z0-9._-]*(?:/[a-z0-9][a-z0-9._-]*)+:[a-zA-Z0-9][\w.-]*)"
     r"|([a-z][a-z0-9]*(?:[_-][a-z0-9]+)*:(?:latest|v?[0-9][\w.-]*))"
     r")\b")
@@ -252,10 +299,6 @@ NOT_A_CONTAINER = {
         "the same, the incubating tier",
     "falco-sandbox-rules":
         "the same, the sandbox tier",
-    "sha256":
-        "the digest half of a reference the walk already holds whole — `image@"
-        "sha256:<hex>` splits at the `@` and the tail has the single-segment "
-        "shape",
     "localhost":
         "a memcached address in a Loki config value; `localhost:11211` is a host "
         "and a port",
@@ -386,7 +429,8 @@ def keyed_images(node) -> set[str]:
 
 
 def extract_images(rendered: str, chart: str,
-                   unscannable: list[tuple[str, str]],
+                   unrendered: list[tuple[str, str]],
+                   unclassified: list[tuple[str, str]],
                    seen: set[str] | None = None) -> set[str]:
     """Every image one chart's render deploys, and an assertion that it is every one.
 
@@ -407,7 +451,7 @@ def extract_images(rendered: str, chart: str,
         docs = list(yaml.safe_load_all(rendered))
     except yaml.YAMLError as exc:
         first = str(exc).strip().splitlines()[0]
-        unscannable.append((chart, f"rendered YAML this gate could not parse — {first}"))
+        unrendered.append((chart, f"rendered YAML this gate could not parse — {first}"))
         return set()
 
     structural = keyed_images(docs)
@@ -434,7 +478,7 @@ def extract_images(rendered: str, chart: str,
         if bare in CONTROLLER_IMAGES:
             controller.add(ref_str)
             continue
-        unscannable.append((
+        unclassified.append((
             chart,
             f"{ref_str} is image-shaped and reaches no pod template or `image:` key. "
             f"Either a structural walk stopped seeing a shape, or a controller is "
@@ -473,6 +517,17 @@ def classify(ref: str) -> str:
     return "mutable" if tag.lower() in MUTABLE_TAGS else "tag"
 
 
+# What an operator is told to write. Every reference form named here in
+# backticks is one the walk above reads, asserted rather than assumed: advice
+# pointing at a spelling this gate is blind to is worse than no advice, because
+# following it moves an image out of the population and the run stays green.
+MUTABLE_REMEDIATION = (
+    "Pin it in the addon's values.yaml to the chart's appVersion, or to a digest — "
+    "`<repo>@sha256:<hex>` is a form this gate reads whole, whether it carries a "
+    "tag as well or not."
+)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--list", action="store_true", help="print the image inventory")
@@ -480,20 +535,23 @@ def main() -> int:
     args = ap.parse_args()
 
     seen: set[str] = set()
-    images, unscannable = inventory(args.env, seen)
+    images, unrendered, unclassified = inventory(args.env, seen)
 
     if args.list:
         for ref in sorted(images):
             print(f"{classify(ref):8} {ref}  ({', '.join(sorted(images[ref]))})")
-        print(f"\n{len(images)} image(s); {len(unscannable)} chart(s) unscannable")
-        for path, err in unscannable:
-            print(f"  unscannable  {path}: {err}")
+        print(f"\n{len(images)} image(s); {len(unrendered)} chart(s) not rendered; "
+              f"{len(unclassified)} reference(s) not placed")
+        for path, err in unrendered:
+            print(f"  not rendered  {path}: {err}")
+        for path, err in unclassified:
+            print(f"  not placed    {path}: {err}")
         return 0
 
     if not images:
         print("FAIL  rendered no images at all. Every chart failed, or the extractor "
               "stopped matching — either way this reports the same as a clean fleet.")
-        for path, err in unscannable:
+        for path, err in unrendered:
             print(f"        {path}: {err}")
         return 2
 
@@ -509,8 +567,8 @@ def main() -> int:
         if bare in ALLOWED_MUTABLE:
             continue
         failures.append(
-            f"{ref} (via {', '.join(sorted(images[ref]))}) resolves to a moving target. "
-            f"Pin it in the addon's values.yaml to the chart's appVersion or a digest.")
+            f"{ref} (via {', '.join(sorted(images[ref]))}) resolves to a moving "
+            f"target. {MUTABLE_REMEDIATION}")
 
     for bare, reason in sorted(ALLOWED_MUTABLE.items()):
         if bare not in mutable_seen:
@@ -519,20 +577,38 @@ def main() -> int:
                 f"renders it mutably — the exemption outlived its reason. Delete it. "
                 f"(recorded: {reason[:100]})")
 
-    # Reported whatever the verdict: a chart that did not render contributed no
-    # images, and counting the rest as the whole fleet is how a partial scan
-    # reads as a complete one.
-    if unscannable:
-        print(f"{len(unscannable)} chart(s) could not be rendered and were NOT scanned:")
-        for path, err in unscannable:
-            print(f"  {path}: {err}")
-        print()
+    # A reference the classifier cannot place is a verdict this gate owes and has
+    # not given: the chart rendered, the string is image-shaped, and whether
+    # anything runs it is unanswered. Printed under a heading about charts that
+    # did not render, it reached no verdict at all and the run exited 0 —
+    # correctness resting on a sibling gate reading the same list as a refusal,
+    # which is that gate holding the line rather than this one stating a result.
+    failures.extend(f"{chart}: {detail}" for chart, detail in unclassified)
 
     if failures:
+        if unrendered:
+            print(f"{len(unrendered)} chart(s) could not be rendered and were NOT "
+                  f"scanned, so the population below is a subset of the fleet:")
+            for path, err in unrendered:
+                print(f"  {path}: {err}")
+            print()
         print(f"{len(failures)} image-pin problem(s) across {len(images)} rendered image(s):\n")
         for f in failures:
             print(f"  {f}")
         return 1
+
+    # No failure among the images that WERE derived is not a verdict over the
+    # fleet when a chart contributed none. Exit 2 rather than 0: a chart that did
+    # not render is a gate that examined less than it reports on, which is not
+    # the same as finding nothing.
+    if unrendered:
+        print(f"Cannot run: {len(unrendered)} chart(s) could not be rendered and were "
+              f"NOT scanned:")
+        for path, err in unrendered:
+            print(f"  {path}: {err}")
+        print(f"The {len(images)} image(s) that did render carry an immutable "
+              f"reference. That is a result over part of the fleet, not the fleet.")
+        return gatelib.CANNOT_RUN
 
     print(f"✓ all {len(images)} rendered image(s) across {len(images and set().union(*images.values()) or [])} "
           f"chart(s) carry an immutable reference "

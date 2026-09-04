@@ -342,12 +342,21 @@ def main() -> int:
         return 0
 
     seen: set[str] = set()
-    images, unrendered = image_pins.inventory(args.env, seen)
+    images, unrendered, unclassified = image_pins.inventory(args.env, seen)
     if unrendered:
         cannot_run("Cannot run: charts that did not render contributed no images, so "
                    "the scan below would cover part of the fleet and report on all of "
                    "it.",
                    *(f"  {path}: {err}" for path, err in unrendered))
+    # A reference the classifier could not place is one this scan cannot decide
+    # to include or exclude. Excluded silently it is an unscanned image inside a
+    # population reported as the fleet's — the same shape as a chart that did
+    # not render, one string down.
+    if unclassified:
+        cannot_run("Cannot run: the render carries image-shaped references that reach "
+                   "no pod template and are on no declaration, so whether the scan "
+                   "below covers them is unknown:",
+                   *(f"  {chart}: {detail}" for chart, detail in unclassified))
     units = image_pins.render_addons.discover()
     coverage = image_pins.chart_coverage(images, units, seen)
     if coverage:

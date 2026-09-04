@@ -14,6 +14,10 @@ here, and so is the per-chart floor that catches a chart contributing nothing.
 
 from __future__ import annotations
 
+import contextlib
+import io
+import re
+import sys
 import unittest
 
 from gateloader import load
@@ -48,8 +52,26 @@ spec:
 
 class ExtractingFromARender(unittest.TestCase):
     def images(self, rendered, chart="c"):
-        unscannable: list[tuple[str, str]] = []
-        return gate.extract_images(rendered, chart, unscannable), unscannable
+        """(population, references the classifier could not place).
+
+        The two out-parameters are separate because they are separate verdicts:
+        a render that will not parse leaves the fleet unknown, a reference that
+        will not classify is a question this gate owes an answer to. Every case
+        below that asserts `problems == []` is also asserting the render parsed,
+        so the two are checked apart.
+        """
+        unrendered: list[tuple[str, str]] = []
+        unclassified: list[tuple[str, str]] = []
+        found = gate.extract_images(rendered, chart, unrendered, unclassified)
+        self.assertEqual(unrendered, [], "the fixture render did not parse")
+        return found, unclassified
+
+    def both(self, rendered, chart="c"):
+        """(population, not-rendered, not-placed), for the cases that plant one."""
+        unrendered: list[tuple[str, str]] = []
+        unclassified: list[tuple[str, str]] = []
+        found = gate.extract_images(rendered, chart, unrendered, unclassified)
+        return found, unrendered, unclassified
 
     def test_the_list_item_spelling_is_found(self):
         """The shape the pattern never matched, and the whole defect.
@@ -223,10 +245,13 @@ data:
 
     def test_a_render_that_will_not_parse_is_reported_not_dropped(self):
         """A chart silently absent from the inventory is the whole failure mode."""
-        found, problems = self.images("kind: Deployment\n  bad: [unclosed\n")
+        found, unrendered, unclassified = self.both("kind: Deployment\n  bad: [unclosed\n")
         self.assertEqual(found, set())
-        self.assertEqual(len(problems), 1)
-        self.assertIn("could not parse", problems[0][1])
+        self.assertEqual(len(unrendered), 1)
+        self.assertIn("could not parse", unrendered[0][1])
+        self.assertEqual(unclassified, [],
+                         "a render that did not parse cannot also have produced a "
+                         "reference the classifier could not place")
 
     def test_the_helm_value_sentinel_does_not_lose_the_chart(self):
         """Charts emit `- =` inside ConfigMap payloads; PyYAML has no constructor
@@ -325,3 +350,227 @@ class DeclarationsMatchTheRender(unittest.TestCase):
         problems = gate.declaration_rot(set())
         self.assertEqual(len(problems),
                          len(gate.CONTROLLER_IMAGES) + len(gate.NOT_A_CONTAINER))
+
+
+DIGEST = "sha256:" + "9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e9d8c7b6a5f4e3d2c1b0a9f8e"
+
+
+class ADigestPinnedReferenceIsInThePopulation(unittest.TestCase):
+    """`<repo>@sha256:<hex>` is a reference this gate recommends and could not read.
+
+    The pattern under the structural walk had two alternatives and both required
+    a tag, so a digest-pinned reference in a controller flag or a config value
+    yielded nothing but its `sha256:<hex>` tail — a single-segment shape whose
+    bare name is `sha256`, and an entry by that name passed over it. The gate's
+    own remediation tells an operator to pin to a digest, so the one spelling it
+    recommends was the one its completeness floor could not see.
+    """
+
+    def candidates(self, s: str) -> list[str]:
+        return [c for groups in gate.IMAGE_REF.findall(s) for c in groups if c]
+
+    def test_a_digest_only_reference_is_matched_whole(self):
+        self.assertEqual(self.candidates(f"ghcr.io/example/thing@{DIGEST}"),
+                         [f"ghcr.io/example/thing@{DIGEST}"])
+
+    def test_a_tag_and_digest_reference_is_matched_whole(self):
+        """Not as its `repo:tag` head: what a container runs is the digest, and
+        the head alone reaches the classifier as a tag."""
+        ref = f"ghcr.io/example/thing:1.2.3@{DIGEST}"
+        self.assertEqual(self.candidates(ref), [ref])
+        self.assertEqual(gate.classify(ref), "digest")
+
+    def test_a_single_segment_official_image_carries_a_digest(self):
+        """`nats@sha256:...` — no registry, no organisation, and the shape the
+        event-bus controller declares."""
+        self.assertEqual(self.candidates(f"nats@{DIGEST}"), [f"nats@{DIGEST}"])
+
+    def test_the_bare_name_drops_both_tag_and_digest(self):
+        for ref in (f"ghcr.io/example/thing@{DIGEST}",
+                    f"ghcr.io/example/thing:1.2.3@{DIGEST}",
+                    "ghcr.io/example/thing:1.2.3"):
+            with self.subTest(ref=ref):
+                self.assertEqual(gate.bare_name(ref), "ghcr.io/example/thing")
+
+    def test_a_digest_with_no_repository_before_it_is_still_seen(self):
+        """A `digest:` field carries one, and it names no image.
+
+        Seen is the property, not excused. It is matched, so a render that
+        starts carrying one is reported as a reference this gate cannot place
+        rather than passed over — and the repair is a declaration saying why.
+
+        No declaration stands for it while the render carries none, because a
+        NOT_A_CONTAINER entry excuses whatever has its bare name: an entry for
+        `sha256` covers every reference whose only matched token is a digest,
+        which is every digest-pinned reference if the pattern cannot spell the
+        repository-prefixed form. `declaration_rot` is what keeps that from
+        being written and forgotten — an entry matching nothing in the render
+        fails.
+        """
+        self.assertEqual(self.candidates(DIGEST), [DIGEST])
+        self.assertEqual(gate.bare_name(DIGEST), "sha256")
+        self.assertNotIn("sha256", gate.NOT_A_CONTAINER,
+                         "a declaration matching nothing in the render is an "
+                         "exemption that only ever widens")
+
+    def test_a_digest_shaped_string_that_is_not_a_digest_is_not_matched(self):
+        """64 lowercase hex, because the suffix is the only discriminator the
+        digest alternative has — it drops the path separator and the tag rules
+        the others need."""
+        for s in (f"ghcr.io/example/thing@sha256:{'a' * 63}",
+                  "ghcr.io/example/thing@sha256:not-a-digest",
+                  f"ghcr.io/example/thing@sha512:{'a' * 64}"):
+            with self.subTest(s=s):
+                self.assertNotIn(f"ghcr.io/example/thing@{s.split('@')[1]}",
+                                 self.candidates(s))
+
+    def test_a_digest_pinned_controller_reference_is_reported_when_undeclared(self):
+        """The finding, end to end. A controller is handed a digest-pinned
+        reference; no pod template declares it, no list names it, and before the
+        digest alternative the whole string produced nothing to report."""
+        rendered = f"""
+apiVersion: v1
+kind: ConfigMap
+data:
+  controller.yaml: |
+    workerImage: ghcr.io/example/undeclared-worker@{DIGEST}
+"""
+        unrendered: list[tuple[str, str]] = []
+        unclassified: list[tuple[str, str]] = []
+        gate.extract_images(rendered, "c", unrendered, unclassified)
+        self.assertEqual(unrendered, [])
+        self.assertEqual(len(unclassified), 1)
+        self.assertIn(f"ghcr.io/example/undeclared-worker@{DIGEST}", unclassified[0][1])
+
+    def test_a_digest_pinned_declared_controller_reference_is_in_the_population(self):
+        declared = next(iter(gate.CONTROLLER_IMAGES))
+        rendered = f"""
+apiVersion: v1
+kind: ConfigMap
+data:
+  controller.yaml: |
+    image: {declared}@{DIGEST}
+"""
+        unrendered: list[tuple[str, str]] = []
+        unclassified: list[tuple[str, str]] = []
+        found = gate.extract_images(rendered, "c", unrendered, unclassified)
+        self.assertEqual((unrendered, unclassified), ([], []))
+        self.assertIn(f"{declared}@{DIGEST}", found)
+        self.assertEqual(gate.classify(f"{declared}@{DIGEST}"), "digest")
+
+    def test_a_digest_pinned_container_is_read_by_the_structural_walk(self):
+        rendered = f"""
+apiVersion: apps/v1
+kind: Deployment
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/example/app@{DIGEST}
+"""
+        unrendered: list[tuple[str, str]] = []
+        unclassified: list[tuple[str, str]] = []
+        found = gate.extract_images(rendered, "c", unrendered, unclassified)
+        self.assertEqual(found, {f"ghcr.io/example/app@{DIGEST}"})
+        self.assertEqual((unrendered, unclassified), ([], []))
+
+    def test_every_form_the_remediation_recommends_is_one_this_reads(self):
+        """The sentence and the pattern, checked against each other.
+
+        Read out of the gate's own remediation string rather than retyped here,
+        so rewording the advice to name a spelling the pattern does not read
+        fails — which is the defect this closes, one revision later.
+        """
+        recommended = re.findall(r"`([^`]+)`", gate.MUTABLE_REMEDIATION)
+        self.assertTrue(recommended,
+                        f"the remediation names no reference form: "
+                        f"{gate.MUTABLE_REMEDIATION}")
+        for form in recommended:
+            with self.subTest(form=form):
+                concrete = (form.replace("<repo>", "ghcr.io/example/app")
+                                .replace("<hex>", DIGEST.split(":", 1)[1]))
+                self.assertEqual(self.candidates(concrete), [concrete],
+                                 f"the remediation recommends {form}, which the "
+                                 f"pattern under the structural walk does not read")
+
+
+class WhatCannotBeReadReachesAVerdict(unittest.TestCase):
+    """Neither silence, and not the same verdict.
+
+    A chart that did not render leaves the fleet's image set unknown; a
+    reference the classifier cannot place is a chart that rendered and a
+    question this gate owes an answer to. Held in one list, the second printed
+    under the first's heading and reached no verdict at all — the run exited 0,
+    and CI blocked only because a sibling gate read the same list as a refusal.
+    """
+
+    IMAGES = {"ghcr.io/example/app:1.0.0": {"c"}}
+    MUTABLE = {"ghcr.io/example/app:latest": {"c"}}
+
+    def verdict(self, images, unrendered=(), unclassified=()):
+        """main() over a planted inventory.
+
+        chart_coverage and ALLOWED_MUTABLE are neutralised because both assert
+        against the real fleet: a fixture of two images would trip every
+        per-chart floor and every exemption-rot check, and the case would then
+        pass for a reason it did not plant. Each has its own tests elsewhere in
+        this file.
+        """
+        saved = (gate.inventory, gate.chart_coverage, dict(gate.ALLOWED_MUTABLE),
+                 sys.argv)
+        gate.inventory = lambda env, seen=None: (images, list(unrendered),
+                                                 list(unclassified))
+        gate.chart_coverage = lambda *a, **k: []
+        gate.ALLOWED_MUTABLE.clear()
+        sys.argv = ["check-image-pins.py"]
+        try:
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                rc = gate.main()
+        finally:
+            gate.inventory, gate.chart_coverage, argv = saved[0], saved[1], saved[3]
+            gate.ALLOWED_MUTABLE.update(saved[2])
+            sys.argv = argv
+        return rc, out.getvalue()
+
+    def test_a_clean_fleet_passes(self):
+        """The control: without it every case below could be failing for a
+        reason the case did not introduce."""
+        rc, out = self.verdict(self.IMAGES)
+        self.assertEqual(rc, 0, out)
+
+    def test_a_reference_that_cannot_be_placed_fails(self):
+        rc, out = self.verdict(self.IMAGES, unclassified=[
+            ("c", "ghcr.io/example/mystery:1.0 is image-shaped and reaches no pod "
+                  "template or `image:` key.")])
+        self.assertEqual(rc, 1)
+        self.assertIn("ghcr.io/example/mystery:1.0", out)
+
+    def test_a_reference_that_cannot_be_placed_is_not_a_scope_caveat(self):
+        """It is printed as a problem, not under a heading about charts that did
+        not render — the chart rendered."""
+        _, out = self.verdict(self.IMAGES, unclassified=[("c", "mystery")])
+        self.assertNotIn("could not be rendered", out)
+        self.assertIn("image-pin problem", out)
+
+    def test_a_chart_that_did_not_render_cannot_report_a_clean_fleet(self):
+        """Every image that DID render is immutable, and that is a result over
+        part of the fleet rather than over the fleet."""
+        rc, out = self.verdict(self.IMAGES, unrendered=[("addons/x", "helm failed")])
+        self.assertEqual(rc, gate.gatelib.CANNOT_RUN)
+        self.assertIn("Cannot run", out)
+        self.assertIn("addons/x", out)
+
+    def test_a_chart_that_did_not_render_is_named_alongside_a_real_failure(self):
+        """The failure is the verdict, and the unrendered chart still bounds what
+        the verdict covers — dropping either one loses something a reader needs."""
+        rc, out = self.verdict(self.MUTABLE, unrendered=[("addons/x", "helm failed")])
+        self.assertEqual(rc, 1)
+        self.assertIn("addons/x", out)
+        self.assertIn("subset of the fleet", out)
+        self.assertIn("moving target", out)
+
+    def test_an_empty_population_cannot_run(self):
+        rc, out = self.verdict({}, unrendered=[("addons/x", "helm failed")])
+        self.assertEqual(rc, gate.gatelib.CANNOT_RUN)
+        self.assertIn("rendered no images at all", out)
