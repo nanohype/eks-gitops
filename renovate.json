@@ -133,6 +133,19 @@
       ]
     },
     {
+      "description": "The Renovate package the renovate-coverage job installs. Pinned in ci.yml's env block like every other CI tool, and labelled the same, because a bump moves what scripts/check-renovate-defaults.mjs compares the recorded manager defaults against.",
+      "matchDatasources": [
+        "npm"
+      ],
+      "matchPackageNames": [
+        "renovate"
+      ],
+      "labels": [
+        "dependencies",
+        "ci"
+      ]
+    },
+    {
       "description": [
         "Cilium is the CNI and does not ride the batch. Two things are encoded here, and the org preset's ordering note is what makes it possible: a consumer's packageRules are appended after the preset's, and later rules win \u2014 so this ungroups a package the preset grouped.",
         "It moves alone. The preset extends group:allNonMajor, which folds cilium in with every other non-major chart; the last cilium minor arrived alongside five unrelated bumps. A CNI minor cannot be reviewed, staged or reverted independently once it is in a batch, and this is the one chart on which every pod's networking depends.",

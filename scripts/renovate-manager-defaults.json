@@ -1,0 +1,28 @@
+{
+  "description": [
+    "defaultConfig.managerFilePatterns for every manager renovate.json enables, transcribed from the Renovate package.",
+    "A manager that configures no managerFilePatterns in renovate.json runs on these. check-renovate-coverage.py matches each pin's source file against the effective set for the manager the pin is attributed to — what renovate.json configures, or this when it configures nothing — so a pin is certified by a pattern that reaches it rather than by its manager's name appearing on an allowlist.",
+    "A transcript goes stale in silence, and stale here is worse than absent: the gate would certify a pin against a pattern Renovate no longer uses and print the same success. scripts/check-renovate-defaults.mjs re-resolves every entry against the shipped package and fails on any difference. The renovate-coverage CI job runs it beside renovate-config-validator, which is where the package already is.",
+    "null means the manager ships no managerFilePatterns at all. custom.regex is the one: each customManager carries its own, which renovate.json states and the gate reads directly.",
+    "An empty list means the manager reads nothing without configuration. argocd and pip-compile both ship one, which is why renovate.json configures both — and why the gate fails a manager whose effective set is empty rather than treating it as unconstrained."
+  ],
+  "generated": {
+    "by": "scripts/check-renovate-defaults.mjs --write",
+    "renovate": "44.65.0"
+  },
+  "managers": {
+    "argocd": [],
+    "custom.regex": null,
+    "github-actions": [
+      "/(^|/)(workflow-templates|\\.(?:github|gitea|forgejo)/(?:workflows|actions))/.+\\.ya?ml$/",
+      "/(^|/)action\\.ya?ml$/"
+    ],
+    "gomod": [
+      "/(^|/)go\\.mod$/"
+    ],
+    "pip-compile": [],
+    "pyenv": [
+      "/(^|/)\\.python-version$/"
+    ]
+  }
+}

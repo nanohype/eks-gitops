@@ -52,9 +52,19 @@ res() {
   return 0
 }
 
+# Files this harness CREATES rather than edits. mut/res restore a tracked file
+# from a backup taken before the edit; a file that did not exist has no backup,
+# and leaving one behind after an interrupt makes the next run measure a tree
+# nobody wrote. So creation is registered and the same trap removes it.
+NEW_FILES=()
+add_file() { NEW_FILES+=("$1"); }
+drop_file() { rm -f "$1"; }
+
 restore_all() {
-  [ "${#MUT_FILES[@]}" -eq 0 ] && return 0
   local f
+  for f in "${NEW_FILES[@]:-}"; do [ -n "$f" ] && rm -f "$f"; done
+  NEW_FILES=()
+  [ "${#MUT_FILES[@]}" -eq 0 ] && return 0
   for f in "${MUT_FILES[@]}"; do res "$f"; done
 }
 
@@ -166,6 +176,94 @@ PY
 run nonzero "renovate-coverage: tidied OCI repoURL" ./scripts/check-renovate-coverage.py
 res $F
 
+# Coverage is REACH, not attribution. A manager on enabledManagers is one
+# Renovate runs; managerFilePatterns decides which files it opens. Pointing one
+# manager at a path this repo does not have is valid config that opens nothing —
+# the schema passes, no lookup is attempted so the Dependency Dashboard reports
+# nothing, and the only symptom is a version that stops moving. Each of these
+# repoints ONE manager: repointing them all at once is a failure any pooled
+# check would also catch, while repointing one leaves every other manager
+# matching, which is the shape a pooled check reports as covered.
+F=renovate.json; mut $F
+python3 - "$F" <<'PY'
+import json,pathlib,sys
+p=pathlib.Path(sys.argv[1]); c=json.loads(p.read_text())
+c["pip-compile"]["managerFilePatterns"]=["/^locks/requirements\\.txt$/"]
+p.write_text(json.dumps(c,indent=2)+"\n")
+print("   pip-compile ->", c["pip-compile"]["managerFilePatterns"])
+PY
+run nonzero "renovate-coverage: pip-compile reaches no file" ./scripts/check-renovate-coverage.py
+res $F
+
+F=renovate.json; mut $F
+python3 - "$F" <<'PY'
+import json,pathlib,sys
+p=pathlib.Path(sys.argv[1]); c=json.loads(p.read_text())
+c["customManagers"][0]["managerFilePatterns"]=["/^nowhere/[^/]+$/"]
+p.write_text(json.dumps(c,indent=2)+"\n")
+print("   customManagers[0] ->", c["customManagers"][0]["managerFilePatterns"])
+PY
+run nonzero "renovate-coverage: one customManager reaches no file" ./scripts/check-renovate-coverage.py
+res $F
+
+# A manager resting on the default shipped inside the Renovate package. The
+# record scripts/renovate-manager-defaults.json holds is what makes these
+# provable offline, and configuring one is how a repo narrows what it reads.
+F=renovate.json; mut $F
+python3 - "$F" <<'PY'
+import json,pathlib,sys
+p=pathlib.Path(sys.argv[1]); c=json.loads(p.read_text())
+c["github-actions"]={"managerFilePatterns":["/^workflows/[^/]+\\.ya?ml$/"]}
+p.write_text(json.dumps(c,indent=2)+"\n")
+print("   github-actions ->", c["github-actions"]["managerFilePatterns"])
+PY
+run nonzero "renovate-coverage: github-actions narrowed off .github/workflows" ./scripts/check-renovate-coverage.py
+res $F
+
+# The naturally-shaped one: no config edit at all. A job installs a second
+# lockfile, two pins are derived from it, and the pip-compile pattern that
+# reaches requirements.txt reaches nothing else.
+F=.github/workflows/ci.yml; mut $F
+add_file requirements-dev.txt
+printf 'pytest==8.4.2\nhypothesis==6.140.3\n' > requirements-dev.txt
+python3 - "$F" <<'PY'
+import pathlib,sys
+p=pathlib.Path(sys.argv[1]); s=p.read_text()
+a="          pip install --require-hashes -r requirements.txt"
+assert a in s, "install step anchor not found"
+m=s.replace(a, a+"\n          pip install -r requirements-dev.txt", 1)
+assert m!=s, "mutation did not land"
+p.write_text(m)
+print("   added: pip install -r requirements-dev.txt")
+PY
+run nonzero "renovate-coverage: a second lockfile no pattern reaches" ./scripts/check-renovate-coverage.py
+drop_file requirements-dev.txt
+res $F
+
+# A version file for a runtime nobody wrote a reader for. Recognised by shape,
+# so it is SEEN and unattributable — which is a different answer from absent and
+# exits 2 rather than passing over it.
+F=.github/workflows/ci.yml; mut $F
+add_file .node-version
+printf '24\n' > .node-version
+python3 - "$F" <<'PY'
+import pathlib,sys
+p=pathlib.Path(sys.argv[1]); s=p.read_text()
+a="      - name: No unfilled placeholders in deploy config\n"
+assert a in s, "step anchor not found"
+step=("      - name: Probe node setup\n"
+      "        uses: actions/setup-node@v9\n"
+      "        with:\n"
+      "          node-version-file: .node-version\n\n")
+m=s.replace(a, step+a, 1)
+assert m!=s, "mutation did not land"
+p.write_text(m)
+print("   added: a setup-node step reading .node-version")
+PY
+run nonzero "renovate-coverage: a version file for an unread runtime" ./scripts/check-renovate-coverage.py
+drop_file .node-version
+res $F
+
 F=addons/ai-platform/agent-platform/base/platform.yaml; mut $F
 python3 - "$F" <<'PY'
 import pathlib,sys
@@ -273,7 +371,7 @@ echo "RESULT pass=$pass fail=$fail"
 # The harness owes the same assertion it demands of the gates: with every `run`
 # line deleted it would report pass=0 fail=0 and exit 0, which is a green run
 # over nothing checked.
-MIN_CHECKS=25
+MIN_CHECKS=30
 total=$((pass + fail))
 if [ "$total" -lt "$MIN_CHECKS" ]; then
   echo "FAIL  ran $total check(s), under the floor of $MIN_CHECKS — this harness"
