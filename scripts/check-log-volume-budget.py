@@ -97,7 +97,7 @@ def fail(msg: str) -> None:
 
 def chart_pin() -> tuple[str, str]:
     """Chart coordinates DERIVED from the ApplicationSet, never re-declared."""
-    doc = yaml.safe_load(APPSET.read_text())
+    doc = gatelib.read_yaml(APPSET)
     sources = ((doc.get("spec") or {}).get("template") or {}).get("spec", {}).get("sources") or []
     for src in sources:
         if isinstance(src, dict) and "chart" in src:

@@ -49,4 +49,27 @@ args=(-strict -summary -schema-location default -schema-location "$DATREE")
 [ -n "${KUBECONFORM_CACHE:-}" ] && args+=(-cache "$KUBECONFORM_CACHE")
 [ -n "$SKIP" ] && args+=(-skip "$SKIP")
 
-exec kubeconform "${args[@]}" "$@"
+# A floor on what was VALIDATED. kubeconform exits 0 over an empty target and
+# prints "0 resource found in 0 file", which is the same status a clean tree
+# gets — so a renamed directory, a wrong argument or a rendered/ that was never
+# written all report success. `exec` gave the caller kubeconform's status and
+# nothing else; the summary is what says whether anything was read.
+out="$(kubeconform "${args[@]}" "$@" 2>&1)"
+rc=$?
+printf '%s\n' "$out"
+[ "$rc" -ne 0 ] && exit "$rc"
+
+found="$(printf '%s' "$out" | sed -n 's/.*Summary: \([0-9][0-9]*\) resource.*/\1/p' | head -1)"
+if [ -z "$found" ]; then
+  echo "Cannot run: kubeconform printed no summary, so how many resources it read"
+  echo "is unknown. A pass here would report the same thing as a clean tree."
+  exit 2
+fi
+if [ "$found" -eq 0 ]; then
+  echo "FAIL  kubeconform validated 0 resources under: $*"
+  echo "      Nothing was schema-checked, which is not the same as everything being"
+  echo "      valid. Check the path — a renamed directory or an unrendered target"
+  echo "      reports exactly this."
+  exit 2
+fi
+exit 0
