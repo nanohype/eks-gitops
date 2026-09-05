@@ -16,6 +16,7 @@ import contextlib
 import io
 import json
 import pathlib
+import shutil
 import tempfile
 import unittest
 from fractions import Fraction
@@ -26,6 +27,12 @@ from gateloader import load
 gate = load("check-burn-rate-budgets")
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
+
+# The objective is read out of the render, so the planted fixtures are rendered
+# too rather than compared against a stub. The job running these installs
+# kustomize; a checkout without it skips rather than aborting the runner on the
+# gate's exit-2 refusal.
+HAS_KUSTOMIZE = shutil.which("kustomize") is not None
 
 
 def burn_expr(budget, factor, long_window, short_window,
@@ -143,28 +150,39 @@ class TheDurationGrammar(unittest.TestCase):
         self.assertEqual(gate.decimal(Fraction(6)), "6")
 
 
+@unittest.skipUnless(HAS_KUSTOMIZE, "kustomize is not on PATH")
 class TheVerdict(unittest.TestCase):
     """main() over a planted alerting directory and dashboard corpus."""
 
-    def verdict(self, rules, panel_exprs=PANELS):
+    def verdict(self, rules, panel_exprs=PANELS, ship_dashboard=True):
+        """main() over a planted tree, rendered the way the real one is.
+
+        `ship_dashboard=False` writes the dashboard and leaves it out of the
+        kustomization's `resources`, which is what a panel that stops being
+        delivered looks like from disk.
+        """
         root = pathlib.Path(tempfile.mkdtemp())
-        alerts = root / "dashboards" / "base" / "alerting"
-        boards = root / "dashboards" / "base" / "platform"
+        base = root / "dashboards" / "base"
+        alerts = base / "alerting"
+        boards = base / "platform"
         alerts.mkdir(parents=True)
         boards.mkdir(parents=True)
         (alerts / "g.yaml").write_text(yaml.safe_dump(group("slo", *rules)))
         (boards / "d.yaml").write_text(
             yaml.safe_dump(dashboard("d", *panel_exprs)))
-        saved = (gate.ROOT, gate.ALERT_DIR,
-                 gate.panels.ROOT, gate.panels.DASHBOARD_DIR)
-        gate.ROOT, gate.ALERT_DIR = root, alerts
-        gate.panels.ROOT, gate.panels.DASHBOARD_DIR = root, root / "dashboards"
+        resources = ["  - alerting/g.yaml"]
+        if ship_dashboard:
+            resources.append("  - platform/d.yaml")
+        (base / "kustomization.yaml").write_text(
+            "apiVersion: kustomize.config.k8s.io/v1beta1\n"
+            "kind: Kustomization\nresources:\n" + "\n".join(resources) + "\n")
+        saved = (gate.ROOT, gate.ALERT_DIR, gate.KUSTOMIZE_ROOT)
+        gate.ROOT, gate.ALERT_DIR, gate.KUSTOMIZE_ROOT = root, alerts, base
         try:
             with contextlib.redirect_stdout(io.StringIO()) as out:
                 rc = gate.main()
         finally:
-            (gate.ROOT, gate.ALERT_DIR,
-             gate.panels.ROOT, gate.panels.DASHBOARD_DIR) = saved
+            gate.ROOT, gate.ALERT_DIR, gate.KUSTOMIZE_ROOT = saved
         return rc, out.getvalue()
 
     def tiers(self):
@@ -262,6 +280,32 @@ class TheVerdict(unittest.TestCase):
         self.assertEqual(rc, 1, out)
         self.assertIn("which of those", out.lower())
 
+    def test_a_panel_that_stops_being_delivered_is_reported(self):
+        """The dashboard is on disk, unedited, and renders fine — it is simply
+        no longer in the kustomization's `resources`. The rules still ship and
+        still burn; the panel measuring what they burn against does not. A
+        figure anchored to a document no cluster receives is anchored to
+        nothing."""
+        rc, out = self.verdict(self.tiers(), ship_dashboard=False)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("no dashboard delivered by", out)
+
+    def test_a_render_that_fails_cannot_run(self):
+        """Exit 2. A kustomization that does not build says nothing about which
+        panels a cluster receives, and the dashboards on disk say nothing about
+        it either."""
+        root = pathlib.Path(tempfile.mkdtemp())
+        base = root / "dashboards" / "base"
+        base.mkdir(parents=True)
+        (base / "kustomization.yaml").write_text(
+            "apiVersion: kustomize.config.k8s.io/v1beta1\n"
+            "kind: Kustomization\nresources:\n  - platform/gone.yaml\n")
+        with self.assertRaises(SystemExit) as caught, \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            gate.delivered_dashboards(base)
+        self.assertEqual(caught.exception.code, gate.gatelib.CANNOT_RUN)
+        self.assertIn("could not be read", out.getvalue())
+
     def test_no_burn_rule_at_all_cannot_run(self):
         """Exit 2. A directory with no burn rule reports what a directory of
         correct claims reports."""
@@ -298,13 +342,33 @@ class TheShippedCatalog(unittest.TestCase):
                     f"{group_name}/{r.get('title')} burns against "
                     f"{selectors} and no dashboard panel measures any of them")
 
+    def test_the_rules_this_reads_are_rules_the_catalog_delivers(self):
+        """This gate reads the alerting directory; a cluster receives what the
+        kustomization renders. It does not take the second reading itself,
+        because check-alert-severity-routes.py already refuses a rule group on
+        disk that the same root does not render — so the corpus here is the
+        delivered one by way of that gate.
+
+        Asserted rather than assumed. The two gates have to agree on the root
+        and on the kind, and a narrowing on either side would otherwise leave
+        this one reading files no cluster has, silently.
+        """
+        routes = load("check-alert-severity-routes")
+        self.assertEqual(routes.KUSTOMIZE_ROOT, gate.KUSTOMIZE_ROOT,
+                         "the two alerting gates render different roots, so one "
+                         "of them is asserting over a tree the other does not")
+        self.assertIn(gate.RULE_GROUP, routes.ALERTING_KINDS,
+                      f"{routes.__name__} no longer refuses an unrendered "
+                      f"{gate.RULE_GROUP}, so this gate's corpus is files on "
+                      f"disk rather than what a cluster receives")
+
     def test_the_objective_is_read_from_the_dashboards_not_declared_here(self):
         """A constant agreeing with the standard today and compared to nothing
         tomorrow is the defect this gate was written for, one level up."""
         source = (ROOT / "scripts" / "check-burn-rate-budgets.py").read_text()
         self.assertNotIn("2592000", source)
         self.assertNotIn('"30d"', source)
-        self.assertIn("panels.dashboards()", source)
+        self.assertIn('subprocess.run(["kustomize", "build"', source)
 
 
 if __name__ == "__main__":

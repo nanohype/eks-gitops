@@ -37,13 +37,20 @@ Every term comes from the tree:
   * `f` and `w` from the rule's own expression — the `> bool f` threshold and
     the longest range selector in it;
   * `W` from the dashboard panel measuring the same metric selector over its
-    longest explicit range. That is the panel that displays the objective this
+    longest explicit range — read out of the RENDER, not off disk, so it is the
+    panel a cluster receives. That is the panel displaying the objective this
     rule burns against, in a different file, edited by different work.
+
+The figure therefore has no independent existence. There is no number here to
+correct, and none in the summary that anything trusts: the sentence is checked
+against the arithmetic that produces it, every term of which is read from a
+place that would have to be edited in step for a wrong figure to survive.
 
 So there is no constant here to agree with the standard today and be compared to
 nothing tomorrow. A figure that drifts fails against the expression that
-produces it, and an SLO window that moves fails against the panel that measures
-it.
+produces it; an SLO window that moves fails against the panel that measures it;
+and a panel that stops being delivered stops anchoring anything, which is a
+finding rather than a silent fallback to whatever the summary says.
 
 Every rule whose expression is a burn-rate expression must carry the claim. A
 burn-rate title that does not say how much budget is at stake tells the reader
@@ -72,10 +79,14 @@ WHAT IT DOES NOT CHECK
 from __future__ import annotations
 
 import importlib.util
+import json
 import pathlib
 import re
+import subprocess
 import sys
 from fractions import Fraction
+
+import yaml
 
 _here = pathlib.Path(__file__).resolve().parent
 
@@ -86,18 +97,14 @@ gatelib = importlib.util.module_from_spec(_gs)
 sys.modules["gatelib"] = gatelib
 _gs.loader.exec_module(gatelib)
 
-# The dashboard walk lives in the gate that already owns it. Copying it here
-# would give this gate a second walk to keep in step with the first, and a
-# dashboard silently dropped from either corpus reports the same as a clean run.
-_ap = _here / "check-athena-panel-columns.py"
-_as = importlib.util.spec_from_file_location("check_athena_panel_columns", _ap)
-assert _as and _as.loader, f"{_ap} is not loadable as a module"
-panels = importlib.util.module_from_spec(_as)
-_as.loader.exec_module(panels)
-
 ROOT = _here.parent
 ALERT_DIR = ROOT / "dashboards" / "base" / "alerting"
+# The kustomization delivering both the rules and the panels they burn against.
+# Derived from the alerting directory rather than named again, so the rules and
+# the objective cannot come to be read out of different trees.
+KUSTOMIZE_ROOT = ALERT_DIR.parent
 RULE_GROUP = "GrafanaAlertRuleGroup"
+DASHBOARD = "GrafanaDashboard"
 
 UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
 
@@ -117,6 +124,14 @@ FACTOR = re.compile(
 # The claim in the summary: a percentage of budget over a window.
 CLAIM = re.compile(
     r"(?P<pct>\d+(?:\.(?P<frac>\d+))?)%\s+(?:in|over)\s+(?P<window>\d+[smhdw])")
+
+
+def under_root(path: pathlib.Path) -> str:
+    """`path` relative to the repository when it is inside it, else as given."""
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
 
 
 def seconds(duration: str) -> int:
@@ -196,15 +211,54 @@ def factors(expr: str) -> set[Fraction]:
     return {Fraction(m.group("factor")) for m in FACTOR.finditer(expr)}
 
 
+def delivered_dashboards(root: pathlib.Path) -> list[dict]:
+    """The dashboard JSON of every GrafanaDashboard `root` renders.
+
+    Read from the render rather than off disk, because `resources` is an
+    explicit list and a panel can stop being delivered without moving, being
+    edited, or failing to render. A dashboard the catalog no longer ships is
+    not a second source: the rules would keep burning against an objective
+    nobody can see, and this gate would keep certifying their figures against
+    a document no cluster receives.
+    """
+    gatelib.require("kustomize")
+    proc = subprocess.run(["kustomize", "build", str(root)],
+                          capture_output=True, text=True)
+    if proc.returncode != 0:
+        print(f"Cannot run: kustomize build {under_root(root)} failed, so "
+              f"which panels this catalog delivers could not be read. The "
+              f"dashboards on disk say nothing about that on their own.")
+        print(proc.stderr.strip()[:500])
+        sys.exit(gatelib.CANNOT_RUN)
+    out: list[dict] = []
+    for doc in yaml.safe_load_all(proc.stdout):
+        if not isinstance(doc, dict) or doc.get("kind") != DASHBOARD:
+            continue
+        raw = (doc.get("spec") or {}).get("json")
+        if not isinstance(raw, str):
+            continue
+        try:
+            out.append(json.loads(raw))
+        except json.JSONDecodeError as err:
+            # Refusing to skip a dashboard that will not parse. A gate that
+            # silently drops its subject reports success over nothing.
+            name = (doc.get("metadata") or {}).get("name", "<unnamed>")
+            print(f"Cannot run: {DASHBOARD}/{name} renders spec.json that is not "
+                  f"valid JSON, so the objective it measures could not be read: "
+                  f"{err}")
+            sys.exit(gatelib.CANNOT_RUN)
+    return out
+
+
 def objective_windows() -> dict[str, int]:
-    """selector -> the longest explicit range a dashboard panel applies to it.
+    """selector -> the longest explicit range a DELIVERED panel applies to it.
 
     The SLO window, read from the panel that displays the objective. A burn
     window is by construction shorter than the window it burns against, so the
     longest range a panel measures this selector over is the objective's.
     """
     out: dict[str, int] = {}
-    for _path, dash in panels.dashboards():
+    for dash in delivered_dashboards(KUSTOMIZE_ROOT):
         for expr in panel_exprs(dash):
             for m in SELECTOR.finditer(expr):
                 sel = re.sub(r"\s+", "", m.group("sel"))
@@ -301,7 +355,8 @@ def main() -> int:
         objective = {windows[sel] for sel in selectors if sel in windows}
         if not objective:
             failures.append(
-                f"{where} claims {claim.group(0)!r} and no dashboard panel measures "
+                f"{where} claims {claim.group(0)!r} and no dashboard delivered "
+                f"by {under_root(KUSTOMIZE_ROOT)} measures "
                 f"{' or '.join(sorted(selectors))} over an explicit range. The "
                 f"figure is compared to nothing, which is how the last wrong one "
                 f"survived.")

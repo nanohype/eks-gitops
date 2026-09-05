@@ -419,6 +419,24 @@ run nonzero "burn-rate-budgets: a summary claiming a budget its expression does 
   ./scripts/check-burn-rate-budgets.py
 res $F
 
+# The other term, and the one that lives outside the alerting directory. The
+# dashboard is unedited and still renders; it is simply no longer in the
+# kustomization's resources. The rules ship and burn, the panel measuring what
+# they burn against does not, and every figure is then anchored to a document no
+# cluster receives.
+F=dashboards/base/kustomization.yaml; mut $F
+python3 - "$F" <<'PYZ'
+import pathlib,sys
+p=pathlib.Path(sys.argv[1]); s=p.read_text()
+m=s.replace("  - platform/agent-operator.yaml\n", "", 1)
+assert m!=s, "mutation did not land"
+p.write_text(m)
+print("   dropped the panel measuring the objective from the kustomization")
+PYZ
+run nonzero "burn-rate-budgets: the panel measuring the objective stops shipping" \
+  ./scripts/check-burn-rate-budgets.py
+res $F
+
 F=addons/bootstrap/cert-manager/values-hub.yaml; mut $F; rm -f $F
 run nonzero "env-coverage: deleted hub delta" ./scripts/check-env-coverage.py
 res $F
@@ -531,7 +549,7 @@ echo "RESULT pass=$pass fail=$fail"
 # The harness owes the same assertion it demands of the gates: with every `run`
 # line deleted it would report pass=0 fail=0 and exit 0, which is a green run
 # over nothing checked.
-MIN_CHECKS=43
+MIN_CHECKS=44
 total=$((pass + fail))
 if [ "$total" -lt "$MIN_CHECKS" ]; then
   echo "FAIL  ran $total check(s), under the floor of $MIN_CHECKS — this harness"

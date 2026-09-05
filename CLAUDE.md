@@ -172,9 +172,11 @@ aggregate, so a clean `task validate` is necessary but not sufficient:
   does not spend while every rule-level validation passes. The figure is derived
   rather than listed: burn factor times long window over the SLO window, with the
   factor and window read from the rule's expression and the SLO window from the
-  dashboard panel measuring the same selector. A rule whose selectors no panel
-  measures is a finding, because a figure compared to nothing is how the last
-  wrong one survived
+  dashboard panel measuring the same selector — out of the render, so it is a
+  panel a cluster receives rather than a file on disk. A rule whose selectors no
+  delivered panel measures is a finding, because a figure compared to nothing is
+  how the last wrong one survived. The figure has no independent existence:
+  there is no constant to correct and none in the summary that anything trusts
 - **Image vulnerabilities** — `scripts/check-image-vulnerabilities.py` (CI job
   `image-vulnerabilities`). The one with a target of its own,
   `task validate:image-vulnerabilities`, kept out of the aggregate because it
