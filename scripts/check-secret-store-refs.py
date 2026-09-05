@@ -79,6 +79,7 @@ _gs.loader.exec_module(gatelib)
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 APPSET_DIR = ROOT / "applicationsets"
 CONTRACT = ROOT / "contracts" / "secret-store.json"
+STORE_DIR = ROOT / "addons" / "bootstrap" / "secret-stores"
 
 CLUSTER_STORE = "ClusterSecretStore"
 NAMESPACED_STORE = "SecretStore"
@@ -230,6 +231,19 @@ def survey():
     return declared, consumers, versions
 
 
+def rendered(contract: dict) -> str:
+    """The contract's one canonical serialisation.
+
+    `--write` emits this and the check compares against it byte for byte, so
+    "the published contract" and "what the generator produces" are the same
+    question. Comparing parsed objects field by field answers a weaker one: it
+    passes a file carrying an extra key, a reordered object, or a rewritten
+    comment, and a consumer reads the file rather than the four fields this gate
+    happens to look at.
+    """
+    return json.dumps(contract, indent=2) + "\n"
+
+
 def build_contract(declared, versions) -> dict:
     (kind, name), (_path, api) = next(iter(declared.items()))
     return {
@@ -323,7 +337,7 @@ def main(argv: list[str] | None = None) -> int:
     want = build_contract(cluster_stores, versions)
     if args.write:
         CONTRACT.parent.mkdir(parents=True, exist_ok=True)
-        CONTRACT.write_text(json.dumps(want, indent=2) + "\n", encoding="utf-8")
+        CONTRACT.write_text(rendered(want), encoding="utf-8")
         print(f"✓ wrote {rel(CONTRACT)}")
         return 0
 
@@ -333,34 +347,20 @@ def main(argv: list[str] | None = None) -> int:
               f"have nothing to compare their chart defaults against. Run "
               f"`{rel(pathlib.Path(__file__))} --write`.")
         return 1
-    try:
-        have = json.loads(CONTRACT.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as err:
-        print(f"FAIL  {rel(CONTRACT)} is not valid JSON: {err}. A contract a "
-              f"consumer cannot parse is one it will skip.")
-        return 1
-    if have != want:
-        print(f"FAIL  {rel(CONTRACT)} does not state what this tree states.")
-        # The published side is named, not echoed. It is parsed as arbitrary
-        # JSON out of a file, so what a message would be repeating is whatever
-        # somebody put there; the declared side is the tree's own and is what
-        # the reader has to act on anyway.
-        for section, fields in (("clusterSecretStore", ("apiVersion", "kind", "name")),
-                                ("externalSecret", ("apiVersion",))):
-            published = have.get(section)
-            if not isinstance(published, dict):
-                print(f"      {section}: absent from the published contract")
-                continue
-            for field in fields:
-                grammar = {"apiVersion": GROUP_VERSION,
-                           "kind": KIND}.get(field, OBJECT_NAME)
-                if published.get(field) != want[section][field]:
-                    print(f"      {section}.{field}: the manifest declares "
-                          f"{printable(want[section][field], grammar)}; the "
-                          f"contract publishes something else")
-        print("      A contract that has drifted from the manifest is worse "
-              "than none: consumers assert against it and pass.")
-        print(f"      Regenerate with `{rel(pathlib.Path(__file__))} --write`.")
+
+    # Compared as bytes, and deliberately not parsed for the message. What is in
+    # that file is whatever somebody put there, so a message quoting it back
+    # repeats it into a log; the reader already has the file open, and the fix is
+    # the same whatever the difference is.
+    if CONTRACT.read_text(encoding="utf-8") != rendered(want):
+        print(f"FAIL  {rel(CONTRACT)} is not what this tree declares.")
+        print(f"      The manifest under {rel(STORE_DIR)} is the source of "
+              f"truth and the contract is generated from it, so a difference "
+              f"means the file was hand-edited or the manifest moved under it.")
+        print("      A contract that has drifted is worse than none: the "
+              "repositories asserting against it pass.")
+        print(f"      Regenerate with `{rel(pathlib.Path(__file__))} --write` "
+              f"and read the diff.")
         return 1
 
     store = want["clusterSecretStore"]

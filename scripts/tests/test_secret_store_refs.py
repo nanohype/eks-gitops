@@ -205,7 +205,33 @@ class TheVerdict(unittest.TestCase):
         rc, out, _ = self.verdict(
             self.healthy(), contract=self.contract_for("aws-secretsmanager"))
         self.assertEqual(rc, 1, out)
-        self.assertIn("does not state what this tree states", out)
+        self.assertIn("is not what this tree declares", out)
+
+    def test_a_contract_differing_only_in_shape_is_reported(self):
+        """Compared as bytes. A file carrying an extra key, or the same four
+        fields reordered, is not what the generator produces — and a consumer
+        reads the file, not the four fields this gate happens to look at."""
+        contract = self.contract_for()
+        contract["clusterSecretStore"]["extra"] = "surplus"
+        rc, out, _ = self.verdict(self.healthy(), contract=contract)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("is not what this tree declares", out)
+
+    def test_the_written_contract_is_what_the_check_compares_against(self):
+        """`--write` then check must pass, or the generator and the comparison
+        have come apart and every run is red with no way to fix it."""
+        rc, out, path = self.verdict(self.healthy(), write=True)
+        self.assertEqual(rc, 0, out)
+        root = path.parent.parent
+        saved = (gate.ROOT, gate.APPSET_DIR, gate.CONTRACT)
+        gate.ROOT, gate.APPSET_DIR, gate.CONTRACT = (
+            root, root / "applicationsets", path)
+        try:
+            with contextlib.redirect_stdout(io.StringIO()) as second:
+                rc = gate.main([])
+        finally:
+            gate.ROOT, gate.APPSET_DIR, gate.CONTRACT = saved
+        self.assertEqual(rc, 0, second.getvalue())
 
     def test_a_missing_contract_is_reported(self):
         rc, out, _ = self.verdict(self.healthy())
@@ -214,7 +240,10 @@ class TheVerdict(unittest.TestCase):
 
     def test_a_contract_that_does_not_parse_is_reported(self):
         """A contract a consumer cannot parse is one it skips, which lands it
-        back where it started: restating the name and hoping."""
+        back where it started: restating the name and hoping. It is caught by
+        the same byte comparison as every other difference — unparseable is not
+        a separate case once the file has to be exactly what the generator
+        emits."""
         _rc, _out, path = self.verdict(self.healthy(),
                                        contract=self.contract_for())
         path.write_text("{not json")
@@ -228,7 +257,7 @@ class TheVerdict(unittest.TestCase):
         finally:
             gate.ROOT, gate.APPSET_DIR, gate.CONTRACT = saved
         self.assertEqual(rc, 1)
-        self.assertIn("not valid JSON", out.getvalue())
+        self.assertIn("is not what this tree declares", out.getvalue())
 
     def test_write_regenerates_the_contract_from_the_tree(self):
         rc, out, path = self.verdict(self.healthy(), write=True)
@@ -305,10 +334,9 @@ class TheOutputCarriesNothingItDidNotVerify(TheVerdict):
         self.assertEqual(rc, 1, out)
         self.assertNotIn(HOSTILE, out)
         self.assertNotIn("AKIA", out)
-        self.assertIn("clusterSecretStore.name", out)
-        self.assertIn("aws-secrets-manager", out,
-                      "the declared side is the tree's own and is what the "
-                      "reader has to act on")
+        self.assertIn("Regenerate", out,
+                      "the remedy is the same whatever the difference is, and "
+                      "it is what the reader needs")
 
     def test_a_hostile_value_in_a_consumer_is_not_repeated(self):
         docs = self.healthy()
@@ -332,12 +360,15 @@ class TheOutputCarriesNothingItDidNotVerify(TheVerdict):
         self.assertEqual(rc, 1, out)
         self.assertNotIn(HOSTILE, out)
 
-    def test_the_published_side_is_named_rather_than_dumped(self):
-        """`json.dumps(have)` put arbitrary file content in the message. The
-        field name is what the reader needs; the content is what they already
-        have in front of them."""
+    def test_the_contract_is_never_parsed_for_a_message(self):
+        """It was `json.dumps(have)`, which put arbitrary file content into the
+        output. The file is compared as bytes now and no message reads from it:
+        the reader has it open, and the fix is the same whatever differs."""
         source = (ROOT / "scripts" / "check-secret-store-refs.py").read_text()
         self.assertNotIn("json.dumps(have", source)
+        self.assertNotIn("json.loads(CONTRACT", source)
+        self.assertIn('CONTRACT.read_text(encoding="utf-8") != rendered(want)',
+                      source)
 
 
 class TheShippedCatalog(unittest.TestCase):
