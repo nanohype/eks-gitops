@@ -360,31 +360,46 @@ class TheOutputCarriesNothingItDidNotVerify(TheVerdict):
         self.assertEqual(rc, 1, out)
         self.assertNotIn(HOSTILE, out)
 
-    def test_every_suppression_carries_its_reason(self):
+    def test_every_marker_has_its_reason_above_it(self):
         """A bare `# codeql[...]` is the thing that rots.
 
-        The suppression is legible as a decision only while the decision is next
-        to it. Stripped to the marker it becomes indistinguishable from somebody
-        silencing a finding they did not read, and there is no way to tell which
-        it was six months later.
+        The marker does not suppress — code scanning runs here as default setup
+        and reads no suppression comment for this query — so it is a comment
+        addressed to a person, and a comment addressed to a person that says
+        only a rule id says nothing. Stripped to the marker it is
+        indistinguishable from somebody silencing a finding they did not read,
+        and there is no way to tell which it was six months later.
+
+        Ordering rather than a window: the reason has to come BEFORE the marker,
+        because a reader meets them in that order. How many lines separate them
+        is not a property worth pinning.
         """
         source = (ROOT / "scripts" / "check-secret-store-refs.py").read_text()
         lines = source.splitlines()
         marked = [i for i, line in enumerate(lines) if "codeql[" in line]
-        self.assertTrue(marked, "the suppressions are gone; if the query stopped "
+        self.assertTrue(marked, "the markers are gone; if the query stopped "
                                 "matching, delete this test with them")
         REASON = "secret store is the thing that holds secrets"
         self.assertIn(REASON, source,
-                      "no suppression in this file says what the scanner matched "
-                      "or why the match is wrong")
+                      "no marker in this file says what the scanner matched or "
+                      "why the match is wrong")
         for i in marked:
             with self.subTest(line=i + 1):
-                preceding = "\n".join(lines[max(0, i - 30):i])
+                above = "\n".join(lines[:i])
                 self.assertTrue(
-                    REASON in preceding or "same reason as" in preceding,
-                    "this suppression neither carries the reason nor points at "
-                    "it — a marker on its own is indistinguishable from somebody "
-                    "silencing a finding they did not read")
+                    REASON in above or "same reason as" in above,
+                    "this marker neither carries the reason nor points at it — "
+                    "on its own it is indistinguishable from somebody silencing "
+                    "a finding they did not read")
+
+    def test_the_marker_does_not_claim_to_suppress(self):
+        """It did not. The alerts stayed open with it in place and were closed
+        in the scanner's own database, which is not in this tree — so prose
+        here saying the finding is suppressed at the site would be the same
+        class of defect this gate exists to catch, one level up."""
+        source = (ROOT / "scripts" / "check-secret-store-refs.py").read_text()
+        self.assertIn("does NOT suppress anything", source)
+        self.assertNotIn("Suppressed at the site", source)
 
     def test_no_value_is_rebuilt_to_defeat_the_dataflow(self):
         """The alternative to a suppression is contorting the code until the

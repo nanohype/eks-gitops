@@ -346,19 +346,26 @@ def main(argv: list[str] | None = None) -> int:
     # to it. Both are about a name rather than a content, and the pattern will
     # recur in whatever tool comes third.
     #
-    # Suppressed at the site rather than excluded in a CodeQL config: a config
-    # exclusion is a list that would silently cover every file added to scripts/
-    # afterwards, none of which chose it. This dies with the line it sits on.
+    # The marker below does NOT suppress anything. Code scanning runs here as
+    # default setup, which reads no suppression comment for this query: the
+    # alerts stayed open with it in place and were closed by dismissing them in
+    # the scanner's own database, which is not in this tree. So the marker
+    # records the decision at the site and the decision takes effect somewhere a
+    # reader of this file cannot see.
+    #
+    # It stays because the alternative leaves the site with no explanation at
+    # all. Read it as a comment addressed to a person, not to the tool.
     #
     # Not worked around in the code either. A verified string can be rebuilt
     # character by character from a literal alphabet, which defeats the dataflow
-    # and explains nothing — a reader can disagree with a suppression, and cannot
+    # and explains nothing — a reader can disagree with a comment, and cannot
     # even see a defeated dataflow.
     #
-    # The marker goes on the line BEFORE the expression it covers, and covers
-    # only that one line. On the same line it is the older `lgtm[...]` form,
-    # which edits the line it annotates and so changes the alert's hash: the
-    # original closes as fixed and an identical one opens beside it.
+    # The placement is the one the marker would need if it were read: on the
+    # line BEFORE the expression, covering that line only. On the same line it
+    # is the older `lgtm[...]` form, which edits the line it annotates and so
+    # changes the alert's hash — the original closes as fixed and an identical
+    # one opens beside it.
         for f in failures:
             # codeql[py/clear-text-logging-sensitive-data]
             print(f"  {f}")
