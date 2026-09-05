@@ -1,0 +1,177 @@
+{
+  "_README": "Every symbol the AWS Load Balancer Controller consults when it decides a load balancer's scheme, and when it decides whether a Service is its own, derived from the controller source at the version the chart pin installs. Each is READ by policies/kyverno/networking/base/inject-adopt-lb-subnets.yaml with a string the policy must contain, UNREAD with the reason the policy does not consult it, or PLUMBING with the reason it decides nothing. A symbol that is none of those fails --sync: a new deciding input is a decision somebody makes, not a record to regenerate. Re-derive with scripts/check-lb-scheme-inputs.py --sync.",
+  "controller": {
+    "chartRepo": "https://aws.github.io/eks-charts",
+    "chart": "aws-load-balancer-controller",
+    "chartVersion": "3.5.0",
+    "sourceRef": "v3.5.0"
+  },
+  "controllerConfig": {
+    "args": {
+      "default-load-balancer-scheme": "internal",
+      "load-balancer-class": "service.k8s.aws/nlb",
+      "ingress-class": "alb"
+    },
+    "serviceMutatorWebhook": false
+  },
+  "literals": {
+    "'service.k8s.aws/nlb'": "the load balancer class the controller claims, --load-balancer-class",
+    "'nlb-ip'": "an aws-load-balancer-type value that claims a Service on its own",
+    "'external'": "the aws-load-balancer-type value that claims a Service with a target type",
+    "'ip'": "an aws-load-balancer-nlb-target-type value that completes the external claim",
+    "'instance'": "the other aws-load-balancer-nlb-target-type value that completes it",
+    "'internal'": "the scheme the controller falls back to, --default-load-balancer-scheme",
+    "'internet-facing'": "the other scheme the controller can compute"
+  },
+  "symbols": {
+    "Ingress.Spec.Scheme": {
+      "decides": "scheme",
+      "kind": "Ingress",
+      "annotation": null,
+      "status": "unread",
+      "note": "IngressClassParams.spec.scheme overrides the object's own annotation, and reaching it means resolving the Ingress class and then its parameters. Kyverno evaluates a rule's context before its preconditions, so those two lookups would run on every Ingress admission on every cluster in the fleet, adopt or not, and Kyverno's admission controller is granted neither resource. An Ingress whose class parameters set a scheme and whose object states none therefore takes the default here; the controller rejects the mismatch at provisioning, which is the same loud failure an adopt cluster had before any injection existed."
+    },
+    "Ingress.annotations.IngressSuffixScheme": {
+      "decides": "scheme",
+      "kind": "Ingress",
+      "annotation": "alb.ingress.kubernetes.io/scheme",
+      "status": "read"
+    },
+    "Ingress.buildLoadBalancerScheme.annotationParser": {
+      "decides": "scheme",
+      "kind": "Ingress",
+      "annotation": null,
+      "status": "plumbing",
+      "note": "The reader that turns a suffix into an annotation lookup. It decides nothing; what it is asked for is recorded above."
+    },
+    "Ingress.buildLoadBalancerScheme.defaultScheme": {
+      "decides": "scheme",
+      "kind": "Ingress",
+      "annotation": null,
+      "status": "read",
+      "evidence": "'internal'"
+    },
+    "Ingress.buildLoadBalancerScheme.ingGroup": {
+      "decides": "scheme",
+      "kind": "Ingress",
+      "annotation": null,
+      "status": "unread",
+      "note": "One load balancer serves an Ingress group and one scheme is decided across every member, so no single object carries the answer. Rather than guess from the member being admitted, the policy declines to inject when alb.ingress.kubernetes.io/group.name is set."
+    },
+    "Service.IsServiceSupported.annotationParser": {
+      "decides": "ownership",
+      "kind": "Service",
+      "annotation": null,
+      "status": "plumbing",
+      "note": "The reader that turns a suffix into an annotation lookup. It decides nothing; what it is asked for is recorded above."
+    },
+    "Service.IsServiceSupported.featureGates": {
+      "decides": "ownership",
+      "kind": "Service",
+      "annotation": null,
+      "status": "unread",
+      "note": "The ServiceTypeLoadBalancerOnly gate only narrows which Services the controller claims. The policy requires spec.type LoadBalancer unconditionally, so its population is never wider than the controller's whichever way the gate is set."
+    },
+    "Service.IsServiceSupported.loadBalancerClass": {
+      "decides": "ownership",
+      "kind": "Service",
+      "annotation": null,
+      "status": "read",
+      "evidence": "'service.k8s.aws/nlb'"
+    },
+    "Service.Spec.LoadBalancerClass": {
+      "decides": "ownership",
+      "kind": "Service",
+      "annotation": null,
+      "status": "read",
+      "evidence": "request.object.spec.loadBalancerClass"
+    },
+    "Service.Spec.Type": {
+      "decides": "ownership",
+      "kind": "Service",
+      "annotation": null,
+      "status": "read",
+      "evidence": "request.object.spec.type"
+    },
+    "Service.annotations.SvcLBSuffixInternal": {
+      "decides": "scheme",
+      "kind": "Service",
+      "annotation": "service.beta.kubernetes.io/aws-load-balancer-internal",
+      "status": "read"
+    },
+    "Service.annotations.SvcLBSuffixLoadBalancerType": {
+      "decides": "ownership",
+      "kind": "Service",
+      "annotation": "service.beta.kubernetes.io/aws-load-balancer-type",
+      "status": "read"
+    },
+    "Service.annotations.SvcLBSuffixScheme": {
+      "decides": "scheme",
+      "kind": "Service",
+      "annotation": "service.beta.kubernetes.io/aws-load-balancer-scheme",
+      "status": "read"
+    },
+    "Service.annotations.SvcLBSuffixTargetType": {
+      "decides": "ownership",
+      "kind": "Service",
+      "annotation": "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type",
+      "status": "read"
+    },
+    "Service.buildLoadBalancerScheme.annotationParser": {
+      "decides": "scheme",
+      "kind": "Service",
+      "annotation": null,
+      "status": "plumbing",
+      "note": "The reader that turns a suffix into an annotation lookup. It decides nothing; what it is asked for is recorded above."
+    },
+    "Service.buildLoadBalancerScheme.defaultLoadBalancerScheme": {
+      "decides": "scheme",
+      "kind": "Service",
+      "annotation": null,
+      "status": "read",
+      "evidence": "'internal'"
+    },
+    "Service.buildLoadBalancerScheme.elbv2TaggingManager": {
+      "decides": "scheme",
+      "kind": "Service",
+      "annotation": null,
+      "status": "plumbing",
+      "note": "Performs that same lookup against the AWS API."
+    },
+    "Service.buildLoadBalancerScheme.existingLoadBalancer": {
+      "decides": "scheme",
+      "kind": "Service",
+      "annotation": null,
+      "status": "unread",
+      "note": "When neither annotation states a scheme the controller adopts the scheme of a load balancer that already exists, read from the AWS API by resource tag. An admission request carries no such thing and Kyverno has no route to one, so a Service whose scheme lives only in AWS takes the default here."
+    },
+    "Service.buildLoadBalancerScheme.fetchExistingLoadBalancerOnce": {
+      "decides": "scheme",
+      "kind": "Service",
+      "annotation": null,
+      "status": "plumbing",
+      "note": "Memoises that same lookup for one reconcile."
+    },
+    "Service.buildLoadBalancerScheme.service": {
+      "decides": "scheme",
+      "kind": "Service",
+      "annotation": null,
+      "status": "plumbing",
+      "note": "The Service being reconciled \u2014 the object the annotations above are read from."
+    },
+    "Service.buildLoadBalancerScheme.stack": {
+      "decides": "scheme",
+      "kind": "Service",
+      "annotation": null,
+      "status": "plumbing",
+      "note": "The resource stack whose tags address the existing load balancer. It carries no scheme of its own; the lookup it serves is recorded as unread."
+    },
+    "Service.buildLoadBalancerScheme.trackingProvider": {
+      "decides": "scheme",
+      "kind": "Service",
+      "annotation": null,
+      "status": "plumbing",
+      "note": "Builds the tag filter for that same lookup."
+    }
+  }
+}

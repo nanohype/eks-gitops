@@ -161,6 +161,7 @@ run 0 "check-env-coverage.py" ./scripts/check-env-coverage.py
 run 0 "check-burn-rate-budgets.py" ./scripts/check-burn-rate-budgets.py
 run 0 "check-secret-store-refs.py" ./scripts/check-secret-store-refs.py
 run 0 "check-directory-manifest-size.py" ./scripts/check-directory-manifest-size.py
+run 0 "check-lb-scheme-inputs.py" ./scripts/check-lb-scheme-inputs.py
 run 0 "check-named-things.py" ./scripts/check-named-things.py
 run 0 "check-policy-validity.py" ./scripts/check-policy-validity.py
 run 0 "no-placeholders.sh" ./scripts/no-placeholders.sh
@@ -537,6 +538,74 @@ run nonzero "directory-manifest-size: a directory source nothing measured" \
   ./scripts/check-directory-manifest-size.py
 res $F
 
+# The defect as it was. aws-load-balancer-internal is still honoured by the
+# controller and still ahead of its default, so a Service setting it and nothing
+# else is internet-facing to the controller and internal to a policy reading only
+# the newer spelling — the private-subnet list on a load balancer the controller
+# puts on public subnets.
+F=policies/kyverno/networking/base/inject-adopt-lb-subnets.yaml; mut $F
+python3 - "$F" <<'PYQ'
+import pathlib,sys
+p=pathlib.Path(sys.argv[1]); s=p.read_text()
+m=s.replace("|| (internalannotation == 'false' && 'internet-facing' || 'internal')",
+            "|| 'internal'")
+assert m!=s, "mutation did not land"
+p.write_text(m)
+print("   dropped the legacy spelling from the scheme the policy computes")
+PYQ
+run nonzero "kyverno: a Service the controller calls internet-facing takes private subnets" \
+  ./scripts/kyverno-test.sh
+res $F
+
+# A policy the engine refuses is not a policy that passed. Every row expecting a
+# rule to skip is satisfied by the rule never running, and the CLI counts those
+# as passes.
+F=policies/kyverno/networking/base/inject-adopt-lb-subnets.yaml; mut $F
+python3 - "$F" <<'PYQ'
+import pathlib,sys
+p=pathlib.Path(sys.argv[1]); s=p.read_text()
+m=s.replace("{{ lbclass == 'service.k8s.aws/nlb' || lbtype == 'nlb-ip' || "
+            "(lbtype == 'external' && (nlbtargettype == 'ip' || nlbtargettype == 'instance')) }}",
+            "{{ 'yes' == 'yes' }}")
+assert m!=s, "mutation did not land"
+p.write_text(m)
+print("   made the policy one Kyverno will not accept")
+PYQ
+run nonzero "kyverno: a rejected policy reports every expected skip as a pass" \
+  ./scripts/kyverno-test.sh
+res $F
+
+# The policy stops reading an input the controller still decides on. Renamed
+# rather than deleted: an annotation nobody sets is the same silence.
+F=policies/kyverno/networking/base/inject-adopt-lb-subnets.yaml; mut $F
+python3 - "$F" <<'PYQ'
+import pathlib,sys
+p=pathlib.Path(sys.argv[1]); s=p.read_text()
+m=s.replace("aws-load-balancer-internal", "aws-load-balancer-private")
+assert m!=s, "mutation did not land"
+p.write_text(m)
+print("   renamed the legacy annotation the policy reads")
+PYQ
+run nonzero "lb-scheme-inputs: an input the controller decides on goes unread" \
+  ./scripts/check-lb-scheme-inputs.py
+res $F
+
+# The shape a Renovate pull request has. Moving the chart pin moves the
+# controller, and every symbol in the record was derived from the version that
+# was there before.
+F=applicationsets/addons-networking.yaml; mut $F
+python3 - "$F" <<'PYQ'
+import pathlib,sys
+p=pathlib.Path(sys.argv[1]); s=p.read_text()
+m=s.replace('chartVersion: "3.5.0"', 'chartVersion: "3.6.0"', 1)
+assert m!=s, "mutation did not land"
+p.write_text(m)
+print("   moved the controller chart pin and left the derivation where it was")
+PYQ
+run nonzero "lb-scheme-inputs: the controller moves and the derivation does not" \
+  ./scripts/check-lb-scheme-inputs.py
+res $F
+
 F=addons/bootstrap/cert-manager/values-hub.yaml; mut $F; rm -f $F
 run nonzero "env-coverage: deleted hub delta" ./scripts/check-env-coverage.py
 res $F
@@ -649,7 +718,7 @@ echo "RESULT pass=$pass fail=$fail"
 # The harness owes the same assertion it demands of the gates: with every `run`
 # line deleted it would report pass=0 fail=0 and exit 0, which is a green run
 # over nothing checked.
-MIN_CHECKS=52
+MIN_CHECKS=57
 total=$((pass + fail))
 if [ "$total" -lt "$MIN_CHECKS" ]; then
   echo "FAIL  ran $total check(s), under the floor of $MIN_CHECKS — this harness"

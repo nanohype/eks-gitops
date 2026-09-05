@@ -2,12 +2,25 @@
 # tree) by `kyverno test policies/kyverno/tests`. The kube-system/network-config
 # ConfigMap state is supplied via values.yaml.
 #
-#   (a) plain Ingress          → private-subnet CSV (internal is the default)
-#   (b) internet-facing Ingress→ public-subnet CSV
-#   (c) plain LB Service       → private-subnet CSV
-#   (d) internet-facing Service→ public-subnet CSV
-#   (f) Ingress with an explicit subnets annotation → untouched (skip)
-#   (+) ClusterIP Service      → untouched, proving the type precondition (skip)
+# The matrix is the AWS Load Balancer Controller's own decision procedure: first
+# whether the object is one it provisions a load balancer for, then which scheme
+# it will compute for it.
+#
+#   Ingress
+#     (a) plain                     → private-subnet CSV (the controller's default)
+#     (b) internet-facing           → public-subnet CSV
+#     (c) already pins subnets      → untouched
+#     (d) member of a group         → untouched, the scheme belongs to the group
+#   Service the controller claims
+#     (e) by loadBalancerClass      → private
+#     (f) by type=external + target → private
+#     (g) by type=nlb-ip, scheme set → public
+#     (h) legacy -internal: "false" → PUBLIC, with no scheme annotation present
+#     (i) legacy -internal: "true"  → private
+#     (j) both spellings disagreeing → private, the scheme annotation wins
+#   Service the controller does not claim
+#     (k) plain type=LoadBalancer   → untouched, the in-tree provider's Classic LB
+#     (l) ClusterIP                 → untouched
 apiVersion: cli.kyverno.io/v1alpha1
 kind: Test
 metadata:
@@ -31,10 +44,26 @@ results:
     patchedResources: patched/ing-internet.yaml
     result: pass
   - policy: inject-adopt-lb-subnets
+    rule: ingress-internal-subnets
+    kind: Ingress
+    resources: [ing-explicit]
+    result: skip
+  - policy: inject-adopt-lb-subnets
+    rule: ingress-internal-subnets
+    kind: Ingress
+    resources: [ing-grouped]
+    result: skip
+  - policy: inject-adopt-lb-subnets
     rule: service-internal-subnets
     kind: Service
-    resources: [svc-plain]
-    patchedResources: patched/svc-plain.yaml
+    resources: [svc-nlb-class]
+    patchedResources: patched/svc-nlb-class.yaml
+    result: pass
+  - policy: inject-adopt-lb-subnets
+    rule: service-internal-subnets
+    kind: Service
+    resources: [svc-external-instance]
+    patchedResources: patched/svc-external-instance.yaml
     result: pass
   - policy: inject-adopt-lb-subnets
     rule: service-internet-facing-subnets
@@ -43,9 +72,27 @@ results:
     patchedResources: patched/svc-internet.yaml
     result: pass
   - policy: inject-adopt-lb-subnets
-    rule: ingress-internal-subnets
-    kind: Ingress
-    resources: [ing-explicit]
+    rule: service-internet-facing-subnets
+    kind: Service
+    resources: [svc-legacy-internal-false]
+    patchedResources: patched/svc-legacy-internal-false.yaml
+    result: pass
+  - policy: inject-adopt-lb-subnets
+    rule: service-internal-subnets
+    kind: Service
+    resources: [svc-legacy-internal-true]
+    patchedResources: patched/svc-legacy-internal-true.yaml
+    result: pass
+  - policy: inject-adopt-lb-subnets
+    rule: service-internal-subnets
+    kind: Service
+    resources: [svc-scheme-beats-legacy]
+    patchedResources: patched/svc-scheme-beats-legacy.yaml
+    result: pass
+  - policy: inject-adopt-lb-subnets
+    rule: service-internal-subnets
+    kind: Service
+    resources: [svc-plain]
     result: skip
   - policy: inject-adopt-lb-subnets
     rule: service-internal-subnets

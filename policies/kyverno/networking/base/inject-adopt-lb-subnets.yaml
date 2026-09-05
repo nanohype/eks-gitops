@@ -15,13 +15,14 @@ metadata:
       auto-discovery finds nothing. This policy supplies the subnets explicitly.
       It reads the cluster-local network-config ConfigMap (written by
       cluster-bootstrap in every mode) and, only when that record says the cluster
-      is in adopt mode, injects the subnet-id annotation the controller reads. It
-      is scheme-aware: an internal load balancer (the controller's default when no
-      scheme is set) lands on the private subnets, an internet-facing one on the
-      public subnets. The subnet annotation is added only if absent, so a tenant
-      that pins its own subnets is never overridden. A create-mode cluster owns its
-      VPC and its own ELB role tags, so the ConfigMap reports create, every rule's
-      precondition fails, and nothing is mutated.
+      is in adopt mode, injects the subnet-id annotation the controller reads. An
+      internal load balancer lands on the private subnets, an internet-facing one
+      on the public subnets, and the scheme is resolved the way the controller
+      resolves it rather than from a single annotation. The subnet annotation is
+      added only if absent, so a tenant that pins its own subnets is never
+      overridden. A create-mode cluster owns its VPC and its own ELB role tags, so
+      the ConfigMap reports create, every rule's precondition fails, and nothing
+      is mutated.
 spec:
   admission: true
   emitWarning: false
@@ -41,7 +42,7 @@ spec:
   webhookConfiguration:
     failurePolicy: Ignore
   rules:
-    # ── Ingress, internal scheme (the default) → private subnets ──────────────
+    # ── Ingress, internal scheme → private subnets ────────────────────────────
     - name: ingress-internal-subnets
       skipBackgroundRequests: true
       match:
@@ -54,17 +55,36 @@ spec:
           configMap:
             name: network-config
             namespace: kube-system
-        # The object's own scheme, defaulted to internal to match the AWS Load
-        # Balancer Controller's default when the annotation is absent.
-        - name: scheme
+        # An Ingress that names a group shares one load balancer, and its scheme
+        # -- one scheme for the whole group -- is decided across every member. No
+        # single object carries the answer, and a member that disagrees with the
+        # group is rejected by the controller rather than given its own subnets.
+        # Injecting from this object alone would be a guess about the others.
+        - name: groupname
+          variable:
+            jmesPath: 'request.object.metadata.annotations."alb.ingress.kubernetes.io/group.name"'
+            default: ""
+        - name: schemeannotation
           variable:
             jmesPath: 'request.object.metadata.annotations."alb.ingress.kubernetes.io/scheme"'
-            default: internal
+            default: ""
+        # The controller's order for a single-member group: an IngressClassParams
+        # scheme, else this annotation, else its --default-load-balancer-scheme.
+        # IngressClassParams is not read here and that is a decision, not an
+        # oversight -- scripts/check-lb-scheme-inputs.py records which inputs are
+        # read and which are knowingly not, and fails when the controller grows
+        # one that is neither.
+        - name: scheme
+          variable:
+            value: "{{ schemeannotation || 'internal' }}"
       preconditions:
         all:
           - key: "{{ networkconfig.data.network_mode }}"
             operator: Equals
             value: adopt
+          - key: "{{ groupname }}"
+            operator: Equals
+            value: ""
           - key: "{{ scheme }}"
             operator: Equals
             value: internal
@@ -90,15 +110,25 @@ spec:
           configMap:
             name: network-config
             namespace: kube-system
-        - name: scheme
+        - name: groupname
+          variable:
+            jmesPath: 'request.object.metadata.annotations."alb.ingress.kubernetes.io/group.name"'
+            default: ""
+        - name: schemeannotation
           variable:
             jmesPath: 'request.object.metadata.annotations."alb.ingress.kubernetes.io/scheme"'
-            default: internal
+            default: ""
+        - name: scheme
+          variable:
+            value: "{{ schemeannotation || 'internal' }}"
       preconditions:
         all:
           - key: "{{ networkconfig.data.network_mode }}"
             operator: Equals
             value: adopt
+          - key: "{{ groupname }}"
+            operator: Equals
+            value: ""
           - key: "{{ scheme }}"
             operator: Equals
             value: internet-facing
@@ -110,7 +140,7 @@ spec:
           metadata:
             annotations:
               +(alb.ingress.kubernetes.io/subnets): "{{ networkconfig.data.public_subnet_ids }}"
-    # ── Service type=LoadBalancer, internal scheme (the default) → private ────
+    # ── Service the controller provisions, internal scheme → private subnets ──
     - name: service-internal-subnets
       skipBackgroundRequests: true
       match:
@@ -123,15 +153,61 @@ spec:
           configMap:
             name: network-config
             namespace: kube-system
-        - name: scheme
+        # WHICH SERVICES THE CONTROLLER PROVISIONS. A type=LoadBalancer Service is
+        # not automatically the AWS Load Balancer Controller's. It claims one whose
+        # spec.loadBalancerClass is its own class, or that carries
+        # aws-load-balancer-type: nlb-ip, or aws-load-balancer-type: external with
+        # an nlb-target-type. Every other type=LoadBalancer Service goes to the
+        # in-tree cloud provider, which builds a Classic Load Balancer and reads
+        # neither the scheme annotation nor the subnets annotation this policy
+        # writes. The chart sets enableServiceMutatorWebhook: false, so nothing
+        # stamps loadBalancerClass on a Service that does not ask for it, and the
+        # plain shape stays the in-tree provider's.
+        - name: lbclass
+          variable:
+            jmesPath: 'request.object.spec.loadBalancerClass'
+            default: ""
+        - name: lbtype
+          variable:
+            jmesPath: 'request.object.metadata.annotations."service.beta.kubernetes.io/aws-load-balancer-type"'
+            default: ""
+        - name: nlbtargettype
+          variable:
+            jmesPath: 'request.object.metadata.annotations."service.beta.kubernetes.io/aws-load-balancer-nlb-target-type"'
+            default: ""
+        - name: controllermanaged
+          variable:
+            value: "{{ lbclass == 'service.k8s.aws/nlb' || lbtype == 'nlb-ip' || (lbtype == 'external' && (nlbtargettype == 'ip' || nlbtargettype == 'instance')) }}"
+        - name: schemeannotation
           variable:
             jmesPath: 'request.object.metadata.annotations."service.beta.kubernetes.io/aws-load-balancer-scheme"'
-            default: internal
+            default: ""
+        # The legacy spelling, still honoured and still ahead of the default.
+        # aws-load-balancer-internal: "false" means internet-facing; a Service
+        # setting it without the newer scheme annotation is internet-facing to the
+        # controller and was internal to this policy, which is the private-subnet
+        # CSV on a load balancer the controller wants on public ones.
+        - name: internalannotation
+          variable:
+            jmesPath: 'request.object.metadata.annotations."service.beta.kubernetes.io/aws-load-balancer-internal"'
+            default: ""
+        # The controller's order: the scheme annotation, else the legacy internal
+        # flag, else the scheme of a load balancer that already exists, else its
+        # --default-load-balancer-scheme. The existing load balancer is not
+        # readable from an admission request at all; the default is asserted
+        # against the rendered chart by scripts/check-lb-scheme-inputs.py rather
+        # than assumed here.
+        - name: scheme
+          variable:
+            value: "{{ schemeannotation || (internalannotation == 'false' && 'internet-facing' || 'internal') }}"
       preconditions:
         all:
           - key: "{{ request.object.spec.type }}"
             operator: Equals
             value: LoadBalancer
+          - key: "{{ controllermanaged }}"
+            operator: Equals
+            value: true
           - key: "{{ networkconfig.data.network_mode }}"
             operator: Equals
             value: adopt
@@ -146,7 +222,7 @@ spec:
           metadata:
             annotations:
               +(service.beta.kubernetes.io/aws-load-balancer-subnets): "{{ networkconfig.data.private_subnet_ids }}"
-    # ── Service type=LoadBalancer, internet-facing scheme → public subnets ────
+    # ── Service the controller provisions, internet-facing → public subnets ───
     - name: service-internet-facing-subnets
       skipBackgroundRequests: true
       match:
@@ -159,15 +235,40 @@ spec:
           configMap:
             name: network-config
             namespace: kube-system
-        - name: scheme
+        - name: lbclass
+          variable:
+            jmesPath: 'request.object.spec.loadBalancerClass'
+            default: ""
+        - name: lbtype
+          variable:
+            jmesPath: 'request.object.metadata.annotations."service.beta.kubernetes.io/aws-load-balancer-type"'
+            default: ""
+        - name: nlbtargettype
+          variable:
+            jmesPath: 'request.object.metadata.annotations."service.beta.kubernetes.io/aws-load-balancer-nlb-target-type"'
+            default: ""
+        - name: controllermanaged
+          variable:
+            value: "{{ lbclass == 'service.k8s.aws/nlb' || lbtype == 'nlb-ip' || (lbtype == 'external' && (nlbtargettype == 'ip' || nlbtargettype == 'instance')) }}"
+        - name: schemeannotation
           variable:
             jmesPath: 'request.object.metadata.annotations."service.beta.kubernetes.io/aws-load-balancer-scheme"'
-            default: internal
+            default: ""
+        - name: internalannotation
+          variable:
+            jmesPath: 'request.object.metadata.annotations."service.beta.kubernetes.io/aws-load-balancer-internal"'
+            default: ""
+        - name: scheme
+          variable:
+            value: "{{ schemeannotation || (internalannotation == 'false' && 'internet-facing' || 'internal') }}"
       preconditions:
         all:
           - key: "{{ request.object.spec.type }}"
             operator: Equals
             value: LoadBalancer
+          - key: "{{ controllermanaged }}"
+            operator: Equals
+            value: true
           - key: "{{ networkconfig.data.network_mode }}"
             operator: Equals
             value: adopt

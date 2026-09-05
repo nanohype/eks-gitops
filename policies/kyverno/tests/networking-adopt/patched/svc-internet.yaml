@@ -4,6 +4,7 @@ metadata:
   name: svc-internet
   namespace: workloads
   annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: nlb-ip
     service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
     service.beta.kubernetes.io/aws-load-balancer-subnets: subnet-pub-a,subnet-pub-b
 spec:

@@ -2,7 +2,7 @@
 # live in a workload namespace (the policy matches every namespace). The
 # network-config ConfigMap state is supplied to the CLI as context via values.yaml.
 ---
-# Plain Ingress, no scheme annotation → defaults to internal → private subnets.
+# Plain Ingress, no scheme annotation → the controller's default → private subnets.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -37,7 +37,24 @@ spec:
   rules:
     - host: c.example.com
 ---
-# Plain LoadBalancer Service, no scheme annotation → internal → private subnets.
+# Ingress in a group. One load balancer serves every member and its scheme is
+# decided across all of them, so this object does not carry the answer even
+# though it looks like it does — no injection.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ing-grouped
+  namespace: workloads
+  annotations:
+    alb.ingress.kubernetes.io/group.name: shared
+spec:
+  rules:
+    - host: d.example.com
+---
+# Plain LoadBalancer Service: no loadBalancerClass, no aws-load-balancer-type.
+# The AWS Load Balancer Controller does not claim it, the in-tree cloud provider
+# builds a Classic Load Balancer, and neither the scheme nor the subnets
+# annotation is read — so injecting one would be writing to nobody.
 apiVersion: v1
 kind: Service
 metadata:
@@ -48,14 +65,89 @@ spec:
   ports:
     - port: 80
 ---
-# LoadBalancer Service explicitly internet-facing → public subnets.
+# Claimed by loadBalancerClass, no scheme stated → default → private subnets.
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-nlb-class
+  namespace: workloads
+spec:
+  type: LoadBalancer
+  loadBalancerClass: service.k8s.aws/nlb
+  ports:
+    - port: 80
+---
+# Claimed by the type annotation plus an instance target type → private subnets.
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-external-instance
+  namespace: workloads
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: external
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: instance
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 80
+---
+# Claimed by the nlb-ip type annotation, explicitly internet-facing → public.
 apiVersion: v1
 kind: Service
 metadata:
   name: svc-internet
   namespace: workloads
   annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: nlb-ip
     service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 80
+---
+# The legacy spelling with no scheme annotation. "false" means internet-facing to
+# the controller, so this Service needs the PUBLIC subnets. Reading only the
+# scheme annotation makes it look like a default-internal Service and hands it
+# the private CSV for a load balancer the controller puts on public subnets.
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-legacy-internal-false
+  namespace: workloads
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: external
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+    service.beta.kubernetes.io/aws-load-balancer-internal: "false"
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 80
+---
+# The same legacy spelling saying internal → private subnets.
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-legacy-internal-true
+  namespace: workloads
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-internal: "true"
+spec:
+  type: LoadBalancer
+  loadBalancerClass: service.k8s.aws/nlb
+  ports:
+    - port: 80
+---
+# Both spellings, disagreeing. The scheme annotation is read first and the legacy
+# flag is not consulted, so this is internal and takes the private subnets.
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-scheme-beats-legacy
+  namespace: workloads
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: nlb-ip
+    service.beta.kubernetes.io/aws-load-balancer-scheme: internal
+    service.beta.kubernetes.io/aws-load-balancer-internal: "false"
 spec:
   type: LoadBalancer
   ports:

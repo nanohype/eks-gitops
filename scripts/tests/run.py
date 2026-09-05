@@ -71,6 +71,9 @@ EXPECTED = (
     # The source-type decision that says which sources a size limit even applies
     # to, and the byte accounting the repo-server does once it has decided.
     "test_directory_manifest_size",
+    # The walk that derives which inputs decide a load balancer's scheme, and the
+    # two verdicts that make an input nobody thought about visible.
+    "test_lb_scheme_inputs",
 )
 
 # A floor well under the real count. It catches "discovery found almost nothing",
@@ -145,7 +148,7 @@ MIN_TESTS = 31
 # largest in the tree, and among them are the gates on the paths testing-rubric
 # calls security-critical. So this figure being low is not offset by behavioural
 # coverage for precisely the files where that offset was being claimed.
-COMBINED_FLOOR = 44
+COMBINED_FLOOR = 45
 
 # A ceiling on gate scripts carrying NO unit coverage at all, complementing the
 # floors below. The floors stop a covered file regressing; nothing stopped a NEW
@@ -190,6 +193,9 @@ PER_GATE_FLOORS = {
     # The half of the directory-size gate that decides the verdict. The rest is
     # `--sync`, `--live` and `--self-test`, which run against a clone.
     "scripts/check-directory-manifest-size.py": 70,
+    # The Go reading and the offline verdict. `--sync`, `--live` and the chart
+    # render reach the network and are covered by stubbing what they return.
+    "scripts/check-lb-scheme-inputs.py": 65,
 }
 
 

@@ -480,6 +480,23 @@ jobs:
       - name: Run policy unit tests
         run: ./scripts/kyverno-test.sh policies/kyverno/tests
 
+      # The subnet-injection policy decides private-or-public from a scheme it
+      # believes a load balancer will have, and that belief is only as wide as the
+      # set of inputs it reads. The AWS Load Balancer Controller decides the same
+      # thing from four annotations, an IngressClassParams field, an Ingress
+      # group, and a load balancer that already exists in AWS. This derives that
+      # set from the controller source at the pinned chart version and fails when
+      # one of them is neither read by the policy nor recorded with the reason it
+      # is not — so a spelling nobody has heard of yet lands red rather than
+      # quietly taking the default. Offline: the derivation is keyed on the chart
+      # pin, so moving the pin fails here, and upstream/pins re-derives on a
+      # schedule.
+      - name: Every input the controller decides a scheme on is one the policy reads
+        run: |
+          pip install --require-hashes -r requirements.txt
+          ./scripts/check-lb-scheme-inputs.py
+          ./scripts/check-lb-scheme-inputs.py --self-test
+
       # The unit tests above load BASE policies and pin verify-images' match and
       # exclude scoping only. This structural gate guards the signing-IDENTITY
       # contract they are blind to — required signature, GitHub OIDC issuer,
