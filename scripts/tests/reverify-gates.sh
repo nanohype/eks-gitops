@@ -386,6 +386,23 @@ run nonzero "alert-severity-routes: a route to a contact point nobody declares" 
   ./scripts/check-alert-severity-routes.py
 res $F
 
+# The routing tree stops being delivered without moving, being edited, or
+# failing to render. Every earlier check here still passes on this tree: the
+# rules are labelled, the routes match, the contact points are declared. What a
+# cluster receives is the rule groups and nothing to match them against.
+F=dashboards/base/kustomization.yaml; mut $F
+python3 - "$F" <<'PYX'
+import pathlib,sys
+p=pathlib.Path(sys.argv[1]); s=p.read_text()
+m=s.replace("  - alerting/notification-policy.yaml\n", "", 1)
+assert m!=s, "mutation did not land"
+p.write_text(m)
+print("   dropped the notification policy from the kustomization's resources")
+PYX
+run nonzero "alert-severity-routes: the routing tree stops shipping" \
+  ./scripts/check-alert-severity-routes.py
+res $F
+
 F=addons/bootstrap/cert-manager/values-hub.yaml; mut $F; rm -f $F
 run nonzero "env-coverage: deleted hub delta" ./scripts/check-env-coverage.py
 res $F
@@ -498,7 +515,7 @@ echo "RESULT pass=$pass fail=$fail"
 # The harness owes the same assertion it demands of the gates: with every `run`
 # line deleted it would report pass=0 fail=0 and exit 0, which is a green run
 # over nothing checked.
-MIN_CHECKS=40
+MIN_CHECKS=41
 total=$((pass + fail))
 if [ "$total" -lt "$MIN_CHECKS" ]; then
   echo "FAIL  ran $total check(s), under the floor of $MIN_CHECKS — this harness"

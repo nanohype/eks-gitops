@@ -17,6 +17,7 @@ from __future__ import annotations
 import contextlib
 import io
 import pathlib
+import shutil
 import tempfile
 import unittest
 
@@ -26,6 +27,12 @@ from gateloader import load
 gate = load("check-alert-severity-routes")
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
+
+# The gate renders the kustomization to learn what a cluster receives, so the
+# planted fixtures are rendered too rather than compared against a stub. The
+# job running these installs it; a checkout without it skips rather than
+# aborting the runner on the gate's exit-2 refusal.
+HAS_KUSTOMIZE = shutil.which("kustomize") is not None
 
 
 def rule_group(name, *rules):
@@ -43,10 +50,12 @@ def contact_point(name):
             "spec": {"name": name, "receivers": []}}
 
 
-def policy(route):
+def policy(route, name="routes"):
+    """`name` is a parameter because the render rejects two objects sharing one:
+    the two-policy case has to plant two distinct resources to reach the gate."""
     return {"apiVersion": "grafana.integreatly.org/v1beta1",
             "kind": "GrafanaNotificationPolicy",
-            "metadata": {"name": "routes"},
+            "metadata": {"name": name},
             "spec": {"route": route}}
 
 
@@ -54,22 +63,37 @@ def exact(key, value):
     return {"name": key, "value": value, "isEqual": True, "isRegex": False}
 
 
+@unittest.skipUnless(HAS_KUSTOMIZE, "kustomize is not on PATH")
 class TheVerdict(unittest.TestCase):
     """main() over a planted alerting directory."""
 
-    def verdict(self, *docs):
+    def verdict(self, *docs, unshipped=()):
+        """main() over a planted tree, rendered the way the real one is.
+
+        `unshipped` names documents to write to the alerting directory and
+        leave out of the kustomization's `resources`, which is what a routing
+        tree that stops being delivered looks like from disk.
+        """
         root = pathlib.Path(tempfile.mkdtemp())
-        alerting = root / "dashboards" / "base" / "alerting"
+        base = root / "dashboards" / "base"
+        alerting = base / "alerting"
         alerting.mkdir(parents=True)
+        resources = []
         for i, doc in enumerate(docs):
-            (alerting / f"{i:02d}-{doc['kind']}.yaml").write_text(yaml.safe_dump(doc))
-        saved = (gate.ROOT, gate.ALERTING)
-        gate.ROOT, gate.ALERTING = root, alerting
+            name = f"{i:02d}-{doc['kind']}.yaml"
+            (alerting / name).write_text(yaml.safe_dump(doc))
+            if doc not in unshipped:
+                resources.append(f"  - alerting/{name}")
+        (base / "kustomization.yaml").write_text(
+            "apiVersion: kustomize.config.k8s.io/v1beta1\n"
+            "kind: Kustomization\nresources:\n" + "\n".join(resources) + "\n")
+        saved = (gate.ROOT, gate.ALERTING, gate.KUSTOMIZE_ROOT)
+        gate.ROOT, gate.ALERTING, gate.KUSTOMIZE_ROOT = root, alerting, base
         try:
             with contextlib.redirect_stdout(io.StringIO()) as out:
                 rc = gate.main()
         finally:
-            gate.ROOT, gate.ALERTING = saved
+            gate.ROOT, gate.ALERTING, gate.KUSTOMIZE_ROOT = saved
         return rc, out.getvalue()
 
     ROUTED = policy({"receiver": "low",
@@ -116,7 +140,7 @@ class TheVerdict(unittest.TestCase):
     def test_two_policies_are_reported(self):
         """Grafana keeps one tree per instance, so a second is not additional
         routing — it is whichever reconciled last."""
-        rc, out = self.verdict(self.ROUTED, policy({"receiver": "low"}),
+        rc, out = self.verdict(self.ROUTED, policy({"receiver": "low"}, "second"),
                                contact_point("low"),
                                rule_group("g", ("Paging", {"severity": "page"})))
         self.assertEqual(rc, 1)
@@ -169,6 +193,127 @@ class TheVerdict(unittest.TestCase):
             self.assertEqual(caught.exception.code, gate.gatelib.CANNOT_RUN)
         finally:
             gate.ALERTING = saved
+
+
+@unittest.skipUnless(HAS_KUSTOMIZE, "kustomize is not on PATH")
+class WhatShipsDecides(unittest.TestCase):
+    """The routing this gate reads has to be routing a cluster receives.
+
+    `resources` is an explicit list, so every object here can stop being
+    delivered without moving, being edited, or failing to render. The files
+    then describe complete delivery and the cluster holds rule groups labelled
+    for a pager with nothing to match them against — a green gate over the
+    exact state it exists to refuse.
+    """
+
+    verdict = TheVerdict.verdict
+    ROUTED = TheVerdict.ROUTED
+    healthy = TheVerdict.healthy
+
+    def test_a_routing_tree_left_out_of_the_kustomization_is_reported(self):
+        docs = self.healthy()
+        rc, out = self.verdict(*docs, unshipped=(self.ROUTED,))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("GrafanaNotificationPolicy/routes", out)
+        self.assertIn("does not render it", out)
+
+    def test_a_contact_point_left_out_of_the_kustomization_is_reported(self):
+        docs = self.healthy()
+        rc, out = self.verdict(*docs, unshipped=(contact_point("urgent"),))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("GrafanaContactPoint/urgent", out)
+
+    def test_a_rule_group_left_out_of_the_kustomization_is_reported(self):
+        """Not only the delivery objects. A rule group nothing renders is a
+        promise this gate certified and no cluster carries."""
+        docs = self.healthy()
+        rc, out = self.verdict(*docs, unshipped=(docs[3],))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("GrafanaAlertRuleGroup/g", out)
+
+    def test_the_finding_names_the_file(self):
+        """Eight files of near-identical shape; a verdict that does not name one
+        is a verdict nobody can act on."""
+        rc, out = self.verdict(*self.healthy(), unshipped=(self.ROUTED,))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("GrafanaNotificationPolicy.yaml:", out)
+
+    def test_an_alerting_object_rendered_from_outside_the_directory_is_reported(self):
+        """The other direction, and the one that decides which tree Grafana
+        obeys: a second notification policy the gate never opened still
+        reconciles, and whichever lands last wins."""
+        root = pathlib.Path(tempfile.mkdtemp())
+        base = root / "dashboards" / "base"
+        alerting = base / "alerting"
+        alerting.mkdir(parents=True)
+        resources = []
+        for i, doc in enumerate(TheVerdict.healthy(self)):
+            name = f"{i:02d}-{doc['kind']}.yaml"
+            (alerting / name).write_text(yaml.safe_dump(doc))
+            resources.append(f"  - alerting/{name}")
+        (base / "elsewhere.yaml").write_text(
+            yaml.safe_dump(policy({"receiver": "low"}, "second-tree")))
+        resources.append("  - elsewhere.yaml")
+        (base / "kustomization.yaml").write_text(
+            "apiVersion: kustomize.config.k8s.io/v1beta1\n"
+            "kind: Kustomization\nresources:\n" + "\n".join(resources) + "\n")
+        saved = (gate.ROOT, gate.ALERTING, gate.KUSTOMIZE_ROOT)
+        gate.ROOT, gate.ALERTING, gate.KUSTOMIZE_ROOT = root, alerting, base
+        try:
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                rc = gate.main()
+        finally:
+            gate.ROOT, gate.ALERTING, gate.KUSTOMIZE_ROOT = saved
+        self.assertEqual(rc, 1, out.getvalue())
+        self.assertIn("GrafanaNotificationPolicy/second-tree", out.getvalue())
+
+    def test_a_render_that_fails_cannot_run(self):
+        """Exit 2. A kustomization that does not build says nothing about what
+        a cluster receives, and the files on disk say nothing about it either."""
+        root = pathlib.Path(tempfile.mkdtemp())
+        base = root / "dashboards" / "base"
+        base.mkdir(parents=True)
+        (base / "kustomization.yaml").write_text(
+            "apiVersion: kustomize.config.k8s.io/v1beta1\n"
+            "kind: Kustomization\nresources:\n  - alerting/gone.yaml\n")
+        with self.assertRaises(SystemExit) as caught, \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            gate.shipped(base)
+        self.assertEqual(caught.exception.code, gate.gatelib.CANNOT_RUN)
+        self.assertIn("could not be read", out.getvalue())
+
+    def test_the_render_is_read_rather_than_the_directory_listed_again(self):
+        """The gate would pass every case above by globbing the same directory
+        twice. What separates the two readings is that one shells out."""
+        source = (ROOT / "scripts" / "check-alert-severity-routes.py").read_text()
+        self.assertIn('subprocess.run(["kustomize", "build"', source)
+
+
+class TheShippedRootIsTheOneDelivered(unittest.TestCase):
+    """Over the tree: the root the gate renders is the root an ApplicationSet
+    hands ArgoCD. A gate rendering a root nothing delivers reports on a tree no
+    cluster has."""
+
+    def test_an_applicationset_delivers_the_rendered_root(self):
+        want = str(gate.KUSTOMIZE_ROOT.relative_to(ROOT))
+        delivered = set()
+        for path in sorted((ROOT / "applicationsets").rglob("*.y*ml")):
+            doc = yaml.safe_load(path.read_text())
+            if not isinstance(doc, dict) or doc.get("kind") != "ApplicationSet":
+                continue
+            spec = doc.get("spec") or {}
+            template = ((spec.get("template") or {}).get("spec") or {}).get("source") or {}
+            source_path = template.get("path")
+            if not isinstance(source_path, str):
+                continue
+            for el in gate.gatelib.list_elements(doc):
+                if el.get("path"):
+                    delivered.add(
+                        source_path.replace("{{ .path }}", str(el["path"])).strip("/"))
+        self.assertIn(want, delivered,
+                      f"{want} is the root this gate renders and no ApplicationSet "
+                      f"delivers it, so the gate is asserting over a tree that "
+                      f"reaches no cluster")
 
 
 class TheKeysComeFromThePolicy(unittest.TestCase):
