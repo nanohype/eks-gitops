@@ -87,6 +87,23 @@ EXTERNAL_SECRET = "ExternalSecret"
 
 SKIP_DIRS = {"rendered", ".git", "node_modules"}
 
+# What this gate is allowed to print out of a file it read.
+#
+# Every value here arrives from disk, and one of those files is named for
+# secrets — `contracts/secret-store.json` is parsed as arbitrary JSON, so a
+# value put there ends up in a message. "It only ever holds a store name" is
+# the assumption that fails, and it fails into a log.
+#
+# So a value is echoed only once it is a Kubernetes object name or a group
+# version, checked against the API server's own grammar. A string matching
+# these is lowercase alphanumerics with hyphens and dots, at most 253
+# characters and carrying no separator a credential needs; one that does not
+# match is reported by its field rather than by its content.
+OBJECT_NAME = re.compile(r"[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?")
+KIND = re.compile(r"[A-Z][A-Za-z0-9]{0,62}")
+GROUP_VERSION = re.compile(r"[a-z0-9][a-z0-9.-]{0,62}/v[0-9]+(?:(?:alpha|beta)[0-9]+)?")
+UNPRINTABLE = "<not a name this API server would accept>"
+
 # A `secretStoreRef` in Go-template chart source. Half the consumers here are
 # chart templates that do not parse as YAML, and dropping them would leave the
 # gate reporting on the half that happens to be plain manifests.
@@ -96,6 +113,16 @@ HELM_REF = re.compile(
 FIELD = re.compile(r"^\s*(?P<key>name|kind):\s*(?P<value>\S.*?)\s*$", re.M)
 HELM_API = re.compile(r"^apiVersion:\s*(?P<api>external-secrets\.io/\S+)\s*$", re.M)
 HELM_KIND = re.compile(r"^kind:\s*(?P<kind>\S+)\s*$", re.M)
+
+
+def printable(value: object, grammar: re.Pattern[str] = OBJECT_NAME) -> str:
+    """`value` if it is a name, else a fixed stand-in.
+
+    The stand-in is a constant rather than a truncation: a prefix of a value
+    that is not a name is still whatever that value was.
+    """
+    text = value if isinstance(value, str) else ""
+    return text if grammar.fullmatch(text) else UNPRINTABLE
 
 
 def rel(path: pathlib.Path) -> str:
@@ -245,7 +272,7 @@ def main(argv: list[str] | None = None) -> int:
 
     cluster_stores = {k: v for k, v in declared.items() if k[0] == CLUSTER_STORE}
     if len(cluster_stores) != 1:
-        names = ", ".join(f"{n} ({rel(p)})" for (_k, n), (p, _a) in
+        names = ", ".join(f"{printable(n)} ({rel(p)})" for (_k, n), (p, _a) in
                           sorted(cluster_stores.items()))
         print(f"FAIL  {len(cluster_stores)} {CLUSTER_STORE}(s) declared: "
               f"{names or 'none'}. The published contract names one store, so a "
@@ -260,7 +287,8 @@ def main(argv: list[str] | None = None) -> int:
                 f"ExternalSecret resolves against nothing.")
         elif (kind, name) not in declared:
             failures.append(
-                f"{rel(path)}: secretStoreRef names {kind}/{name} and this "
+                f"{rel(path)}: secretStoreRef names {printable(kind, KIND)}/"
+                f"{printable(name)} and this "
                 f"catalog declares no such store. External Secrets accepts the "
                 f"object, records SecretSyncedError on its status, and never "
                 f"creates the target Secret — the workload mounts a Secret that "
@@ -269,7 +297,8 @@ def main(argv: list[str] | None = None) -> int:
     for path, kind, name in patch_targets():
         if (kind, name) not in declared:
             failures.append(
-                f"{rel(path)}: a kustomize patch targets {kind}/{name} and this "
+                f"{rel(path)}: a kustomize patch targets {printable(kind, KIND)}/"
+                f"{printable(name)} and this "
                 f"catalog declares no such store. kustomize does not treat an "
                 f"unmatched target as an error — the build exits 0 and emits the "
                 f"unpatched base, so every cluster silently keeps whatever the "
@@ -277,7 +306,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if len(versions) > 1:
         listed = "; ".join(
-            f"{api} in {', '.join(sorted({rel(p) for p in paths}))}"
+            f"{printable(api, GROUP_VERSION)} in "
+            f"{', '.join(sorted({rel(p) for p in paths}))}"
             for api, paths in sorted(versions.items()))
         failures.append(
             f"{EXTERNAL_SECRET}s in this catalog declare {len(versions)} "
@@ -311,10 +341,23 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     if have != want:
         print(f"FAIL  {rel(CONTRACT)} does not state what this tree states.")
-        print(f"      published: {json.dumps(have.get('clusterSecretStore'))}"
-              f" / {json.dumps(have.get('externalSecret'))}")
-        print(f"      declared:  {json.dumps(want['clusterSecretStore'])}"
-              f" / {json.dumps(want['externalSecret'])}")
+        # The published side is named, not echoed. It is parsed as arbitrary
+        # JSON out of a file, so what a message would be repeating is whatever
+        # somebody put there; the declared side is the tree's own and is what
+        # the reader has to act on anyway.
+        for section, fields in (("clusterSecretStore", ("apiVersion", "kind", "name")),
+                                ("externalSecret", ("apiVersion",))):
+            published = have.get(section)
+            if not isinstance(published, dict):
+                print(f"      {section}: absent from the published contract")
+                continue
+            for field in fields:
+                grammar = {"apiVersion": GROUP_VERSION,
+                           "kind": KIND}.get(field, OBJECT_NAME)
+                if published.get(field) != want[section][field]:
+                    print(f"      {section}.{field}: the manifest declares "
+                          f"{printable(want[section][field], grammar)}; the "
+                          f"contract publishes something else")
         print("      A contract that has drifted from the manifest is worse "
               "than none: consumers assert against it and pass.")
         print(f"      Regenerate with `{rel(pathlib.Path(__file__))} --write`.")
@@ -322,8 +365,10 @@ def main(argv: list[str] | None = None) -> int:
 
     store = want["clusterSecretStore"]
     print(f"✓ every secret-store reference resolves to the one store this "
-          f"catalog declares: {store['kind']}/{store['name']} "
-          f"({store['apiVersion']}), named by {len(consumers)} secretStoreRef(s) "
+          f"catalog declares: {printable(store['kind'], KIND)}/"
+          f"{printable(store['name'])} "
+          f"({printable(store['apiVersion'], GROUP_VERSION)}), named by "
+          f"{len(consumers)} secretStoreRef(s) "
           f"and {len(patch_targets())} ApplicationSet patch target(s), published "
           f"in {rel(CONTRACT)}")
     print("  whether repositories outside this one read that contract, and "

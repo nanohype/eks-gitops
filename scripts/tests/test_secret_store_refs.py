@@ -253,6 +253,93 @@ class TheVerdict(unittest.TestCase):
         self.assertIn("read no consumer", out)
 
 
+HOSTILE = "AKIAIOSFODNN7EXAMPLE/wJalrXUtnFEMI+K7MDENG+bPxRfiCY"
+
+
+class NothingUnverifiedIsEchoed(unittest.TestCase):
+    """A value this gate did not verify is a name never reaches the output.
+
+    Every value here arrives from disk, and one of those files is named for
+    secrets: `contracts/secret-store.json` is parsed as arbitrary JSON, so
+    whatever somebody puts in it is what a message would repeat. "It only ever
+    holds a store name" is the assumption that fails, and it fails into a log
+    that CI keeps.
+    """
+
+    def test_a_real_name_is_printed_as_written(self):
+        self.assertEqual(gate.printable("aws-secrets-manager"),
+                         "aws-secrets-manager")
+        self.assertEqual(gate.printable("ClusterSecretStore", gate.KIND),
+                         "ClusterSecretStore")
+        self.assertEqual(
+            gate.printable("external-secrets.io/v1beta1", gate.GROUP_VERSION),
+            "external-secrets.io/v1beta1")
+
+    def test_a_credential_shaped_value_is_withheld(self):
+        self.assertEqual(gate.printable(HOSTILE), gate.UNPRINTABLE)
+
+    def test_a_value_carrying_a_separator_a_name_cannot_have_is_withheld(self):
+        for value in (HOSTILE, "a b", "a\nb", "a/b", "a=b", "A", "-a", "a-",
+                      "a" * 254, "", "eyJhbGciOiJIUzI1NiJ9.e30.x"):
+            with self.subTest(value=value[:20]):
+                self.assertEqual(gate.printable(value), gate.UNPRINTABLE)
+
+    def test_a_non_string_is_withheld(self):
+        for value in (None, 3, ["aws-secrets-manager"], {"a": 1}):
+            with self.subTest(value=value):
+                self.assertEqual(gate.printable(value), gate.UNPRINTABLE)
+
+    def test_the_stand_in_is_a_constant_rather_than_a_truncation(self):
+        """A prefix of a value that is not a name is still whatever that value
+        was, which is the whole objection."""
+        self.assertNotIn(HOSTILE[:8], gate.printable(HOSTILE))
+
+
+class TheOutputCarriesNothingItDidNotVerify(TheVerdict):
+    """End to end, through both paths that echo a value read off disk."""
+
+    def test_a_hostile_value_in_the_contract_is_not_repeated(self):
+        contract = self.contract_for()
+        contract["clusterSecretStore"]["name"] = HOSTILE
+        rc, out, _ = self.verdict(self.healthy(), contract=contract)
+        self.assertEqual(rc, 1, out)
+        self.assertNotIn(HOSTILE, out)
+        self.assertNotIn("AKIA", out)
+        self.assertIn("clusterSecretStore.name", out)
+        self.assertIn("aws-secrets-manager", out,
+                      "the declared side is the tree's own and is what the "
+                      "reader has to act on")
+
+    def test_a_hostile_value_in_a_consumer_is_not_repeated(self):
+        docs = self.healthy()
+        docs[1]["spec"]["secretStoreRef"]["name"] = HOSTILE
+        rc, out, _ = self.verdict(docs, contract=self.contract_for())
+        self.assertEqual(rc, 1, out)
+        self.assertNotIn(HOSTILE, out)
+        self.assertIn(gate.UNPRINTABLE, out)
+
+    def test_a_hostile_value_in_a_patch_target_is_not_repeated(self):
+        rc, out, _ = self.verdict(
+            self.healthy(), appsets=[appset("s", HOSTILE)],
+            contract=self.contract_for())
+        self.assertEqual(rc, 1, out)
+        self.assertNotIn(HOSTILE, out)
+
+    def test_a_hostile_apiversion_is_not_repeated(self):
+        docs = self.healthy()
+        docs[2]["apiVersion"] = HOSTILE
+        rc, out, _ = self.verdict(docs, contract=self.contract_for())
+        self.assertEqual(rc, 1, out)
+        self.assertNotIn(HOSTILE, out)
+
+    def test_the_published_side_is_named_rather_than_dumped(self):
+        """`json.dumps(have)` put arbitrary file content in the message. The
+        field name is what the reader needs; the content is what they already
+        have in front of them."""
+        source = (ROOT / "scripts" / "check-secret-store-refs.py").read_text()
+        self.assertNotIn("json.dumps(have", source)
+
+
 class TheShippedCatalog(unittest.TestCase):
     """Over the tree, so a reference added later is checked here."""
 
