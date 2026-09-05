@@ -18,6 +18,7 @@ import contextlib
 import io
 import pathlib
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -25,6 +26,7 @@ import unittest
 from gateloader import load
 
 gate = load("check-image-pins")
+GATE = pathlib.Path(gate.__file__)
 
 
 class Unit:
@@ -781,3 +783,114 @@ class TheReportIsReadFromEitherStream(unittest.TestCase):
         images, unrendered, unclassified = self.inventory_with(DEPLOYMENT, "")
         self.assertEqual((unrendered, unclassified), ([], []))
         self.assertEqual(images, {"ghcr.io/example/app:1.0.0": {"karpenter"}})
+
+
+# Run the pattern in a child, so a pattern that does not return FAILS instead of
+# hanging the suite. An in-process timing assertion cannot be reached by a
+# matcher that never finishes — the very case it exists to catch.
+_MATCH_IN_CHILD = """
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("g", sys.argv[1])
+g = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(g)
+found = [c for grp in g.IMAGE_REF.findall(sys.argv[2]) for c in grp if c]
+print(len(found))
+"""
+
+
+class TheHostGrammarHasOneParse(unittest.TestCase):
+    """A reference either parses one way or not at all, and it says so in time.
+
+    Written as a starred class containing `.` and `-` followed by a
+    plus-quantified group whose body is that same class, a run of `-.` can be
+    split between the two quantifiers every possible way and the engine tries
+    all of them before failing. That is not a wrong answer, it is an answer that
+    never arrives: 43 characters took two thirds of a second and every four
+    further repetitions multiplied it by fifteen.
+
+    The input is rendered content from charts this repository does not author
+    and this gate runs on every render, so the string arrives with a chart bump
+    rather than with an attacker, and the symptom is a job that never returns.
+
+    So the registry grammar's own definition is used instead. A domain
+    COMPONENT carries no dot — dots are the separators — and neither starts nor
+    ends with a dash, which leaves every input exactly one parse or none.
+    """
+
+    # 32 repetitions, 67 characters. Under the ambiguous spelling the
+    # 43-character case multiplied by fifteen three times over, which is most of
+    # an hour; the fixed one answers in microseconds. Nothing between those two
+    # is reachable by a slow machine.
+    HOSTILE = "0." + "-." * 32 + "!"
+    BUDGET_SECONDS = 20
+
+    def completes(self, text):
+        """The number of references found, or a failure if the match hangs."""
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-c", _MATCH_IN_CHILD, str(GATE), text],
+                capture_output=True, text=True, timeout=self.BUDGET_SECONDS)
+        except subprocess.TimeoutExpired:
+            self.fail(f"IMAGE_REF did not finish on {len(text)} characters within "
+                      f"{self.BUDGET_SECONDS}s — the host alternatives have more "
+                      f"than one parse again")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return int(proc.stdout.strip())
+
+    def test_a_hostile_host_string_completes_and_matches_nothing(self):
+        self.assertEqual(self.completes(self.HOSTILE), 0)
+
+    def test_ten_times_the_hostile_input_still_completes(self):
+        """One length can pass on a fast machine with a matcher that is merely
+        slow; ten times the input inside the same budget cannot."""
+        self.assertEqual(self.completes("0." + "-." * 320 + "!"), 0)
+
+    def test_a_hostile_string_inside_a_render_completes(self):
+        """Delivered the way a chart delivers one — a value in a ConfigMap."""
+        rendered = ("apiVersion: v1\\nkind: ConfigMap\\ndata:\\n"
+                    f"  cfg: |\\n    upstream: {self.HOSTILE}\\n")
+        unclassified: list[tuple[str, str]] = []
+        gate.extract_images(rendered, "c", [], unclassified)
+        self.assertEqual(unclassified, [])
+
+    def test_the_references_this_fleet_renders_still_parse(self):
+        """The grammar narrowed, so what it must still admit is read off the
+        population rather than a list written here."""
+        for ref in sorted(gate.CONTROLLER_IMAGES) + sorted(gate.ALLOWED_MUTABLE):
+            with self.subTest(ref=ref):
+                concrete = f"{ref}:1.0.0"
+                self.assertEqual(
+                    [c for grp in gate.IMAGE_REF.findall(concrete) for c in grp if c],
+                    [concrete])
+
+    def test_a_domain_component_carries_no_dot_of_its_own(self):
+        """Dots separate components and never sit inside one. That is the
+        registry grammar, and it is what leaves a single parse."""
+        self.assertRegex("ghcr.io", f"^{gate.DOMAIN_COMPONENT}\\.{gate.DOMAIN_COMPONENT}$")
+        self.assertNotRegex("gh.cr", f"^{gate.DOMAIN_COMPONENT}$")
+
+    def test_a_component_neither_starts_nor_ends_with_a_dash(self):
+        for bad in ("-ghcr", "ghcr-", "-", "gh--cr-"):
+            with self.subTest(component=bad):
+                self.assertNotRegex(bad, f"^{gate.DOMAIN_COMPONENT}$")
+        self.assertRegex("gh--cr", f"^{gate.DOMAIN_COMPONENT}$")
+
+    def test_a_dotless_host_is_not_a_registry(self):
+        """A host needs more than one component, and that is a decision with a
+        consequence rather than a detail of the grammar.
+
+        `localhost:11211` in a Loki config is a host and a port, and it reaches
+        this walk as a single-segment token — which is why NOT_A_CONTAINER
+        carries an entry for it. Admitting a dotless host as a registry would
+        make `localhost:5000/x/y:1.0` one reference instead, and the entry that
+        records why the address is not an image would stop matching anything.
+        """
+        self.assertEqual(
+            [c for grp in gate.IMAGE_REF.findall("localhost:5000/x/y:1.0")
+             for c in grp if c],
+            ["localhost:5000"])
+        self.assertIn("localhost", gate.NOT_A_CONTAINER)
+        self.assertEqual(
+            [c for grp in gate.IMAGE_REF.findall("registry.local:5000/x/y:1.0")
+             for c in grp if c],
+            ["registry.local:5000/x/y:1.0"])

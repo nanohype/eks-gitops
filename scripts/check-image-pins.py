@@ -270,6 +270,27 @@ def chart_artifacts(output: str) -> set[str]:
 # the classifier. The 64-hex suffix is discriminator enough on its own, so the
 # path separator and the tag restrictions the tag alternatives need are not
 # repeated here: nothing else in a render has that shape.
+# The registry grammar's own definition of a host, written once because both
+# alternatives below need it and two spellings of one grammar drift.
+#
+# A domain COMPONENT carries no dot: dots are the separators, and a component
+# neither starts nor ends with a dash. That is what makes the host unambiguous,
+# and unambiguous is what makes it safe. Spelled as a starred class containing
+# `.` and `-` followed by a plus-quantified group beginning with `.` over that
+# same class, every way of splitting a run of `-.` between the two quantifiers
+# is a distinct parse, and the engine tries all of them before failing — 43
+# characters of `0.` and `-.` took a third of a second, 83 would not finish.
+# The input here is rendered content from charts this repository does not
+# author and the gate runs on every render, so a string that makes the matcher
+# climb arrives with a chart bump, and the symptom is a job that never returns
+# rather than one that fails.
+#
+# Here `[a-z0-9]+` and `-+` are disjoint, so a run of dashes can only be a
+# separator inside one component and a dot can only end one. Every input has
+# exactly one parse or none.
+DOMAIN_COMPONENT = r"[a-z0-9]+(?:-+[a-z0-9]+)*"
+REGISTRY = rf"(?:{DOMAIN_COMPONENT}(?:\.{DOMAIN_COMPONENT})+(?::\d+)?/)?"
+
 IMAGE_REF = re.compile(
     r"(?<![a-z0-9._:/-])"
     # A digest with no repository before it names no image: there is no
@@ -281,10 +302,10 @@ IMAGE_REF = re.compile(
     # exemption to keep re-reading — it is not a reference.
     r"(?!sha(?:256|512):[0-9a-f]{32,}(?![0-9a-z]))"
     r"(?:"
-    r"((?:[a-z0-9][a-z0-9._-]*(?:\.[a-z0-9._-]+)+(?::\d+)?/)?"
+    rf"({REGISTRY}"
     r"[a-z0-9][a-z0-9._-]*(?:/[a-z0-9][a-z0-9._-]*)*"
     r"(?::[a-zA-Z0-9][\w.-]*)?@sha256:[0-9a-f]{64})"
-    r"|((?:[a-z0-9][a-z0-9._-]*(?:\.[a-z0-9._-]+)+(?::\d+)?/)?"
+    rf"|({REGISTRY}"
     r"[a-z0-9][a-z0-9._-]*(?:/[a-z0-9][a-z0-9._-]*)+:[a-zA-Z0-9][\w.-]*)"
     r"|([a-z][a-z0-9]*(?:[_-][a-z0-9]+)*:(?:latest|v?[0-9][\w.-]*))"
     r")\b")
