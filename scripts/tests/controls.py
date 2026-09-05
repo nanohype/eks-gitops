@@ -151,6 +151,12 @@ NEEDS_NETWORK_PY = {
 NEEDS_NETWORK_SH = {
     "kubeconform-scan.sh": "kubeconform",
     "kyverno-test.sh": "kyverno",
+    # Reaches the registry for the image manifest and Rekor for the
+    # transparency-log entry, because that round trip IS what it executes: it
+    # admits a signed pod through the enforcing rendition and reads back what
+    # was admitted. A control for it offline would be a control for a
+    # verification that did not happen.
+    "check-digest-rewrite.sh": "kyverno",
 }
 
 NEEDS_NETWORK = {**NEEDS_NETWORK_PY, **NEEDS_NETWORK_SH}

@@ -460,16 +460,29 @@ jobs:
       - name: Run policy unit tests
         run: ./scripts/kyverno-test.sh policies/kyverno/tests
 
-      # `kyverno test` cannot reach Fulcio/Rekor, so it never verifies a Cosign
-      # signature offline — the unit tests above only pin verify-images' match/
-      # exclude scoping. This structural gate guards the signing-IDENTITY contract
-      # the unit tests are blind to (required signature, GitHub OIDC issuer,
-      # anchored org-scoped release-workflow subjectRegExp), so a widened
-      # subjectRegExp or a flipped `required` can't ship silently.
+      # The unit tests above load BASE policies and pin verify-images' match and
+      # exclude scoping only. This structural gate guards the signing-IDENTITY
+      # contract they are blind to — required signature, GitHub OIDC issuer,
+      # anchored org-scoped release-workflow subjectRegExp — so a widened
+      # subjectRegExp or a flipped `required` cannot ship silently. It reads the
+      # rendered policy; what the identity ADMITS is the step below.
       - name: Verify-images signing-identity contract
         run: |
           pip install --require-hashes -r requirements.txt
           ./scripts/check-image-verification.py
+
+      # The digest rewrite is the whole reason the enforcing tier enforces, and
+      # in this repository it was a field value other files read rather than a
+      # behaviour anything ran: every suite loads a base policy, where the field
+      # is false because Kyverno rejects true under an Audit failure action.
+      #
+      # This renders the enforcing overlay and admits a signed pod through it,
+      # reaching the registry and the transparency log — the same round trip
+      # admission makes. A change that keeps the field and breaks the pinning is
+      # red here rather than a container that started from a tag with no signal
+      # anywhere.
+      - name: The enforcing tier rewrites a verified tag to its digest
+        run: ./scripts/check-digest-rewrite.sh
 
   # ── Fork-safety gate ─────────────────────────────────────────────────
   # An applied ApplicationSet must not hardcode nanohype/eks-gitops — THIS
