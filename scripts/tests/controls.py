@@ -534,6 +534,22 @@ def m_secret_store_refs(root):
                 marker="aws-secretsmanager")
 
 
+def m_directory_manifest_size(root):
+    """Lower the contracted ceiling to the one argocd-repo-server ships with.
+
+    Which is the configuration the incident happened under: the Argo Workflows
+    `crds/full` directory is over 10M, so at the stock ceiling the repo-server
+    refuses to generate that Application and it reports ComparisonError. Nothing
+    about the source changes — the same eight files, the same pin — so this is
+    the violation as it actually arrives, from a host configured lower than the
+    catalog needs rather than from a manifest anyone edited.
+    """
+    return _sub(root, "contracts/repo-server.json",
+                '"maxCombinedDirectoryManifestsSize": "20M"',
+                '"maxCombinedDirectoryManifestsSize": "10M"',
+                marker='"maxCombinedDirectoryManifestsSize": "10M"')
+
+
 def m_chart_deprecation(root):
     """A recorded chart that nothing pins, which the offline gate must reject."""
     import json
@@ -613,6 +629,9 @@ CONTROLS = {
                                    "does not spend", m_burn_rate_budgets),
     "check-secret-store-refs.py": ("a reference to a store the catalog does not "
                                    "declare", m_secret_store_refs),
+    "check-directory-manifest-size.py": ("a directory source over the ceiling the "
+                                         "repo-server is configured for",
+                                         m_directory_manifest_size),
 }
 
 

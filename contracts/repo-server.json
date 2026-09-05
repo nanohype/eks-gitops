@@ -1,0 +1,7 @@
+{
+  "_purpose": "The argocd-repo-server this catalog is installed against must be configured to combine at least this many bytes of manifests for a directory-type Application, or the directory sources in applicationsets/ generate nothing and their Applications report ComparisonError. The value is not derivable from this repository: it is a repo-server flag, and this catalog installs no ArgoCD and pins no ArgoCD version. It is recorded here so the repository that does install ArgoCD can assert that what it configures and what this catalog needs are the same number.",
+  "_setBy": "argocd-repo-server --max-combined-directory-manifests-size, equivalently ARGOCD_REPO_SERVER_MAX_COMBINED_DIRECTORY_MANIFESTS_SIZE; `argocd-repo-server --help` prints the flag and the default it ships with.",
+  "_measuredBy": "scripts/check-directory-manifest-size.py, which measures every directory source the way the repo-server does and fails before a cluster does. Sizes live in scripts/directory-sources.json.",
+  "maxCombinedDirectoryManifestsSize": "20M",
+  "argoCdDefault": "10M"
+}

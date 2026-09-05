@@ -160,6 +160,7 @@ run 0 "check-alert-severity-routes.py" ./scripts/check-alert-severity-routes.py
 run 0 "check-env-coverage.py" ./scripts/check-env-coverage.py
 run 0 "check-burn-rate-budgets.py" ./scripts/check-burn-rate-budgets.py
 run 0 "check-secret-store-refs.py" ./scripts/check-secret-store-refs.py
+run 0 "check-directory-manifest-size.py" ./scripts/check-directory-manifest-size.py
 run 0 "check-named-things.py" ./scripts/check-named-things.py
 run 0 "check-policy-validity.py" ./scripts/check-policy-validity.py
 run 0 "no-placeholders.sh" ./scripts/no-placeholders.sh
@@ -486,6 +487,56 @@ run nonzero "secret-store-refs: the published contract drifts from the tree" \
   ./scripts/check-secret-store-refs.py
 res $F
 
+# The configuration the incident arrived under. Nothing about the source
+# changes — same eight files, same pin — only the ceiling the host is
+# configured for, and at the one ArgoCD ships with the repo-server refuses to
+# generate the Application at all.
+F=contracts/repo-server.json; mut $F
+python3 - "$F" <<'PYQ'
+import pathlib,sys
+p=pathlib.Path(sys.argv[1]); s=p.read_text()
+m=s.replace('"maxCombinedDirectoryManifestsSize": "20M"',
+            '"maxCombinedDirectoryManifestsSize": "10M"', 1)
+assert m!=s, "mutation did not land"
+p.write_text(m)
+print("   lowered the ceiling to the one argocd-repo-server ships with")
+PYQ
+run nonzero "directory-manifest-size: the host is configured below what the catalog needs" \
+  ./scripts/check-directory-manifest-size.py
+res $F
+
+# The shape a Renovate pull request has. Moving the tag changes what the
+# repo-server would combine, and the recorded measurement was taken against the
+# tag that was there before — so a bump that grows the directory past the
+# ceiling has to land its new size in the same diff.
+F=applicationsets/argo-workflows-crds.yaml; mut $F
+python3 - "$F" <<'PYQ'
+import pathlib,sys
+p=pathlib.Path(sys.argv[1]); s=p.read_text()
+m=s.replace("targetRevision: argo-workflows-1.0.23",
+            "targetRevision: argo-workflows-1.0.24", 1)
+assert m!=s, "mutation did not land"
+p.write_text(m)
+print("   moved the pin and left the measurement where it was")
+PYQ
+run nonzero "directory-manifest-size: a pin moves away from what was measured" \
+  ./scripts/check-directory-manifest-size.py
+res $F
+
+# A directory source nothing bounds. The Application is valid in every way the
+# rest of this repository can check and produces nothing on a cluster.
+F=scripts/directory-sources.json; mut $F
+python3 - "$F" <<'PYQ'
+import pathlib,sys,json
+p=pathlib.Path(sys.argv[1]); d=json.loads(p.read_text())
+d["sources"].pop("argo-workflows-crds")
+p.write_text(json.dumps(d, indent=2)+"\n")
+print("   dropped the size record for a directory source that still ships")
+PYQ
+run nonzero "directory-manifest-size: a directory source nothing measured" \
+  ./scripts/check-directory-manifest-size.py
+res $F
+
 F=addons/bootstrap/cert-manager/values-hub.yaml; mut $F; rm -f $F
 run nonzero "env-coverage: deleted hub delta" ./scripts/check-env-coverage.py
 res $F
@@ -598,7 +649,7 @@ echo "RESULT pass=$pass fail=$fail"
 # The harness owes the same assertion it demands of the gates: with every `run`
 # line deleted it would report pass=0 fail=0 and exit 0, which is a green run
 # over nothing checked.
-MIN_CHECKS=48
+MIN_CHECKS=52
 total=$((pass + fail))
 if [ "$total" -lt "$MIN_CHECKS" ]; then
   echo "FAIL  ran $total check(s), under the floor of $MIN_CHECKS — this harness"

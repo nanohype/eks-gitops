@@ -793,6 +793,20 @@ jobs:
           ./scripts/check-chart-deprecation.py
           ./scripts/check-chart-deprecation.py --self-test
 
+      # A source with a `path` and no chart is not automatically a kustomize
+      # directory: ArgoCD classifies by what the directory holds, and a Directory
+      # source is the one shape the repo-server measures against
+      # --max-combined-directory-manifests-size. Over that, it generates nothing
+      # and reports ComparisonError, which reads as `Unknown` in the sync column
+      # and surfaces waves later as whatever workload needed the kind that never
+      # installed. Offline like the chart half above: the sizes are keyed on
+      # (repoURL, targetRevision, path), so a pin cannot move without its
+      # measurement going stale here, and upstream/pins asks the live question.
+      - name: Directory sources fit the repo-server's combined-manifest ceiling
+        run: |
+          ./scripts/check-directory-manifest-size.py
+          ./scripts/check-directory-manifest-size.py --self-test
+
   # ── Appset render gate ───────────────────────────────────────────────
   # The Karpenter EC2NodeClass patch carries if/range control flow inside a
   # `patch: |-` string block. Every other gate treats that string as opaque —

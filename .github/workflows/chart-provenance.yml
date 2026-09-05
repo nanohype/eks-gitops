@@ -1,22 +1,24 @@
-name: chart provenance
+name: upstream pins
 
-# The live half of the chart-provenance check: is every chart this catalog pins
-# still the chart it was pinned for, upstream, right now?
+# The live half of every check that asks whether an upstream pin still resolves
+# to what it was recorded against: charts, and the directories a directory-source
+# Application asks the repo-server to combine.
 #
 # It is a separate workflow rather than a job in ci.yml on purpose, and there
 # are two reasons.
 #
-# The verdict is not a function of this commit. A maintainer can deprecate a
-# chart, or hand it to a different organisation, at any moment. Run in the merge
-# path, that turns a pull request red for a reason the pull request did not
-# cause — the same trap `mirror-check freshness` and `schemas:freshness` are
-# kept off the blocking path to avoid.
+# Neither verdict is a function of this commit. A maintainer can deprecate a
+# chart, hand it to a different organisation, or move a tag, at any moment. Run
+# in the merge path, that turns a pull request red for a reason the pull request
+# did not cause — the same trap `mirror-check freshness` and `schemas:freshness`
+# are kept off the blocking path to avoid. Resolving them also needs a clone or
+# a registry round trip, which the merge path does not get to depend on.
 #
 # And the merge gate in ci.yml refuses any workflow containing a job it does not
 # watch, while counting a skipped dependency as a failure. A job that only runs
 # on a schedule cannot satisfy both, so it does not belong in that file. The
-# offline half — every pin has a record, every record a pin — does run there,
-# because that IS a function of the tree.
+# offline halves — every pin has a record, every record a pin — do run there,
+# because those ARE a function of the tree.
 on:
   schedule:
     # Mondays, ahead of the working week and after the weekend's upstream releases.
@@ -54,3 +56,29 @@ jobs:
       # "current" for something that is no longer the same software.
       - name: Compare every pinned chart against its record
         run: ./scripts/check-chart-deprecation.py --live
+
+  sizes:
+    name: pinned directory sources still measure what was recorded
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - name: Install Python dependencies
+        run: pip install --require-hashes -r requirements.txt
+
+      # A directory source over the repo-server's combined-manifest ceiling
+      # generates nothing, and says so as a ComparisonError with the sync column
+      # reading Unknown rather than as anything that looks like a failure. The
+      # size is a function of (repoURL, targetRevision, path), so the blocking
+      # half in ci.yml already fails when a pin moves away from its measurement.
+      # What only a clone can answer is whether a tag that nobody moved here was
+      # moved upstream underneath it.
+      - name: Re-measure every pinned directory source
+        run: ./scripts/check-directory-manifest-size.py --live
