@@ -354,8 +354,14 @@ def main(argv: list[str] | None = None) -> int:
     # character by character from a literal alphabet, which defeats the dataflow
     # and explains nothing — a reader can disagree with a suppression, and cannot
     # even see a defeated dataflow.
+    #
+    # The marker goes on the line BEFORE the expression it covers, and covers
+    # only that one line. On the same line it is the older `lgtm[...]` form,
+    # which edits the line it annotates and so changes the alert's hash: the
+    # original closes as fixed and an identical one opens beside it.
         for f in failures:
-            print(f"  {f}")  # codeql[py/clear-text-logging-sensitive-data]
+            # codeql[py/clear-text-logging-sensitive-data]
+            print(f"  {f}")
         return 1
 
     want = build_contract(cluster_stores, versions)
@@ -389,7 +395,8 @@ def main(argv: list[str] | None = None) -> int:
 
     store = want["clusterSecretStore"]
     # Same match, same reason as the failure path above.
-    print(f"✓ every secret-store reference resolves to the one store this "  # codeql[py/clear-text-logging-sensitive-data]
+    # codeql[py/clear-text-logging-sensitive-data]
+    print(f"✓ every secret-store reference resolves to the one store this "
           f"catalog declares: {printable(store['kind'], KIND)}/"
           f"{printable(store['name'])} "
           f"({printable(store['apiVersion'], GROUP_VERSION)}), named by "
