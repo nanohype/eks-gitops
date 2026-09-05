@@ -504,6 +504,21 @@ def m_alert_severity_routes(root):
                 marker=f"severity: {MARKER}-urgent")
 
 
+def m_burn_rate_budgets(root):
+    """Put back the figure this gate was written for.
+
+    A ticket-tier rule whose expression compares against a burn factor of 1 over
+    3d, claiming the budget is fully consumed. Factor 1 spends at exactly the
+    rate that exhausts the budget over the SLO window, so 3d of it is 10% of a
+    30d budget. The expression stays correct and only the sentence changes,
+    which is what every rule-level validation passes.
+    """
+    return _sub(root, "dashboards/base/alerting/agent-operator.yaml",
+                "budget burning slowest (10% in 3d)",
+                "budget burning (100% over 3d)",
+                marker="100% over 3d")
+
+
 def m_chart_deprecation(root):
     """A recorded chart that nothing pins, which the offline gate must reject."""
     import json
@@ -579,6 +594,8 @@ CONTROLS = {
     "check-alert-coverage.py": ("an alert on an unexported KSM field", m_alert_coverage),
     "check-alert-severity-routes.py": ("a severity label that routes nowhere",
                                        m_alert_severity_routes),
+    "check-burn-rate-budgets.py": ("a summary claiming a budget its expression "
+                                   "does not spend", m_burn_rate_budgets),
 }
 
 
