@@ -1,0 +1,36 @@
+{
+  "_README": "What each directory-source Application asks argocd-repo-server to combine, measured the way the repo-server measures it. A source over the ceiling in contracts/repo-server.json generates nothing and reports ComparisonError, which is quieter than OutOfSync. The sizes are a function of (repoURL, targetRevision, path): moving a pin makes this record stale, and a stale record fails the blocking gate, so a bump cannot land without the new size landing in the same diff. Re-measure with scripts/check-directory-manifest-size.py --sync.",
+  "sources": {
+    "argo-workflows-crds": {
+      "repoURL": "https://github.com/argoproj/argo-helm",
+      "targetRevision": "argo-workflows-1.0.23",
+      "path": "charts/argo-workflows/files/crds/full",
+      "recurse": false,
+      "include": "",
+      "exclude": "",
+      "bytes": 11102482,
+      "files": 8
+    },
+    "gateway-api-crds": {
+      "repoURL": "https://github.com/kubernetes-sigs/gateway-api",
+      "targetRevision": "v1.6.1",
+      "path": "config/crd/standard",
+      "recurse": false,
+      "include": "",
+      "exclude": "",
+      "bytes": 1169515,
+      "files": 11
+    },
+    "portal-tenants": {
+      "repoURL": "{{ index .metadata.annotations \"gitops/tenants-repo-url\" }}",
+      "targetRevision": "{{ index .metadata.annotations \"gitops/repo-branch\" }}",
+      "path": "{{ .path.path }}",
+      "recurse": true,
+      "include": "",
+      "exclude": "",
+      "bytes": null,
+      "files": null,
+      "unbounded": "Repository, revision and path all resolve from cluster annotations the portal sets, so no size is a function of this tree. What the tenant boundary manifests amount to is bounded where they are written, not here."
+    }
+  }
+}

@@ -200,13 +200,19 @@ tasks:
     cmds:
       - ./scripts/check-secret-store-refs.py
 
+  validate:directory-manifest-size:
+    desc: "Directory-source gate — every directory source fits the combined-manifest ceiling the repo-server is configured for"
+    cmds:
+      - ./scripts/check-directory-manifest-size.py
+      - ./scripts/check-directory-manifest-size.py --self-test
+
   validate:athena-panel-columns:
     desc: "Athena panel gate — every column a CUR panel names is one the export delivers"
     cmds:
       - ./scripts/check-athena-panel-columns.py
 
   validate:
-    desc: Run all validations (lint, build, helm-render, appset schema, sync waves, label values, appset render, policy admission, secret refs, athena panels, dashboard/fork-safety)
+    desc: Run all validations (lint, build, helm-render, appset schema, sync waves, label values, appset render, policy admission, secret refs, directory sizes, athena panels, dashboard/fork-safety)
     deps:
       - lint:yaml
       - lint:python
@@ -219,6 +225,7 @@ tasks:
       - validate:policy-admission
       - validate:externalsecret-keys
       - validate:secret-store-refs
+      - validate:directory-manifest-size
       - validate:athena-panel-columns
       - validate:dashboards
       - validate:fork-safety

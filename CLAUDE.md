@@ -100,6 +100,7 @@ task validate:label-values         # Every k8s label value satisfies the API ser
 task validate:policy-admission     # Prove no addon is denied by the Enforce-tier Kyverno policies (+ exclusion-list parity)
 task validate:externalsecret-keys  # Each ExternalSecret names its remote secret once, and the delivering appset patches it
 task validate:secret-store-refs    # Every secret-store reference names the one store this catalog declares, and the published contract states it
+task validate:directory-manifest-size # Every directory-source Application fits the repo-server's combined-manifest ceiling
 task validate:dashboards           # grafana.com dashboard ids exist and are AMG-saveable
 task validate:athena-panel-columns # Every column a CUR panel names is one the export delivers
 task validate:fork-safety          # No hardcoded catalog repoURL in applied ApplicationSets (report-only locally)
@@ -113,7 +114,7 @@ task validate:image-vulnerabilities # Every fixed CRITICAL in a rendered image i
 
 `task validate` runs the structural gates (lint, kustomize build, helm-render,
 ApplicationSet schema, sync-wave ordering, appset render, policy-admission,
-secret-store references, dashboards, fork-safety). CI runs those plus several gates that have **no local
+secret-store references, directory-source sizes, dashboards, fork-safety). CI runs those plus several gates that have **no local
 `task` target**, and one that has a target but is deliberately outside the
 aggregate, so a clean `task validate` is necessary but not sufficient:
 
@@ -178,6 +179,24 @@ aggregate, so a clean `task validate` is necessary but not sufficient:
   delivered panel measures is a finding, because a figure compared to nothing is
   how the last wrong one survived. The figure has no independent existence:
   there is no constant to correct and none in the summary that anything trusts
+- **Directory-source manifest sizes** — `scripts/check-directory-manifest-size.py`,
+  in the `appsets` job beside the offline chart-provenance half. The repo-server
+  refuses to generate a directory-type Application whose combined manifest files
+  exceed `--max-combined-directory-manifests-size`, and the Application then
+  reports `ComparisonError` with `Unknown` in the sync column — quieter than
+  `OutOfSync`, and the symptom arrives waves later as whatever workload needed
+  the kind that never installed. A source with a `path` is not automatically a
+  kustomize directory: ArgoCD takes an explicit `helm`/`kustomize`/`plugin`/
+  `directory` block at its word and otherwise classifies by what the directory
+  holds, so the population is derived by running that decision over the tree
+  rather than from a list, and a kustomization deleted out of an overlay
+  reclassifies that source into the corpus. The ceiling is not derivable here —
+  it is a repo-server flag, and this catalog installs no ArgoCD — so it is gated
+  rather than derived: `contracts/repo-server.json` records what the host must be
+  configured for, and the repository that configures the repo-server is where the
+  two are held equal. Sizes in `scripts/directory-sources.json` are keyed on
+  (repoURL, targetRevision, path), so a pin cannot move without its measurement
+  going stale and failing the blocking gate on the pull request that moves it
 - **Image vulnerabilities** — `scripts/check-image-vulnerabilities.py` (CI job
   `image-vulnerabilities`). The one with a target of its own,
   `task validate:image-vulnerabilities`, kept out of the aggregate because it
@@ -206,10 +225,15 @@ documents: `task validate` runs it report-only, CI runs it `--blocking`.
 - Standalone jobs on every PR: `helm-render` (templates every addon against its appset-pinned chart with base + each env's values — an unknown key fails here, not fleet-wide at sync), `policy-admission` (renders the whole fleet into its real destination namespaces and runs `kyverno apply` against the Enforce-tier best-practice/pod-security policies, so an addon landing in a namespace the policies don't exclude fails here instead of being denied at admission on a vended enforce cluster — also asserts all four exclusion lists stay identical, that every namespace the fleet lands a workload in is on that list, and that a deliberately non-compliant canary is denied by every rule, which is what proves the run evaluated anything), `appsets` (ApplicationSet schema + documented sync-wave ordering), `appset-render` (renders the Karpenter EC2NodeClass patch template the way the ArgoCD ApplicationSet controller does — Go text/template + sprig, `missingkey=error` — against fixture create/adopt/legacy cluster Secrets, so a control-flow edit that breaks the per-cluster render fails here instead of at sync), `secrets` (gitleaks over the working tree), plus the dashboard, fork-safety, and Kyverno policy gates
 - Chart pins in `applicationsets/`, the Go module, the CI tool downloads and the GitHub Actions are all watched by Renovate (`renovate.json`, extending the org preset at `nanohype/.github`)
 - A scheduled workflow, `.github/workflows/chart-provenance.yml`, runs weekly (Mondays)
-  and re-resolves every pinned chart against its recorded provenance via
-  `scripts/check-chart-deprecation.py --live` — so a chart that is deprecated,
-  moved, or no longer resolves to what it did at pin time surfaces on a schedule
-  rather than at the next sync
+  and re-resolves every upstream pin against what was recorded for it. One job
+  runs `scripts/check-chart-deprecation.py --live`, so a chart that is
+  deprecated, moved, or no longer resolves to what it did at pin time surfaces on
+  a schedule rather than at the next sync. The other runs
+  `scripts/check-directory-manifest-size.py --live`, which re-measures each
+  pinned directory source: the blocking half already fails when a pin moves away
+  from its measurement, and what only a clone can answer is whether a tag nobody
+  moved here was moved upstream underneath it. Both need the network, which is
+  why neither is on the merge path
 - Manual diff rendering available via `.github/workflows/diff.yml`
 
 ## Claude Code Tooling

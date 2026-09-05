@@ -68,6 +68,9 @@ EXPECTED = (
     # A name restated in eleven places, and the two readers it takes to find
     # them all — half the corpus is chart source that does not parse as YAML.
     "test_secret_store_refs",
+    # The source-type decision that says which sources a size limit even applies
+    # to, and the byte accounting the repo-server does once it has decided.
+    "test_directory_manifest_size",
 )
 
 # A floor well under the real count. It catches "discovery found almost nothing",
@@ -142,7 +145,7 @@ MIN_TESTS = 31
 # largest in the tree, and among them are the gates on the paths testing-rubric
 # calls security-critical. So this figure being low is not offset by behavioural
 # coverage for precisely the files where that offset was being claimed.
-COMBINED_FLOOR = 42
+COMBINED_FLOOR = 44
 
 # A ceiling on gate scripts carrying NO unit coverage at all, complementing the
 # floors below. The floors stop a covered file regressing; nothing stopped a NEW
@@ -184,6 +187,9 @@ PER_GATE_FLOORS = {
     "scripts/check-alert-severity-routes.py": 95,
     "scripts/check-image-vulnerabilities.py": 41,
     "scripts/check-image-pins.py": 88,
+    # The half of the directory-size gate that decides the verdict. The rest is
+    # `--sync`, `--live` and `--self-test`, which run against a clone.
+    "scripts/check-directory-manifest-size.py": 70,
 }
 
 
