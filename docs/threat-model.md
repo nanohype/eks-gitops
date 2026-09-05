@@ -76,17 +76,27 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
   `check-image-verification.py:79-110` closes that hole: it fails the build if
   `required` flips, the issuer changes, or the subjectRegExp loses its anchor, its
   org scope, or its `refs/tags` binding — run in CI (ci.yml:85-88).
-- **Residual** — verification is signature-presence only: `mutateDigest` /
-  - **Residual** — the base keeps `mutateDigest: false` (verify-images.yaml),
-  which Kyverno requires under an `Audit` failure action; the staging and
-  production overlays patch it to `true` alongside the `Enforce` patch
-  (supply-chain/overlays/production/kustomization.yaml, overlays/staging/kustomization.yaml), so a tag is pinned to the verified
-  digest exactly where the policy enforces and nowhere else. `verifyDigest` stays
-  `false` at every tier (verify-images.yaml) — Kyverno derives the digest
-  rather than demanding authors write one. Third-party images (anything outside
-  `ghcr.io/nanohype/*`) are unmatched and pass unsigned — their trust is the
-  upstream registry's, not this policy's.
-  to a digest. Third-party images (anything outside `ghcr.io/nanohype/*`) are
+- **Pinning** — the base keeps `mutateDigest: false` (verify-images.yaml), which
+  Kyverno requires under an `Audit` failure action; the staging and production
+  overlays patch it to `true` alongside the `Enforce` patch
+  (supply-chain/overlays/staging/kustomization.yaml,
+  supply-chain/overlays/production/kustomization.yaml), so a tag is pinned to the
+  verified digest exactly where the policy enforces and nowhere else.
+  `verifyDigest` stays `false` at every tier (verify-images.yaml) — Kyverno
+  derives the digest rather than demanding authors write one.
+
+  That pinning is EXECUTED rather than configured: `scripts/check-digest-rewrite.sh`
+  renders each enforcing overlay, admits a signed `ghcr.io/nanohype/*` pod through
+  it against the registry and the transparency log, and requires the admitted spec
+  to carry the digest the signature was checked against. Every other check that
+  touches the field reads rendered YAML, and a change that keeps `mutateDigest: true`
+  while breaking the rewrite leaves all of them reading exactly as they do today.
+
+  What it does not establish is that a cluster admits what the CLI admits. The
+  engine is the same code and the policy is the rendered one; no environment
+  reachable from this repository runs an API server.
+
+- **Residual** — third-party images (anything outside `ghcr.io/nanohype/*`) are
   unmatched and pass unsigned — their trust is the upstream registry's, not this
   policy's.
 
