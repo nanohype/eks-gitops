@@ -1,0 +1,14 @@
+# A pod the enforcing tier admits, written the way the catalog writes one: a TAG.
+#
+# The tag is what makes this fixture mean something. A digest-pinned reference
+# would verify and need no rewrite, so the assertion would hold over a policy
+# with mutateDigest turned off — which is the state this suite exists to detect.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: signed-operator
+  namespace: eks-agent-platform
+spec:
+  containers:
+    - name: manager
+      image: ghcr.io/nanohype/eks-agent-platform/operator:0.6.1
