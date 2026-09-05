@@ -62,6 +62,9 @@ EXPECTED = (
     # The floors that keep an emptied corpus from reading as a clean one,
     # asserted apart from the gates that carry them.
     "test_corpus_floors",
+    # A name restated in eleven places, and the two readers it takes to find
+    # them all — half the corpus is chart source that does not parse as YAML.
+    "test_secret_store_refs",
 )
 
 # A floor well under the real count. It catches "discovery found almost nothing",
@@ -154,7 +157,11 @@ COMBINED_FLOOR = 42
 # ratchet that declines to move is one nobody can regress against — but it is
 # the weaker half of this file's claim, and the per-gate floors and the controls
 # in scripts/tests/controls.py are where the real one lives.
-MAX_UNCOVERED_GATES = 11
+#
+# It moves by what a change actually covered, not by what the run reports. A
+# gate arriving with its own tests lowers it; a gate that starts reading as
+# covered because something new imports it does not.
+MAX_UNCOVERED_GATES = 10
 
 PER_GATE_FLOORS = {
     "scripts/check-named-things.py": 35,

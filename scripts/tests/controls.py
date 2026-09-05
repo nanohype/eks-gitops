@@ -504,6 +504,21 @@ def m_alert_severity_routes(root):
                 marker=f"severity: {MARKER}-urgent")
 
 
+def m_secret_store_refs(root):
+    """Typo the store in the chart source that does not parse as YAML.
+
+    The half of the corpus a gate written against `yaml.safe_load_all` drops
+    while reporting a clean run over the rest, and the exact shape one repo in
+    this org shipped: `aws-secretsmanager` against `aws-secrets-manager`. The
+    ExternalSecret installs, syncs, records SecretSyncedError on its own status,
+    and never creates the Secret the workload mounts.
+    """
+    return _sub(root, "catalog/druid/chart/templates/externalsecret.yaml",
+                "    name: aws-secrets-manager\n",
+                "    name: aws-secretsmanager\n",
+                marker="aws-secretsmanager")
+
+
 def m_chart_deprecation(root):
     """A recorded chart that nothing pins, which the offline gate must reject."""
     import json
@@ -579,6 +594,8 @@ CONTROLS = {
     "check-alert-coverage.py": ("an alert on an unexported KSM field", m_alert_coverage),
     "check-alert-severity-routes.py": ("a severity label that routes nowhere",
                                        m_alert_severity_routes),
+    "check-secret-store-refs.py": ("a reference to a store the catalog does not "
+                                   "declare", m_secret_store_refs),
 }
 
 

@@ -158,6 +158,7 @@ run 0 "check-renovate-coverage.py" ./scripts/check-renovate-coverage.py
 run 0 "check-ai-config.py" ./scripts/check-ai-config.py
 run 0 "check-alert-severity-routes.py" ./scripts/check-alert-severity-routes.py
 run 0 "check-env-coverage.py" ./scripts/check-env-coverage.py
+run 0 "check-secret-store-refs.py" ./scripts/check-secret-store-refs.py
 run 0 "check-named-things.py" ./scripts/check-named-things.py
 run 0 "check-policy-validity.py" ./scripts/check-policy-validity.py
 run 0 "no-placeholders.sh" ./scripts/no-placeholders.sh
@@ -403,6 +404,54 @@ run nonzero "alert-severity-routes: the routing tree stops shipping" \
   ./scripts/check-alert-severity-routes.py
 res $F
 
+# The store is renamed and the eight references that name it are not. Nothing
+# else in this tree sees it: helm renders, kustomize builds, kubeconform passes,
+# and the ExternalSecrets record SecretSyncedError on an object nothing in the
+# install path reads.
+F=addons/bootstrap/secret-stores/cluster-secret-store.yaml; mut $F
+python3 - "$F" <<'PYQ'
+import pathlib,sys
+p=pathlib.Path(sys.argv[1]); s=p.read_text()
+m=s.replace("  name: aws-secrets-manager\n", "  name: aws-sm\n", 1)
+assert m!=s, "mutation did not land"
+p.write_text(m)
+print("   renamed the ClusterSecretStore the whole catalog references")
+PYQ
+run nonzero "secret-store-refs: the store is renamed and nothing follows it" \
+  ./scripts/check-secret-store-refs.py
+res $F
+
+# The reference kustomize will not fail on. An unmatched patch target is not an
+# error: the build exits 0 and emits the base, so every cluster keeps us-west-2
+# and looks its secrets up in the wrong region.
+F=applicationsets/secret-stores.yaml; mut $F
+python3 - "$F" <<'PYQ'
+import pathlib,sys
+p=pathlib.Path(sys.argv[1]); s=p.read_text()
+m=s.replace("                name: aws-secrets-manager\n",
+            "                name: aws-secretsmanager\n", 1)
+assert m!=s, "mutation did not land"
+p.write_text(m)
+print("   pointed the region patch at a store that does not exist")
+PYQ
+run nonzero "secret-store-refs: an ApplicationSet patch target stops matching" \
+  ./scripts/check-secret-store-refs.py
+res $F
+
+# The published half. A contract that has drifted from the manifest is worse
+# than none, because the repositories asserting against it pass.
+F=contracts/secret-store.json; mut $F
+python3 - "$F" <<'PYQ'
+import pathlib,sys,json
+p=pathlib.Path(sys.argv[1]); d=json.loads(p.read_text())
+d["clusterSecretStore"]["name"]="aws-secretsmanager"
+p.write_text(json.dumps(d, indent=2)+"\n")
+print("   hand-edited the published contract away from the manifest")
+PYQ
+run nonzero "secret-store-refs: the published contract drifts from the tree" \
+  ./scripts/check-secret-store-refs.py
+res $F
+
 F=addons/bootstrap/cert-manager/values-hub.yaml; mut $F; rm -f $F
 run nonzero "env-coverage: deleted hub delta" ./scripts/check-env-coverage.py
 res $F
@@ -515,7 +564,7 @@ echo "RESULT pass=$pass fail=$fail"
 # The harness owes the same assertion it demands of the gates: with every `run`
 # line deleted it would report pass=0 fail=0 and exit 0, which is a green run
 # over nothing checked.
-MIN_CHECKS=41
+MIN_CHECKS=45
 total=$((pass + fail))
 if [ "$total" -lt "$MIN_CHECKS" ]; then
   echo "FAIL  ran $total check(s), under the floor of $MIN_CHECKS — this harness"
