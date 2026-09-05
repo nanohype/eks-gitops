@@ -175,7 +175,7 @@ spec:
         service: eks-agent-platform
         component: operator
       annotations:
-        summary: operator reconcile latency budget burning (100% over 3d)
+        summary: operator reconcile latency budget burning slowest (10% in 3d)
         description: >
           The fraction of reconciles over 1s exceeds 1x the 99% latency objective
           over both the 3d and 6h windows — the budget is being spent at exactly the

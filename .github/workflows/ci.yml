@@ -112,11 +112,20 @@ jobs:
       # rules can each be individually correct and leave the state reported by
       # nobody. kubeconform SKIPs the Grafana CRDs and no gate executes the
       # PromQL, so an alert that can never fire looks exactly like one that has
-      # not fired yet. kubeconform SKIPs the Grafana CRDs and no gate
-      # executes the PromQL, so an alert that can never fire looks exactly like
-      # one that has not fired yet.
+      # not fired yet.
       - name: Excluded alert states are somebody's job
         run: ./scripts/check-alert-coverage.py
+
+      # A burn-rate summary is the alert TITLE — the sentence that reaches a
+      # human first and often the only one they read. The figure in it is prose
+      # that nothing parses, so a rule can name a budget its own expression does
+      # not spend and pass every rule-level validation, because the expression is
+      # correct and only the sentence is wrong. This derives the figure from the
+      # rule's factor and window against the objective the dashboards measure, so
+      # there is no constant here to agree with the standard today and be
+      # compared to nothing tomorrow.
+      - name: Burn-rate summaries state the budget their expression spends
+        run: ./scripts/check-burn-rate-budgets.py
 
   # ── Kyverno policy unit tests ────────────────────────────────────────
   # `kyverno test` proves each policy rule PASSES a compliant resource and FAILS

@@ -166,6 +166,15 @@ aggregate, so a clean `task validate` is necessary but not sufficient:
   `scripts/check-catalog-revision.py` (CI job `catalog-revision`)
 - **Alert coverage** — `scripts/check-alert-coverage.py`, which runs inside the
   `dashboards` job alongside the locally-available dashboard and Athena gates
+- **Burn-rate budget claims** — `scripts/check-burn-rate-budgets.py`, in the same
+  `dashboards` job. A burn-rate summary is the alert title, and the budget figure
+  in it is prose nothing parses, so a rule can name a figure its own expression
+  does not spend while every rule-level validation passes. The figure is derived
+  rather than listed: burn factor times long window over the SLO window, with the
+  factor and window read from the rule's expression and the SLO window from the
+  dashboard panel measuring the same selector. A rule whose selectors no panel
+  measures is a finding, because a figure compared to nothing is how the last
+  wrong one survived
 - **Image vulnerabilities** — `scripts/check-image-vulnerabilities.py` (CI job
   `image-vulnerabilities`). The one with a target of its own,
   `task validate:image-vulnerabilities`, kept out of the aggregate because it

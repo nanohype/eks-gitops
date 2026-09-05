@@ -61,6 +61,9 @@ EXPECTED = (
     # The floors that keep an emptied corpus from reading as a clean one,
     # asserted apart from the gates that carry them.
     "test_corpus_floors",
+    # The arithmetic behind a figure an on-call reads at the worst moment, and
+    # the anchoring that keeps it from being a constant compared to nothing.
+    "test_burn_rate_budgets",
 )
 
 # A floor well under the real count. It catches "discovery found almost nothing",
@@ -144,16 +147,22 @@ COMBINED_FLOOR = 40
 # Ratchets downward only. Adding a gate without tests fails here rather than
 # diluting the combined figure by a percentage point nobody notices.
 #
-# Two of the files this counts as covered are covered by IMPORT, not by tests.
+# Some of the files this counts as covered are covered by IMPORT, not by tests.
 # check-image-vulnerabilities.py loads check-image-pins.py by path so the two
 # cannot disagree about what the fleet is, and that loads render-addons.py in
-# turn; a test module importing the first executes the module bodies of all
-# three. Coverage cannot tell that from a test, so both read as non-zero while
-# carrying no assertions of their own. The ceiling is lowered anyway, because a
-# ratchet that declines to move is one nobody can regress against — but it is
-# the weaker half of this file's claim, and the per-gate floors and the controls
-# in scripts/tests/controls.py are where the real one lives.
-MAX_UNCOVERED_GATES = 11
+# turn; check-burn-rate-budgets.py loads check-athena-panel-columns.py for the
+# dashboard walk, for the same reason. A test module importing any of those
+# executes the module bodies of the ones underneath. Coverage cannot tell that
+# from a test, so they read as non-zero while carrying no assertions of their
+# own. The ceiling is lowered anyway, because a ratchet that declines to move is
+# one nobody can regress against — but it is the weaker half of this file's
+# claim, and the per-gate floors and the controls in scripts/tests/controls.py
+# are where the real one lives.
+#
+# So this number moves by what a change actually covered, not by what the run
+# reports. A gate arriving with its own tests lowers it; a gate that starts
+# reading as covered because something new imports it does not.
+MAX_UNCOVERED_GATES = 10
 
 PER_GATE_FLOORS = {
     "scripts/check-named-things.py": 35,

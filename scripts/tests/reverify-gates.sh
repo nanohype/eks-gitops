@@ -157,6 +157,7 @@ run 0 "image-pins: a helm reporting OCI pulls on stdout" \
 run 0 "check-renovate-coverage.py" ./scripts/check-renovate-coverage.py
 run 0 "check-ai-config.py" ./scripts/check-ai-config.py
 run 0 "check-env-coverage.py" ./scripts/check-env-coverage.py
+run 0 "check-burn-rate-budgets.py" ./scripts/check-burn-rate-budgets.py
 run 0 "check-named-things.py" ./scripts/check-named-things.py
 run 0 "check-policy-validity.py" ./scripts/check-policy-validity.py
 run 0 "no-placeholders.sh" ./scripts/no-placeholders.sh
@@ -352,6 +353,21 @@ PY
 run nonzero "ai-config: global. geo prefix" ./scripts/check-ai-config.py
 res $F
 
+# The number an on-call reads first. The expression stays correct and only the
+# sentence changes, which is every rule-level validation's blind spot.
+F=dashboards/base/alerting/agent-operator.yaml; mut $F
+python3 - "$F" <<'PYX'
+import pathlib,sys
+p=pathlib.Path(sys.argv[1]); s=p.read_text()
+m=s.replace("budget burning slowest (10% in 3d)", "budget burning (100% over 3d)", 1)
+assert m!=s, "mutation did not land"
+p.write_text(m)
+print("   claimed the 3d tier consumes the whole budget")
+PYX
+run nonzero "burn-rate-budgets: a summary claiming a budget its expression does not spend" \
+  ./scripts/check-burn-rate-budgets.py
+res $F
+
 F=addons/bootstrap/cert-manager/values-hub.yaml; mut $F; rm -f $F
 run nonzero "env-coverage: deleted hub delta" ./scripts/check-env-coverage.py
 res $F
@@ -464,7 +480,7 @@ echo "RESULT pass=$pass fail=$fail"
 # The harness owes the same assertion it demands of the gates: with every `run`
 # line deleted it would report pass=0 fail=0 and exit 0, which is a green run
 # over nothing checked.
-MIN_CHECKS=37
+MIN_CHECKS=39
 total=$((pass + fail))
 if [ "$total" -lt "$MIN_CHECKS" ]; then
   echo "FAIL  ran $total check(s), under the floor of $MIN_CHECKS — this harness"
