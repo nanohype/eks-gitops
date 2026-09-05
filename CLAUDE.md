@@ -101,6 +101,7 @@ task validate:policy-admission     # Prove no addon is denied by the Enforce-tie
 task validate:externalsecret-keys  # Each ExternalSecret names its remote secret once, and the delivering appset patches it
 task validate:secret-store-refs    # Every secret-store reference names the one store this catalog declares, and the published contract states it
 task validate:directory-manifest-size # Every directory-source Application fits the repo-server's combined-manifest ceiling
+task validate:lb-scheme-inputs     # Every input the AWS LB Controller decides a scheme on is one the injection policy reads
 task validate:dashboards           # grafana.com dashboard ids exist and are AMG-saveable
 task validate:athena-panel-columns # Every column a CUR panel names is one the export delivers
 task validate:fork-safety          # No hardcoded catalog repoURL in applied ApplicationSets (report-only locally)
@@ -114,7 +115,8 @@ task validate:image-vulnerabilities # Every fixed CRITICAL in a rendered image i
 
 `task validate` runs the structural gates (lint, kustomize build, helm-render,
 ApplicationSet schema, sync-wave ordering, appset render, policy-admission,
-secret-store references, directory-source sizes, dashboards, fork-safety). CI runs those plus several gates that have **no local
+secret-store references, directory-source sizes, load-balancer scheme inputs,
+dashboards, fork-safety). CI runs those plus several gates that have **no local
 `task` target**, and one that has a target but is deliberately outside the
 aggregate, so a clean `task validate` is necessary but not sufficient:
 
@@ -179,6 +181,23 @@ aggregate, so a clean `task validate` is necessary but not sufficient:
   delivered panel measures is a finding, because a figure compared to nothing is
   how the last wrong one survived. The figure has no independent existence:
   there is no constant to correct and none in the summary that anything trusts
+- **Load-balancer scheme inputs** — `scripts/check-lb-scheme-inputs.py`, in the
+  `kyverno` job. `inject-adopt-lb-subnets` injects private or public subnet ids
+  according to the scheme it believes a load balancer will have, and reading one
+  annotation per object kind made that belief a pattern: a second spelling of the
+  same thing, `aws-load-balancer-internal`, is still honoured and still ahead of
+  the controller's default, so a Service setting only that one was internet-facing
+  to the controller and internal to the policy. Adding the second annotation fixes
+  the instance and not the next one, so the population is derived instead: the
+  gate reads `buildLoadBalancerScheme` (Service and Ingress) and
+  `IsServiceSupported` in the controller source at the version the chart pin
+  installs, follows the functions they call, and requires every symbol those
+  bodies consult to be recorded in `scripts/lb-scheme-inputs.json` as READ with a
+  string the policy must contain, UNREAD with the reason it cannot be consulted,
+  or PLUMBING with the reason it decides nothing. A symbol that is none of those
+  fails `--sync`. The record is keyed on the chart pin, so moving the controller
+  fails the blocking half; `--live` re-derives from source and re-renders the
+  chart on the schedule, because a controller can grow an input between bumps
 - **Directory-source manifest sizes** — `scripts/check-directory-manifest-size.py`,
   in the `appsets` job beside the offline chart-provenance half. The repo-server
   refuses to generate a directory-type Application whose combined manifest files
@@ -232,8 +251,10 @@ documents: `task validate` runs it report-only, CI runs it `--blocking`.
   `scripts/check-directory-manifest-size.py --live`, which re-measures each
   pinned directory source: the blocking half already fails when a pin moves away
   from its measurement, and what only a clone can answer is whether a tag nobody
-  moved here was moved upstream underneath it. Both need the network, which is
-  why neither is on the merge path
+  moved here was moved upstream underneath it. A third runs
+  `scripts/check-lb-scheme-inputs.py --live`, which re-derives the inputs the AWS
+  Load Balancer Controller decides a load balancer's scheme from. All three need
+  the network, which is why none is on the merge path
 - Manual diff rendering available via `.github/workflows/diff.yml`
 
 ## Claude Code Tooling

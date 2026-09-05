@@ -550,6 +550,26 @@ def m_directory_manifest_size(root):
                 marker='"maxCombinedDirectoryManifestsSize": "10M"')
 
 
+def m_lb_scheme_inputs(root):
+    """Stop the policy reading the legacy scheme annotation.
+
+    Which is the defect as it was: aws-load-balancer-internal is still honoured
+    by the controller and still ahead of its default, so a Service setting it and
+    nothing else is internet-facing to the controller and internal to a policy
+    that reads only the newer spelling — the private-subnet list on a load
+    balancer the controller puts on public subnets. Renamed rather than deleted,
+    because a policy that reads an annotation nobody sets is the same silence.
+    """
+    rel = "policies/kyverno/networking/base/inject-adopt-lb-subnets.yaml"
+    path = root / rel
+    before = path.read_text()
+    marker = f"aws-load-balancer-internal-{MARKER}"
+    after = before.replace("aws-load-balancer-internal", marker)
+    assert after != before, f"{rel} carries no legacy scheme annotation to rename"
+    path.write_text(after)
+    return path, before, after, marker
+
+
 def m_chart_deprecation(root):
     """A recorded chart that nothing pins, which the offline gate must reject."""
     import json
@@ -632,6 +652,8 @@ CONTROLS = {
     "check-directory-manifest-size.py": ("a directory source over the ceiling the "
                                          "repo-server is configured for",
                                          m_directory_manifest_size),
+    "check-lb-scheme-inputs.py": ("a scheme the controller decides on that the policy "
+                                  "stopped reading", m_lb_scheme_inputs),
 }
 
 

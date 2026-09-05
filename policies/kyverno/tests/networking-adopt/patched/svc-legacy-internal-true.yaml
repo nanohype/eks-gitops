@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-legacy-internal-true
+  namespace: workloads
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-internal: "true"
+    service.beta.kubernetes.io/aws-load-balancer-subnets: subnet-priv-a,subnet-priv-b
+spec:
+  type: LoadBalancer
+  loadBalancerClass: service.k8s.aws/nlb
+  ports:
+    - port: 80

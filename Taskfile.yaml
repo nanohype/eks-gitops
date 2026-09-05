@@ -206,13 +206,19 @@ tasks:
       - ./scripts/check-directory-manifest-size.py
       - ./scripts/check-directory-manifest-size.py --self-test
 
+  validate:lb-scheme-inputs:
+    desc: "Load-balancer scheme gate — every input the controller decides a scheme on is one the injection policy reads"
+    cmds:
+      - ./scripts/check-lb-scheme-inputs.py
+      - ./scripts/check-lb-scheme-inputs.py --self-test
+
   validate:athena-panel-columns:
     desc: "Athena panel gate — every column a CUR panel names is one the export delivers"
     cmds:
       - ./scripts/check-athena-panel-columns.py
 
   validate:
-    desc: Run all validations (lint, build, helm-render, appset schema, sync waves, label values, appset render, policy admission, secret refs, directory sizes, athena panels, dashboard/fork-safety)
+    desc: Run every gate this repo can run offline — lint, build, helm-render, schema, sync waves, label values, appset render, policy admission, and the reference/derivation gates
     deps:
       - lint:yaml
       - lint:python
@@ -226,6 +232,7 @@ tasks:
       - validate:externalsecret-keys
       - validate:secret-store-refs
       - validate:directory-manifest-size
+      - validate:lb-scheme-inputs
       - validate:athena-panel-columns
       - validate:dashboards
       - validate:fork-safety
