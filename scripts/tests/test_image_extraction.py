@@ -894,3 +894,33 @@ class TheHostGrammarHasOneParse(unittest.TestCase):
             [c for grp in gate.IMAGE_REF.findall("registry.local:5000/x/y:1.0")
              for c in grp if c],
             ["registry.local:5000/x/y:1.0"])
+
+
+class OneCorpus(unittest.TestCase):
+    """`inventory` and the per-chart floor read the same units, not two views.
+
+    `discover()` is asserted per file elsewhere — every ApplicationSet pinning a
+    chart contributes a unit, every matrix element pinning one appears among
+    that appset's units. `inventory` walks exactly those units, and
+    `chart_coverage` then requires each of them to have contributed an image.
+
+    Passing over a reference helm reported pulling sits between the two, so the
+    question is whether it can take a chart's only contribution with it. It
+    cannot take a real one: a chart artifact is not an image the chart deploys,
+    and it never entered the population in the first place. What it must not do
+    is leave a chart looking covered when it contributed nothing — so that is
+    asserted here rather than reasoned about.
+    """
+
+    def test_a_chart_contributing_only_its_own_coordinate_is_reported(self):
+        """The whole risk in one case. The reference is passed over, the chart
+        contributed no image, and the per-chart floor says so — silence here
+        would be a chart dropping out of every question both gates ask."""
+        rendered = ("Pulled: ghcr.io/example/chart:1.0.0\n"
+                    "apiVersion: v1\nkind: ConfigMap\ndata: {}\n")
+        found = gate.extract_images(rendered, "chart", [], [],
+                                    None, gate.chart_artifacts(rendered))
+        self.assertEqual(found, set())
+        problems = gate.chart_coverage({}, [Unit("chart")])
+        self.assertTrue(any("chart rendered and contributed no image" in p
+                            for p in problems), problems)

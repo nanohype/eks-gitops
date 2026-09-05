@@ -240,12 +240,15 @@ def called_names(src: str) -> set[str]:
 
 
 # The harnesses, which cannot control themselves: a suite asserting its own
-# ability to reject would be the thing under test and the thing testing it. Both
-# are covered instead by their own self-tests, which run on every ordinary
+# ability to reject would be the thing under test and the thing testing it. Each
+# is covered instead by its own self-assertions, which run on every ordinary
 # invocation. Asserted like every other exemption — an entry naming a file that
-# no longer exists fails.
+# no longer exists fails, a present executable on no list fails, and an entry
+# nothing in the repo invokes fails.
 NOT_GATES = {
-    "tests/controls.py": "the control harness; self_test() runs on every invocation",
+    "tests/controls.py": "the control harness; self_test() runs on every "
+                         "invocation, and test_controls.py holds the reader "
+                         "this rule asks",
     "tests/run.py": "the unit-test runner; asserts its own module list and floors",
     "tests/reverify-gates.sh": "the Tier-1 re-verification harness; it drives the "
                                "gates rather than checking the tree, and asserts "
@@ -253,6 +256,10 @@ NOT_GATES = {
     "tests/empty-corpus.py": "the vacuity harness; it runs every gate against an "
                              "emptied corpus rather than checking the tree, and "
                              "asserts its own probe floor and exemptions",
+    "tests/reverify-tests.sh": "the unit-test re-verification harness; it reverts a "
+                               "gate behaviour and requires the suite to name it, "
+                               "asserts the tree is green before and after, and "
+                               "carries its own probe floor",
 }
 
 
@@ -607,31 +614,186 @@ def run_gate(gate: str, cwd: pathlib.Path) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=GATE_TIMEOUT)
 
 
-def check_vacuity() -> list[str]:
-    """The suite cannot shrink quietly, and no exemption may match nothing."""
-    problems = []
-    present = set(gate_files())
+def caller_files(root: pathlib.Path) -> list[pathlib.Path]:
+    """The files that decide what runs: the Taskfile and every workflow."""
+    return [p for p in (root / "Taskfile.yaml",
+                        *sorted((root / ".github" / "workflows").glob("*.y*ml")))
+            if p.is_file()]
 
-    for name, reason in sorted(NOT_GATES.items()):
+
+def _task_commands(task) -> list[str]:
+    """The command strings one Taskfile task executes.
+
+    `{task: other}` is not one: it names another task, whose own commands are
+    read when that task is walked. `{cmd: ...}` and `{defer: ...}` are.
+    """
+    if isinstance(task, str):
+        return [task]
+    if isinstance(task, list):
+        entries = task
+    elif isinstance(task, dict):
+        entries = task.get("cmds") or []
+    else:
+        return []
+    out = []
+    for entry in entries:
+        if isinstance(entry, str):
+            out.append(entry)
+        elif isinstance(entry, dict):
+            for key in ("cmd", "defer"):
+                if isinstance(entry.get(key), str):
+                    out.append(entry[key])
+    return out
+
+
+def caller_commands(root: pathlib.Path) -> tuple[list[str], list[str]]:
+    """(every command the callers execute, callers that would not parse).
+
+    Taken from the parsed documents at the positions a runner reads a command
+    from — a task's `cmds:` entries, a workflow step's `run:` script. Every
+    other string in either file is prose as far as this reader is concerned,
+    and a comment is not in the parse at all.
+
+    `status:` and `preconditions:` hold commands too and are deliberately
+    absent. They decide whether a task's work runs; a harness reached only
+    through one of them asserts nothing about the tree.
+
+    A caller that will not parse is returned as its own fact rather than as a
+    caller with no commands in it. Those are the same value to `any()` and
+    different facts to a reader: one says nothing runs the harness, the other
+    says this file could not be asked.
+    """
+    import yaml
+
+    commands: list[str] = []
+    unreadable: list[str] = []
+    for path in caller_files(root):
+        try:
+            doc = yaml.safe_load(path.read_text())
+        except yaml.YAMLError as exc:
+            detail = str(exc).strip().splitlines()
+            unreadable.append(f"{path.relative_to(root)}: "
+                              f"{detail[0] if detail else exc.__class__.__name__}")
+            continue
+        if not isinstance(doc, dict):
+            continue
+        tasks = doc.get("tasks")
+        if isinstance(tasks, dict):
+            for task in tasks.values():
+                commands += _task_commands(task)
+        jobs = doc.get("jobs")
+        if isinstance(jobs, dict):
+            for job in jobs.values():
+                if not isinstance(job, dict):
+                    continue
+                for step in job.get("steps") or []:
+                    if isinstance(step, dict) and isinstance(step.get("run"), str):
+                        commands.append(step["run"])
+    return commands, unreadable
+
+
+def command_words(command: str) -> list[str]:
+    """The words `command` would execute, shell comments and quoting resolved.
+
+    A second parse, for the reason the first one happened: inside a `run: |`
+    block the runner is a shell, and a `#` comment there is prose exactly as a
+    YAML comment is. Quoting is read too, so a path inside a quoted string is a
+    word of that string rather than a word of the command.
+    """
+    import shlex
+
+    text = blank_comments(command)
+    try:
+        return shlex.split(text)
+    except ValueError:
+        # An unbalanced quote leaves no argv to read. Splitting on whitespace is
+        # a weaker view — it cannot tell a word from part of a quoted string —
+        # and it is named as weaker here rather than handed back as the same
+        # answer.
+        return text.split()
+
+
+def invoked_anywhere(rel: str, root: pathlib.Path = ROOT) -> bool:
+    """Whether a command the task runner or a workflow executes runs `scripts/<rel>`.
+
+    Asked of the commands, not of the files. The callers are parsed, the
+    commands are taken from the positions a runner takes them from, and each
+    command is split into the words it would execute. A comment naming the
+    path, a `desc:` describing it and a quoted mention inside a command reach
+    none of those — which is the point, because this rule exists to reject a
+    harness nothing runs and text naming a harness is the cheapest way to look
+    like running one.
+
+    Two limits, both toward reporting a harness as UN-invoked. A path assembled
+    at run time from a variable is not resolved, so a caller that built one
+    fails here. And a word this finds is not proved to be the command's
+    executable — an unquoted `echo scripts/x.sh` counts — so what it separates
+    is prose from command text, not one word of a command from another.
+    """
+    wanted = {f"scripts/{rel}", f"./scripts/{rel}"}
+    commands, _unreadable = caller_commands(root)
+    return any(word in wanted for command in commands for word in command_words(command))
+
+
+def vacuity_problems(present: set[str], controls, network, not_gates,
+                     invoked=None) -> list[str]:
+    """The list rules, over lists supplied rather than read off the tree.
+
+    Separated from check_vacuity so each rule can be planted against: every one
+    is a statement about which name appears on which list, and supplying the
+    lists is how a violation is introduced without editing the repository the
+    rest of this file is running inside.
+    """
+    invoked = invoked_anywhere if invoked is None else invoked
+    problems = []
+
+    for name, reason in sorted(not_gates.items()):
         if name not in present:
             problems.append(
                 f"{name} is exempted as a harness rather than a gate, but no such "
                 f"executable exists under scripts/ — the exemption outlived its file. "
                 f"(recorded: {reason})")
+            continue
+        # A harness excuses itself by asserting its own outcome on every ordinary
+        # invocation, which is a claim about a thing that gets invoked. One
+        # nothing runs makes the exemption an excuse for an executable that never
+        # executes, and its recorded reason is free text nothing else checks.
+        if not invoked(name):
+            problems.append(
+                f"{name} is exempted as a harness that asserts its own outcome, but "
+                f"neither Taskfile.yaml nor a workflow under .github/workflows/ runs "
+                f"it. A harness nothing invokes asserts nothing. (recorded: {reason})")
 
     for gate in sorted(present):
-        if gate in NOT_GATES:
+        if gate in not_gates:
             continue
-        if gate not in CONTROLS and gate not in NEEDS_NETWORK:
+        if gate not in controls and gate not in network:
             problems.append(
                 f"{gate} ships no positive control and is on no exemption list. A gate "
                 f"nobody has shown to fail is an untested assertion about the tree.")
 
-    for gate in sorted(set(CONTROLS) | set(NEEDS_NETWORK)):
+    for gate in sorted(set(controls) | set(network)):
         if gate not in present:
             problems.append(
                 f"{gate} is named by a control or an exemption but no longer exists in "
                 f"scripts/ — the reference outlived the gate.")
+    return problems
+
+
+def check_vacuity() -> list[str]:
+    """The suite cannot shrink quietly, and no exemption may match nothing."""
+    present = set(gate_files())
+    problems = vacuity_problems(present, CONTROLS, NEEDS_NETWORK, NOT_GATES)
+
+    # The harness-invocation rule reads what the callers run. A caller that will
+    # not parse runs nothing as far as that rule can tell, and every harness in
+    # it then reads as one nobody invokes — which points the reader at the
+    # exemption list instead of at the one file to fix.
+    for unreadable in caller_commands(ROOT)[1]:
+        problems.append(
+            f"{unreadable} — this file decides what runs, and it could not be "
+            f"parsed. The harness-invocation rule examined nothing in it, which "
+            f"is not the same as it invoking nothing.")
 
     for gate, call in sorted(NEEDS_NETWORK_PY.items()):
         p = SCRIPTS / gate
@@ -780,6 +942,41 @@ def self_test() -> int:
         ok = got is want
         print(f"  {'ok  ' if ok else 'FAIL'}  {name}: "
               f"{'found' if got else 'absent'}")
+        bad += 0 if ok else 1
+    print()
+
+    # check_vacuity's own verdicts, which decide this file's exit code and which
+    # nothing else reaches. Each is a rule about a LIST \u2014 a gate on no list, an
+    # exemption naming a file that is gone, a harness nothing runs \u2014 so each is
+    # planted by supplying the lists rather than by editing the tree.
+    #
+    # This is the shape one level down from the one the harness-invocation rule
+    # was added to reject: a branch that is correct and asserted by nobody. The
+    # NOT_GATES reason for this file says its self-test runs on every invocation,
+    # and until these cases existed that sentence covered everything except the
+    # branch it was written beside.
+    print("\u2500\u2500 Vacuity-rule self-test \u2500\u2500")
+    vacuity_cases: list[tuple[str, set[str], set[str], dict, dict, str | None]] = [
+        ("a gate on no list at all",
+         {"check-x.py"}, set(), {}, {}, "ships no positive control"),
+        ("a control naming a gate that is gone",
+         set(), {"check-x.py"}, {}, {}, "the reference outlived the gate"),
+        ("an exemption naming a harness that is gone",
+         set(), set(), {}, {"tests/gone.py": "a reason"},
+         "the exemption outlived its file"),
+        ("a harness nothing invokes",
+         {"tests/gone.py"}, set(), {}, {"tests/gone.py": "a reason"},
+         "A harness nothing invokes asserts nothing"),
+        ("a gate covered by a control",
+         {"check-x.py"}, {"check-x.py"}, {}, {}, None),
+    ]
+    for name, present_, controls_, network_, not_gates_, expect_ in vacuity_cases:
+        found = vacuity_problems(present_, controls_, network_, not_gates_,
+                                 invoked=lambda _name: False)
+        shown = " ".join(found)
+        ok = (not found) if expect_ is None else any(expect_ in p for p in found)
+        print(f"  {'ok  ' if ok else 'FAIL'}  {name}: "
+              f"{(shown[:70] + chr(8230)) if shown else 'accepted'}")
         bad += 0 if ok else 1
     print()
 

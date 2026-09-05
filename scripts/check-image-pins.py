@@ -602,6 +602,37 @@ MUTABLE_REMEDIATION = (
 )
 
 
+def verdict(images: dict[str, set[str]], allowed: dict[str, str]) -> list[str]:
+    """Every image-pin problem, over an inventory and an exemption list.
+
+    Two directions, and the second is the one that rots. A mutable reference with
+    no exemption is the defect the gate exists for. An exemption the fleet no
+    longer renders mutably is a description that outlived its reason, and an
+    exemption list nobody re-checks only ever widens.
+    """
+    failures = []
+    mutable_seen: set[str] = set()
+
+    for ref in sorted(images):
+        if classify(ref) != "mutable":
+            continue
+        bare = bare_name(ref)
+        mutable_seen.add(bare)
+        if bare in allowed:
+            continue
+        failures.append(
+            f"{ref} (via {', '.join(sorted(images[ref]))}) resolves to a moving "
+            f"target. {MUTABLE_REMEDIATION}")
+
+    for bare, reason in sorted(allowed.items()):
+        if bare not in mutable_seen:
+            failures.append(
+                f"{bare} is on the mutable-tag exemption list but the fleet no longer "
+                f"renders it mutably — the exemption outlived its reason. Delete it. "
+                f"(recorded: {reason[:100]})")
+    return failures
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--list", action="store_true", help="print the image inventory")
@@ -630,26 +661,7 @@ def main() -> int:
         return 2
 
     failures = chart_coverage(images, render_addons.discover(), seen)
-    mutable_seen: set[str] = set()
-
-    for ref in sorted(images):
-        if classify(ref) != "mutable":
-            continue
-        name = ref.rsplit("/", 1)[-1]
-        bare = ref.rsplit(":", 1)[0] if ":" in name else ref
-        mutable_seen.add(bare)
-        if bare in ALLOWED_MUTABLE:
-            continue
-        failures.append(
-            f"{ref} (via {', '.join(sorted(images[ref]))}) resolves to a moving "
-            f"target. {MUTABLE_REMEDIATION}")
-
-    for bare, reason in sorted(ALLOWED_MUTABLE.items()):
-        if bare not in mutable_seen:
-            failures.append(
-                f"{bare} is on the mutable-tag exemption list but the fleet no longer "
-                f"renders it mutably — the exemption outlived its reason. Delete it. "
-                f"(recorded: {reason[:100]})")
+    failures += verdict(images, ALLOWED_MUTABLE)
 
     # A reference the classifier cannot place is a verdict this gate owes and has
     # not given: the chart rendered, the string is image-shaped, and whether

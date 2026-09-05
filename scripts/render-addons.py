@@ -239,14 +239,25 @@ _NOT_FOUND = (
 )
 
 
+def registry_answered(err: str) -> bool:
+    """Whether helm's complaint says the registry replied and refused the pin.
+
+    Separate from the exit path so the two worlds can be told apart without
+    running helm. A message naming both a missing chart and a broken connection
+    is the second: an unreachable registry cannot testify about what it holds.
+    """
+    low = err.lower()
+    return (any(t in low for t in _NOT_FOUND)
+            and not any(t in low for t in _UNREACHABLE))
+
+
 def helm_or_exit(cmd: list[str], what: str) -> subprocess.CompletedProcess:
     """Run a helm command; on failure exit with the RIGHT kind of complaint."""
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=NETWORK_TIMEOUT)
     if proc.returncode == 0:
         return proc
     err = ((proc.stderr or "") + (proc.stdout or "")).strip()
-    low = err.lower()
-    if any(t in low for t in _NOT_FOUND) and not any(t in low for t in _UNREACHABLE):
+    if registry_answered(err):
         print(f"{what}: the registry answered and the pinned chart is not there.")
         print(err)
         print("This is a pin that does not resolve — a finding about this repo.")
