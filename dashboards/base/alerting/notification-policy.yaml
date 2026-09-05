@@ -1,0 +1,53 @@
+# The routing tree every alert rule under this directory is written against.
+#
+# A rule labels itself with the urgency it is asking for. Grafana matches those
+# labels against this tree and delivers to the receiver the matching route
+# names; with no tree the workspace default applies, and the workspace default
+# contact point is empty. A `severity: page` label with no route is a promise
+# that a human is woken, kept by nobody, in the one moment it matters.
+#
+# The root receiver is the low-urgency one rather than a dedicated fallback. An
+# alert whose severity matches no route is a rule this tree has not been taught
+# about, and the two answers to that are "deliver it somewhere a person reads"
+# and "drop it silently". scripts/check-alert-severity-routes.py makes the case
+# impossible to arrive at unnoticed; this makes it survivable if it does.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaNotificationPolicy
+metadata:
+  name: platform-severity-routes
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: external
+  route:
+    receiver: platform-ticket
+    # Grouped by the system rather than by the rule, so a fleet-wide failure
+    # raising six rules against one service is one notification and not six.
+    group_by:
+      - alertname
+      - service
+      - component
+    routes:
+      # Wakes a human. Repeated hourly while firing, because an unanswered page
+      # is the failure this whole tree exists to prevent.
+      - receiver: platform-page
+        matchers:
+          - name: severity
+            value: page
+            isEqual: true
+            isRegex: false
+        group_wait: 30s
+        group_interval: 5m
+        repeat_interval: 1h
+      # Read in working hours. Grouped and repeated slowly on purpose: a ticket
+      # that re-notifies like a page teaches people to mute the channel both
+      # arrive in.
+      - receiver: platform-ticket
+        matchers:
+          - name: severity
+            value: ticket
+            isEqual: true
+            isRegex: false
+        group_wait: 5m
+        group_interval: 30m
+        repeat_interval: 12h

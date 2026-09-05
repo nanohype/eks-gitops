@@ -1,0 +1,60 @@
+# Where a firing alert is delivered. One contact point per urgency, because the
+# urgency is what the rules label themselves with and a route can only send to a
+# receiver that exists.
+#
+# The integration credentials are never written here. Each receiver takes its
+# secret through valuesFrom, from the Secret alert-destinations.yaml
+# materialises — so the value lives in Secrets Manager and this file names the
+# key rather than carrying it.
+#
+# Neither is marked optional. An optional missing secret produces a contact
+# point with no integration key: Grafana accepts it, the route resolves, and
+# nothing is delivered — which is indistinguishable from a working destination
+# by every signal except an incident nobody answered. Required, the contact
+# point reports NotReady and says so.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaContactPoint
+metadata:
+  name: platform-page
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: external
+  name: platform-page
+  receivers:
+    - uid: platform-page-pagerduty
+      type: pagerduty
+      settings:
+        severity: critical
+        # The alert's own labels, so the incident names the system it is about
+        # rather than only the rule that fired.
+        class: '{{ .CommonLabels.service }}'
+        component: '{{ .CommonLabels.component }}'
+      valuesFrom:
+        - targetPath: integrationKey
+          valueFrom:
+            secretKeyRef:
+              name: alert-destinations
+              key: PAGERDUTY_INTEGRATION_KEY
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaContactPoint
+metadata:
+  name: platform-ticket
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: external
+  name: platform-ticket
+  receivers:
+    - uid: platform-ticket-slack
+      type: slack
+      settings:
+        title: '{{ .CommonLabels.alertname }} — {{ .CommonLabels.service }}'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ "\n" }}{{ end }}'
+      valuesFrom:
+        - targetPath: url
+          valueFrom:
+            secretKeyRef:
+              name: alert-destinations
+              key: SLACK_WEBHOOK_URL

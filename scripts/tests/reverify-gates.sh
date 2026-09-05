@@ -156,6 +156,7 @@ run 0 "image-pins: a helm reporting OCI pulls on stdout" \
   ./scripts/check-image-pins.py
 run 0 "check-renovate-coverage.py" ./scripts/check-renovate-coverage.py
 run 0 "check-ai-config.py" ./scripts/check-ai-config.py
+run 0 "check-alert-severity-routes.py" ./scripts/check-alert-severity-routes.py
 run 0 "check-env-coverage.py" ./scripts/check-env-coverage.py
 run 0 "check-named-things.py" ./scripts/check-named-things.py
 run 0 "check-policy-validity.py" ./scripts/check-policy-validity.py
@@ -352,6 +353,56 @@ PY
 run nonzero "ai-config: global. geo prefix" ./scripts/check-ai-config.py
 res $F
 
+# A rule labelled to page is asking for a human to be woken, and Grafana keeps
+# that promise by matching the label against a route. Relabelled to a severity
+# the tree does not route, the rule still parses, still evaluates and still
+# changes state in the alert list — and falls to the root receiver instead of
+# the destination it asked for. The rule and the policy never name each other,
+# so nothing else in this tree can see it.
+F=dashboards/base/alerting/agent-operator.yaml; mut $F
+python3 - "$F" <<'PY'
+import pathlib,sys
+p=pathlib.Path(sys.argv[1]); s=p.read_text()
+m=s.replace("        severity: page\n", "        severity: urgent\n", 1)
+assert m!=s, "mutation did not land"
+p.write_text(m)
+print("   relabelled one rule severity: page -> urgent")
+PY
+run nonzero "alert-severity-routes: a severity the tree does not route" \
+  ./scripts/check-alert-severity-routes.py
+res $F
+
+# The other direction, and the one that rots: a destination nothing reaches.
+F=dashboards/base/alerting/notification-policy.yaml; mut $F
+python3 - "$F" <<'PY'
+import pathlib,sys
+p=pathlib.Path(sys.argv[1]); s=p.read_text()
+m=s.replace("      - receiver: platform-page\n", "      - receiver: platform-paige\n", 1)
+assert m!=s, "mutation did not land"
+p.write_text(m)
+print("   misspelled the receiver one route delivers to")
+PY
+run nonzero "alert-severity-routes: a route to a contact point nobody declares" \
+  ./scripts/check-alert-severity-routes.py
+res $F
+
+# The routing tree stops being delivered without moving, being edited, or
+# failing to render. Every earlier check here still passes on this tree: the
+# rules are labelled, the routes match, the contact points are declared. What a
+# cluster receives is the rule groups and nothing to match them against.
+F=dashboards/base/kustomization.yaml; mut $F
+python3 - "$F" <<'PYX'
+import pathlib,sys
+p=pathlib.Path(sys.argv[1]); s=p.read_text()
+m=s.replace("  - alerting/notification-policy.yaml\n", "", 1)
+assert m!=s, "mutation did not land"
+p.write_text(m)
+print("   dropped the notification policy from the kustomization's resources")
+PYX
+run nonzero "alert-severity-routes: the routing tree stops shipping" \
+  ./scripts/check-alert-severity-routes.py
+res $F
+
 F=addons/bootstrap/cert-manager/values-hub.yaml; mut $F; rm -f $F
 run nonzero "env-coverage: deleted hub delta" ./scripts/check-env-coverage.py
 res $F
@@ -464,7 +515,7 @@ echo "RESULT pass=$pass fail=$fail"
 # The harness owes the same assertion it demands of the gates: with every `run`
 # line deleted it would report pass=0 fail=0 and exit 0, which is a green run
 # over nothing checked.
-MIN_CHECKS=37
+MIN_CHECKS=41
 total=$((pass + fail))
 if [ "$total" -lt "$MIN_CHECKS" ]; then
   echo "FAIL  ran $total check(s), under the floor of $MIN_CHECKS — this harness"

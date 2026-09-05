@@ -86,6 +86,13 @@ spec:
                   path: /spec/dataFrom/0/extract/key
                   value: '{{ index .metadata.labels "cluster_name" }}-grafana-token'
             - target:
+                kind: ExternalSecret
+                name: alert-destinations
+              patch: |-
+                - op: replace
+                  path: /spec/dataFrom/0/extract/key
+                  value: '{{ index .metadata.labels "cluster_name" }}-alert-destinations'
+            - target:
                 kind: CronJob
                 name: grafana-token-rotator
               patch: |-

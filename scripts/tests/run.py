@@ -37,6 +37,7 @@ EXPECTED = (
     "test_kyverno_corpus",
     "test_named_things",
     "test_falco_rule_floor",
+    "test_alert_severity_routes",
     "test_gatelib",
     # The harness layer. controls.py excuses the harnesses from carrying a
     # positive control because each asserts its own outcome when it runs, and
@@ -135,7 +136,7 @@ MIN_TESTS = 31
 # largest in the tree, and among them are the gates on the paths testing-rubric
 # calls security-critical. So this figure being low is not offset by behavioural
 # coverage for precisely the files where that offset was being claimed.
-COMBINED_FLOOR = 40
+COMBINED_FLOOR = 42
 
 # A ceiling on gate scripts carrying NO unit coverage at all, complementing the
 # floors below. The floors stop a covered file regressing; nothing stopped a NEW
@@ -169,6 +170,7 @@ PER_GATE_FLOORS = {
     "scripts/render-addons.py": 40,
     "scripts/check-log-volume-budget.py": 58,
     "scripts/check-falco-rule-floor.py": 28,
+    "scripts/check-alert-severity-routes.py": 95,
     "scripts/check-image-vulnerabilities.py": 41,
     "scripts/check-image-pins.py": 88,
 }
