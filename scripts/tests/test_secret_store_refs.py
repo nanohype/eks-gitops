@@ -360,6 +360,42 @@ class TheOutputCarriesNothingItDidNotVerify(TheVerdict):
         self.assertEqual(rc, 1, out)
         self.assertNotIn(HOSTILE, out)
 
+    def test_every_suppression_carries_its_reason(self):
+        """A bare `# codeql[...]` is the thing that rots.
+
+        The suppression is legible as a decision only while the decision is next
+        to it. Stripped to the marker it becomes indistinguishable from somebody
+        silencing a finding they did not read, and there is no way to tell which
+        it was six months later.
+        """
+        source = (ROOT / "scripts" / "check-secret-store-refs.py").read_text()
+        lines = source.splitlines()
+        marked = [i for i, line in enumerate(lines) if "codeql[" in line]
+        self.assertTrue(marked, "the suppressions are gone; if the query stopped "
+                                "matching, delete this test with them")
+        REASON = "secret store is the thing that holds secrets"
+        self.assertIn(REASON, source,
+                      "no suppression in this file says what the scanner matched "
+                      "or why the match is wrong")
+        for i in marked:
+            with self.subTest(line=i + 1):
+                preceding = "\n".join(lines[max(0, i - 30):i])
+                self.assertTrue(
+                    REASON in preceding or "same reason as" in preceding,
+                    "this suppression neither carries the reason nor points at "
+                    "it — a marker on its own is indistinguishable from somebody "
+                    "silencing a finding they did not read")
+
+    def test_no_value_is_rebuilt_to_defeat_the_dataflow(self):
+        """The alternative to a suppression is contorting the code until the
+        analyser loses the trail — rebuilding a verified string character by
+        character out of a literal alphabet. A reader can disagree with a
+        suppression; they cannot see a defeated dataflow at all."""
+        source = (ROOT / "scripts" / "check-secret-store-refs.py").read_text()
+        self.assertNotIn("ALPHABET", source)
+        self.assertIn("return text if grammar.fullmatch(text) else UNPRINTABLE",
+                      source)
+
     def test_the_contract_is_never_parsed_for_a_message(self):
         """It was `json.dumps(have)`, which put arbitrary file content into the
         output. The file is compared as bytes now and no message reads from it:

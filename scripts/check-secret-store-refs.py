@@ -330,8 +330,32 @@ def main(argv: list[str] | None = None) -> int:
 
     if failures:
         print(f"{len(failures)} secret-store reference problem(s):\n")
+    # py/clear-text-logging-sensitive-data matches here on the NAMES of the
+    # files this gate reads — addons/bootstrap/secret-stores/ and
+    # contracts/secret-store.json — and treats a path containing "secret-store"
+    # as secret material. A secret store is the thing that holds secrets, not a
+    # secret: it is an address and a set of credentials-free provider settings,
+    # and the values printed below are a Kubernetes object name, a kind, a group
+    # version, a repository-relative path and a count. Every one read from a file
+    # has been through printable(), which returns it only on a fullmatch against
+    # the API server's own grammar and a fixed stand-in otherwise.
+    #
+    # This repository has now made the same distinction in two systems. The
+    # secrets block in .gitignore carries !*secret*-store*.yaml and
+    # !*secret*-store*.yml, and this file's contract added !*secret*-store*.json
+    # to it. Both are about a name rather than a content, and the pattern will
+    # recur in whatever tool comes third.
+    #
+    # Suppressed at the site rather than excluded in a CodeQL config: a config
+    # exclusion is a list that would silently cover every file added to scripts/
+    # afterwards, none of which chose it. This dies with the line it sits on.
+    #
+    # Not worked around in the code either. A verified string can be rebuilt
+    # character by character from a literal alphabet, which defeats the dataflow
+    # and explains nothing — a reader can disagree with a suppression, and cannot
+    # even see a defeated dataflow.
         for f in failures:
-            print(f"  {f}")
+            print(f"  {f}")  # codeql[py/clear-text-logging-sensitive-data]
         return 1
 
     want = build_contract(cluster_stores, versions)
@@ -364,7 +388,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     store = want["clusterSecretStore"]
-    print(f"✓ every secret-store reference resolves to the one store this "
+    # Same match, same reason as the failure path above.
+    print(f"✓ every secret-store reference resolves to the one store this "  # codeql[py/clear-text-logging-sensitive-data]
           f"catalog declares: {printable(store['kind'], KIND)}/"
           f"{printable(store['name'])} "
           f"({printable(store['apiVersion'], GROUP_VERSION)}), named by "
