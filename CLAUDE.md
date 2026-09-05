@@ -105,6 +105,7 @@ task validate:fork-safety          # No hardcoded catalog repoURL in applied App
 task validate:log-volume-budget    # Loki declares the fraction at which it stops ingesting, and the alert leads it
 task validate:falco-rule-floor     # Every Falco rule set installed on a node is one Falco actually loads
 task validate:empty-corpus         # No gate reports success over a corpus that is not there
+task validate:image-vulnerabilities # Every fixed CRITICAL in a rendered image is acknowledged (not in `task validate` — see below)
 ```
 
 ### Local `task validate` is a subset of CI
@@ -112,7 +113,8 @@ task validate:empty-corpus         # No gate reports success over a corpus that 
 `task validate` runs the structural gates (lint, kustomize build, helm-render,
 ApplicationSet schema, sync-wave ordering, appset render, policy-admission,
 dashboards, fork-safety). CI runs those plus several gates that have **no local
-`task` target**, so a clean `task validate` is necessary but not sufficient:
+`task` target**, and one that has a target but is deliberately outside the
+aggregate, so a clean `task validate` is necessary but not sufficient:
 
 - **Zero-placeholder gate** — `scripts/no-placeholders.sh` (CI job `placeholders`)
 - **Renovate config schema + manager-default drift** —
@@ -164,6 +166,14 @@ dashboards, fork-safety). CI runs those plus several gates that have **no local
   `scripts/check-catalog-revision.py` (CI job `catalog-revision`)
 - **Alert coverage** — `scripts/check-alert-coverage.py`, which runs inside the
   `dashboards` job alongside the locally-available dashboard and Athena gates
+- **Image vulnerabilities** — `scripts/check-image-vulnerabilities.py` (CI job
+  `image-vulnerabilities`). The one with a target of its own,
+  `task validate:image-vulnerabilities`, kept out of the aggregate because it
+  pulls every image the pinned charts render. Blocking on a CRITICAL
+  with a published fix that `image-advisories.yaml` does not acknowledge; HIGH is
+  counted and printed. Every run scans a digest-pinned end-of-life image first
+  and requires its known CRITICALs back, so a clean result is a result rather
+  than a scanner with no database
 - **Render → render-assert → kubeconform → `trivy config`** (CI job `validate`);
   locally this is `task render` then `task scan`, not part of `task validate`
 

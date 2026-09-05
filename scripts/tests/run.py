@@ -52,6 +52,12 @@ EXPECTED = (
     "test_render_addons",
     "test_image_pins",
     "test_log_volume_budget",
+    # The image population both image gates read, and the acknowledgement file
+    # the vulnerability verdict is decided against. One walk answers every
+    # question either gate asks, so an extractor that stops seeing a shape
+    # removes those images from all of them at once.
+    "test_image_extraction",
+    "test_image_vulnerabilities",
     # The floors that keep an emptied corpus from reading as a clean one,
     # asserted apart from the gates that carry them.
     "test_corpus_floors",
@@ -116,7 +122,20 @@ MIN_TESTS = 31
 # two differ enough to matter, so the name here says combined and the printed
 # line says so too. Calling a combined figure "line coverage" would be a
 # measurement mislabelled as the one the rubric asks about.
-COMBINED_FLOOR = 37
+#
+# What the number does NOT capture: scripts/tests/controls.py runs most gates end
+# to end as a subprocess against a mutated tree, so those gates have behavioural
+# coverage this line count cannot see. Neither figure substitutes for the other —
+# the controls prove a gate rejects, the unit tests prove it computes the right
+# answer on a case the real tree does not contain.
+#
+# MOST, and the exceptions are the ones that matter to this floor. controls.py
+# exempts every gate that reaches a chart registry or an API, and its own run
+# prints the split. Those gates have neither kind of coverage, they are the
+# largest in the tree, and among them are the gates on the paths testing-rubric
+# calls security-critical. So this figure being low is not offset by behavioural
+# coverage for precisely the files where that offset was being claimed.
+COMBINED_FLOOR = 40
 
 # A ceiling on gate scripts carrying NO unit coverage at all, complementing the
 # floors below. The floors stop a covered file regressing; nothing stopped a NEW
@@ -124,6 +143,16 @@ COMBINED_FLOOR = 37
 #
 # Ratchets downward only. Adding a gate without tests fails here rather than
 # diluting the combined figure by a percentage point nobody notices.
+#
+# Two of the files this counts as covered are covered by IMPORT, not by tests.
+# check-image-vulnerabilities.py loads check-image-pins.py by path so the two
+# cannot disagree about what the fleet is, and that loads render-addons.py in
+# turn; a test module importing the first executes the module bodies of all
+# three. Coverage cannot tell that from a test, so both read as non-zero while
+# carrying no assertions of their own. The ceiling is lowered anyway, because a
+# ratchet that declines to move is one nobody can regress against — but it is
+# the weaker half of this file's claim, and the per-gate floors and the controls
+# in scripts/tests/controls.py are where the real one lives.
 MAX_UNCOVERED_GATES = 11
 
 PER_GATE_FLOORS = {
@@ -138,9 +167,10 @@ PER_GATE_FLOORS = {
     "scripts/check-platform-crs.py": 51,
     "scripts/validate-dashboards.py": 49,
     "scripts/render-addons.py": 40,
-    "scripts/check-image-pins.py": 38,
     "scripts/check-log-volume-budget.py": 58,
     "scripts/check-falco-rule-floor.py": 28,
+    "scripts/check-image-vulnerabilities.py": 41,
+    "scripts/check-image-pins.py": 88,
 }
 
 

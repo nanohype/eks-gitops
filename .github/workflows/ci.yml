@@ -542,12 +542,76 @@ jobs:
 
       - name: Render every addon across every environment
         run: ./scripts/render-addons.py
-      # Tag immutability is a fact about the commit under test, so it blocks.
-      # Whether a CVE landed in one of these images overnight is not, and that
-      # half stays scheduled — blocking a merge on the world changing is how a
-      # gate teaches people to route around it.
+      # Tag immutability is a fact about the commit under test, so it blocks
+      # here. What the image CONTAINS is a separate question with a separate
+      # job — image-vulnerabilities — because it has to pull every image and is
+      # slow enough to be worth running in parallel with this one.
       - name: Every rendered image carries an immutable reference
         run: ./scripts/check-image-pins.py
+
+  # ── Image vulnerability gate ─────────────────────────────────────────
+  # Whoever moves a chart pin owns what the image behind it carries, and this
+  # repo pins independently of any cluster. trivy-operator reports the same
+  # findings at runtime, but to an operator who cannot change the pin without a
+  # pull request here — so the decision belongs at the pin, which is this job.
+  #
+  # Blocking on a CRITICAL with a published fix that image-advisories.yaml does
+  # not acknowledge. A new advisory can therefore turn a pull request red for a
+  # reason the pull request did not cause; that is deliberate and the advisory
+  # file is the release valve, because the alternative is a scan whose findings
+  # nobody has to answer. HIGH is counted and printed, not gated.
+  #
+  # The run scans a digest-pinned end-of-life image first and requires its known
+  # CRITICALs back. A scanner with no database returns a clean result for every
+  # image, which is indistinguishable from a healthy fleet by exit code — so
+  # without the canary a green run here would prove nothing at all.
+  image-vulnerabilities:
+    name: Rendered images carry no unacknowledged CRITICAL
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - name: Install Python dependencies
+        run: pip install --require-hashes -r requirements.txt
+
+      # Same guard the validate job carries: setup-trivy reads an empty version
+      # as "install the latest release", so an expansion failure would scan with
+      # an unpinned trivy and pass.
+      - name: Assert the pinned trivy version resolved
+        run: |
+          if [ -z "${{ env.TRIVY_VERSION }}" ]; then
+            echo "TRIVY_VERSION expanded empty. setup-trivy reads that as 'latest',"
+            echo "so this job would scan with an unpinned trivy and pass. Restore"
+            echo "the TRIVY_VERSION key in this workflow's env block."
+            exit 1
+          fi
+
+      - name: Install trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          cache: true
+          version: ${{ env.TRIVY_VERSION }} # zizmor: ignore[unpinned-tools]
+
+      - name: Cache Helm charts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.cache/helm
+          key: helm-charts-${{ hashFiles('applicationsets/*.yaml') }}
+          restore-keys: |
+            helm-charts-
+
+      - name: Every fixed CRITICAL is acknowledged
+        run: ./scripts/check-image-vulnerabilities.py
 
   # ── Policy-admission gate ────────────────────────────────────────────
   # The best-practice / pod-security policies run in Enforce mode on staging and
@@ -903,6 +967,7 @@ jobs:
         kyverno,
         fork-safety,
         helm-render,
+        image-vulnerabilities,
         policy-admission,
         appsets,
         appset-render,
@@ -934,6 +999,7 @@ jobs:
               'Kyverno policy tests (+ verify-images contract)': '${{ needs.kyverno.result }}',
               'Fork-safety gate (no hardcoded org, blocking)': '${{ needs.fork-safety.result }}',
               'Helm-render (every addon × every env)': '${{ needs.helm-render.result }}',
+              'Rendered images carry no unacknowledged CRITICAL': '${{ needs.image-vulnerabilities.result }}',
               'Policy-admission (Enforce-tier Kyverno vs the fleet)': '${{ needs.policy-admission.result }}',
               'ApplicationSet schema + sync waves': '${{ needs.appsets.result }}',
               'Appset render (Karpenter subnet selector)': '${{ needs.appset-render.result }}',
@@ -989,6 +1055,7 @@ jobs:
         kyverno,
         fork-safety,
         helm-render,
+        image-vulnerabilities,
         policy-admission,
         appsets,
         appset-render,

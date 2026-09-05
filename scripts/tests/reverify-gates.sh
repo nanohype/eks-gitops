@@ -131,6 +131,29 @@ run 0 "task validate" task validate
 run 0 "controls floor" ./scripts/tests/controls.py
 run 0 "check-workflows.sh (zizmor)" ./scripts/check-workflows.sh
 run 0 "check-image-pins.py" ./scripts/check-image-pins.py
+
+# The same tree under the other helm stream shape. Some helm builds write the
+# OCI pull report to stdout, where it lands in the manifest stream the gate
+# parses and every OCI-sourced chart puts its own coordinates there; some write
+# it to stderr, where nothing sees it. A gate reading one only is green on the
+# machine that renders and red in the job that installs the other build, with
+# nothing in the tree different — which is not a verdict about the tree.
+#
+# Reproduced rather than described: a shim runs the real helm and folds stderr
+# into stdout, with a cold OCI cache, because helm reports nothing on a hit.
+mkdir -p "$SP/oldhelm"
+REAL_HELM="$(command -v helm)"
+cat > "$SP/oldhelm/helm" <<SHIM
+#!/usr/bin/env bash
+exec "$REAL_HELM" "\$@" 2>&1
+SHIM
+chmod +x "$SP/oldhelm/helm"
+run 0 "image-pins: a helm reporting OCI pulls on stdout" \
+  env "PATH=$SP/oldhelm:$PATH" \
+      "HELM_CACHE_HOME=$SP/oldhelm/cache" \
+      "HELM_CONFIG_HOME=$SP/oldhelm/config" \
+      "HELM_DATA_HOME=$SP/oldhelm/data" \
+  ./scripts/check-image-pins.py
 run 0 "check-renovate-coverage.py" ./scripts/check-renovate-coverage.py
 run 0 "check-ai-config.py" ./scripts/check-ai-config.py
 run 0 "check-env-coverage.py" ./scripts/check-env-coverage.py
@@ -162,6 +185,40 @@ assert m!=s and "tag: v1.18.2" not in m, "mutation did not land"
 p.write_text(m)
 PY
 run nonzero "image-pins: unpinned readiness-checker" ./scripts/check-image-pins.py
+res $F
+
+# What the gate cannot read is not therefore absent, and the two ways it can
+# fail to read are two verdicts. A reference the classifier cannot place is a
+# chart that rendered and a question this gate owes an answer to; a chart that
+# did not render leaves the fleet's image set unknown.
+#
+# The digest form is the one the gate's own remediation recommends. Written with
+# no tag it matched neither tag alternative, so the whole reference yielded only
+# its `sha256:<hex>` tail — a single-segment shape a declaration by that name
+# passed over.
+F=addons/networking/external-dns/values.yaml; mut $F
+python3 - "$F" <<'PY'
+import pathlib,sys
+p=pathlib.Path(sys.argv[1]); s=p.read_text()
+a="podAnnotations:\n"
+assert a in s, "podAnnotations anchor not found"
+ref="ghcr.io/example/probe-worker@sha256:" + "9f8e" + "a"*60
+m=s.replace(a, a + f'  probe/image: "{ref}"\n', 1)
+assert m!=s, "mutation did not land"
+p.write_text(m)
+print(f"   planted {ref[:52]}...")
+PY
+run nonzero "image-pins: a digest-only reference nothing declares" ./scripts/check-image-pins.py
+res $F
+
+# A chart that contributes no images and is DECLARED to contribute none, so the
+# per-chart floor passes over it and the unrendered verdict is what is being
+# read. Any other chart would be caught by the floor first, which would score
+# this probe green for a reason it did not plant.
+F=addons/ai-platform/envoy-ai-gateway-crds/values.yaml; mut $F
+printf '\nbroken: [unclosed\n' >> $F
+echo "   planted unparseable values for a chart declared imageless"
+run nonzero "image-pins: a chart that did not render cannot report a clean fleet" ./scripts/check-image-pins.py
 res $F
 
 F=applicationsets/addons-agent-operator.yaml; mut $F
@@ -389,7 +446,7 @@ echo "RESULT pass=$pass fail=$fail"
 # The harness owes the same assertion it demands of the gates: with every `run`
 # line deleted it would report pass=0 fail=0 and exit 0, which is a green run
 # over nothing checked.
-MIN_CHECKS=32
+MIN_CHECKS=35
 total=$((pass + fail))
 if [ "$total" -lt "$MIN_CHECKS" ]; then
   echo "FAIL  ran $total check(s), under the floor of $MIN_CHECKS — this harness"
