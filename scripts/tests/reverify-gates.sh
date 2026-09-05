@@ -156,6 +156,7 @@ run 0 "image-pins: a helm reporting OCI pulls on stdout" \
   ./scripts/check-image-pins.py
 run 0 "check-renovate-coverage.py" ./scripts/check-renovate-coverage.py
 run 0 "check-ai-config.py" ./scripts/check-ai-config.py
+run 0 "check-alert-severity-routes.py" ./scripts/check-alert-severity-routes.py
 run 0 "check-env-coverage.py" ./scripts/check-env-coverage.py
 run 0 "check-named-things.py" ./scripts/check-named-things.py
 run 0 "check-policy-validity.py" ./scripts/check-policy-validity.py
@@ -351,6 +352,39 @@ PY
 run nonzero "ai-config: global. geo prefix" ./scripts/check-ai-config.py
 res $F
 
+# A rule labelled to page is asking for a human to be woken, and Grafana keeps
+# that promise by matching the label against a route. Relabelled to a severity
+# the tree does not route, the rule still parses, still evaluates and still
+# changes state in the alert list — and falls to the root receiver instead of
+# the destination it asked for. The rule and the policy never name each other,
+# so nothing else in this tree can see it.
+F=dashboards/base/alerting/agent-operator.yaml; mut $F
+python3 - "$F" <<'PY'
+import pathlib,sys
+p=pathlib.Path(sys.argv[1]); s=p.read_text()
+m=s.replace("        severity: page\n", "        severity: urgent\n", 1)
+assert m!=s, "mutation did not land"
+p.write_text(m)
+print("   relabelled one rule severity: page -> urgent")
+PY
+run nonzero "alert-severity-routes: a severity the tree does not route" \
+  ./scripts/check-alert-severity-routes.py
+res $F
+
+# The other direction, and the one that rots: a destination nothing reaches.
+F=dashboards/base/alerting/notification-policy.yaml; mut $F
+python3 - "$F" <<'PY'
+import pathlib,sys
+p=pathlib.Path(sys.argv[1]); s=p.read_text()
+m=s.replace("      - receiver: platform-page\n", "      - receiver: platform-paige\n", 1)
+assert m!=s, "mutation did not land"
+p.write_text(m)
+print("   misspelled the receiver one route delivers to")
+PY
+run nonzero "alert-severity-routes: a route to a contact point nobody declares" \
+  ./scripts/check-alert-severity-routes.py
+res $F
+
 F=addons/bootstrap/cert-manager/values-hub.yaml; mut $F; rm -f $F
 run nonzero "env-coverage: deleted hub delta" ./scripts/check-env-coverage.py
 res $F
@@ -446,7 +480,7 @@ echo "RESULT pass=$pass fail=$fail"
 # The harness owes the same assertion it demands of the gates: with every `run`
 # line deleted it would report pass=0 fail=0 and exit 0, which is a green run
 # over nothing checked.
-MIN_CHECKS=35
+MIN_CHECKS=38
 total=$((pass + fail))
 if [ "$total" -lt "$MIN_CHECKS" ]; then
   echo "FAIL  ran $total check(s), under the floor of $MIN_CHECKS — this harness"

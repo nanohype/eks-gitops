@@ -1,0 +1,35 @@
+# The credentials the alert destinations authenticate with, pulled from AWS
+# Secrets Manager through the same aws-secrets-manager ClusterSecretStore the
+# Grafana service-account token uses.
+#
+# The key committed here is a placeholder. The real secret is cluster-scoped —
+# `<cluster>-alert-destinations` — so co-located sibling clusters in one account
+# do not collide, and the dashboards ApplicationSet patches the name per cluster
+# from the cluster_name label, as it does for the Grafana token and the
+# monitoring endpoints.
+#
+# The secret itself is created and seeded by the landing-zone managed-monitoring
+# component, as `<cluster>-grafana-token` is — it is not hand-made here. Until it
+# carries a value the contact points reconcile with no integration key and
+# Grafana delivers nothing, which is the state this file exists to end rather
+# than one it introduces.
+#
+# extract, not a data list, for the reason monitoring-endpoints.yaml records:
+# the payload's field names are already the key names the contact points read,
+# so enumerating them here would restate the producer's shape and name one
+# cluster-scoped secret once per field.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: alert-destinations
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: aws-secrets-manager
+    kind: ClusterSecretStore
+  target:
+    name: alert-destinations
+    creationPolicy: Owner
+  dataFrom:
+    - extract:
+        key: eks-alert-destinations

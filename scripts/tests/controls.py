@@ -483,6 +483,21 @@ def m_alert_coverage(root):
                 marker='lastRunAt\\"} == 0')
 
 
+def m_alert_severity_routes(root):
+    """Relabel one rule with a severity the notification policy does not route.
+
+    The exact defect: the rule still parses, still evaluates, still changes
+    state in the Grafana alert list — and its label selects no route, so it
+    falls to the tree's root receiver instead of the destination it asked for.
+    Nothing else in the tree can see that, because the rule and the policy never
+    name each other.
+    """
+    return _sub(root, "dashboards/base/alerting/agent-operator.yaml",
+                "        severity: page\n",
+                f"        severity: {MARKER}-urgent\n",
+                marker=f"severity: {MARKER}-urgent")
+
+
 def m_chart_deprecation(root):
     """A recorded chart that nothing pins, which the offline gate must reject."""
     import json
@@ -556,6 +571,8 @@ CONTROLS = {
     "check-policy-validity.py": ("a structurally invalid ClusterPolicy", m_policy_validity),
     "check-serviceaccount-bindings.py": ("a pod naming an absent ServiceAccount", m_serviceaccount_bindings),
     "check-alert-coverage.py": ("an alert on an unexported KSM field", m_alert_coverage),
+    "check-alert-severity-routes.py": ("a severity label that routes nowhere",
+                                       m_alert_severity_routes),
 }
 
 

@@ -121,6 +121,11 @@ tasks:
     cmds:
       - ./scripts/tests/controls.py
 
+  validate:alert-severity-routes:
+    desc: "Alert routing gate — every severity a rule claims resolves to a declared contact point"
+    cmds:
+      - ./scripts/check-alert-severity-routes.py
+
   validate:empty-corpus:
     desc: "Vacuity gate — no gate reports success over a corpus that is not there"
     cmds:
@@ -217,6 +222,7 @@ tasks:
       - validate:policy-validity
       - validate:gate-tests
       - validate:gate-controls
+      - validate:alert-severity-routes
       - validate:empty-corpus
       - validate:reverify-tests
       - validate:named-things
