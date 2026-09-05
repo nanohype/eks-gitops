@@ -142,7 +142,7 @@ tasks:
       - ./scripts/check-log-volume-budget.py
 
   validate:renovate-coverage:
-    desc: "Renovate coverage gate — every chart pin in applicationsets/ is watched by a manager that resolves"
+    desc: "Renovate coverage gate — every chart pin, and every toolchain version a CI job runs on, is watched by a manager that resolves"
     cmds:
       - ./scripts/check-renovate-coverage.py
 
