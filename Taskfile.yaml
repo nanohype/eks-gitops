@@ -195,13 +195,18 @@ tasks:
     cmds:
       - ./scripts/check-externalsecret-keys.py
 
+  validate:secret-store-refs:
+    desc: "Secret-store gate — every reference names the one store this catalog declares, and the published contract states it"
+    cmds:
+      - ./scripts/check-secret-store-refs.py
+
   validate:athena-panel-columns:
     desc: "Athena panel gate — every column a CUR panel names is one the export delivers"
     cmds:
       - ./scripts/check-athena-panel-columns.py
 
   validate:
-    desc: Run all validations (lint, build, helm-render, appset schema, sync waves, label values, appset render, policy admission, externalsecret keys, athena panel columns, dashboard/fork-safety)
+    desc: Run all validations (lint, build, helm-render, appset schema, sync waves, label values, appset render, policy admission, secret refs, athena panels, dashboard/fork-safety)
     deps:
       - lint:yaml
       - lint:python
@@ -213,6 +218,7 @@ tasks:
       - validate:appset-render
       - validate:policy-admission
       - validate:externalsecret-keys
+      - validate:secret-store-refs
       - validate:athena-panel-columns
       - validate:dashboards
       - validate:fork-safety

@@ -98,6 +98,17 @@ jobs:
       - name: ExternalSecret keys are named once and patched per cluster
         run: ./scripts/check-externalsecret-keys.py
 
+      # The catalog declares one ClusterSecretStore and eleven other places
+      # restate its name — eight secretStoreRefs, an ApplicationSet patch target,
+      # and five chart defaults in repositories this one does not own. An
+      # ExternalSecret naming a store that is not there installs and syncs
+      # cleanly and records SecretSyncedError on an object nothing in the install
+      # path reads; an unmatched kustomize patch target is not an error at all,
+      # so the region rewrite silently does not happen. This holds them to the
+      # declaration and publishes it for the consumers outside this repository.
+      - name: Every secret-store reference resolves to the declared store
+        run: ./scripts/check-secret-store-refs.py
+
       # A CUR export runs an explicit column projection, so its delivered set is
       # far narrower than the CUR specification and every documented column name
       # looks plausible in a panel query. The dashboard gate below reads

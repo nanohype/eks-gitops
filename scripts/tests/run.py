@@ -65,6 +65,9 @@ EXPECTED = (
     # The arithmetic behind a figure an on-call reads at the worst moment, and
     # the anchoring that keeps it from being a constant compared to nothing.
     "test_burn_rate_budgets",
+    # A name restated in eleven places, and the two readers it takes to find
+    # them all — half the corpus is chart source that does not parse as YAML.
+    "test_secret_store_refs",
 )
 
 # A floor well under the real count. It catches "discovery found almost nothing",

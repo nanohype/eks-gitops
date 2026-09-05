@@ -99,6 +99,7 @@ task validate:sync-waves           # Assert the documented sync-wave category or
 task validate:label-values         # Every k8s label value satisfies the API server's grammar
 task validate:policy-admission     # Prove no addon is denied by the Enforce-tier Kyverno policies (+ exclusion-list parity)
 task validate:externalsecret-keys  # Each ExternalSecret names its remote secret once, and the delivering appset patches it
+task validate:secret-store-refs    # Every secret-store reference names the one store this catalog declares, and the published contract states it
 task validate:dashboards           # grafana.com dashboard ids exist and are AMG-saveable
 task validate:athena-panel-columns # Every column a CUR panel names is one the export delivers
 task validate:fork-safety          # No hardcoded catalog repoURL in applied ApplicationSets (report-only locally)
@@ -112,7 +113,7 @@ task validate:image-vulnerabilities # Every fixed CRITICAL in a rendered image i
 
 `task validate` runs the structural gates (lint, kustomize build, helm-render,
 ApplicationSet schema, sync-wave ordering, appset render, policy-admission,
-dashboards, fork-safety). CI runs those plus several gates that have **no local
+secret-store references, dashboards, fork-safety). CI runs those plus several gates that have **no local
 `task` target**, and one that has a target but is deliberately outside the
 aggregate, so a clean `task validate` is necessary but not sufficient:
 

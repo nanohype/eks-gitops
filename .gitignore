@@ -13,6 +13,11 @@
 *secret*.json
 !*secret*-store*.yaml
 !*secret*-store*.yml
+# The store's published contract — its name and apiVersion, for consumers in
+# other repositories to assert against instead of restating. Same category as
+# the two lines above: a description of where secrets are fetched from, holding
+# none. JSON because that is the shape the org's other cross-repo pins take.
+!*secret*-store*.json
 # ExternalSecret manifests are references into the secret store, not secret
 # material — they must ship with the charts that need them.
 !*externalsecret*.yaml
