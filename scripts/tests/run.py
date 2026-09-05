@@ -62,6 +62,9 @@ EXPECTED = (
     # The floors that keep an emptied corpus from reading as a clean one,
     # asserted apart from the gates that carry them.
     "test_corpus_floors",
+    # The arithmetic behind a figure an on-call reads at the worst moment, and
+    # the anchoring that keeps it from being a constant compared to nothing.
+    "test_burn_rate_budgets",
     # A name restated in eleven places, and the two readers it takes to find
     # them all — half the corpus is chart source that does not parse as YAML.
     "test_secret_store_refs",
@@ -158,9 +161,10 @@ COMBINED_FLOOR = 42
 # the weaker half of this file's claim, and the per-gate floors and the controls
 # in scripts/tests/controls.py are where the real one lives.
 #
-# It moves by what a change actually covered, not by what the run reports. A
-# gate arriving with its own tests lowers it; a gate that starts reading as
-# covered because something new imports it does not.
+# So this number moves by what a change actually covered, not by what the run
+# reports. A gate arriving with its own tests lowers it; a gate that starts
+# reading as covered because something new imports it does not, and an import
+# removed later would give that coverage back with nothing lost.
 MAX_UNCOVERED_GATES = 10
 
 PER_GATE_FLOORS = {

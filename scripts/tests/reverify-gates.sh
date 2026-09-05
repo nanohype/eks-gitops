@@ -158,6 +158,7 @@ run 0 "check-renovate-coverage.py" ./scripts/check-renovate-coverage.py
 run 0 "check-ai-config.py" ./scripts/check-ai-config.py
 run 0 "check-alert-severity-routes.py" ./scripts/check-alert-severity-routes.py
 run 0 "check-env-coverage.py" ./scripts/check-env-coverage.py
+run 0 "check-burn-rate-budgets.py" ./scripts/check-burn-rate-budgets.py
 run 0 "check-secret-store-refs.py" ./scripts/check-secret-store-refs.py
 run 0 "check-named-things.py" ./scripts/check-named-things.py
 run 0 "check-policy-validity.py" ./scripts/check-policy-validity.py
@@ -404,6 +405,39 @@ run nonzero "alert-severity-routes: the routing tree stops shipping" \
   ./scripts/check-alert-severity-routes.py
 res $F
 
+# The number an on-call reads first. The expression stays correct and only the
+# sentence changes, which is every rule-level validation's blind spot.
+F=dashboards/base/alerting/agent-operator.yaml; mut $F
+python3 - "$F" <<'PYX'
+import pathlib,sys
+p=pathlib.Path(sys.argv[1]); s=p.read_text()
+m=s.replace("budget burning slowest (10% in 3d)", "budget burning (100% over 3d)", 1)
+assert m!=s, "mutation did not land"
+p.write_text(m)
+print("   claimed the 3d tier consumes the whole budget")
+PYX
+run nonzero "burn-rate-budgets: a summary claiming a budget its expression does not spend" \
+  ./scripts/check-burn-rate-budgets.py
+res $F
+
+# The other term, and the one that lives outside the alerting directory. The
+# dashboard is unedited and still renders; it is simply no longer in the
+# kustomization's resources. The rules ship and burn, the panel measuring what
+# they burn against does not, and every figure is then anchored to a document no
+# cluster receives.
+F=dashboards/base/kustomization.yaml; mut $F
+python3 - "$F" <<'PYZ'
+import pathlib,sys
+p=pathlib.Path(sys.argv[1]); s=p.read_text()
+m=s.replace("  - platform/agent-operator.yaml\n", "", 1)
+assert m!=s, "mutation did not land"
+p.write_text(m)
+print("   dropped the panel measuring the objective from the kustomization")
+PYZ
+run nonzero "burn-rate-budgets: the panel measuring the objective stops shipping" \
+  ./scripts/check-burn-rate-budgets.py
+res $F
+
 # The store is renamed and the eight references that name it are not. Nothing
 # else in this tree sees it: helm renders, kustomize builds, kubeconform passes,
 # and the ExternalSecrets record SecretSyncedError on an object nothing in the
@@ -564,7 +598,7 @@ echo "RESULT pass=$pass fail=$fail"
 # The harness owes the same assertion it demands of the gates: with every `run`
 # line deleted it would report pass=0 fail=0 and exit 0, which is a green run
 # over nothing checked.
-MIN_CHECKS=45
+MIN_CHECKS=48
 total=$((pass + fail))
 if [ "$total" -lt "$MIN_CHECKS" ]; then
   echo "FAIL  ran $total check(s), under the floor of $MIN_CHECKS — this harness"
