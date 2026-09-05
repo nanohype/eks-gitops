@@ -9,11 +9,18 @@ on:
 permissions:
   contents: read
 
-# CLI tools this workflow downloads as release tarballs or installs through a
-# setup action. Pinned in one place so a
-# Renovate custom manager can watch each `# renovate:`-annotated line and open a
-# currency PR that runs the render/schema/policy gates before merge. A bump also
-# invalidates the hardcoded SHA256 below it, so a human confirms the new checksum.
+# Tool versions this workflow resolves: release tarballs, a setup action's
+# download, and the npm package the Renovate gates run against. Pinned in one
+# place so a Renovate custom manager can watch each `# renovate:`-annotated line
+# and open a currency PR that runs the render/schema/policy gates before merge.
+# A tarball bump also invalidates the hardcoded SHA256 below it, so a human
+# confirms the new checksum.
+#
+# RENOVATE_VERSION is pinned for a second reason. The drift check compares
+# scripts/renovate-manager-defaults.json against the defaults inside this exact
+# package, so an unpinned install would move the thing being compared: a default
+# Renovate changed would surface on whichever unrelated PR ran next. Pinned, it
+# surfaces on the currency PR that raises the pin, where re-recording is the fix.
 env:
   # renovate: datasource=github-releases depName=kyverno/kyverno
   KYVERNO_VERSION: v1.18.2
@@ -26,6 +33,8 @@ env:
   KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
   # renovate: datasource=github-releases depName=aquasecurity/trivy
   TRIVY_VERSION: v0.72.0
+  # renovate: datasource=npm depName=renovate
+  RENOVATE_VERSION: 44.65.0
 
 jobs:
   placeholders:
@@ -383,8 +392,33 @@ jobs:
       # PARTIAL by design, and stated so rather than rounded up: this checks
       # schema validity, not semantics. It accepts a datasourceTemplate naming a
       # datasource that does not exist.
+      #
+      # The Renovate package declares `engines.node`, and its own code uses
+      # language features that decide whether it loads at all — so the Node this
+      # job runs is part of what makes the two steps below meaningful. Inherited
+      # from the runner it is whatever the image ships and moves without this
+      # repository changing; read from .node-version it is a pin like the others,
+      # and the renovate-coverage gate below asserts a manager watches it.
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+      # Installed rather than run through `npx --package`, because two steps
+      # below need the same resolved package: the validator, and the drift check
+      # that imports each manager's defaultConfig out of it. Resolving it twice
+      # would let them disagree about which Renovate the answers came from.
+      - name: Resolve the Renovate package
+        run: npm install --no-save --no-audit --no-fund "renovate@${RENOVATE_VERSION}"
       - name: Renovate config is well-formed
-        run: npx --yes --package renovate renovate-config-validator renovate.json
+        run: ./node_modules/.bin/renovate-config-validator renovate.json
+      # The Python gate matches each pin against the file patterns of the manager
+      # it is attributed to. Where renovate.json configures none, those patterns
+      # come from defaultConfig inside this package, which no offline gate reads —
+      # so scripts/renovate-manager-defaults.json transcribes them. A stale
+      # transcript is worse than none: it certifies pins against a pattern
+      # Renovate does not use and prints the same success as a correct one.
+      - name: Recorded manager defaults match the shipped package
+        run: node scripts/check-renovate-defaults.mjs
       - name: Every chart pin is watched
         run: ./scripts/check-renovate-coverage.py
 

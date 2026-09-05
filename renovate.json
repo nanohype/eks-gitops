@@ -6,18 +6,27 @@
   "description": [
     "Currency management for the catalog, layered on the org preset at nanohype/.github.",
     "What stays local is the manager scoping and the custom managers. Renovate watches every Helm chart version pinned in applicationsets/ (and the git-pinned Gateway API CRDs), the Go module behind the appset-render gate, the CLI tools the CI workflow downloads, and the GitHub Actions in .github/workflows/ \u2014 the helm-render, schema and policy CI gates then validate each bump before merge.",
-    "enabledManagers is an allowlist rather than a default because this repo is a manifest catalog: without it Renovate would try to read every values.yaml as a Helm chart it owns."
+    "enabledManagers is an allowlist rather than a default because this repo is a manifest catalog: without it Renovate would try to read every values.yaml as a Helm chart it owns.",
+    "An allowlist has a failure mode a default does not: a manager stays on the list after the thing it read is gone, and a manager whose file patterns match nothing looks identical to one with nothing to do. scripts/check-renovate-coverage.py asserts both directions — every pin the workflows resolve is claimed by a manager on this list, and every manager on this list is claimed by a pin."
   ],
   "enabledManagers": [
     "argocd",
     "gomod",
     "custom.regex",
     "github-actions",
-    "pip-compile"
+    "pip-compile",
+    "pyenv",
+    "nodenv"
   ],
   "argocd": {
     "managerFilePatterns": [
       "/^applicationsets/[^/]+\\.ya?ml$/"
+    ]
+  },
+  "pip-compile": {
+    "description": "The pip-compile manager ships an EMPTY defaultConfig.managerFilePatterns, so enabling it without this block adds a manager that matches no file. renovate-config-validator accepts that config and the Dependency Dashboard shows no lookup for it, so the only symptom is that every distribution in requirements.txt stops moving. requirements.txt is the lockfile every Python CI job installs from with --require-hashes; requirements.in is its source and pip-compile regenerates the hashes with the version.",
+    "managerFilePatterns": [
+      "/^requirements\\.txt$/"
     ]
   },
   "customManagers": [
@@ -125,6 +134,19 @@
       ]
     },
     {
+      "description": "The Renovate package the renovate-coverage job installs. Pinned in ci.yml's env block like every other CI tool, and labelled the same, because a bump moves what scripts/check-renovate-defaults.mjs compares the recorded manager defaults against.",
+      "matchDatasources": [
+        "npm"
+      ],
+      "matchPackageNames": [
+        "renovate"
+      ],
+      "labels": [
+        "dependencies",
+        "ci"
+      ]
+    },
+    {
       "description": [
         "Cilium is the CNI and does not ride the batch. Two things are encoded here, and the org preset's ordering note is what makes it possible: a consumer's packageRules are appended after the preset's, and later rules win \u2014 so this ungroups a package the preset grouped.",
         "It moves alone. The preset extends group:allNonMajor, which folds cilium in with every other non-major chart; the last cilium minor arrived alongside five unrelated bumps. A CNI minor cannot be reviewed, staged or reverted independently once it is in a batch, and this is the one chart on which every pod's networking depends.",
@@ -161,6 +183,16 @@
       "description": "Python tooling the gates and CI run, locked with hashes in requirements.txt. pip-compile regenerates the lockfile so the hashes move with the version.",
       "matchManagers": [
         "pip-compile"
+      ],
+      "labels": [
+        "dependencies",
+        "ci"
+      ]
+    },
+    {
+      "description": "The Node the renovate-coverage job runs on, read from .node-version. The Renovate package declares an engines.node floor and its own code uses language features that decide whether it loads at all, so this pin is what makes the config validator and the manager-default drift check able to run.",
+      "matchManagers": [
+        "nodenv"
       ],
       "labels": [
         "dependencies",

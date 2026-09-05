@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import contextlib
 import io
+import pathlib
 import re
 import sys
+import tempfile
 import unittest
 
 from gateloader import load
@@ -596,3 +598,186 @@ class WhatCannotBeReadReachesAVerdict(unittest.TestCase):
         rc, out = self.verdict({}, unrendered=[("addons/x", "helm failed")])
         self.assertEqual(rc, gate.gatelib.CANNOT_RUN)
         self.assertIn("rendered no images at all", out)
+
+
+class WhatHelmReportsPulling(unittest.TestCase):
+    """An OCI registry serves charts and container images through one grammar.
+
+    `public.ecr.aws/karpenter/karpenter:1.14.0` is indistinguishable from an
+    image by shape, and it is the chart — the container beside it is
+    `public.ecr.aws/karpenter/controller`. Nothing in the reference says which,
+    and no walk over the render can, because a chart coordinate reaches no pod
+    template by construction.
+
+    helm answers it, about this run: it prints what it fetched as a chart. That
+    is an observation rather than a name somebody wrote down, which matters
+    because a declaration here could not survive. `declaration_rot` removes an
+    entry the render does not support, and the render carries these only under
+    the helm builds that print the report to stdout — so one rule would demand
+    the entry and the other remove it.
+    """
+
+    REPORT = ("Pulled: public.ecr.aws/karpenter/karpenter:1.14.0\n"
+              "Digest: sha256:" + "4c1e" + "a" * 60 + "\n")
+
+    def test_the_report_names_the_artifact(self):
+        self.assertEqual(gate.chart_artifacts(self.REPORT),
+                         {"public.ecr.aws/karpenter/karpenter:1.14.0"})
+
+    def test_a_render_with_no_report_names_nothing(self):
+        self.assertEqual(gate.chart_artifacts(DEPLOYMENT), set())
+
+    def test_the_digest_line_is_not_an_artifact(self):
+        """It names the artifact above it, not another one."""
+        self.assertNotIn("sha256:" + "4c1e" + "a" * 60,
+                         gate.chart_artifacts(self.REPORT))
+
+    def test_a_pulled_chart_is_not_an_unplaceable_reference(self):
+        """The whole finding, end to end. The report leads the manifests, so on
+        the helm builds that print it to stdout every OCI-sourced chart puts its
+        own coordinates into the stream this parses."""
+        rendered = self.REPORT + DEPLOYMENT
+        unrendered: list[tuple[str, str]] = []
+        unclassified: list[tuple[str, str]] = []
+        found = gate.extract_images(rendered, "karpenter", unrendered, unclassified,
+                                    None, gate.chart_artifacts(rendered))
+        self.assertEqual((unrendered, unclassified), ([], []))
+        self.assertEqual(found, {"ghcr.io/example/app:1.0.0"})
+
+    def test_without_the_report_the_same_stream_is_unplaceable(self):
+        """The control on the case above: it passes because the report was read,
+        not because the reference stopped being image-shaped."""
+        rendered = self.REPORT + DEPLOYMENT
+        unrendered: list[tuple[str, str]] = []
+        unclassified: list[tuple[str, str]] = []
+        gate.extract_images(rendered, "karpenter", unrendered, unclassified)
+        self.assertEqual(len(unclassified), 1)
+        self.assertIn("public.ecr.aws/karpenter/karpenter:1.14.0", unclassified[0][1])
+
+    def test_a_container_sharing_the_repository_path_is_not_passed_over(self):
+        """Compared whole, not on the bare name.
+
+        A registry can serve a chart and an image from one path, and passing
+        over every reference sharing a pulled chart's name would take the image
+        with it — the one direction this gate must never fail in.
+        """
+        rendered = ("Pulled: ghcr.io/example/thing:1.0.0\n"
+                    "Digest: sha256:" + "b" * 64 + "\n"
+                    "apiVersion: v1\nkind: ConfigMap\ndata:\n"
+                    "  cfg: |\n    image: ghcr.io/example/thing:9.9.9\n")
+        unrendered: list[tuple[str, str]] = []
+        unclassified: list[tuple[str, str]] = []
+        gate.extract_images(rendered, "thing", unrendered, unclassified,
+                            None, gate.chart_artifacts(rendered))
+        self.assertEqual(len(unclassified), 1)
+        self.assertIn("ghcr.io/example/thing:9.9.9", unclassified[0][1])
+
+    def test_the_same_artifact_carrying_a_digest_is_recognised(self):
+        """`<ref>@sha256:<hex>` and `<ref>` are one artifact; the report names
+        the second and the render can carry either."""
+        ref = "ghcr.io/example/chart:1.0.0"
+        rendered = (f"Pulled: {ref}\n"
+                    "apiVersion: v1\nkind: ConfigMap\ndata:\n"
+                    f"  cfg: |\n    chart: {ref}@sha256:{'c' * 64}\n")
+        unrendered: list[tuple[str, str]] = []
+        unclassified: list[tuple[str, str]] = []
+        gate.extract_images(rendered, "chart", unrendered, unclassified,
+                            None, gate.chart_artifacts(rendered))
+        self.assertEqual(unclassified, [])
+
+    def test_a_pulled_artifact_still_reaches_the_declaration_record(self):
+        """`seen` is what the render CONTAINED, so declaration_rot keeps reading
+        the same corpus whether or not a reference was passed over."""
+        rendered = self.REPORT + DEPLOYMENT
+        seen: set[str] = set()
+        gate.extract_images(rendered, "karpenter", [], [], seen,
+                            gate.chart_artifacts(rendered))
+        self.assertIn("public.ecr.aws/karpenter/karpenter", seen)
+
+
+class TheReportIsReadFromEitherStream(unittest.TestCase):
+    """Which stream carries it is a property of the helm build, not of this repo.
+
+    Some helm builds write the OCI pull report to stdout, where it lands in the
+    manifest stream this gate parses; some write it to stderr, where nothing sees
+    it. Reading one only makes the gate's answer depend on which helm ran it —
+    green on the machine that renders, red in the job that installs a different
+    build, with the same tree.
+
+    So `inventory` is exercised here against both stream shapes, with helm itself
+    stubbed: the tool is the external input, and what varies is the input.
+    """
+
+    REPORT = ("Pulled: public.ecr.aws/karpenter/karpenter:1.14.0\n"
+              "Digest: sha256:" + "4c1e" + "a" * 60 + "\n")
+
+    class Unit:
+        chart = "karpenter"
+        path = "addons/operations/karpenter"
+        repo = "https://example.com"
+        version = "1.14.0"
+        namespace = "kube-system"
+        params: tuple = ()
+        is_oci = True
+
+        def oci_ref(self):
+            return "oci://public.ecr.aws/karpenter/karpenter"
+
+    def inventory_with(self, stdout, stderr):
+        """inventory() over one unit whose helm run produced these two streams."""
+        root = pathlib.Path(tempfile.mkdtemp())
+        (root / self.Unit.path).mkdir(parents=True)
+
+        class Completed:
+            returncode = 0
+
+            def __init__(self, out, err):
+                self.stdout, self.stderr = out, err
+
+        saved = (gate.ROOT, gate.render_addons.discover, gate.render_addons.add_repos,
+                 gate.subprocess.run, gate.gatelib.require)
+        gate.ROOT = root
+        gate.render_addons.discover = lambda *a, **k: [self.Unit()]
+        gate.render_addons.add_repos = lambda *a, **k: {}
+        gate.subprocess.run = lambda *a, **k: Completed(stdout, stderr)
+        gate.gatelib.require = lambda *a, **k: None
+        try:
+            return gate.inventory("production")
+        finally:
+            (gate.ROOT, gate.render_addons.discover, gate.render_addons.add_repos,
+             gate.subprocess.run, gate.gatelib.require) = saved
+
+    def test_a_report_on_stdout_is_read(self):
+        """The shape that fails: the report is in the manifest stream, so the
+        chart's own coordinates are a reference the classifier must place."""
+        _, unrendered, unclassified = self.inventory_with(self.REPORT + DEPLOYMENT, "")
+        self.assertEqual((unrendered, unclassified), ([], []))
+
+    # A chart carrying its own OCI coordinate in its rendered content. Whether
+    # the pull report reaches the gate then decides the verdict on the SAME
+    # render, which is what makes the stream choice observable at all.
+    SELF_REFERENCING = ("apiVersion: v1\nkind: ConfigMap\ndata:\n"
+                        "  cfg: |\n"
+                        "    chart: public.ecr.aws/karpenter/karpenter:1.14.0\n")
+
+    def test_a_report_on_stderr_is_read(self):
+        """The render carries the coordinate and the report does not, so a gate
+        reading stdout alone has no evidence and reports the chart's own
+        reference as one it cannot place."""
+        _, unrendered, unclassified = self.inventory_with(
+            DEPLOYMENT + "---\n" + self.SELF_REFERENCING, self.REPORT)
+        self.assertEqual((unrendered, unclassified), ([], []))
+
+    def test_both_stream_shapes_produce_the_same_verdict(self):
+        """The property, stated directly: one tree, two helm builds, one answer."""
+        body = DEPLOYMENT + "---\n" + self.SELF_REFERENCING
+        on_out = self.inventory_with(self.REPORT + body, "")
+        on_err = self.inventory_with(body, self.REPORT)
+        self.assertEqual(on_out[0], on_err[0])
+        self.assertEqual((on_out[1], on_out[2]), (on_err[1], on_err[2]))
+        self.assertEqual(on_err[2], [])
+
+    def test_no_report_at_all_leaves_the_render_unchanged(self):
+        images, unrendered, unclassified = self.inventory_with(DEPLOYMENT, "")
+        self.assertEqual((unrendered, unclassified), ([], []))
+        self.assertEqual(images, {"ghcr.io/example/app:1.0.0": {"karpenter"}})

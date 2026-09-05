@@ -30,6 +30,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 # it, and nothing else in the suite would notice.
 EXPECTED = (
     "test_renovate_coverage",
+    "test_renovate_defaults",
     "test_label_values",
     "test_sync_waves",
     "test_kyverno_corpus",
@@ -79,7 +80,7 @@ MIN_TESTS = 31
 # largest in the tree, and among them are the gates on the paths testing-rubric
 # calls security-critical. So this figure being low is not offset by behavioural
 # coverage for precisely the files where that offset was being claimed.
-COMBINED_FLOOR = 23
+COMBINED_FLOOR = 29
 
 # A ceiling on gate scripts carrying NO unit coverage at all, complementing the
 # floors below. The floors stop a covered file regressing; nothing stopped a NEW
@@ -102,7 +103,7 @@ MAX_UNCOVERED_GATES = 15
 
 PER_GATE_FLOORS = {
     "scripts/check-named-things.py": 35,
-    "scripts/check-renovate-coverage.py": 55,
+    "scripts/check-renovate-coverage.py": 88,
     "scripts/check-label-values.py": 33,
     "scripts/check-sync-waves.py": 10,
     "scripts/gatelib.py": 55,

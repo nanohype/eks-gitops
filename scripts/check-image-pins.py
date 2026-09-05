@@ -190,9 +190,43 @@ def inventory(env: str, seen: set[str] | None = None
         if proc.returncode != 0:
             unrendered.append((u.path, (proc.stderr.strip() or proc.stdout.strip())[:200]))
             continue
-        for ref_str in extract_images(proc.stdout, u.chart, unrendered, unclassified, seen):
+        # BOTH streams, because which one carries the pull report is a property
+        # of the helm build rather than of this repository: some versions write
+        # it to stdout, where it lands in the manifest stream this parses, and
+        # some to stderr, where nothing sees it. Read from either, so what the
+        # gate knows about a run does not depend on which helm ran it.
+        pulled = chart_artifacts(proc.stdout + "\n" + proc.stderr)
+        for ref_str in extract_images(proc.stdout, u.chart, unrendered, unclassified,
+                                      seen, pulled):
             images.setdefault(ref_str, set()).add(u.chart)
     return images, unrendered, unclassified
+
+
+# helm's own report of an OCI artifact it fetched, which it prints as two lines
+# before the manifests:
+#
+#     Pulled: public.ecr.aws/karpenter/karpenter:1.14.0
+#     Digest: sha256:<hex>
+#
+# This is the answer to a question a list cannot answer. An OCI registry serves
+# charts and container images through one API and one reference grammar, so
+# `public.ecr.aws/karpenter/karpenter:1.14.0` is indistinguishable from an image
+# by shape — and it is the chart, while the container beside it is
+# `public.ecr.aws/karpenter/controller`. helm pulled the first AS A CHART and
+# says so, which is an observation about this run rather than a name somebody
+# wrote down.
+#
+# Being an observation is what makes it usable here. A declaration naming these
+# would have to be re-checked against the render by declaration_rot, which
+# deletes an entry the render does not support — and the render only carries
+# them under the helm builds that print to stdout. One rule would demand the
+# entry and the other remove it. Nothing is declared, so nothing rots.
+HELM_PULLED = re.compile(r"^Pulled:\s*(?P<ref>\S+)\s*$", re.M)
+
+
+def chart_artifacts(output: str) -> set[str]:
+    """Every OCI artifact helm reports pulling as a chart, from either stream."""
+    return {m.group("ref") for m in HELM_PULLED.finditer(output)}
 
 
 # An image reference as a controller is handed one: in a flag, a ConfigMap value,
@@ -440,7 +474,8 @@ def keyed_images(node) -> set[str]:
 def extract_images(rendered: str, chart: str,
                    unrendered: list[tuple[str, str]],
                    unclassified: list[tuple[str, str]],
-                   seen: set[str] | None = None) -> set[str]:
+                   seen: set[str] | None = None,
+                   pulled: set[str] | None = None) -> set[str]:
     """Every image one chart's render deploys, and an assertion that it is every one.
 
     Structural first, because a pattern is a claim about spelling. IMAGE is
@@ -479,10 +514,19 @@ def extract_images(rendered: str, chart: str,
     # `repo:tag` in an annotation or a config value. Those are one image, and
     # reporting the second as unreachable would be reporting the first.
     structural_bare = {bare_name(r) for r in structural}
+    # Compared whole, not on the bare name. A registry can serve a chart and a
+    # container image from one repository path, and passing over every reference
+    # sharing a pulled chart's name would take the image with it — which is the
+    # one direction this gate must never fail in.
+    artifacts = set(pulled or ())
     controller: set[str] = set()
     for ref_str in sorted((textual | candidates) - structural):
         bare = bare_name(ref_str)
         if bare in structural_bare or bare in NOT_A_CONTAINER:
+            continue
+        if ref_str in artifacts or ref_str.split("@", 1)[0] in artifacts:
+            # helm reported fetching this exact reference as a chart. Pulling a
+            # chart starts no container, so there is nothing here to scan.
             continue
         if bare in CONTROLLER_IMAGES:
             controller.add(ref_str)

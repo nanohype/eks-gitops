@@ -117,14 +117,43 @@ dashboards, fork-safety). CI runs those plus several gates that have **no local
 aggregate, so a clean `task validate` is necessary but not sufficient:
 
 - **Zero-placeholder gate** — `scripts/no-placeholders.sh` (CI job `placeholders`)
-- **Renovate config schema** — `renovate-config-validator`, CI-only because it
-  runs through `npx --package renovate`, which fetches the whole Renovate
-  package. That is minutes per invocation and needs the network, so it fails the
-  hermetic-and-fast bar a local target has to meet. `check-renovate-coverage.py`
-  covers the overlapping half locally: it compiles every `matchStrings` regex out
-  of the shipped config, so a manager Renovate would discard as malformed fails
-  there too. What only the validator catches is an unknown or misspelled Renovate
-  KEY, which is why it still runs somewhere.
+- **Renovate config schema + manager-default drift** —
+  `renovate-config-validator` and `scripts/check-renovate-defaults.mjs`, both
+  CI-only because both need the Renovate package installed. That is minutes per
+  invocation and needs the network, so it fails the hermetic-and-fast bar a local
+  target has to meet; the `renovate-coverage` job installs the package once and
+  runs both against it. `check-renovate-coverage.py` covers the overlapping half
+  locally: it compiles every `matchStrings` regex out of the shipped config, so a
+  manager Renovate would discard as malformed fails there too. What only the
+  validator catches is an unknown or misspelled Renovate KEY, which is why it
+  still runs somewhere.
+
+  Neither catches a manager that is spelled correctly and reads nothing. A
+  manager on `enabledManagers` is one Renovate RUNS; which files it opens is
+  `managerFilePatterns`, and a pattern naming a path this repo does not have is
+  valid config that opens nothing — the schema is fine, no lookup is attempted so
+  the Dependency Dashboard shows no failure, and the only symptom is a version
+  that stops moving. So `check-renovate-coverage.py` matches every pin against
+  the patterns of the manager it is attributed to, per customManager rather than
+  against a pool.
+
+  A manager configuring no `managerFilePatterns` runs on the `defaultConfig`
+  shipped inside the Renovate package, which no offline gate reads.
+  `scripts/renovate-manager-defaults.json` transcribes it and
+  `check-renovate-defaults.mjs` re-resolves every entry against the package, so a
+  stale transcript fails the build rather than certifying pins against a pattern
+  Renovate does not use. Re-record it with
+  `node scripts/check-renovate-defaults.mjs --write`.
+
+  That script needs a Node satisfying the package's own `engines.node`: Renovate
+  uses language features newer than some runtimes ship, and below the floor it
+  throws while loading, so a job inheriting the runner's Node refuses on every
+  run — and a gate that always refuses gates nothing. `.node-version` at the repo
+  root is the pin the `renovate-coverage` job installs from, watched by the
+  `nodenv` manager like every other pin here. The script asserts the floor in
+  both directions: a runtime below it cannot run (exit 2), and a `.node-version`
+  below it is a finding (exit 1), so the next CI run failing is reported by the
+  run before it.
 - **Kyverno unit tests + verify-images signing-identity contract** —
   `kyverno test policies/kyverno/tests` and `scripts/check-image-verification.py`
   (CI job `kyverno`)
