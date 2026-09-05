@@ -166,11 +166,10 @@ POLICY_GROUPS = ["best-practices", "pod-security-standards"]
 # Enforce runs on staging + production; both flip the base policies to Enforce.
 ENFORCE_ENVS = ["staging", "production"]
 
-# A floor on addon×env manifests rendered into the resource file. Set well under
-# what the catalog produces, so it catches "discovery matched almost nothing"
-# rather than "an addon was retired".
+# A floor on addon×env manifests rendered. Set well under what the catalog
+# produces; see the note at the comparison for why it is a number rather than a
+# quantity derived from the same walk.
 MIN_RENDERED = 40
-
 
 # Kinds Kyverno's workload policies (and their autogen pod-controller variants)
 # evaluate. Namespace-scoped, so they must carry metadata.namespace for the
@@ -328,7 +327,7 @@ def check_exclusion_parity() -> tuple[bool, set[str], set[str]]:
     print("── Exclusion-list parity ──────────────────────────────────────────")
     lists: dict[str, list[str]] = {}
     for group, fname in EXCLUSION_POLICIES:
-        doc = yaml.safe_load((POLICY_DIR / group / "base" / fname).read_text())
+        doc = gatelib.read_yaml(POLICY_DIR / group / "base" / fname)
         for rule in doc["spec"]["rules"]:
             key = f"{doc['metadata']['name']}/{rule['name']}"
             # A rule's exclusion is the union of every `exclude.any` entry's
@@ -688,16 +687,21 @@ def main() -> int:
             return 1
         print(f"  rendered {count} addon×env manifests into their namespaces, "
               f"plus the canary\n")
-        # A floor on what was RENDERED, not on what was found. `count` was
-        # printed and compared only against a render failure, so a discovery
-        # that matched almost nothing produced a fleet of a handful of manifests
-        # and the run still reported that no addon would be denied.
+        # A constant, not a derivation. Bounding the render by the discovered
+        # units was written first and is circular: discover() reads the same
+        # ApplicationSets the render does, so a discovery that matched almost
+        # nothing lowers the bound by exactly as much as it lowers the count and
+        # the comparison holds. Nothing else in the tree enumerates the fleet.
+        #
+        # The canary and the runtime pod keep every rule-coverage assertion green
+        # regardless of how much fleet was rendered, so without a floor here a run
+        # over almost no fleet is indistinguishable from a clean one.
         if count < MIN_RENDERED:
             print(f"  FAIL  {count} manifest(s) rendered, below the floor of "
                   f"{MIN_RENDERED}. The policies were evaluated against a fleet "
                   f"this catalog does not have, and 'no addon flagged' is a "
                   f"statement about that fleet rather than this one.\n")
-            return 2
+            return gatelib.CANNOT_RUN
 
         coverage_ok = check_namespace_coverage(landed, excluded)
 

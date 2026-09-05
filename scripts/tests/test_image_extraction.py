@@ -392,26 +392,48 @@ class ADigestPinnedReferenceIsInThePopulation(unittest.TestCase):
             with self.subTest(ref=ref):
                 self.assertEqual(gate.bare_name(ref), "ghcr.io/example/thing")
 
-    def test_a_digest_with_no_repository_before_it_is_still_seen(self):
+    def test_a_digest_with_no_repository_before_it_is_not_a_reference(self):
         """A `digest:` field carries one, and it names no image.
 
-        Seen is the property, not excused. It is matched, so a render that
-        starts carrying one is reported as a reference this gate cannot place
-        rather than passed over — and the repair is a declaration saying why.
+        Excluded by shape, not by a declaration, because the two rules this
+        repository already has cannot both hold over it. A NOT_A_CONTAINER entry
+        excuses whatever carries its bare name, so an entry for `sha256` would
+        excuse every reference whose only matched token is a digest — and
+        `declaration_rot` deletes an entry the render does not support, which is
+        every tree that happens not to carry a bare digest that day. One rule
+        demands the entry and the other deletes it.
 
-        No declaration stands for it while the render carries none, because a
-        NOT_A_CONTAINER entry excuses whatever has its bare name: an entry for
-        `sha256` covers every reference whose only matched token is a digest,
-        which is every digest-pinned reference if the pattern cannot spell the
-        repository-prefixed form. `declaration_rot` is what keeps that from
-        being written and forgotten — an entry matching nothing in the render
-        fails.
+        There is nothing lost: a digest that belongs to a repository is matched
+        with that repository, whole, by the alternative above.
         """
-        self.assertEqual(self.candidates(DIGEST), [DIGEST])
-        self.assertEqual(gate.bare_name(DIGEST), "sha256")
+        self.assertEqual(self.candidates(DIGEST), [])
         self.assertNotIn("sha256", gate.NOT_A_CONTAINER,
                          "a declaration matching nothing in the render is an "
                          "exemption that only ever widens")
+
+    def test_a_repository_digest_is_unaffected_by_that_exclusion(self):
+        """The exclusion is anchored at the start of a token, so it removes the
+        bare form and nothing else."""
+        for ref in (f"ghcr.io/example/app@{DIGEST}",
+                    f"ghcr.io/example/app:1.0.0@{DIGEST}"):
+            with self.subTest(ref=ref):
+                self.assertEqual(self.candidates(ref), [ref])
+
+    def test_a_digest_in_a_rendered_field_contributes_nothing(self):
+        """End to end: a `digest:` value is not an unplaceable reference, so it
+        does not put a gate that reads this population into a refusal."""
+        rendered = f"""
+apiVersion: v1
+kind: ConfigMap
+data:
+  provenance.yaml: |
+    chart: example
+    digest: {DIGEST}
+"""
+        unrendered: list[tuple[str, str]] = []
+        unclassified: list[tuple[str, str]] = []
+        found = gate.extract_images(rendered, "c", unrendered, unclassified)
+        self.assertEqual((found, unrendered, unclassified), (set(), [], []))
 
     def test_a_digest_shaped_string_that_is_not_a_digest_is_not_matched(self):
         """64 lowercase hex, because the suffix is the only discriminator the

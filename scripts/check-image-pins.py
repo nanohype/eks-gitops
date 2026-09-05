@@ -237,7 +237,16 @@ def inventory(env: str, seen: set[str] | None = None
 # path separator and the tag restrictions the tag alternatives need are not
 # repeated here: nothing else in a render has that shape.
 IMAGE_REF = re.compile(
-    r"(?<![a-z0-9._:/-])(?:"
+    r"(?<![a-z0-9._:/-])"
+    # A digest with no repository before it names no image: there is no
+    # registry and no repository in `sha256:<hex>`, only the value. Excluded by
+    # SHAPE rather than by a declaration, because the two rules this repo
+    # already has cannot both hold over one: an entry named `sha256` would have
+    # to excuse it wherever it appears, and declaration_rot deletes an entry the
+    # render does not support. A shape that can never be a reference is not an
+    # exemption to keep re-reading — it is not a reference.
+    r"(?!sha(?:256|512):[0-9a-f]{32,}(?![0-9a-z]))"
+    r"(?:"
     r"((?:[a-z0-9][a-z0-9._-]*(?:\.[a-z0-9._-]+)+(?::\d+)?/)?"
     r"[a-z0-9][a-z0-9._-]*(?:/[a-z0-9][a-z0-9._-]*)*"
     r"(?::[a-zA-Z0-9][\w.-]*)?@sha256:[0-9a-f]{64})"

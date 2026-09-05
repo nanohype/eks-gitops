@@ -104,6 +104,7 @@ task validate:athena-panel-columns # Every column a CUR panel names is one the e
 task validate:fork-safety          # No hardcoded catalog repoURL in applied ApplicationSets (report-only locally)
 task validate:log-volume-budget    # Loki declares the fraction at which it stops ingesting, and the alert leads it
 task validate:falco-rule-floor     # Every Falco rule set installed on a node is one Falco actually loads
+task validate:empty-corpus         # No gate reports success over a corpus that is not there
 task validate:image-vulnerabilities # Every fixed CRITICAL in a rendered image is acknowledged (not in `task validate` — see below)
 ```
 

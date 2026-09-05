@@ -239,6 +239,12 @@ jobs:
       # asserted exemption fails this step, so the suite cannot shrink quietly.
       - name: Positive controls — every gate can reject
         run: ./scripts/tests/controls.py
+      # A control proves a gate rejects a violation it was handed. This proves it
+      # rejects the ABSENCE of the thing it reads — a renamed directory, a
+      # narrowed glob, a filter that stopped matching. Every gate is probed, from
+      # the tree rather than a list, so the class stays closed as gates are added.
+      - name: No gate reports success over an absent corpus
+        run: ./scripts/tests/empty-corpus.py
       # Prose that names a path, a task target or a file:line is a claim about
       # the tree, and nothing else keeps those claims true as the tree moves.
       - name: Named things in prose resolve
@@ -400,7 +406,7 @@ jobs:
           kyverno version
 
       - name: Run policy unit tests
-        run: kyverno test policies/kyverno/tests
+        run: ./scripts/kyverno-test.sh policies/kyverno/tests
 
       # `kyverno test` cannot reach Fulcio/Rekor, so it never verifies a Cosign
       # signature offline — the unit tests above only pin verify-images' match/

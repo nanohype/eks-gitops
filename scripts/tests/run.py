@@ -79,7 +79,7 @@ MIN_TESTS = 31
 # largest in the tree, and among them are the gates on the paths testing-rubric
 # calls security-critical. So this figure being low is not offset by behavioural
 # coverage for precisely the files where that offset was being claimed.
-COMBINED_FLOOR = 22
+COMBINED_FLOOR = 23
 
 # A ceiling on gate scripts carrying NO unit coverage at all, complementing the
 # floors below. The floors stop a covered file regressing; nothing stopped a NEW

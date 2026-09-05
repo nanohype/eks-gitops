@@ -59,6 +59,24 @@ def read_yaml_all(path) -> list:
         sys.exit(CANNOT_RUN)
 
 
+def read_yaml(path):
+    """The first document in `path`, or exit 2 naming the file. See read_yaml_all.
+
+    For the gates that read one manifest to derive what they check against — a
+    chart pin, an appset's coordinates. An unguarded `read_text()` there raises
+    FileNotFoundError, which exits 1: the status this repo uses for "the gate
+    rejected the tree". By exit code a reader cannot tell that from a finding,
+    and the traceback names a pathlib internal rather than the manifest that is
+    missing.
+    """
+    docs = read_yaml_all(path)
+    if not docs:
+        print(f"Cannot run: {pathlib.Path(path)} holds no YAML document, so the "
+              f"coordinates this gate reads from it are unknown.")
+        sys.exit(CANNOT_RUN)
+    return docs[0]
+
+
 def read_json(path):
     """`path` parsed as JSON, or exit 2 naming the file. See read_yaml_all."""
     import json

@@ -150,6 +150,7 @@ NEEDS_NETWORK_PY = {
 # from an invocation, which is a real gap and not a design choice.
 NEEDS_NETWORK_SH = {
     "kubeconform-scan.sh": "kubeconform",
+    "kyverno-test.sh": "kyverno",
 }
 
 NEEDS_NETWORK = {**NEEDS_NETWORK_PY, **NEEDS_NETWORK_SH}
@@ -249,6 +250,9 @@ NOT_GATES = {
     "tests/reverify-gates.sh": "the Tier-1 re-verification harness; it drives the "
                                "gates rather than checking the tree, and asserts "
                                "its own pass/fail totals",
+    "tests/empty-corpus.py": "the vacuity harness; it runs every gate against an "
+                             "emptied corpus rather than checking the tree, and "
+                             "asserts its own probe floor and exemptions",
 }
 
 

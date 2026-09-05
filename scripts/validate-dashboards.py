@@ -387,6 +387,12 @@ def main() -> int:
         print("Locally-authored dashboards: datasources wired, template variables declared.\n")
 
     refs = discover(args.root)
+    if 0 < len(refs) < MIN_DASHBOARD_REFS:
+        print(f"FAIL  found {len(refs)} grafanaCom.id reference(s), below the floor of "
+              f"{MIN_DASHBOARD_REFS}. The comment above that constant promised a floor "
+              f"on what was EXAMINED and the code enforced one of zero, so a glob that "
+              f"matched almost nothing reported the same as a clean tree.")
+        return 2
     if not refs:
         print(f"FAIL  no grafanaCom.id references found. This repo ships "
               f"{MIN_DASHBOARD_REFS}+ of them, so finding none means this gate read "
