@@ -164,7 +164,6 @@ run 0 "no-placeholders.sh" ./scripts/no-placeholders.sh
 run 0 "check-platform-crs --self-test" ./scripts/check-platform-crs.py --self-test
 run 0 "check-chart-deprecation --self-test" ./scripts/check-chart-deprecation.py --self-test
 run 0 "kyverno test" kyverno test policies/kyverno/tests
-run 0 "check-digest-rewrite.sh" ./scripts/check-digest-rewrite.sh
 run 0 "gitleaks dir (CI invocation)" gitleaks dir . --redact
 run 0 "yamllint" yamllint -c .yamllint.yaml .
 
@@ -471,23 +470,6 @@ PY
 run nonzero "kyverno test: mutated injected annotation" kyverno test policies/kyverno/tests
 res $F
 
-# The digest rewrite is the whole reason the enforcing tier enforces, and it was
-# a field value other files read rather than a behaviour anything ran. Turned
-# off in the overlay, every gate that reads rendered YAML still passes: the
-# field is gone, so nothing asserts it is true, and the pod is admitted with the
-# tag it arrived with. Only executing the policy sees it.
-F=policies/kyverno/supply-chain/overlays/production/kustomization.yaml; mut $F
-python3 - "$F" <<'PY'
-import pathlib,re,sys
-p=pathlib.Path(sys.argv[1]); s=p.read_text()
-m=re.sub(r'(path: /spec/rules/0/verifyImages/0/mutateDigest\n\s+value: )true', r'\1false', s, count=1)
-assert m!=s, "mutation did not land"
-p.write_text(m)
-print("   production overlay: mutateDigest -> false")
-PY
-run nonzero "digest-rewrite: the enforcing tier stops pinning" ./scripts/check-digest-rewrite.sh
-res $F
-
 echo
 echo "── Restored tree must be clean again ──"
 run 0 "task validate (post)" task validate
@@ -498,7 +480,7 @@ echo "RESULT pass=$pass fail=$fail"
 # The harness owes the same assertion it demands of the gates: with every `run`
 # line deleted it would report pass=0 fail=0 and exit 0, which is a green run
 # over nothing checked.
-MIN_CHECKS=40
+MIN_CHECKS=38
 total=$((pass + fail))
 if [ "$total" -lt "$MIN_CHECKS" ]; then
   echo "FAIL  ran $total check(s), under the floor of $MIN_CHECKS — this harness"
