@@ -37,6 +37,7 @@ EXPECTED = (
     "test_named_things",
     "test_falco_rule_floor",
     "test_gatelib",
+    "test_corpus_floors",
 )
 
 # A floor well under the real count. It catches "discovery found almost nothing",

@@ -136,7 +136,7 @@ def rank(priority: str) -> int:
 
 def chart_pin() -> tuple[str, str, str]:
     """Falco's chart coordinates, DERIVED from the ApplicationSet."""
-    doc = yaml.safe_load(APPSET.read_text())
+    doc = gatelib.read_yaml(APPSET)
     spec = doc.get("spec") or {}
     for gen in spec.get("generators") or []:
         for inner in (gen.get("matrix") or {}).get("generators") or []:
