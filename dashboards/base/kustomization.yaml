@@ -22,6 +22,12 @@ resources:
   # Grafana-managed SLO / burn-rate alert rules (folder + per-system rule groups),
   # reconciled onto the external Amazon Managed Grafana.
   - alerting/folder.yaml
+  # Where a firing rule is delivered. Without these the rules' severity labels
+  # select the workspace default policy and its empty default contact point,
+  # so every alert changes state in the Grafana list and reaches no human.
+  - alerting/alert-destinations.yaml
+  - alerting/contact-points.yaml
+  - alerting/notification-policy.yaml
   - alerting/portal.yaml
   - alerting/agent-operator.yaml
   - alerting/fleet-vend.yaml

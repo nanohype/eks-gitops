@@ -116,6 +116,16 @@ jobs:
       - name: Excluded alert states are somebody's job
         run: ./scripts/check-alert-coverage.py
 
+      # A rule labelled to page is asking for a human to be woken. Grafana keeps
+      # that promise by matching the label against a notification policy; with
+      # no matching route the alert falls to the tree's root, and with no tree at
+      # all to the workspace default policy and its empty default contact point.
+      # The rule and the policy never name each other, so nothing else in the
+      # tree can see the gap — and the signal arrives at the moment nobody is
+      # watching a dashboard.
+      - name: Every alert severity routes to a declared contact point
+        run: ./scripts/check-alert-severity-routes.py
+
       # A burn-rate summary is the alert TITLE — the sentence that reaches a
       # human first and often the only one they read. The figure in it is prose
       # that nothing parses, so a rule can name a budget its own expression does
