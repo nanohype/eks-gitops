@@ -118,6 +118,16 @@ tasks:
     cmds:
       - ./scripts/tests/empty-corpus.py
 
+  validate:reverify-tests:
+    desc: "Mutation harness — revert a gate behaviour and require the suite to name it"
+    cmds:
+      - ./scripts/tests/reverify-tests.sh
+
+  reverify:gates:
+    desc: "Tier-1 re-verification — plant a defect per gate and read each tool's own exit status (slow; runs `task validate` twice)"
+    cmds:
+      - ./scripts/tests/reverify-gates.sh
+
   validate:policy-validity:
     desc: "Policy-validity gate — every rendered policy overlay is one Kyverno will accept"
     cmds:
@@ -200,6 +210,7 @@ tasks:
       - validate:gate-tests
       - validate:gate-controls
       - validate:empty-corpus
+      - validate:reverify-tests
       - validate:named-things
       - validate:ai-config
       - validate:workflows

@@ -1,13 +1,17 @@
 # Coverage over the gate scripts, measured by the unit-test suite in
-# scripts/tests. The positive controls in scripts/tests/controls.py exercise MOST
+# scripts/tests. The positive controls in scripts/tests/controls.py exercise most
 # gates end to end as a subprocess, which this figure does not see — so the
-# number below is the floor under the UNIT tier specifically.
+# number in scripts/tests/run.py is the floor under the UNIT tier specifically,
+# and it is not a floor under the correctness of a gate the controls cover.
 #
-# Most, not every. controls.py exempts the gates that reach a chart registry or an
-# API, and prints the split on every run. Those gates therefore have neither unit
-# coverage nor a behavioural control, and they are the largest ones — so the
-# figure below is not a floor under their correctness at all, and reading it as
-# one would be reading a number measured over a different population.
+# Most, not every: controls.py exempts the gates whose input arrives over the
+# network, and prints the split on every run. For those a unit test is the only
+# proof available, so run.py asserts that each one carries unit coverage, reading
+# the exemption list out of controls.py rather than repeating it.
+#
+# The two tiers answer different questions and neither substitutes for the other.
+# A control proves a gate rejects a supplied violation; a unit test proves the
+# gate computes the right verdict on a case the real tree does not contain.
 [run]
 source = ./scripts
 omit =

@@ -398,7 +398,6 @@ def main() -> int:
               f"{MIN_DASHBOARD_REFS}+ of them, so finding none means this gate read "
               f"the wrong tree, not that the dashboards are clean.")
         return 2
-        return 1 if local else 0
 
     print(f"Validating {len(refs)} grafana.com dashboard reference(s)\n")
 
