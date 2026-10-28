@@ -52,6 +52,10 @@ EXPECTED = (
     # rewrite; these prove it rejects each weakening that both kyverno fixtures
     # still satisfy, and hold the trusted subject expression to a corpus.
     "test_image_verification",
+    # What the policy-validity gate reads out of `kyverno apply`, which exits 0
+    # over a policy it discarded, and the digest pin it holds every rendered
+    # ImageValidatingPolicy to.
+    "test_policy_validity",
     "test_platform_crs",
     "test_dashboards",
     "test_render_addons",
@@ -104,11 +108,13 @@ MIN_TESTS = 31
 # cannot be excused by a percentage that moves a point.
 #
 # testing-rubric's `security-critical-100` (severity: reject) asks for a per-file
-# 100% override on every file on a security-critical path. Two gates sit on one:
-# check-policy-admission.py is an approval gate, deciding whether the fleet is
-# admissible at Enforce, and check-image-verification.py holds the signature-
-# verification contract. Both carry 100 in PER_GATE_FLOORS, so a branch added to
-# either without a test fails this run rather than lowering a ratchet.
+# 100% override on every file on a security-critical path. Three gates sit on
+# one: check-policy-admission.py is an approval gate, deciding whether the fleet
+# is admissible at Enforce; check-image-verification.py holds the signature-
+# verification contract; and check-policy-validity.py holds every rendered
+# ImageValidatingPolicy to the digest pin that verification depends on. Each
+# carries 100 in PER_GATE_FLOORS, so a branch added to any of them without a
+# test fails this run rather than lowering a ratchet.
 #
 # The floors that follow are the weaker half. They stop a covered file
 # regressing; they cannot state what is covered, and a count loose enough to
@@ -183,6 +189,7 @@ PER_GATE_FLOORS = {
     # THE ASSERTION THAT IS NOT A NUMBER above.
     "scripts/check-policy-admission.py": 100,
     "scripts/check-image-verification.py": 100,
+    "scripts/check-policy-validity.py": 100,
     # The control-exempt gates. Their floors are what keeps the verdict half
     # covered after the module that covers it is edited.
     "scripts/check-platform-crs.py": 51,
