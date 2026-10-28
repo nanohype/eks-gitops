@@ -178,12 +178,15 @@ ones:
 - [trivy](https://trivy.dev/) — `scan`
 - [go](https://go.dev/dl/) >= 1.26 — `validate:appset-render`
 - [zizmor](https://docs.zizmor.sh/) — `validate:workflows`
+- [kind](https://kind.sigs.k8s.io/), kubectl and Docker — `validate:digest-rewrite`,
+  which is outside `task validate` because it runs a cluster
 - Python at the version `.python-version` pins, with the packages `requirements.txt`
   locks — PyYAML for the gates under `scripts/`, `coverage` for `validate:gate-tests`,
   `yamllint` for `lint:yaml`, `zizmor` for `validate:workflows`. Install them with
   `pip install --require-hashes -r requirements.txt`, which is what CI runs.
 
-CI pins the versions of kyverno, kubeconform, trivy and gitleaks it downloads;
+CI pins the versions of kyverno, kubeconform, trivy, gitleaks, kind and kubectl it
+downloads, and the kind node image by digest;
 those pins are in the `env:` block at the top of `.github/workflows/ci.yml` and
 are the versions a local run is expected to match. `task validate` shells out to
 whichever build is on `PATH`, so a different major can fail in ways the pinned

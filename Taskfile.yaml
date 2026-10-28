@@ -101,6 +101,14 @@ tasks:
       # its own blocking job; run it here before moving a chart pin.
       - ./scripts/check-image-vulnerabilities.py
 
+  validate:digest-rewrite:
+    desc: "Digest-pin gate — under real admission, each supply-chain overlay pins a signed tag and decides a foreign identity"
+    cmds:
+      # Brings up a kind cluster and installs Kyverno, so it needs Docker and the
+      # network and is NOT in `task validate`. CI runs it as the `digest-rewrite`
+      # job; run it here before changing verify-images or the Kyverno pin.
+      - ./scripts/check-digest-rewrite.sh
+
   validate:workflows:
     desc: "Workflow supply-chain gate — zizmor over .github/workflows, offline, MEDIUM+ blocks"
     cmds:

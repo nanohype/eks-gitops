@@ -1,194 +1,248 @@
 #!/usr/bin/env bash
-# Execute the digest rewrite the enforcing tier depends on, and read the result.
+# Admit pods through a real API server running the catalog's Kyverno, and read
+# back what was admitted.
 #
-# WHY THIS EXISTS
+# WHAT THIS GUARDS
 #
-# `mutateDigest: true` is the whole reason the enforcing tier enforces.
-# Verification resolves a tag to a digest at admission; the kubelet resolves the
-# same tag again at pull time. Pinning at admission is what stops anyone who can
-# move a tag between those two moments from running an unverified image under a
-# policy reporting success.
+# verify-images pins every ghcr.io/nanohype/* tag to the digest it verified
+# (`mutateDigest: true`). Verification resolves a tag at admission and the
+# kubelet resolves it again at pull; the pin is what stops anyone able to move
+# the tag between those two moments from running an unverified image under a
+# passing policy.
 #
-# In this repository that guarantee was a field value other files read, never a
-# behaviour anything ran. Three checks touch the field and all three read
-# rendered YAML: `kyverno test` loads only base policies, where the field is
-# false because Kyverno rejects true under an Audit failure action;
-# check-image-verification.py declines to assert it and delegates the pairing;
-# check-policy-validity.py asserts Enforce implies true, then applies its probe
-# pod, whose image is outside `ghcr.io/nanohype/*` so the rule never matches.
-#
-# The rendition carrying `mutateDigest: true` was under no test at all. A change
-# that keeps the field and breaks the rewrite — an exclude block growing over a
-# workload namespace, a Kyverno upgrade altering the verifyImages mutation path —
-# leaves every YAML reading exactly as it does today.
+# The pin is written by Kyverno's MUTATING webhook. The Kyverno CLI evaluates an
+# ImageValidatingPolicy through the validating path only, so `kyverno test` and
+# `kyverno apply` never execute it: under `verifyDigest: true` a tag-only pod
+# simply fails there. A field can read true in every rendered overlay while the
+# rewrite has stopped happening — a Kyverno upgrade changing the mutation path,
+# a webhook that no longer registers — and only an admission request sees it.
 #
 # WHAT THIS RUNS
 #
-# The ENFORCING rendition, rendered here rather than committed, against a pod
-# written the way the catalog writes one: with a tag. The pod's image is a real
-# signed release, so verification runs end to end and the mutation runs behind
-# it — this exercises the path rather than a model of it.
+# A kind cluster on the node image ci.yml pins (KIND_NODE_IMAGE), Kyverno from
+# the chart and values the kyverno appset element names, and then, for each
+# rendered supply-chain overlay in turn:
 #
-# HOW THE RESULT IS OBSERVED, and why it is read out of a report.
+#   * the signed fixture, written with a tag, must be admitted carrying that tag
+#     joined to an @sha256 digest — at every tier, because the pin does not
+#     depend on the validation action;
+#   * the branch-signed fixture must be DENIED with the policy's identity
+#     message wherever the overlay's validationActions include Deny, and
+#     admitted (audited) where they do not.
 #
-# The Kyverno CLI offers no machine-readable channel carrying the object a
-# verifyImages mutation admitted. Three were tried. `kyverno test`'s
-# `patchedResources` is compared against EVERY engine response for the rule, and
-# a verifyImages rule produces two — one holding the resource as submitted and
-# one holding it mutated — so one comparison always diffs whichever file is
-# supplied, and supplying both produces a cross product with two failures.
-# `kyverno apply -o` writes a file for mutate rules and leaves it empty for this
-# one. The JSON policy report carries the verdict and the message and not the
-# object.
+# NEEDS THE NETWORK AND DOCKER. Kyverno inside the cluster reaches the registry
+# for the manifest and Rekor for the transparency-log entry, which is the round
+# trip production admission makes. A denial whose message is a network failure
+# exits 2: it is a verification that never ran, not a rewrite that stopped.
 #
-# What remains is the CLI's own detailed report, which prints the admitted
-# object. That is text, and text is the weaker reading — but it fails in the
-# safe direction: the assertion is that a specific reference token appears, so a
-# report that stops printing it, or wraps it, or renames the column, makes the
-# token absent and this gate red. It cannot go quiet.
-#
-# NEEDS THE NETWORK, and that is not incidental. Keyless verification reaches
-# the registry for the manifest and Rekor for the transparency-log entry, which
-# is the round trip admission makes. Offline the CLI reports a verification
-# failure rather than a clean result, which is why the two are told apart below
-# instead of both reading as a rewrite that stopped happening.
-#
-# WHAT IT DOES NOT ESTABLISH
-#
-# That a cluster admits what the CLI admits. The engine is the same code and the
-# policy is the rendered one, and no environment reachable from this repository
-# runs an API server — so this is the strongest observation available here and
-# it is not an admission-time proof.
+# Exit 0: every overlay pinned the tag and decided the identity as its action
+# says. Exit 1: one did not. Exit 2: the run could not establish either.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SUITE="$ROOT/policies/kyverno/tests/supply-chain-digest"
+GROUP="$ROOT/policies/kyverno/supply-chain"
+APPSET="$ROOT/applicationsets/addons-security.yaml"
+CI="$ROOT/.github/workflows/ci.yml"
+POLICY=verify-images
+IDENTITY_MESSAGE="image is not signed by a nanohype release workflow"
 
-# Every overlay that turns the rewrite on. Enumerated from the tree rather than
-# named here: an overlay added later is one more tier depending on a step, and
-# it has to be executed by something too.
-mapfile -t OVERLAYS < <(
-  grep -rl 'verifyImages/0/mutateDigest' "$ROOT/policies/kyverno" --include='kustomization.yaml' \
-    | xargs -n1 dirname | sort
-)
-
-if [ "${#OVERLAYS[@]}" -eq 0 ]; then
-  echo "Cannot run: no overlay in policies/kyverno patches mutateDigest, so the"
-  echo "rendition this executes does not exist. That is a tree this gate cannot"
-  echo "read, not a rewrite that works."
+cannot_run() {
+  printf '%s\n' "Cannot run: $*"
   exit 2
+}
+
+# ── The tree first, so an absent corpus refuses before any cluster exists ──
+
+OVERLAYS=()
+for d in "$GROUP"/overlays/*/; do
+  [ -f "$d/kustomization.yaml" ] && OVERLAYS+=("${d%/}")
+done
+if [ "${#OVERLAYS[@]}" -eq 0 ]; then
+  cannot_run "no overlay under ${GROUP#"$ROOT"/}/overlays, so there is no rendition
+of $POLICY to admit anything through. That is a tree this gate cannot read, not a
+rewrite that works."
 fi
 
-for tool in kyverno kustomize; do
-  if ! command -v "$tool" >/dev/null 2>&1; then
-    echo "Cannot run: $tool is not on PATH. The rewrite was not executed — that is"
-    echo "different from it having happened."
-    exit 2
-  fi
+for f in pod.yaml branch-signed.yaml; do
+  [ -f "$SUITE/$f" ] || cannot_run "$SUITE/$f does not exist, so there is no pod to admit."
 done
 
-if [ ! -f "$SUITE/pod.yaml" ]; then
-  echo "Cannot run: $SUITE/pod.yaml does not exist, so there is no pod to admit."
-  exit 2
-fi
-
-# The reference the fixture submits, read out of the fixture rather than
-# repeated here. A tag, and asserted to be one: a digest-pinned fixture needs no
-# rewrite, so it would satisfy every check below against a policy with the
-# rewrite turned off — which is the state this gate exists to detect.
-TAGGED="$(grep -oE 'ghcr\.io/nanohype/[a-z0-9./-]+:[A-Za-z0-9][A-Za-z0-9._-]*' "$SUITE/pod.yaml" | head -1)"
-if [ -z "$TAGGED" ]; then
-  echo "Cannot run: $SUITE/pod.yaml carries no tagged ghcr.io/nanohype image, so"
-  echo "the rule under test does not match it and nothing would be rewritten."
-  exit 2
+# The reference the signed fixture submits, read out of the fixture. A tag, and
+# asserted to be one: a digest-pinned fixture needs no rewrite and would pass
+# against a policy with the rewrite turned off.
+TAGGED="$(sed -n 's/^ *image: *\(ghcr\.io\/nanohype\/[^ ]*\) *$/\1/p' "$SUITE/pod.yaml" | head -1)"
+if [ -z "$TAGGED" ] || ! printf '%s' "$TAGGED" | grep -qE ':[A-Za-z0-9][A-Za-z0-9._-]*$'; then
+  cannot_run "$SUITE/pod.yaml carries no tagged ghcr.io/nanohype image, so the policy
+does not match it and nothing would be rewritten."
 fi
 if printf '%s' "$TAGGED" | grep -q '@sha256:'; then
-  echo "Cannot run: $SUITE/pod.yaml is pinned by digest already. The rewrite would"
-  echo "be a no-op and this would pass over a policy that had stopped doing it."
-  exit 2
+  cannot_run "$SUITE/pod.yaml is pinned by digest already. The rewrite would be a
+no-op and this would pass over a policy that had stopped doing it."
 fi
 
+[ -f "$APPSET" ] || cannot_run "$APPSET does not exist, so the Kyverno chart pin is unknown."
+[ -f "$CI" ] || cannot_run "$CI does not exist, so the pinned kind node image is unknown."
+
+for tool in kind kubectl helm kustomize docker python3; do
+  command -v "$tool" >/dev/null 2>&1 \
+    || cannot_run "$tool is not on PATH. No pod was admitted — that is different
+from the rewrite having happened."
+done
+
+# The chart coordinates the catalog installs, read from the appset element.
+read -r CHART_REPO CHART_VERSION ADDON_PATH < <(python3 - "$APPSET" <<'PY'
+import sys, yaml
+for doc in yaml.safe_load_all(open(sys.argv[1])):
+    def walk(n):
+        if isinstance(n, dict):
+            if n.get("chart") == "kyverno" and n.get("chartVersion"):
+                print(n["chartRepo"], n["chartVersion"], n["path"])
+                sys.exit(0)
+            for v in n.values():
+                walk(v)
+        elif isinstance(n, list):
+            for v in n:
+                walk(v)
+    walk(doc)
+PY
+)
+[ -n "${CHART_VERSION:-}" ] || cannot_run "$APPSET names no kyverno chart element."
+VALUES=("$ROOT/$ADDON_PATH/values.yaml" "$ROOT/$ADDON_PATH/values-production.yaml")
+for v in "${VALUES[@]}"; do
+  [ -f "$v" ] || cannot_run "$v does not exist, so Kyverno would install with values the catalog does not ship."
+done
+
+NODE_IMAGE="${KIND_NODE_IMAGE:-$(sed -n 's/^  KIND_NODE_IMAGE: *\([^ ]*\) *$/\1/p' "$CI" | head -1)}"
+case "$NODE_IMAGE" in
+  *@sha256:*) ;;
+  *) cannot_run "KIND_NODE_IMAGE is '$NODE_IMAGE', not a digest-pinned image. The node
+image is part of what this run asserts against, so an unpinned one is refused." ;;
+esac
+
+# ── The cluster ──────────────────────────────────────────────────────────
+
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT INT TERM
+CLUSTER="digest-rewrite-$$"
+export KUBECONFIG="$WORK/kubeconfig"
+cleanup() {
+  kind delete cluster --name "$CLUSTER" --kubeconfig "$KUBECONFIG" >/dev/null 2>&1
+  rm -rf "$WORK"
+}
+trap cleanup EXIT INT TERM
+
+echo "── kind $NODE_IMAGE, kyverno chart $CHART_VERSION"
+kind create cluster --name "$CLUSTER" --image "$NODE_IMAGE" --wait 180s >"$WORK/kind.log" 2>&1 \
+  || { tail -20 "$WORK/kind.log"; cannot_run "kind could not create the cluster."; }
+
+helm_args=()
+for v in "${VALUES[@]}"; do helm_args+=(-f "$v"); done
+helm install kyverno kyverno --repo "$CHART_REPO" --version "$CHART_VERSION" \
+    --namespace kyverno --create-namespace "${helm_args[@]}" \
+    --wait --timeout 10m >"$WORK/helm.log" 2>&1 \
+  || { tail -20 "$WORK/helm.log"; cannot_run "Kyverno $CHART_VERSION did not install."; }
+
+# The namespaces the fixtures name.
+for f in "$SUITE"/*.yaml; do
+  ns="$(sed -n 's/^  namespace: *\([^ ]*\) *$/\1/p' "$f" | head -1)"
+  [ -n "$ns" ] && kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+done
+
+# The API server's refusal, with the checkout path elided so the reason fits.
+show_err() {
+  sed -e "s#$ROOT/##g" -e 's/^/        /' "$WORK/err" | cut -c1-240
+}
+
+network_failure() {
+  grep -qiE 'no such host|i/o timeout|connection refused|context deadline|TLS handshake|unexpected status code 5[0-9][0-9]|toomanyrequests'
+}
 
 fail=0
+checked=0
 for overlay in "${OVERLAYS[@]}"; do
   rel="${overlay#"$ROOT"/}"
-  dir="$WORK/$(printf '%s' "$rel" | tr '/' '_')"
-  mkdir -p "$dir"
-  if ! kustomize build "$overlay" > "$dir/policy.yaml" 2>"$dir/err"; then
-    echo "Cannot run: $rel does not render — $(head -1 "$dir/err")"
-    exit 2
-  fi
-  cp "$SUITE/pod.yaml" "$dir/"
-  # The expected patch is the pod AS SUBMITTED, and that direction is what makes
-  # the reading non-circular. `kyverno test` compares it against every engine
-  # response; the mutated one differs, so the report prints the object the engine
-  # produced. A digest in that output can only have come from the engine — an
-  # expectation carrying the digest would have the report echo the fixture back.
-  cat > "$dir/kyverno-test.yaml" <<TEST
-apiVersion: cli.kyverno.io/v1alpha1
-kind: Test
-metadata:
-  name: digest-rewrite
-policies:
-  - policy.yaml
-resources:
-  - pod.yaml
-results:
-  - policy: verify-images
-    rule: verify-ghcr-nanohype
-    resources:
-      - eks-agent-platform/signed-operator
-    kind: Pod
-    result: pass
-    patchedResources: pod.yaml
-TEST
+  rendered="$WORK/$(basename "$overlay").yaml"
+  kustomize build "$overlay" >"$rendered" 2>"$WORK/err" \
+    || cannot_run "$rel does not render — $(head -1 "$WORK/err")"
+  actions="$(python3 - "$rendered" "$POLICY" <<'PY'
+import sys, yaml
+for doc in yaml.safe_load_all(open(sys.argv[1])):
+    if doc and doc.get("kind") == "ImageValidatingPolicy" and doc["metadata"]["name"] == sys.argv[2]:
+        print(",".join(doc["spec"].get("validationActions") or []))
+        sys.exit(0)
+sys.exit(1)
+PY
+)" || cannot_run "$rel renders no ImageValidatingPolicy named $POLICY."
 
-  out="$(cd "$dir" && kyverno test . --registry --detailed-results 2>&1 \
-           | sed 's/\x1b\[[0-9;]*m//g')"
-
-  # A verification that could not REACH the registry or Rekor is not a rewrite
-  # that did not happen. They are different facts about different systems, so
-  # they are told apart here rather than both reading as a policy that stopped
-  # pinning.
-  if printf '%s' "$out" | grep -qiE 'failed to verify image|no such host|i/o timeout|connection refused|context deadline'; then
-    echo "Cannot run: $rel — the image could not be verified, so the rewrite never"
-    echo "ran and this observed nothing:"
-    printf '%s\n' "$out" | grep -iE 'failed to verify image|no such host|i/o timeout|connection refused|context deadline' \
-      | head -2 | cut -c1-160 | sed 's/^/      /'
-    exit 2
+  kubectl apply --server-side -f "$rendered" >/dev/null 2>"$WORK/err" \
+    || cannot_run "the API server refused $rel — $(head -1 "$WORK/err")"
+  if ! kubectl wait --for=jsonpath='{.status.conditionStatus.ready}'=true \
+        "imagevalidatingpolicy/$POLICY" --timeout=180s >/dev/null 2>"$WORK/err"; then
+    kubectl get "imagevalidatingpolicy/$POLICY" -o jsonpath='{.status}' 2>/dev/null; echo
+    cannot_run "$rel: Kyverno never reported $POLICY ready, so its webhooks may not be
+registered and an admitted pod would prove nothing."
   fi
 
-  # The verification must have PASSED, because a rewrite behind a failed
-  # verification is a rewrite that never had a digest to write.
-  if printf '%s' "$out" | grep -qE 'Fail +\| +(Ok|Want)'; then
+  echo "── $rel (validationActions: $actions)"
+
+  # The tag, rewritten. The admitted object is the API server's response to the
+  # create, so the digest in it can only have been written by admission.
+  if admitted="$(kubectl create -f "$SUITE/pod.yaml" -o jsonpath='{.spec.containers[0].image}' 2>"$WORK/err")"; then
+    kubectl delete -f "$SUITE/pod.yaml" --wait=false >/dev/null 2>&1
+    if printf '%s' "$admitted" | grep -qE "^$(printf '%s' "$TAGGED" | sed 's/[.]/\\./g')@sha256:[0-9a-f]{64}$"; then
+      echo "  ok    admitted $TAGGED as $admitted"
+    else
+      fail=1
+      echo "  FAIL  admitted $TAGGED as '$admitted', with no digest joined to the tag."
+      echo "        Verification and execution then resolve the tag separately, and"
+      echo "        anyone able to move it between those two moments runs an"
+      echo "        unverified image under a policy reporting success."
+    fi
+  elif network_failure <"$WORK/err"; then
+    show_err
+    cannot_run "$rel could not reach the registry or Rekor, so the signed pod was never
+verified and nothing was observed about the rewrite."
+  else
     fail=1
-    echo "  FAIL  $rel did not verify $TAGGED, so no digest was resolved to write."
-    printf '%s\n' "$out" | tail -6 | cut -c1-160 | sed 's/^/        /'
-    continue
+    echo "  FAIL  denied the release-signed $TAGGED, so no digest was written:"
+    show_err
   fi
 
-  # And the admitted object must carry the digest joined to the tag it was
-  # verified from. One token, so a report that wraps or renames around it makes
-  # this absent rather than true.
-  if printf '%s' "$out" | tr -s ' ' | grep -q "image: $TAGGED@sha256:"; then
-    echo "  ok    $rel admits the pod carrying the digest verification resolved"
-    continue
+  # The identity, decided. Deny refuses it; Audit admits and reports it.
+  if kubectl create -f "$SUITE/branch-signed.yaml" -o name >/dev/null 2>"$WORK/err"; then
+    kubectl delete -f "$SUITE/branch-signed.yaml" --wait=false >/dev/null 2>&1
+    case ",$actions," in
+      *,Deny,*)
+        fail=1
+        echo "  FAIL  admitted a branch-signed image under Deny." ;;
+      *) echo "  ok    admitted the branch-signed image under $actions (reported, not blocked)" ;;
+    esac
+  elif grep -qF "$IDENTITY_MESSAGE" "$WORK/err"; then
+    case ",$actions," in
+      *,Deny,*) echo "  ok    denied the branch-signed image: $IDENTITY_MESSAGE" ;;
+      *) fail=1
+         echo "  FAIL  denied the branch-signed image under $actions, which reports and does not block." ;;
+    esac
+  elif network_failure <"$WORK/err"; then
+    show_err
+    cannot_run "$rel could not reach the registry or Rekor for the branch-signed image."
+  else
+    fail=1
+    echo "  FAIL  the branch-signed image was refused for a reason other than its identity:"
+    show_err
   fi
-  fail=1
-  echo "  FAIL  $rel verified $TAGGED and admitted it with no digest attached."
-  echo "        Verification and execution then resolve the tag separately, and"
-  echo "        anyone able to move it between those two moments runs an"
-  echo "        unverified image under a policy reporting success."
+
+  kubectl delete -f "$rendered" --wait=true >/dev/null 2>&1
+  checked=$((checked + 1))
 done
 
 if [ "$fail" -ne 0 ]; then
   echo
-  echo "The enforcing tier's guarantee is that the admitted spec carries the digest"
-  echo "the signature was checked against. It does not."
+  echo "verify-images' guarantee is that the admitted spec carries the digest the"
+  echo "signature was checked against, and that a tier with Deny refuses an identity"
+  echo "the policy does not trust. Under real admission, that did not hold."
   exit 1
 fi
 
-echo "✓ ${#OVERLAYS[@]} enforcing overlay(s) rewrite a tagged image to the digest"
-echo "  verification resolved — executed against the registry and the transparency"
-echo "  log, not read off the rendered field"
+echo "✓ $checked overlay(s) of $POLICY pin a tagged image to the digest admission"
+echo "  verified and decide a foreign identity as their validationActions say —"
+echo "  executed through a real API server, the registry and the transparency log"

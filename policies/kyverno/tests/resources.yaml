@@ -175,9 +175,17 @@ spec:
           port: 8080
         periodSeconds: 10
 ---
-# verify-images scoping: a non-nanohype image is outside imageReferences
-# (ghcr.io/nanohype/*), so verify-images skips it (Pass/Excluded). Widening the
-# references to "*" makes this pod get evaluated and flips it to fail.
+# verify-images fixtures. Every nanohype reference is pinned by digest: the CLI
+# runs the validating path only, never the digest mutation admission runs first,
+# so a tag reaching verifyDigest fails here the way it would at the validating
+# webhook (vi-tag-only). The signed digest is a release of the operator, signed
+# and SPDX-attested by release.yaml on a tag; the branch-signed digest is a fab
+# build signed by ci.yml on refs/heads/main, a real org signature from a
+# workflow the policy does not trust.
+#
+# A non-nanohype image is outside matchImageReferences (ghcr.io/nanohype/*), so
+# nothing is verified and the pod passes. Widening the glob to "*" makes this
+# image subject to verification and flips it to fail.
 apiVersion: v1
 kind: Pod
 metadata:
@@ -192,13 +200,12 @@ spec:
     - name: app
       image: registry.k8s.io/pause:3.10
 ---
-# verify-images scoping: a nanohype image, but in an EXCLUDED namespace (kyverno),
-# so verify-images skips it. Dropping the namespace exclude flips this to fail.
+# A release-signed, SBOM-attested nanohype image, pinned by digest.
 apiVersion: v1
 kind: Pod
 metadata:
-  name: vi-excluded-ns
-  namespace: kyverno
+  name: vi-signed
+  namespace: workloads
   labels:
     app.kubernetes.io/name: example
 spec:
@@ -206,4 +213,76 @@ spec:
     runAsNonRoot: true
   containers:
     - name: app
-      image: ghcr.io/nanohype/eks-agent-platform:v0.1.0
+      image: ghcr.io/nanohype/eks-agent-platform/operator@sha256:06a465237e0caeb3fecfd46ae7cd143c7dc27b7164143bb8fde7127081392549
+---
+# The same image beside a third-party sidecar. The sidecar is outside
+# matchImageReferences and never reaches the validations, so it cannot fail them.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vi-signed-with-sidecar
+  namespace: workloads
+  labels:
+    app.kubernetes.io/name: example
+spec:
+  securityContext:
+    runAsNonRoot: true
+  containers:
+    - name: app
+      image: ghcr.io/nanohype/eks-agent-platform/operator@sha256:06a465237e0caeb3fecfd46ae7cd143c7dc27b7164143bb8fde7127081392549
+    - name: sidecar
+      image: registry.k8s.io/pause:3.10
+---
+# A signed image named by tag. verifyDigest refuses an image that reaches
+# validation without a digest, which at admission means the pin did not happen.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vi-tag-only
+  namespace: workloads
+  labels:
+    app.kubernetes.io/name: example
+spec:
+  securityContext:
+    runAsNonRoot: true
+  containers:
+    - name: app
+      image: ghcr.io/nanohype/eks-agent-platform/operator:0.6.1
+---
+# Signed by the org, from ci.yml on a branch push. The subject regex admits only
+# release.ya?ml on refs/tags, so this fails the signature validation.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vi-branch-signed
+  namespace: workloads
+  labels:
+    app.kubernetes.io/name: example
+spec:
+  securityContext:
+    runAsNonRoot: true
+  containers:
+    - name: app
+      image: ghcr.io/nanohype/fab@sha256:9e415943a62573af33d4f4b85ad19700280679063de720ff59780844cb1b7c77
+---
+# A release-signed main container behind a branch-signed init container. Two
+# fields fail it independently: the validations cover every container field,
+# and `required: true` refuses a matched image no validation verified. The pod
+# passes only when both are gone; scripts/check-image-verification.py asserts
+# each one on its own.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vi-branch-signed-init
+  namespace: workloads
+  labels:
+    app.kubernetes.io/name: example
+spec:
+  securityContext:
+    runAsNonRoot: true
+  initContainers:
+    - name: init
+      image: ghcr.io/nanohype/fab@sha256:9e415943a62573af33d4f4b85ad19700280679063de720ff59780844cb1b7c77
+  containers:
+    - name: app
+      image: ghcr.io/nanohype/eks-agent-platform/operator@sha256:06a465237e0caeb3fecfd46ae7cd143c7dc27b7164143bb8fde7127081392549

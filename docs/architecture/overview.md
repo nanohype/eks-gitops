@@ -108,7 +108,7 @@ Some addons use pure Kustomize without Helm:
 - **storage-classes** — EBS gp3 StorageClass and gp2 default removal
 - **priority-classes** — PriorityClass resources for platform and tenant workload tiers
 - **karpenter-resources** — EC2NodeClass and NodePool CRDs with environment-specific patches
-- **Kyverno policies** — ClusterPolicy resources with JSON patch overlays to control enforcement mode
+- **Kyverno policies** — ClusterPolicy resources, plus the supply-chain ImageValidatingPolicy, with JSON patch overlays to control enforcement mode
 
 These use the `base/overlays` pattern:
 

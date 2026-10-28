@@ -19,7 +19,7 @@ addons/                → Addon configurations
     base/                  → Kustomization + resource manifests
     overlays/{development,staging,production}[,hub]/
                            → Environment-specific kustomization.yaml
-policies/              → Kyverno ClusterPolicy manifests (pure Kustomize, base/overlays)
+policies/              → Kyverno policies: ClusterPolicies plus the supply-chain ImageValidatingPolicy (pure Kustomize, base/overlays)
 catalog/               → Platform-specific workloads (Druid)
 ```
 
@@ -160,7 +160,13 @@ aggregate, so a clean `task validate` is necessary but not sufficient:
   run before it.
 - **Kyverno unit tests + verify-images signing-identity contract** —
   `kyverno test policies/kyverno/tests` and `scripts/check-image-verification.py`
-  (CI job `kyverno`)
+  (CI job `kyverno`). The verify-images cases verify real signatures, so the
+  suite needs the network
+- **Digest pin under real admission** — `scripts/check-digest-rewrite.sh`
+  (CI job `digest-rewrite`; locally `task validate:digest-rewrite`, outside the
+  aggregate because it brings up kind and needs Docker and the network). The
+  Kyverno CLI never runs the mutating webhook that pins a verified tag to its
+  digest, so this is the only gate that observes the pin
 - **Secret scan** — gitleaks over the working tree (CI job `secrets`)
 - **Pods name ServiceAccounts that exist** — `scripts/check-serviceaccount-bindings.py`
   (CI job `serviceaccount-bindings`)

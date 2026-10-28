@@ -61,44 +61,49 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
   (the skip list in scripts/kubeconform-scan.sh) and validated only against the
   real webhook out-of-band.
 
-## 3. Image supply chain  (`policies/kyverno/supply-chain/`, `scripts/check-image-verification.py`)
+## 3. Image supply chain  (`policies/kyverno/supply-chain/`, `scripts/check-image-verification.py`, `scripts/check-digest-rewrite.sh`)
 
-- **Spoofing / Tampering of a workload image** — a hand-pushed or altered
-  `ghcr.io/nanohype/*` image. Mitigated: the `verify-images` ClusterPolicy requires
-  (`required: true`) a keyless Cosign signature from the GitHub Actions OIDC issuer,
-  scoped to `ghcr.io/nanohype/*`, with an anchored org- and tag-bound
-  `subjectRegExp` (verify-images.yaml:40-59, :56). Base is `Audit`
-  (verify-images.yaml:21); the **production overlay patches it to `Enforce`**
-  (overlays/production/kustomization.yaml:11-17), blocking unsigned images at
-  admission.
-- **Repudiation of a weakened policy** — `kyverno test` cannot reach Fulcio/Rekor,
-  so it reports Pass regardless of attestor. The structural gate
-  `check-image-verification.py:79-110` closes that hole: it fails the build if
-  `required` flips, the issuer changes, or the subjectRegExp loses its anchor, its
-  org scope, or its `refs/tags` binding — run in CI (ci.yml:85-88).
-- **Pinning** — the base keeps `mutateDigest: false` (verify-images.yaml), which
-  Kyverno requires under an `Audit` failure action; the staging and production
-  overlays patch it to `true` alongside the `Enforce` patch
-  (supply-chain/overlays/staging/kustomization.yaml,
-  supply-chain/overlays/production/kustomization.yaml), so a tag is pinned to the
-  verified digest exactly where the policy enforces and nowhere else.
-  `verifyDigest` stays `false` at every tier (verify-images.yaml) — Kyverno
-  derives the digest rather than demanding authors write one.
+- **Spoofing / Tampering of a workload image** — a hand-pushed, branch-built or
+  altered `ghcr.io/nanohype/*` image. Mitigated: `verify-images` is an
+  ImageValidatingPolicy (`policies.kyverno.io/v1`) scoped to `ghcr.io/nanohype/*`
+  that requires (`required: true`) both a keyless Cosign signature and an SPDX SBOM
+  attestation (in-toto type `https://spdx.dev/Document`), each from the GitHub
+  Actions OIDC issuer with an anchored, org-scoped `subjectRegExp` bound to a
+  `release.ya?ml` workflow on `refs/tags/`, and checked against the Rekor
+  transparency log. Verification reads both Sigstore bundles (cosign v3) and the
+  legacy `.sig`/`.att` tags, so either signing format satisfies it. Base is
+  `validationActions: [Audit]`; the **staging and production overlays patch it to
+  `[Deny]`**, blocking a failed verification at admission.
+- **Repudiation of a weakened policy** — `kyverno test` verifies real signatures
+  (policies/kyverno/tests/kyverno-test.yaml), so it proves the release identity
+  admits a release image and refuses a branch-signed one, but an identity weakened
+  in a way both fixtures still satisfy passes it. The structural gate
+  `check-image-verification.py` closes that hole: it fails the build if `required`,
+  `mutateDigest` or `verifyDigest` flips, the issuer changes, the subjectRegExp
+  loses its anchor, org scope, release-workflow or `refs/tags` binding, the
+  transparency log is switched off, the SPDX attestation stops being required, a
+  validation stops covering every container field, or the namespace exclusion
+  grows past the system namespaces — run in CI (job `kyverno`).
+- **Pinning** — `mutateDigest: true` in the base: admission resolves each matched
+  tag to the digest it verified and rewrites the pod spec to it, at every tier,
+  because an ImageValidatingPolicy pins under Audit as well as Deny.
+  `verifyDigest: true` then refuses any matched image that reaches validation
+  without a digest, so a pin that did not happen is a verification failure rather
+  than a tag the kubelet resolves again at pull. `check-policy-validity.py` asserts
+  both fields on every rendered overlay.
 
-  That pinning is EXECUTED rather than configured: `scripts/check-digest-rewrite.sh`
-  renders each enforcing overlay, admits a signed `ghcr.io/nanohype/*` pod through
-  it against the registry and the transparency log, and requires the admitted spec
-  to carry the digest the signature was checked against. Every other check that
-  touches the field reads rendered YAML, and a change that keeps `mutateDigest: true`
-  while breaking the rewrite leaves all of them reading exactly as they do today.
-
-  What it does not establish is that a cluster admits what the CLI admits. The
-  engine is the same code and the policy is the rendered one; no environment
-  reachable from this repository runs an API server.
+  That pinning is EXECUTED under real admission: `scripts/check-digest-rewrite.sh`
+  (CI job `digest-rewrite`) brings up kind, installs the pinned Kyverno chart with
+  this catalog's values, applies each rendered supply-chain overlay, and requires a
+  tag-only signed pod to come back pinned to `@sha256` and a branch-signed pod to
+  be denied wherever the overlay says Deny. The Kyverno CLI cannot establish this:
+  it runs the validating path only, never the mutating webhook that writes the pin.
 
 - **Residual** — third-party images (anything outside `ghcr.io/nanohype/*`) are
   unmatched and pass unsigned — their trust is the upstream registry's, not this
-  policy's.
+  policy's. The four system namespaces (`kube-system`, `kube-public`,
+  `kube-node-lease`, `kyverno`) are excluded, so a nanohype image placed there is
+  not verified.
 
 ## 4. Admission / pod security  (`policies/kyverno/{best-practices,pod-security-standards}/`)
 
@@ -211,7 +216,7 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
 - **Agent-platform enforcement logic** — the budget reconciler, kill-switch
   suspension, and admission webhook live in the eks-agent-platform operator repo;
   this catalog declares the CRs and the alerts, not the controller that acts on them.
-- **Runtime Cosign cryptography** — Kyverno + Fulcio/Rekor verify signatures at
-  admission in-cluster; CI only checks the signing-**identity** contract
-  structurally (it cannot reach Rekor offline).
+- **Sigstore infrastructure** — Fulcio, Rekor and the GitHub OIDC issuer are
+  trusted as published; CI exercises verification against them over the network
+  (jobs `kyverno` and `digest-rewrite`) but does not model their compromise.
 - **Application-layer threats inside tenant workloads** (druid, agent code).

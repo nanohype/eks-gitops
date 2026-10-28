@@ -72,7 +72,7 @@ features:
 webhooksCleanup:
   enabled: true
   image:
-    tag: v1.18.2
+    tag: v1.19.2
 
 # Override the kubectl image the report-cleanup jobs run. The chart default is a
 # Bitnami image, whose free public catalog Broadcom archived; pin the maintained
@@ -94,4 +94,4 @@ cleanupJobs:
 # unset for the same reason. Pinned alongside the cleanup hook above.
 test:
   image:
-    tag: v1.18.2
+    tag: v1.19.2

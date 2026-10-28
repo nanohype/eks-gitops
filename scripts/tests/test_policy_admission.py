@@ -468,5 +468,61 @@ class TheExclusionCorpusIsReal(unittest.TestCase):
         self.assertTrue(keys)
 
 
+def deployment(name="app", namespace="workloads", replicas=1):
+    return {"apiVersion": "apps/v1", "kind": "Deployment",
+            "metadata": {"name": name, "namespace": namespace},
+            "spec": {"replicas": replicas}}
+
+
+class WhatReachesKyverno(unittest.TestCase):
+    """The resource set the CLI loads into its in-memory API server.
+
+    That server refuses a whole run over one object it would not hold, so what
+    reaches it is decided here: only the kinds the policies evaluate, and one
+    object per identity — without losing an environment's own variant.
+    """
+
+    def test_only_workload_kinds_are_handed_over(self):
+        prepared = "\n---\n".join(yaml.safe_dump(d) for d in (
+            deployment(),
+            {"apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition",
+             "metadata": {"name": "things.example.io"}},
+            {"apiVersion": "v1", "kind": "List", "items": []},
+        ))
+        self.assertEqual([d["kind"] for d in gate.workloads(prepared)], ["Deployment"])
+
+    def test_an_exact_repeat_is_dropped(self):
+        out = gate.distinct_identities([deployment(), deployment()])
+        self.assertEqual(len(out), 1)
+
+    def test_a_differing_repeat_is_kept_under_its_own_name(self):
+        out = gate.distinct_identities([deployment(replicas=1), deployment(replicas=3)])
+        self.assertEqual([d["metadata"]["name"] for d in out], ["app", "app--2"])
+        self.assertEqual(out[1]["spec"]["replicas"], 3,
+                         "the environment's variant is the object kept, renamed")
+        self.assertEqual(out[1]["metadata"]["namespace"], "workloads",
+                         "the namespace decides the exclusion, so it never moves")
+
+    def test_the_same_name_in_another_namespace_is_not_a_repeat(self):
+        out = gate.distinct_identities([deployment(), deployment(namespace="other")])
+        self.assertEqual([d["metadata"]["name"] for d in out], ["app", "app"])
+
+
+class TheReportOnStdout(unittest.TestCase):
+    """`kyverno apply` prints deprecation lines on stdout ahead of the report."""
+
+    def test_the_report_after_warning_lines_is_read(self):
+        out = ("Warning: a.yaml: kyverno.io/v1 ClusterPolicy is deprecated\n"
+               '{"results": [], "summary": {"pass": 1}}\n')
+        self.assertEqual(gate.report_json(out), {"results": [], "summary": {"pass": 1}})
+
+    def test_no_object_is_no_report(self):
+        self.assertIsNone(gate.report_json("Warning: only a warning\n"))
+        self.assertIsNone(gate.report_json(""))
+
+    def test_an_object_that_does_not_decode_is_no_report(self):
+        self.assertIsNone(gate.report_json('{"results": [\n'))
+
+
 if __name__ == "__main__":
     unittest.main()

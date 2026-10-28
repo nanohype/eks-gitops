@@ -68,6 +68,8 @@ task kustomize:build:env ENVIRONMENT=development
    ```bash
    kubectl get clusterpolicy
    kubectl describe clusterpolicy <name>
+   kubectl get imagevalidatingpolicy
+   kubectl describe imagevalidatingpolicy verify-images
    ```
 
 2. View policy reports:
@@ -76,7 +78,9 @@ task kustomize:build:env ENVIRONMENT=development
    kubectl get clusterpolicyreport
    ```
 
-3. In development, policies are in Audit mode — violations generate reports but don't block. In staging/production, policies Enforce — violations are rejected.
+3. In development, policies are in Audit mode — violations generate reports but don't block. In staging/production, policies Enforce (`verify-images`: `validationActions: [Deny]`) — violations are rejected.
+
+4. A `ghcr.io/nanohype/*` pod denied by `verify-images` with "image is not signed by a nanohype release workflow" or "carries no SPDX SBOM attestation" was not signed and attested by a `release.yml`/`release.yaml` workflow on a tag push. Inspect the signer with `cosign tree <image>` and `cosign verify <image> --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-identity-regexp '.*'`. An admitted pod's image carries `@sha256:` — admission pins the tag to the digest it verified.
 
 ## Velero Backup Issues
 

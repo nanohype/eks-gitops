@@ -5,10 +5,10 @@ The other Kyverno gates in this repo check what a policy DOES. `kyverno test`
 proves each rule passes a compliant resource and fails a violating one, and
 check-policy-admission.py proves the fleet is admissible against the Enforce
 tier. Neither asks the prior question: will the API server accept this
-ClusterPolicy at all?
+policy at all?
 
 Kyverno enforces semantic rules that no JSON schema encodes and no behavioural
-test reaches. The one that produced this gate:
+test reaches. One example, on a ClusterPolicy verifyImages rule:
 
     spec.rules[0].verifyImages[0].mutateDigest: Invalid value: true:
     mutateDigest must be set to false for 'Audit' failure action
@@ -16,27 +16,22 @@ test reaches. The one that produced this gate:
 A policy carrying that combination renders clean through kustomize, passes
 kubeconform (the schema permits both fields independently), and passes
 `kyverno test` — which loads the policy in a context that does not run this
-validation. It then fails to apply on every cluster whose overlay is Audit.
-
-The combination is reachable here: a base setting `mutateDigest: true` renders an
-invalid policy in every Audit overlay while the enforcing overlays stay valid.
-The policy-admission gate renders only the Enforce tier, so it never reaches
-that overlay.
+validation. It then fails to apply on every cluster whose overlay is Audit. A
+policy Kyverno cannot load at all fails the same way and is quieter still:
+`kyverno apply` drops it and reports `error: 0`. The policy-admission gate
+renders only the Enforce tier, so an invalid Audit overlay never reaches it.
 
 So this renders EVERY policy overlay — every group, every environment — and runs
 each through Kyverno's own validation. An overlay the API server would reject
 fails the build instead of the sync.
 
-It also asserts the one pairing Kyverno itself will not: an overlay running
-`validationFailureAction: Enforce` must set `mutateDigest: true`. That
-combination is the whole point of enforcing — verify the signature AND pin the
-tag to the digest that was verified. Enforce with mutateDigest false is
-*perfectly valid* Kyverno, so nothing above catches it, and it silently reopens
-the window between admission resolving a tag and the kubelet resolving it again.
-
-The same pairing is described in prose beside the base policy and each enforcing
-overlay kustomization, but a comment cannot fail a build — which is why it is
-asserted here.
+It also asserts what Kyverno itself will not: every rendered
+ImageValidatingPolicy, in every environment, pins the digest it verified
+(`mutateDigest: true`) and refuses an image that reaches validation unpinned
+(`verifyDigest: true`). Either set false is valid Kyverno, so nothing above
+catches it, and it reopens the window between admission resolving a tag and the
+kubelet resolving it again. An overlay can patch either field, so this reads the
+rendered overlays rather than the base.
 """
 
 from __future__ import annotations
@@ -87,39 +82,48 @@ spec:
 failures: list[str] = []
 
 
-def _check_enforce_pins_digest(rel, rendered: str) -> None:
-    """Enforce implies mutateDigest: true, for any rule that verifies images.
+# Kinds Kyverno reports as one "policy rule" each in `kyverno apply`'s load
+# count, because they carry no `rules` list of their own.
+CEL_POLICY_KINDS = {
+    "ValidatingPolicy", "NamespacedValidatingPolicy",
+    "ImageValidatingPolicy", "NamespacedImageValidatingPolicy",
+    "MutatingPolicy", "NamespacedMutatingPolicy",
+    "GeneratingPolicy", "NamespacedGeneratingPolicy",
+    "DeletingPolicy", "NamespacedDeletingPolicy",
+}
 
-    Kyverno validates the illegal direction (mutateDigest true under Audit) and
-    is silent about the useless one (Enforce without it), which verifies a
-    signature and then lets the kubelet re-resolve the tag.
+
+def _check_pins_digest(rel, rendered: str) -> None:
+    """Every ImageValidatingPolicy pins and requires the digest it verified.
+
+    The CRD defaults both fields to true, so an absent field reads as true here
+    the way the API server reads it.
     """
     import yaml as _yaml
 
     for doc in _yaml.safe_load_all(rendered):
-        if not doc or doc.get("kind") != "ClusterPolicy":
+        if not doc or doc.get("kind") != "ImageValidatingPolicy":
             continue
-        action = (doc.get("spec") or {}).get("validationFailureAction")
-        for rule in (doc["spec"].get("rules") or []):
-            for vi in (rule.get("verifyImages") or []):
-                md = vi.get("mutateDigest")
-                name = doc["metadata"]["name"]
-                if action == "Enforce" and md is not True:
-                    failures.append(
-                        f"{rel}: ClusterPolicy {name} rule {rule.get('name')!r} is Enforce "
-                        f"but mutateDigest is {md!r}. Enforce without it verifies a signature "
-                        f"and still lets the kubelet re-resolve the tag — valid Kyverno, and "
-                        f"exactly the window the enforcing tier exists to close."
-                    )
-                elif action != "Enforce" and md is True:
-                    failures.append(
-                        f"{rel}: ClusterPolicy {name} rule {rule.get('name')!r} sets "
-                        f"mutateDigest true under {action!r}. Kyverno rejects that outright."
-                    )
+        name = doc["metadata"]["name"]
+        cfg = (doc.get("spec") or {}).get("validationConfigurations") or {}
+        for field, why in (
+            ("mutateDigest", "admission verifies a tag and the kubelet resolves it again "
+                             "at pull"),
+            ("verifyDigest", "an image whose pin did not happen reaches validation and "
+                             "passes on its tag"),
+        ):
+            if cfg.get(field, True) is not True:
+                failures.append(
+                    f"{rel}: ImageValidatingPolicy {name} sets {field} {cfg.get(field)!r}. "
+                    f"Valid Kyverno, and {why} — the window this policy exists to close."
+                )
 
 
 def rules_in(rendered: str) -> int:
-    """Rules across every ClusterPolicy in a rendered overlay.
+    """Policy rules in a rendered overlay, counted the way `kyverno apply` does.
+
+    A ClusterPolicy or Policy contributes its `rules`; a CEL policy kind, which
+    has none, contributes one.
 
     Parsed, not matched. Counting `- name:` by indentation returned 0 against
     the real render — the depth differs from the source files — so the guard
@@ -129,8 +133,12 @@ def rules_in(rendered: str) -> int:
     """
     total = 0
     for doc in yaml.safe_load_all(rendered):
-        if isinstance(doc, dict) and doc.get("kind") in ("ClusterPolicy", "Policy"):
+        if not isinstance(doc, dict):
+            continue
+        if doc.get("kind") in ("ClusterPolicy", "Policy"):
             total += len((doc.get("spec") or {}).get("rules") or [])
+        elif doc.get("kind") in CEL_POLICY_KINDS:
+            total += 1
     return total
 
 
@@ -225,7 +233,7 @@ def main() -> int:
                 failures.append(f"{rel}: kyverno reported errors: {summary}")
                 continue
 
-            _check_enforce_pins_digest(rel, build.stdout)
+            _check_pins_digest(rel, build.stdout)
 
     if failures:
         for f in failures:
