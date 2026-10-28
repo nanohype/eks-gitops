@@ -16,48 +16,74 @@
     │ refuses those.                                                      │
     └─────────────────────────────────────────────────────────────────────┘
 
-Asserts, on policies/kyverno/supply-chain/base/verify-images.yaml (an
-ImageValidatingPolicy, policies.kyverno.io/v1):
-  - matchImageReferences is scoped to ghcr.io/nanohype/*, never a bare "*";
-  - the policy fails closed (failurePolicy is not Ignore), matches pods on
-    CREATE and UPDATE and pods/ephemeralcontainers on UPDATE, and excludes
-    exactly the system namespaces in SYSTEM_NS;
+The contract is asserted on policies/kyverno/supply-chain/base/verify-images.yaml
+and on each supply-chain overlay as kustomize renders it, because the overlay is
+what a cluster installs and a patch there can undo anything the base says. Each
+rendition must be an ImageValidatingPolicy (policies.kyverno.io/v1) in which:
+  - matchImageReferences is exactly the one glob ghcr.io/nanohype/*;
+  - the policy fails closed (failurePolicy is not Ignore), runs at admission in
+    Kubernetes mode, matches pods on CREATE and UPDATE and
+    pods/ephemeralcontainers on UPDATE, excludes exactly the system namespaces
+    in SYSTEM_NS, and declares no image extractor shadowing a container field;
   - no rule is generated for pod controllers (autogen.podControllers.controllers
     is an empty list), so admission pins the pod and leaves the template git
     holds as written;
   - validationConfigurations sets required, mutateDigest and verifyDigest true;
-  - every attestor is keyless Cosign: the GitHub Actions OIDC issuer exactly,
-    SUBJECT_REGEXP exactly as the subjectRegExp, and the Rekor transparency log
-    checked;
+  - every attestor is keyless Cosign with no key, root or log of its own: the
+    GitHub Actions OIDC issuer exactly, SUBJECT_REGEXP exactly as the
+    subjectRegExp, and the public Rekor log at REKOR_URL checked;
   - an attestation of in-toto type https://spdx.dev/Document is declared;
-  - one validation verifies image signatures and one verifies that SPDX
-    attestation, each against the keyless attestor and over every container
-    field.
+  - one validation is SIGNATURE_VALIDATION and one is ATTESTATION_VALIDATION,
+    each compared whole against the keyless attestor and the SPDX attestation.
 
-BLOCKING: exits non-zero on the first violation.
+Each overlay also sets the validationActions EXPECTED_ACTIONS names for its
+environment, so a tier that enforces cannot drop to reporting.
+
+BLOCKING: exits 1 on the first violation, and 2 when kustomize is absent or a
+render does not finish.
 """
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import NoReturn
 
+import gatelib
 import yaml
 
-POLICY = (
-    Path(__file__).resolve().parent.parent
-    / "policies/kyverno/supply-chain/base/verify-images.yaml"
-)
+ROOT = Path(__file__).resolve().parent.parent
+GROUP = ROOT / "policies/kyverno/supply-chain"
+POLICY = GROUP / "base/verify-images.yaml"
+POLICY_NAME = "verify-images"
+
+# Seconds one kustomize render may take. It reads only the working tree.
+LOCAL_TIMEOUT = 120
+
+# The validationActions each rendered overlay sets, by environment. An overlay
+# under no name here is a tier whose enforcement nobody decided, and an
+# environment here with no overlay is a tier this gate never rendered; both fail.
+EXPECTED_ACTIONS = {
+    "development": ["Audit"],
+    "staging": ["Deny"],
+    "production": ["Deny"],
+}
 
 EXPECTED_API = "policies.kyverno.io/v1"
 EXPECTED_KIND = "ImageValidatingPolicy"
 EXPECTED_ISSUER = "https://token.actions.githubusercontent.com"
 EXPECTED_SBOM_TYPE = "https://spdx.dev/Document"
 REGISTRY_PREFIX = "ghcr.io/nanohype/"
+SCOPE = REGISTRY_PREFIX + "*"
+# The transparency log every release signature is recorded in.
+REKOR_URL = "https://rekor.sigstore.dev"
 # The namespaces the policy skips, and no others. Adding a namespace here is a
 # decision to run unverified nanohype images in it.
 SYSTEM_NS = {"kube-system", "kube-public", "kube-node-lease", "kyverno"}
-CONTAINER_FIELDS = ("images.containers", "images.initContainers", "images.ephemeralContainers")
+# The image lists Kyverno extracts from a pod, which the validations read as
+# images.<field>. A spec.images extractor of the same name replaces the built-in
+# one, so the expression reads unchanged while verifying whatever it returns.
+CONTAINER_FIELDS = ("containers", "initContainers", "ephemeralContainers")
 # The only request that adds an ephemeral container.
 EPHEMERAL = "pods/ephemeralcontainers"
 
@@ -104,28 +130,70 @@ REFUSED_SUBJECTS = (
 )
 
 
+# The two validations, as SIGNATURE_VALIDATION.format(attestor=...) and
+# ATTESTATION_VALIDATION.format(attestor=..., attestation=...) spell them. Each
+# is compared whole, with whitespace removed: CEL ignores whitespace between
+# tokens, YAML folding decides where it falls, and the expressions carry no
+# string literal it could change the meaning of. A check made of parts — the
+# call is present, every field is named — passes an expression that neutralises
+# itself: `... || true`, a count compared with `>= 0`, `exists` where `all`
+# belongs.
+_IMAGES = "(" + " + ".join(f"images.{f}" for f in CONTAINER_FIELDS) + ")"
+SIGNATURE_VALIDATION = (
+    _IMAGES + ".map(image, verifyImageSignatures(image, [attestors.{attestor}]))"
+    ".all(e, e > 0)"
+)
+ATTESTATION_VALIDATION = (
+    _IMAGES + ".map(image, verifyAttestationSignatures(image, attestations.{attestation}, "
+    "[attestors.{attestor}])).all(e, e > 0)"
+)
+
+
+class Violation(Exception):
+    """One way a rendition of the policy breaks the contract."""
+
+
 def fail(msg: str) -> NoReturn:
-    print(f"::error::verify-images identity contract: {msg}")
-    sys.exit(1)
+    raise Violation(msg)
 
 
 def check_scope(spec: dict) -> None:
     refs = spec.get("matchImageReferences") or []
     if not refs:
         fail("matchImageReferences is empty — the policy selects no image")
+    globs = set()
     for ref in refs:
         glob = (ref or {}).get("glob")
         if glob is None:
-            fail(f"matchImageReferences entry {ref!r} is not a glob — scope it to {REGISTRY_PREFIX}*")
+            fail(f"matchImageReferences entry {ref!r} is not a glob — scope it to {SCOPE}")
         if glob.strip() == "*":
             fail("matchImageReferences contains a bare '*' — signature demanded on every image; "
-                 f"scope it to {REGISTRY_PREFIX}*")
+                 f"scope it to {SCOPE}")
         if not glob.startswith(REGISTRY_PREFIX):
-            fail(f"matchImageReferences glob {glob!r} is not scoped to {REGISTRY_PREFIX}*")
+            fail(f"matchImageReferences glob {glob!r} is not scoped to {SCOPE}")
+        globs.add(glob)
+    if globs != {SCOPE}:
+        fail(f"matchImageReferences is {sorted(globs)}, expected exactly ['{SCOPE}'] — a "
+             f"narrower glob leaves every other nanohype image unverified while both "
+             f"fixtures still decide as before")
 
     if spec.get("failurePolicy") == "Ignore":
         fail("failurePolicy is Ignore — a webhook timeout or a Kyverno outage would admit "
              "every image unverified")
+
+    evaluation = spec.get("evaluation") or {}
+    if (evaluation.get("admission") or {}).get("enabled") is False:
+        fail("evaluation.admission.enabled is false — the policy never runs at admission, "
+             "so no pod is verified or pinned")
+    if evaluation.get("mode", "Kubernetes") != "Kubernetes":
+        fail(f"evaluation.mode is {evaluation.get('mode')!r}, not Kubernetes — the policy "
+             f"evaluates another kind of payload and no pod admission reaches it")
+
+    extractors = {(e or {}).get("name") for e in spec.get("images") or []}
+    shadowing = [f for f in CONTAINER_FIELDS if f in extractors]
+    if shadowing:
+        fail(f"spec.images declares an extractor named {shadowing} — it replaces the "
+             f"built-in list the validations read, so they verify what it returns")
 
     mc = spec.get("matchConstraints") or {}
     for narrowing in ("objectSelector", "excludeResourceRules"):
@@ -192,6 +260,10 @@ def check_attestors(spec: dict) -> set[str]:
         if set(cosign) - {"keyless", "ctlog"}:
             fail(f"attestor {name!r} sets {sorted(set(cosign) - {'keyless', 'ctlog'})} — only "
                  f"keyless identities and the transparency log are part of the contract")
+        if set(keyless) - {"identities"}:
+            fail(f"attestor {name!r} keyless sets {sorted(set(keyless) - {'identities'})} — "
+                 f"a root bundle of its own verifies certificates no Fulcio issued, and "
+                 f"the contract is the public Sigstore roots")
         ctlog = cosign.get("ctlog") or {}
         if not ctlog.get("url"):
             fail(f"attestor {name!r} names no transparency log (ctlog.url)")
@@ -199,6 +271,13 @@ def check_attestors(spec: dict) -> set[str]:
             if ctlog.get(flag):
                 fail(f"attestor {name!r} sets ctlog.{flag} — signatures absent from the "
                      f"public log would verify")
+        if set(ctlog) - {"url"}:
+            fail(f"attestor {name!r} ctlog sets {sorted(set(ctlog) - {'url'})} — a log key "
+                 f"or timestamp chain of its own trusts entries the public Rekor never "
+                 f"recorded")
+        if ctlog["url"] != REKOR_URL:
+            fail(f"attestor {name!r} ctlog.url is {ctlog['url']!r}, expected {REKOR_URL!r} — "
+                 f"another log holds whatever its operator writes to it")
         identities = keyless.get("identities") or []
         if not identities:
             fail(f"attestor {name!r} has no keyless identities")
@@ -207,6 +286,10 @@ def check_attestors(spec: dict) -> set[str]:
                 if ident.get(loose):
                     fail(f"attestor {name!r} identity sets {loose} — the contract is one "
                          f"exact issuer and one anchored subjectRegExp")
+            if set(ident) - {"issuer", "subjectRegExp"}:
+                fail(f"attestor {name!r} identity sets "
+                     f"{sorted(set(ident) - {'issuer', 'subjectRegExp'})} — the contract is "
+                     f"one exact issuer and one anchored subjectRegExp")
             issuer = ident.get("issuer")
             if issuer != EXPECTED_ISSUER:
                 fail(f"keyless issuer is {issuer!r}, expected {EXPECTED_ISSUER!r}")
@@ -249,40 +332,34 @@ def check_attestations(spec: dict) -> str:
          f"workflows attest is never required")
 
 
-def covers_every_field(expr: str) -> bool:
-    return all(f in expr for f in CONTAINER_FIELDS)
+def canonical(expr: str) -> str:
+    return "".join(expr.split())
 
 
 def check_validations(spec: dict, attestors: set[str], sbom: str) -> None:
     exprs = [v.get("expression") or "" for v in spec.get("validations") or []]
-    refs = [f"attestors.{n}" for n in sorted(attestors)]
+    present = {canonical(e) for e in exprs}
 
-    sig = [e for e in exprs if "verifyImageSignatures(" in e and any(r in e for r in refs)]
-    if not sig:
-        fail("no validation calls verifyImageSignatures against the keyless attestor — "
-             "signatures are never checked")
-    if not any(covers_every_field(e) for e in sig):
-        fail(f"the signature validation does not cover {', '.join(CONTAINER_FIELDS)} — a "
-             f"nanohype image in an uncovered field runs unverified")
-
-    att = [e for e in exprs if "verifyAttestationSignatures(" in e
-           and f"attestations.{sbom}" in e and any(r in e for r in refs)]
-    if not att:
-        fail(f"no validation calls verifyAttestationSignatures for attestations.{sbom} "
-             f"against the keyless attestor — the SBOM attestation is declared and never "
-             f"required")
-    if not any(covers_every_field(e) for e in att):
-        fail(f"the SBOM validation does not cover {', '.join(CONTAINER_FIELDS)} — a "
-             f"nanohype image in an uncovered field runs without an attested SBOM")
+    for what, template, call, why in (
+        ("signature", SIGNATURE_VALIDATION, "verifyImageSignatures(",
+         "signatures are never checked"),
+        ("SBOM", ATTESTATION_VALIDATION, "verifyAttestationSignatures(",
+         f"the attestations.{sbom} SBOM is declared and never required"),
+    ):
+        expected = [template.format(attestor=n, attestation=sbom) for n in sorted(attestors)]
+        if any(canonical(x) in present for x in expected):
+            continue
+        calling = [" ".join(e.split()) for e in exprs if call in e]
+        if not calling:
+            fail(f"no validation calls {call[:-1]} — {why}")
+        fail(f"the {what} validation is not the expected expression, compared whole: "
+             f"found {calling[0]!r}, expected {expected[0]!r}. An expression naming the "
+             f"call and every container field can still pass every image")
 
 
-def main() -> None:
-    if not POLICY.exists():
-        fail(f"policy not found at {POLICY}")
-
-    doc = yaml.safe_load(POLICY.read_text()) or {}
+def check_contract(doc: dict) -> None:
     if doc.get("apiVersion") != EXPECTED_API or doc.get("kind") != EXPECTED_KIND:
-        fail(f"{POLICY.name} is {doc.get('apiVersion')}/{doc.get('kind')}, expected "
+        fail(f"it is {doc.get('apiVersion')}/{doc.get('kind')}, expected "
              f"{EXPECTED_API}/{EXPECTED_KIND}")
     spec = doc.get("spec") or {}
 
@@ -292,9 +369,84 @@ def main() -> None:
     sbom = check_attestations(spec)
     check_validations(spec, attestors, sbom)
 
-    print("verify-images identity contract OK: ghcr.io/nanohype/* scope, system-only "
-          "namespace exclusion, required + pinned digest, GitHub OIDC issuer, the "
-          "release-on-tag subjectRegExp, Rekor, SPDX attestation required")
+
+def check_actions(env: str, doc: dict) -> None:
+    actions = (doc.get("spec") or {}).get("validationActions") or []
+    if sorted(actions) != sorted(EXPECTED_ACTIONS[env]):
+        fail(f"validationActions is {actions}, expected {EXPECTED_ACTIONS[env]} for "
+             f"{env} — the tier would {'report' if 'Deny' not in actions else 'block'} "
+             f"an image failing verification")
+
+
+def cannot_run(msg: str) -> NoReturn:
+    print(f"Cannot run: {msg}")
+    print("The overlays a cluster installs were NOT checked — that is different from")
+    print("every one meeting the contract.")
+    sys.exit(gatelib.CANNOT_RUN)
+
+
+def rel(path: Path) -> str:
+    return str(path.relative_to(ROOT))
+
+
+def render(overlay: Path) -> dict:
+    """The verify-images document `kustomize build` writes for one overlay."""
+    try:
+        build = subprocess.run(["kustomize", "build", str(overlay)], capture_output=True,
+                               text=True, timeout=LOCAL_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        cannot_run(f"kustomize build {rel(overlay)} ran past {LOCAL_TIMEOUT}s")
+    if build.returncode != 0:
+        fail(f"it does not render — {(build.stderr.strip().splitlines() or ['?'])[0]}")
+    for doc in yaml.safe_load_all(build.stdout):
+        if (isinstance(doc, dict) and doc.get("kind") == EXPECTED_KIND
+                and (doc.get("metadata") or {}).get("name") == POLICY_NAME):
+            return doc
+    fail(f"it renders no {EXPECTED_KIND} named {POLICY_NAME} — that tier installs no "
+         f"signature verification")
+
+
+def overlay_dirs() -> list[Path]:
+    """Every supply-chain overlay, held to the environments EXPECTED_ACTIONS names."""
+    overlays = sorted(p for p in (GROUP / "overlays").glob("*")
+                      if (p / "kustomization.yaml").is_file())
+    unexpected = sorted({p.name for p in overlays} - set(EXPECTED_ACTIONS))
+    if unexpected:
+        fail(f"overlay(s) {unexpected} carry no entry in EXPECTED_ACTIONS — whether that "
+             f"tier blocks or reports a failed verification is a decision to record there")
+    absent = sorted(set(EXPECTED_ACTIONS) - {p.name for p in overlays})
+    if absent:
+        fail(f"no overlay for {absent} — a tier this gate does not render is a tier it "
+             f"does not check")
+    return overlays
+
+
+def main() -> None:
+    # The base first, so its violation is reported without a render; then each
+    # overlay as kustomize writes it, which is what a cluster installs.
+    where = rel(POLICY)
+    try:
+        if not POLICY.exists():
+            fail("policy not found, so there is no contract to read")
+        check_contract(yaml.safe_load(POLICY.read_text()) or {})
+        where = rel(GROUP / "overlays")
+        overlays = overlay_dirs()
+        gatelib.require("kustomize")
+        for overlay in overlays:
+            where = rel(overlay)
+            doc = render(overlay)
+            check_contract(doc)
+            check_actions(overlay.name, doc)
+    except Violation as exc:
+        print(f"::error::verify-images identity contract: {where}: {exc}")
+        sys.exit(1)
+
+    tiers = ", ".join(f"{p.name} {'+'.join(EXPECTED_ACTIONS[p.name])}" for p in overlays)
+    print(f"verify-images identity contract OK on the base and {len(overlays)} rendered "
+          f"overlay(s) ({tiers}): {SCOPE} scope, admission-time Kubernetes evaluation, "
+          f"system-only namespace exclusion, required + pinned digest, GitHub OIDC issuer, "
+          f"the release-on-tag subjectRegExp, public Rekor, both validations compared "
+          f"whole, SPDX attestation required")
 
 
 if __name__ == "__main__":

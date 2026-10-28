@@ -427,9 +427,10 @@ jobs:
         uses: imranismail/setup-kustomize@53f941b41dca13ed61874bbc6b4b6e1562877530 # v3
       # kyverno test proves what a policy DOES; this proves the API server
       # would accept it at all. Kyverno enforces semantic rules no schema
-      # encodes — mutateDigest:true under an Audit failure action is rejected
-      # outright — and an invalid overlay renders clean, passes kubeconform,
-      # passes kyverno test, and then fails to sync on every cluster.
+      # encodes — on a ClusterPolicy verifyImages rule, mutateDigest:true under
+      # an Audit failure action is rejected outright — and an invalid overlay
+      # renders clean, passes kubeconform, passes kyverno test, and then fails
+      # to sync on every cluster.
       - name: Every rendered policy overlay is valid
         run: ./scripts/check-policy-validity.py
 
@@ -563,6 +564,10 @@ jobs:
   kyverno:
     name: Kyverno policy tests
     runs-on: ubuntu-latest
+    # The verify-images rows reach the registry, the Sigstore TUF mirror and
+    # Rekor, and kyverno-test.sh repeats a run that met a transport failure.
+    # This bounds the job if one of them stops answering partway through a read.
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -601,10 +606,16 @@ jobs:
       # image and refuses a branch-signed one. They cannot see an identity
       # weakened in a way both fixtures still satisfy — a subjectRegExp other
       # than the one release identity, a flipped `required`, the transparency
-      # log switched off, a namespace exclusion grown over a workload namespace.
-      # This structural gate refuses those: it holds the subjectRegExp to one
-      # expression, compared whole, and scripts/tests/test_image_verification.py
-      # applies each weakening and requires the refusal.
+      # log switched off, a validation that passes every image, a namespace
+      # exclusion grown over a workload namespace. This structural gate refuses
+      # those on the base and on each supply-chain overlay as kustomize renders
+      # it, which is what a cluster installs: it holds the subjectRegExp and both
+      # validations to one expression each, compared whole, and each tier to the
+      # validationActions its environment enforces.
+      # scripts/tests/test_image_verification.py applies each weakening and
+      # requires the refusal.
+      - name: Install kustomize
+        uses: imranismail/setup-kustomize@53f941b41dca13ed61874bbc6b4b6e1562877530 # v3
       - name: Verify-images signing-identity contract
         run: |
           pip install --require-hashes -r requirements.txt
@@ -622,6 +633,9 @@ jobs:
   digest-rewrite:
     name: admission pins a verified tag to its digest
     runs-on: ubuntu-latest
+    # A bound on the job as a whole, above the waits the script bounds each step
+    # with, so a stalled step reports through the script's own diagnostic first.
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

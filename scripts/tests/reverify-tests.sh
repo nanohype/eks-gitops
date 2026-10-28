@@ -71,7 +71,8 @@ ALL_MODULES="test_policy_admission test_platform_crs test_dashboards \
   test_render_addons test_image_pins test_log_volume_budget test_controls \
   test_corpus_floors test_registry test_chart_deprecation test_falco_rule_floor \
   test_image_vulnerabilities test_renovate_coverage test_lb_scheme_inputs \
-  test_kubeconform_scan test_image_extraction"
+  test_kubeconform_scan test_image_extraction test_image_verification \
+  test_policy_validity test_kyverno_test test_digest_rewrite"
 
 # Bytecode caching keys on (mtime, size). A restore and the next mutation inside
 # the same second can hand the run the PREVIOUS mutant's module, and the suite
@@ -1369,6 +1370,179 @@ p.write_text(m)
 PY
 rejects "rule: reach a constant instead of the reader" test_controls \
   test_a_harness_this_repo_does_not_run_is_reported
+res $F
+
+# The signing-identity contract. A validation is compared whole, so one that
+# names the call and every field and still passes every image is refused; and
+# the contract is held on each rendered overlay, because that is what a cluster
+# installs.
+F=scripts/check-image-verification.py
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("        if any(canonical(x) in present for x in expected):\n",
+              "        if any(call in e for e in exprs):\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "validations: accept any expression making the call" test_image_verification \
+  test_a_validation_neutralised_with_or_true \
+  test_a_count_that_passes_an_unverified_image \
+  test_a_signature_validation_over_containers_only
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    return "".join(expr.split())\n', "    return expr\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "validations: compare with the YAML's whitespace kept" test_image_verification \
+  test_the_same_expression_wrapped_differently_passes
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("        for overlay in overlays:\n", "        for overlay in overlays[:0]:\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "overlays: hold the base alone to the contract" test_image_verification \
+  test_an_overlay_widening_the_subject \
+  test_an_overlay_swapping_the_issuer \
+  test_an_overlay_growing_the_namespace_exclusion
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("            check_actions(overlay.name, doc)\n", "", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "actions: leave a tier's validationActions unread" test_image_verification \
+  test_an_enforcing_tier_that_only_reports
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("    if absent:\n", "    if absent and False:\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "overlays: render whichever environments exist" test_image_verification \
+  test_an_environment_with_no_overlay
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("    if globs != {SCOPE}:\n", "    if not globs:\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "scope: accept any glob under ghcr.io/nanohype/" test_image_verification \
+  test_a_narrower_nanohype_glob
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        if set(ctlog) - {"url"}:\n', '        if set(ctlog) - {"url"} - {"rekorPubKey", "ctLogPubKey", "tsaCertChain"}:\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "ctlog: trust a log key or timestamp chain of its own" test_image_verification \
+  test_a_log_key_or_timestamp_chain_of_its_own
+res $F
+
+# The digest pin on every rendered ImageValidatingPolicy. The CRD defaults both
+# fields to true, so an absent field is the pin and not a finding.
+F=scripts/check-policy-validity.py
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("            if cfg.get(field, True) is not True:\n",
+              "            if cfg.get(field) is not True:\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "digest pin: read an absent field as false" test_policy_validity \
+  test_an_absent_field_reads_as_the_crd_default
+res $F
+
+# A transport failure on the image-verification path decides no row: reading
+# the image reports it as the row's error, and anything after that reports the
+# policy's own message with only the verifier's log naming the cause.
+F=scripts/kyverno-test.sh
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('  [ -z "$transport" ] && break\n', "  break\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "transport: decide a run that met one on its rows" test_kyverno_test \
+  test_one_that_clears_is_run_again \
+  test_one_behind_the_policy_message_is_not_a_regression \
+  test_an_expected_failure_it_produced_is_not_a_pass
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('kyverno test "$TESTS" --detailed-results -v 1 2>&1',
+              'kyverno test "$TESTS" --detailed-results 2>&1', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "kyverno: run without the verifier's log" test_kyverno_test \
+  test_the_suite_is_asked_for_the_reasons_it_is_classified_by
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("\nATTEMPTS=3\n", "\nATTEMPTS=1\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "attempts: report the first transport failure as final" test_kyverno_test \
+  test_one_that_clears_is_run_again
+res $F
+
+# The verdict on a foreign identity, one function for the pod and the
+# ephemeral container alike.
+F=scripts/check-digest-rewrite.sh
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('  if [ "$outcome" = admitted ]; then\n    case ",$actions," in\n',
+              '  if [ "$outcome" = admitted ]; then\n    case ",Deny," in\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "foreign: fail an admission under any action" test_digest_rewrite \
+  test_admitted_under_audit_is_reported_not_blocked
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('  elif network_failure <"$WORK/err"; then\n    show_err\n    cannot_run "$rel could not reach the registry or Rekor for $what."\n',
+              '', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "foreign: read a network refusal as a regression" test_digest_rewrite \
+  test_refused_for_a_network_failure_cannot_run
 res $F
 
 echo

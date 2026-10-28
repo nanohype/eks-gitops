@@ -159,9 +159,11 @@ aggregate, so a clean `task validate` is necessary but not sufficient:
   below it is a finding (exit 1), so the next CI run failing is reported by the
   run before it.
 - **Kyverno unit tests + verify-images signing-identity contract** —
-  `kyverno test policies/kyverno/tests` and `scripts/check-image-verification.py`
-  (CI job `kyverno`). The verify-images cases verify real signatures, so the
-  suite needs the network.
+  `scripts/kyverno-test.sh policies/kyverno/tests` and
+  `scripts/check-image-verification.py` (CI job `kyverno`). The verify-images
+  cases verify real signatures, so the suite needs the network, and a run that
+  meets a transport failure on every attempt exits 2 rather than 1. The
+  contract gate renders each supply-chain overlay, so it needs kustomize.
 - **Digest pin under real admission** — `scripts/check-digest-rewrite.sh`
   (CI job `digest-rewrite`; locally `task validate:digest-rewrite`, outside the
   aggregate because it brings up kind and needs Docker and the network). The
