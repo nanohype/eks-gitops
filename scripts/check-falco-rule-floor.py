@@ -206,8 +206,9 @@ def rulesfile(ref: str,
 
     Read through registry.py's client, so a 429 waits as long as the
     registry asks. The registry answering 404 for the ref is a finding about a
-    ref in this repo; every other status, and a rate limit that outlasts the
-    retries, is not this gate's to interpret.
+    ref in this repo; every other status, a rate limit that outlasts the
+    retries, and every failure in registry.READ_FAILURES is not this gate's to
+    interpret.
     """
     name, tag = ref.rsplit(":", 1)
     repo = name if "/" in name else f"{INDEX_PREFIX}/{name}"
@@ -222,7 +223,7 @@ def rulesfile(ref: str,
                  f"set carries is absent from every node.")
             return None
         cannot_run(f"Cannot run: {REGISTRY} answered {exc.code} for {repo}:{tag}.")
-    except (OSError, registry.RegistryError, ValueError) as exc:
+    except registry.READ_FAILURES as exc:
         _unreachable(exc)
     if (manifest.get("config") or {}).get("mediaType") != RULESFILE_CONFIG:
         return None  # a plugin, or a multi-arch index — installs no rules
@@ -231,7 +232,7 @@ def rulesfile(ref: str,
     except urllib.error.HTTPError as exc:
         cannot_run(f"Cannot run: {REGISTRY} answered {exc.code} for a layer of "
                    f"{repo}:{tag}.")
-    except (OSError, registry.RegistryError) as exc:
+    except registry.READ_FAILURES as exc:
         _unreachable(exc)
     out: dict[str, str] = {}
     with tarfile.open(fileobj=io.BytesIO(blob)) as tf:

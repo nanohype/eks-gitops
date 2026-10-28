@@ -70,7 +70,7 @@ pass=0; fail=0
 ALL_MODULES="test_policy_admission test_platform_crs test_dashboards \
   test_render_addons test_image_pins test_log_volume_budget test_controls \
   test_corpus_floors test_registry test_chart_deprecation test_falco_rule_floor \
-  test_image_vulnerabilities test_renovate_coverage"
+  test_image_vulnerabilities test_renovate_coverage test_lb_scheme_inputs"
 
 # Bytecode caching keys on (mtime, size). A restore and the next mutation inside
 # the same second can hand the run the PREVIOUS mutant's module, and the suite
@@ -706,6 +706,80 @@ p.write_text(m)
 PY
 rejects "rulesfile: read a 404 as the network's fault" test_falco_rule_floor \
   test_a_ref_the_registry_does_not_have_is_a_finding
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    except registry.READ_FAILURES as exc:',
+              '    except (OSError, registry.RegistryError, ValueError) as exc:')
+assert m.count('except (OSError, registry.RegistryError, ValueError) as exc:') == 2, \
+    "mutation did not land"
+p.write_text(m)
+PY
+rejects "rulesfile: catch a narrower tuple than READ_FAILURES" test_falco_rule_floor \
+  test_a_manifest_cut_off_mid_body_cannot_run \
+  test_a_layer_cut_off_mid_body_cannot_run
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        cannot_run(f"Cannot run: {REGISTRY} answered {exc.code} for {repo}:{tag}.")',
+              '        fail(f"{REGISTRY} answered {exc.code} for {repo}:{tag}.")\n'
+              '        return None', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "rulesfile: read every manifest status as a finding" test_falco_rule_floor \
+  test_a_manifest_status_other_than_404_cannot_run
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    if (manifest.get("config") or {}).get("mediaType") != RULESFILE_CONFIG:',
+              '    if False:', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "rulesfile: unpack a plugin as if it carried rules" test_falco_rule_floor \
+  test_an_artifact_that_is_not_a_rulesfile_installs_no_rules
+res $F
+
+
+# A chart repository that could not be read says nothing about the controller
+# this catalog pins. Exiting 1 for it hands a network failure to whoever reads
+# the run as a finding about the pin.
+F=scripts/check-lb-scheme-inputs.py
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        if exc.answered:\n            die(', '        if True:\n            die(', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "metadata: read every unreadable chart as a finding" test_lb_scheme_inputs \
+  test_metadata_that_could_not_be_read_cannot_run
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace(
+    '    archive = registry.chart_archive_or_exit(pin["chartRepo"], pin["chart"], '
+    'pin["chartVersion"])\n',
+    '    try:\n'
+    '        archive = registry.chart_archive(pin["chartRepo"], pin["chart"], '
+    'pin["chartVersion"])\n'
+    '    except registry.ChartUnavailable as exc:\n'
+    '        die(f"would not resolve — {exc}")\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "archive: read every unreadable chart as a finding" test_lb_scheme_inputs \
+  test_an_archive_that_could_not_be_read_cannot_run
 res $F
 
 

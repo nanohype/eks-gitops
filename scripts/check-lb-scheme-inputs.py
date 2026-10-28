@@ -116,6 +116,11 @@ def die(msg: str) -> NoReturn:
     sys.exit(1)
 
 
+def cannot_run(msg: str) -> NoReturn:
+    print(f"lb-scheme-inputs: cannot run: {msg}", file=sys.stderr)
+    sys.exit(gatelib.CANNOT_RUN)
+
+
 # ------------------------------------------------------------------- the chart
 
 
@@ -140,11 +145,19 @@ def chart_pin() -> dict:
 
 
 def app_version(pin: dict) -> str:
-    """What the pinned chart says it installs — the tag the source is read at."""
+    """What the pinned chart says it installs — the tag the source is read at.
+
+    A chart repository that answered and ruled the pin out is a finding about
+    the pin. Any other failure to read it says nothing about this catalog.
+    """
     try:
         meta = registry.chart_metadata(pin["chartRepo"], pin["chart"], pin["chartVersion"])
     except registry.ChartUnavailable as exc:
-        die(f"{pin['chart']} {pin['chartVersion']} would not resolve — {exc}")
+        if exc.answered:
+            die(f"{pin['chart']} {pin['chartVersion']} does not resolve — {exc}")
+        cannot_run(f"{pin['chart']} {pin['chartVersion']} could not be read from "
+                   f"{pin['chartRepo']} — {exc}. An unreachable chart repository is a "
+                   f"fact about the network, not about the pin.")
     version = str(meta.get("appVersion") or "").strip()
     if not version:
         die(f"{pin['chart']} {pin['chartVersion']} publishes no appVersion, so which "
@@ -155,10 +168,7 @@ def app_version(pin: dict) -> str:
 def rendered_flags(pin: dict) -> dict:
     """The controller's effective configuration, as this catalog installs it."""
     gatelib.require("helm")
-    try:
-        archive = registry.chart_archive(pin["chartRepo"], pin["chart"], pin["chartVersion"])
-    except registry.ChartUnavailable as exc:
-        die(f"{pin['chart']} {pin['chartVersion']} would not resolve — {exc}")
+    archive = registry.chart_archive_or_exit(pin["chartRepo"], pin["chart"], pin["chartVersion"])
     values = [str(ADDON / "values.yaml")]
     proc = subprocess.run(
         ["helm", "template", ADDON_NAME, str(archive), "-n", "kube-system",

@@ -518,6 +518,62 @@ class WritingTheRecord(unittest.TestCase):
         self.assertTrue(written["controllerConfig"]["serviceMutatorWebhook"])
 
 
+class ReadingThePinnedChart(unittest.TestCase):
+    """Exit 1 only when the chart repository answered and ruled the pin out.
+
+    The metadata read and the archive read fail the same ways, and each maps
+    to the status registry.ChartUnavailable carries: a pin the repository says
+    is not there is a finding about this catalog, and a repository that could
+    not be read says nothing about it.
+    """
+
+    def unavailable(self, answered):
+        def read(*args, **kwargs):
+            raise gate.registry.ChartUnavailable("scripted", answered=answered)
+        return read
+
+    def exit_status(self, attr, answered, call):
+        real = getattr(gate.registry, attr)
+        setattr(gate.registry, attr, self.unavailable(answered))
+        real_require = gate.gatelib.require
+        gate.gatelib.require = lambda tool: None
+        try:
+            with self.assertRaises(SystemExit) as caught, \
+                    contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(io.StringIO()) as err:
+                call(PIN)
+        finally:
+            setattr(gate.registry, attr, real)
+            gate.gatelib.require = real_require
+        return caught.exception.code, err.getvalue()
+
+    def test_metadata_ruled_out_by_the_repository_is_a_finding(self):
+        code, said = self.exit_status("chart_metadata", True, gate.app_version)
+        self.assertEqual(code, 1)
+        self.assertIn("does not resolve", said)
+
+    def test_metadata_that_could_not_be_read_cannot_run(self):
+        code, said = self.exit_status("chart_metadata", False, gate.app_version)
+        self.assertEqual(code, gate.gatelib.CANNOT_RUN)
+        self.assertIn("cannot run", said)
+
+    def test_an_archive_ruled_out_by_the_repository_is_a_finding(self):
+        code, _ = self.exit_status("chart_archive", True, gate.rendered_flags)
+        self.assertEqual(code, 1)
+
+    def test_an_archive_that_could_not_be_read_cannot_run(self):
+        code, _ = self.exit_status("chart_archive", False, gate.rendered_flags)
+        self.assertEqual(code, gate.gatelib.CANNOT_RUN)
+
+    def test_the_app_version_is_what_the_chart_says_it_installs(self):
+        real = gate.registry.chart_metadata
+        gate.registry.chart_metadata = lambda *a, **k: {"appVersion": " v2.8.1 "}
+        try:
+            self.assertEqual(gate.app_version(PIN), "v2.8.1")
+        finally:
+            gate.registry.chart_metadata = real
+
+
 class TheShippedCatalog(unittest.TestCase):
     def setUp(self):
         self.record = gate.load_records()
