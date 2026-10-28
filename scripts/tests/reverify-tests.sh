@@ -715,6 +715,22 @@ rejects "prune: leave the partial an interrupted fetch wrote" test_registry \
   test_a_partial_left_by_an_interrupted_fetch_is_dropped
 res $F
 
+# CALL_BOUND_SECONDS is what every CI job that reads through this client is held
+# above. A bound that leaves out a wait the client can take lets a job be
+# cancelled mid-wait, with nothing reported about the registry that refused it.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    + (RETRY_ATTEMPTS - 1) * (1 + RETRY_JITTER)\n',
+              '    + (RETRY_ATTEMPTS - 1)\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "bound: leave the jitter out of a call's worst case" test_registry \
+  test_a_call_throttled_at_every_retry_ends_inside_the_bound
+res $F
+
+
 
 F=scripts/check-chart-deprecation.py
 

@@ -72,6 +72,18 @@ RETRY_JITTER = 0.25
 RETRY_MAX_WAIT_SECONDS = 120.0
 HTTP_TIMEOUT = 60
 
+# The longest one http_get call waits on a registry that stops answering or
+# keeps answering 429: RETRY_ATTEMPTS requests of up to HTTP_TIMEOUT each, and
+# before every retry the longest wait it can take, stretched by RETRY_JITTER. A
+# CI job reading through this client allows longer than this, so a call throttled
+# to the bound reports before the job is cancelled; test_registry holds the jobs
+# in .github/workflows/ci.yml to it.
+CALL_BOUND_SECONDS = (
+    RETRY_ATTEMPTS * HTTP_TIMEOUT
+    + (RETRY_ATTEMPTS - 1) * (1 + RETRY_JITTER)
+    * max(RETRY_MAX_WAIT_SECONDS, RETRY_BASE_SECONDS * 2 ** (RETRY_ATTEMPTS - 2))
+)
+
 # CDNs in front of chart hosts refuse urllib's default User-Agent
 # (Python-urllib/<version>) with a 403, which this client reports rather than
 # retries, so every request names the client instead.

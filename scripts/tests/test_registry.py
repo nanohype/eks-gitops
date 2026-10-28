@@ -30,6 +30,7 @@ import urllib.error
 import urllib.parse
 
 import fakeregistry as fake
+import yaml
 from fakeregistry import NOW, auth, http_error
 from gateloader import load
 
@@ -149,6 +150,18 @@ class RetryingOnlyARateLimit(unittest.TestCase):
         self.assertIn("429", str(caught.exception))
         self.assertIn(self.URL, str(caught.exception))
 
+    def test_a_call_throttled_at_every_retry_ends_inside_the_bound(self):
+        """Each request is charged its whole HTTP_TIMEOUT, as one that never answers is."""
+        longest = str(int(registry.RETRY_MAX_WAIT_SECONDS))
+        cases = {"the longest Retry-After": {"Retry-After": longest}, "backoff": {}}
+        for label, headers in cases.items():
+            with self.subTest(label):
+                t = Transport(*[http_error(self.URL, 429, headers)] * registry.RETRY_ATTEMPTS)
+                with self.assertRaises(registry.RegistryError):
+                    self.get(t, jitter=1.0)
+                spent = len(t.requests) * registry.HTTP_TIMEOUT + sum(t.waits)
+                self.assertLessEqual(spent, registry.CALL_BOUND_SECONDS)
+
     def test_a_wait_beyond_the_cap_is_reported_not_slept(self):
         asked = int(registry.RETRY_MAX_WAIT_SECONDS) + 1
         t = Transport(http_error(self.URL, 429, {"Retry-After": str(asked)}))
@@ -224,6 +237,51 @@ class RetryingOnlyARateLimit(unittest.TestCase):
                       str(caught.exception))
         self.assertEqual(answers, [])
         self.assertEqual(len(t.requests), registry.RETRY_ATTEMPTS)
+
+
+class TheJobsReadingThroughTheClient(unittest.TestCase):
+    """Every CI job that keeps or restores the chart cache outlasts one client call.
+
+    A job cancelled while a call waits out a 429 reports nothing about which
+    registry refused it, and a job with no timeout waits on a registry that
+    throttles call after call until the runner's own ceiling. Each of those jobs
+    also reads the cache under the key the charts job keeps it under, or it
+    finds nothing and fetches every chart from its own address.
+    """
+
+    WORKFLOW = pathlib.Path(__file__).resolve().parents[2] / ".github/workflows/ci.yml"
+
+    def chart_cache_jobs(self):
+        jobs = yaml.safe_load(self.WORKFLOW.read_text())["jobs"]
+        found = {}
+        for name, job in jobs.items():
+            for step in job.get("steps") or []:
+                uses = str(step.get("uses", ""))
+                path = str((step.get("with") or {}).get("path", ""))
+                if uses.startswith("actions/cache") and path.endswith("/eks-gitops/charts"):
+                    found[name] = (job, step["with"]["key"])
+        return found
+
+    def test_the_charts_job_and_its_readers_are_found(self):
+        jobs = self.chart_cache_jobs()
+        self.assertIn("charts", jobs)
+        self.assertGreater(len(jobs), 1, "no job restores what the charts job keeps")
+
+    def test_each_allows_longer_than_one_call(self):
+        for name, (job, _) in self.chart_cache_jobs().items():
+            with self.subTest(job=name):
+                minutes = job.get("timeout-minutes")
+                self.assertIsInstance(minutes, int, f"{name} sets no timeout-minutes")
+                self.assertGreater(minutes * 60, registry.CALL_BOUND_SECONDS)
+
+    def test_each_reads_the_key_the_charts_job_keeps(self):
+        jobs = self.chart_cache_jobs()
+        kept = jobs["charts"][1]
+        self.assertIn("scripts/registry.py", kept,
+                      "a client change would hand every job the archives the last one kept")
+        for name, (_, key) in jobs.items():
+            with self.subTest(job=name):
+                self.assertEqual(key, kept)
 
 
 class RequestingAToken(unittest.TestCase):

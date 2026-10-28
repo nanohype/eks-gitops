@@ -182,6 +182,7 @@ jobs:
     name: the catalog's own CRs are admissible
     runs-on: ubuntu-latest
     needs: charts
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -199,7 +200,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/eks-gitops/charts
-          key: charts-${{ hashFiles('applicationsets/*.yaml') }}
+          key: charts-${{ hashFiles('applicationsets/*.yaml', 'scripts/registry.py') }}
       # The platform's own CRDs are on kubeconform-scan.sh's skip list — their
       # schemas are published to no public catalog — and that skip's comment says
       # these kinds are validated out-of-band against a real webhook. This closes
@@ -374,6 +375,7 @@ jobs:
     name: every Falco rule set installed is one Falco loads
     runs-on: ubuntu-latest
     needs: charts
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -383,7 +385,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/eks-gitops/charts
-          key: charts-${{ hashFiles('applicationsets/*.yaml') }}
+          key: charts-${{ hashFiles('applicationsets/*.yaml', 'scripts/registry.py') }}
       # Downloading a rule set and loading it are different things, and the
       # values file is where both look correct. falcoctl writes each ref to the
       # root of rulesfilesDir; Falco reads only what falco.rules_files names. A
@@ -401,6 +403,7 @@ jobs:
     name: the Loki volume warns before it stops accepting writes
     runs-on: ubuntu-latest
     needs: charts
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -410,7 +413,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/eks-gitops/charts
-          key: charts-${{ hashFiles('applicationsets/*.yaml') }}
+          key: charts-${{ hashFiles('applicationsets/*.yaml', 'scripts/registry.py') }}
       # Loki bounds nothing by stored bytes: retention reacts to the age of a
       # chunk, never to the size of the volume. The only disk-aware control is
       # the ingester's WAL threshold, and crossing it rejects every push on the
@@ -586,19 +589,32 @@ jobs:
   # per job. A retry cannot recover every 429: ECR Public allows an
   # unauthenticated client a fixed amount of data per month and identifies the
   # client by its address, so a shared runner address can arrive with that
-  # allowance spent, and no wait inside a job outlasts it. Six jobs fetching the
-  # same charts draw six addresses and fail on whichever one is spent. Here one
-  # job fetches, through scripts/registry.py's client, which waits out a 429 that
-  # does relent and checks each archive against its digest; a failure leaves one
-  # job to re-run, and no rendering job starts without its charts.
+  # allowance spent, and no wait inside a job outlasts it. Every job that renders
+  # a pinned chart would fetch from its own runner address and fail on whichever
+  # one is spent. Here one job fetches, through scripts/registry.py's client,
+  # which waits out a 429 that does relent and checks each archive against its
+  # digest; a failure leaves one job to re-run, and no rendering job starts
+  # without its charts.
   #
-  # The key is the appset pins, so a run that moves no pin fetches nothing.
-  # restore-keys hands a pin bump the previous set, so only the moved chart is
-  # fetched, and --fetch drops the archives no pin names, so the carried set
-  # holds the current pins and nothing older.
+  # The key is the appset pins and the client that verified the archives, so a
+  # run that moves neither fetches nothing. restore-keys hands a pin bump the
+  # previous set, so only the moved chart is fetched; a client change hands it
+  # archives the client re-checks against their digest records, and fetches
+  # again any that carry none. --fetch removes every cached file no pin names, so
+  # the carried set holds the current pins and nothing older.
+  #
+  # This job and every job that restores its archives allow longer than one
+  # client call can take, registry.CALL_BOUND_SECONDS: RETRY_ATTEMPTS requests of
+  # up to HTTP_TIMEOUT each, and before every retry a wait of at most
+  # RETRY_MAX_WAIT_SECONDS stretched by RETRY_JITTER. A call the registry
+  # throttles to that bound then reports which host refused it before the job is
+  # cancelled, and a registry that throttles call after call ends the job at its
+  # timeout rather than at the runner's ceiling. test_registry holds each of
+  # those jobs above the bound and on this job's cache key.
   charts:
     name: Pinned chart archives
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -616,7 +632,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/eks-gitops/charts
-          key: charts-${{ hashFiles('applicationsets/*.yaml') }}
+          key: charts-${{ hashFiles('applicationsets/*.yaml', 'scripts/registry.py') }}
           restore-keys: |
             charts-
 
@@ -638,6 +654,7 @@ jobs:
     name: Helm-render addons
     runs-on: ubuntu-latest
     needs: charts
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -658,7 +675,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/eks-gitops/charts
-          key: charts-${{ hashFiles('applicationsets/*.yaml') }}
+          key: charts-${{ hashFiles('applicationsets/*.yaml', 'scripts/registry.py') }}
 
       - name: Render every addon across every environment
         run: ./scripts/render-addons.py
@@ -689,6 +706,8 @@ jobs:
     name: Rendered images carry no unacknowledged CRITICAL
     runs-on: ubuntu-latest
     needs: charts
+    # trivy pulls and scans every rendered image on top of the render.
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -727,7 +746,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/eks-gitops/charts
-          key: charts-${{ hashFiles('applicationsets/*.yaml') }}
+          key: charts-${{ hashFiles('applicationsets/*.yaml', 'scripts/registry.py') }}
 
       - name: Every fixed CRITICAL is acknowledged
         run: ./scripts/check-image-vulnerabilities.py
@@ -761,6 +780,7 @@ jobs:
     name: Policy-admission gate
     runs-on: ubuntu-latest
     needs: charts
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -792,7 +812,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/eks-gitops/charts
-          key: charts-${{ hashFiles('applicationsets/*.yaml') }}
+          key: charts-${{ hashFiles('applicationsets/*.yaml', 'scripts/registry.py') }}
 
       - name: Render the fleet and apply the Enforce-tier policies
         run: ./scripts/check-policy-admission.py
