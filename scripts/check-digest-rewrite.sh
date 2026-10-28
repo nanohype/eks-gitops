@@ -40,9 +40,11 @@
 #     admitted (audited) where they do not.
 #
 # NEEDS THE NETWORK AND DOCKER. Kyverno inside the cluster reaches the registry
-# for the manifest and Rekor for the transparency-log entry, which is the round
-# trip production admission makes. A denial whose message is a network failure
-# exits 2: it is a verification that never ran, not a rewrite that stopped.
+# for the manifest, the Sigstore TUF mirror for the trusted root and Rekor for
+# the transparency-log entry, which is the round trip production admission
+# makes. A refusal whose cause is a transport failure on that path exits 2: it
+# is a verification that never ran, not a rewrite that stopped and not an
+# identity decided.
 #
 # Exit 0: every overlay pinned the tag and decided the identity as its action
 # says. Exit 1: one did not. Exit 2: the run could not establish either.
@@ -55,6 +57,22 @@ CI="$ROOT/.github/workflows/ci.yml"
 POLICY=verify-images
 IDENTITY_MESSAGE="image is not signed by a nanohype release workflow"
 
+# The admission controller's pods, which run the verifier: the chart labels them
+# with this component, and this run installs the chart as release kyverno.
+VERIFIER_NS=kyverno
+VERIFIER_PODS="app.kubernetes.io/instance=kyverno,app.kubernetes.io/component=admission-controller"
+# The message Kyverno's cosign verifier logs every failed verification under,
+# through logr's Error, which no verbosity setting suppresses.
+VERIFIER_FAILED="image verification failed"
+# Seconds the verifier's log is read from before a request was sent, because
+# `date +%s` truncates both ends of the window to the second. An earlier
+# request's transport failure inside that slack can only turn a decision into a
+# run that could not decide.
+LOG_SLACK=5
+
+# shellcheck source=transport-failure.sh
+. "$ROOT/scripts/transport-failure.sh"
+
 cannot_run() {
   printf '%s\n' "Cannot run: $*"
   exit 2
@@ -65,16 +83,70 @@ show_err() {
   sed -e "s#$ROOT/##g" -e 's/^/        /' "$WORK/err" | cut -c1-240
 }
 
-network_failure() {
-  grep -qiE 'no such host|i/o timeout|connection refused|context deadline|TLS handshake|unexpected status code 5[0-9][0-9]|toomanyrequests'
+# The moment a request goes to the API server, taken before it is sent.
+mark_sent() {
+  sent="$(date +%s)"
+}
+
+# The verifier's lines among what every admission-controller replica logged
+# from LOG_SLACK seconds before the request marked $sent, uncoloured, into
+# $WORK/log. Only those lines are kept: the controller's webhook server logs its
+# own connection errors to the same stream ("TLS handshake error ... connection
+# reset by peer" as the API server drops a connection), and those name no
+# verification. Given a selector, kubectl logs prints ten lines a pod unless
+# --tail says otherwise, and a selector matching no pod prints nothing and exits
+# 0; the identity verdict below requires a verifier line for that reason. A log
+# that cannot be read leaves a refusal's cause unknown, so the run cannot
+# decide it.
+read_verifier_log() {
+  if kubectl logs -n "$VERIFIER_NS" -l "$VERIFIER_PODS" --tail=-1 \
+       --since="$(( $(date +%s) - sent + LOG_SLACK ))s" >"$WORK/log.raw" 2>"$WORK/log.err"; then
+    uncoloured <"$WORK/log.raw" | grep -F "$VERIFIER_FAILED" >"$WORK/log"
+    return 0
+  fi
+  sed 's/^/        /' "$WORK/log.err" | cut -c1-240
+  cannot_run "$rel: the admission controller's log could not be read, so whether a
+refusal was the policy deciding or an outage on the verification path is unknown."
+}
+
+# A refusal whose cause is a transport failure ends the run: it is a
+# verification that never ran. $1 names what was refused, and the function
+# returns when the cause was something else.
+#
+# The cluster states a refusal's cause in the same two places the Kyverno CLI
+# does for scripts/kyverno-test.sh. Reading the image failing refuses the
+# request with the transport error as the API server's message, in $WORK/err. A
+# failure after that — fetching the Sigstore trusted root, a Rekor lookup, the
+# signature's manifest — is counted as a signature that did not verify, so the
+# refusal carries the policy's own message and only the verifier's log names the
+# cause. Both are read, through the one pattern scripts/transport-failure.sh
+# holds for both gates.
+cannot_run_on_transport() {
+  local cause
+  cause="$(transport_failures <"$WORK/err")"
+  if [ -z "$cause" ]; then
+    read_verifier_log
+    cause="$(transport_failures <"$WORK/log")"
+  fi
+  [ -z "$cause" ] && return 0
+  show_err
+  printf '%s\n' "$cause" | sed 's/^/        /'
+  cannot_run "$rel could not reach the registry, the Sigstore trusted root or Rekor for $1."
 }
 
 # A foreign identity, decided: an overlay whose validationActions include Deny
 # refuses it with the policy's identity message, and any other admits it and
 # reports it. $1 names what was submitted and $2 is "admitted" or "refused";
-# the refusal is in $WORK/err and the overlay's actions in $actions. A
-# refusal for another reason is a FAIL, and one naming a network failure is a
-# verification that never ran.
+# the refusal is in $WORK/err and the overlay's actions in $actions. A refusal
+# whose cause is a transport failure is a verification that never ran, and one
+# for another reason is a FAIL.
+#
+# The identity message alone does not establish the identity was decided: an
+# outage inside verification refuses with that same message. A denial under
+# Deny counts when the verifier's lines, read for that request, name no
+# transport failure AND there is at least one. A failed verification always
+# logs one, so with none the log that was read is not the verifier's for the
+# request, and its silence says nothing about the cause.
 decide_foreign() {
   local what="$1" outcome="$2"
   if [ "$outcome" = admitted ]; then
@@ -83,20 +155,25 @@ decide_foreign() {
                 echo "  FAIL  admitted $what under Deny." ;;
       *) echo "  ok    admitted $what under $actions (reported, not blocked)" ;;
     esac
-  elif grep -qF "$IDENTITY_MESSAGE" "$WORK/err"; then
-    case ",$actions," in
-      *,Deny,*) echo "  ok    denied $what: $IDENTITY_MESSAGE" ;;
-      *) fail=1
-         echo "  FAIL  denied $what under $actions, which reports and does not block." ;;
-    esac
-  elif network_failure <"$WORK/err"; then
-    show_err
-    cannot_run "$rel could not reach the registry or Rekor for $what."
-  else
+    return 0
+  fi
+  cannot_run_on_transport "$what"
+  if ! grep -qF "$IDENTITY_MESSAGE" "$WORK/err"; then
     fail=1
     echo "  FAIL  $what was refused for a reason other than its identity:"
     show_err
+    return 0
   fi
+  case ",$actions," in
+    *,Deny,*)
+      [ -s "$WORK/log" ] \
+        || cannot_run "$rel denied $what with the identity message, but the admission
+controller's log carries no '$VERIFIER_FAILED' line for it, so whether the
+identity or an outage refused it is unknown."
+      echo "  ok    denied $what: $IDENTITY_MESSAGE" ;;
+    *) fail=1
+       echo "  FAIL  denied $what under $actions, which reports and does not block." ;;
+  esac
 }
 
 # Sourced, this file defines the functions above and runs nothing, so
@@ -259,6 +336,7 @@ registered and an admitted pod would prove nothing."
 
   # The tag, rewritten. The admitted object is the API server's response to the
   # create, so the digest in it can only have been written by admission.
+  mark_sent
   if admitted="$(kubectl create -f "$SUITE/pod.yaml" -o jsonpath='{.spec.initContainers[0].image} {.spec.containers[0].image}' 2>"$WORK/err")"; then
     read -r admitted_init admitted_main <<<"$admitted"
     for pair in "init container:${admitted_init:-}" "container:${admitted_main:-}"; do
@@ -275,6 +353,7 @@ registered and an admitted pod would prove nothing."
     done
 
     # The ephemeral containers, through the subresource that alone adds them.
+    mark_sent
     if ephemeral="$(kubectl patch pod "$POD" -n "$POD_NS" --subresource=ephemeralcontainers \
           --type=strategic -p "{\"spec\":{\"ephemeralContainers\":[{\"name\":\"pinned\",\"image\":\"$TAGGED\"}]}}" \
           -o jsonpath='{.spec.ephemeralContainers[0].image}' 2>"$WORK/err")"; then
@@ -285,15 +364,14 @@ registered and an admitted pod would prove nothing."
         echo "  FAIL  admitted $TAGGED as an ephemeral container as '$ephemeral', with"
         echo "        no digest joined to the tag."
       fi
-    elif network_failure <"$WORK/err"; then
-      show_err
-      cannot_run "$rel could not reach the registry or Rekor for the ephemeral container."
     else
+      cannot_run_on_transport "the ephemeral container"
       fail=1
       echo "  FAIL  refused the release-signed $TAGGED as an ephemeral container:"
       show_err
     fi
     outcome=refused
+    mark_sent
     kubectl patch pod "$POD" -n "$POD_NS" --subresource=ephemeralcontainers \
         --type=strategic -p "{\"spec\":{\"ephemeralContainers\":[{\"name\":\"foreign\",\"image\":\"$FOREIGN\"}]}}" \
         -o name >/dev/null 2>"$WORK/err" && outcome=admitted
@@ -302,11 +380,8 @@ registered and an admitted pod would prove nothing."
     # as already existing, which reads as that overlay denying a signed image.
     kubectl delete -f "$SUITE/pod.yaml" --wait=true --timeout=120s >/dev/null 2>"$WORK/err" \
       || cannot_run "$rel: the signed pod was not deleted within 120s — $(head -1 "$WORK/err")"
-  elif network_failure <"$WORK/err"; then
-    show_err
-    cannot_run "$rel could not reach the registry or Rekor, so the signed pod was never
-verified and nothing was observed about the rewrite."
   else
+    cannot_run_on_transport "the signed pod, so nothing was observed about the rewrite"
     fail=1
     echo "  FAIL  denied the release-signed $TAGGED, so no digest was written:"
     show_err
@@ -324,6 +399,7 @@ verified and nothing was observed about the rewrite."
     || cannot_run "$rel: the Deployment's pods could not be listed — $(head -1 "$WORK/err")"
   [ -z "$left" ] || cannot_run "$rel: $left from an earlier overlay was still present after
 120s, so it would answer for this overlay's Deployment."
+  mark_sent
   if stored="$(kubectl create -f "$SUITE/deployment.yaml" -o jsonpath='{.spec.template.spec.containers[0].image}' 2>"$WORK/err")"; then
     if [ "$stored" = "$TAGGED" ]; then
       echo "  ok    stored the Deployment's pod template as written ($TAGGED)"
@@ -343,10 +419,7 @@ verified and nothing was observed about the rewrite."
     if [ -z "$created" ]; then
       kubectl get events -n "$DEPLOYMENT_NS" --field-selector reason=FailedCreate \
         -o jsonpath='{range .items[*]}{.message}{"\n"}{end}' >"$WORK/err" 2>&1
-      if network_failure <"$WORK/err"; then
-        show_err
-        cannot_run "$rel could not reach the registry or Rekor for the Deployment's pod."
-      fi
+      cannot_run_on_transport "the Deployment's pod"
       fail=1
       echo "  FAIL  the Deployment's ReplicaSet created no pod within 120s:"
       show_err
@@ -361,16 +434,15 @@ verified and nothing was observed about the rewrite."
     kubectl delete -f "$SUITE/deployment.yaml" --cascade=foreground --wait=true \
       --timeout=120s >/dev/null 2>"$WORK/err" \
       || cannot_run "$rel: the Deployment was not deleted within 120s — $(head -1 "$WORK/err")"
-  elif network_failure <"$WORK/err"; then
-    show_err
-    cannot_run "$rel could not reach the registry or Rekor for the Deployment."
   else
+    cannot_run_on_transport "the Deployment"
     fail=1
     echo "  FAIL  refused the Deployment of the release-signed $TAGGED:"
     show_err
   fi
 
   # The identity, decided. Deny refuses it; Audit admits and reports it.
+  mark_sent
   if kubectl create -f "$SUITE/branch-signed.yaml" -o name >/dev/null 2>"$WORK/err"; then
     decide_foreign "the branch-signed image" admitted
     kubectl delete -f "$SUITE/branch-signed.yaml" --wait=true --timeout=120s >/dev/null 2>"$WORK/err" \
@@ -379,7 +451,11 @@ verified and nothing was observed about the rewrite."
     decide_foreign "the branch-signed image" refused
   fi
 
-  kubectl delete -f "$rendered" --wait=true >/dev/null 2>&1
+  # The next overlay applies a policy of the same name, so this one must be gone
+  # first: a delete still under way leaves which overlay's policy decides the
+  # next admissions unknown.
+  kubectl delete -f "$rendered" --wait=true --timeout=120s >/dev/null 2>"$WORK/err" \
+    || cannot_run "$rel: its policy was not deleted within 120s — $(head -1 "$WORK/err")"
   checked=$((checked + 1))
 done
 

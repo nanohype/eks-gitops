@@ -162,13 +162,19 @@ aggregate, so a clean `task validate` is necessary but not sufficient:
   `scripts/kyverno-test.sh policies/kyverno/tests` and
   `scripts/check-image-verification.py` (CI job `kyverno`). The verify-images
   cases verify real signatures, so the suite needs the network, and a run that
-  meets a transport failure on every attempt exits 2 rather than 1. The
-  contract gate renders each supply-chain overlay, so it needs kustomize.
+  meets a transport failure on every attempt exits 2 rather than 1. Each run is
+  bounded with GNU `timeout` (`gtimeout` from Homebrew's coreutils on macOS),
+  and a run the bound ends counts as a transport failure. The contract gate
+  renders each supply-chain overlay, so it needs kustomize.
 - **Digest pin under real admission** — `scripts/check-digest-rewrite.sh`
   (CI job `digest-rewrite`; locally `task validate:digest-rewrite`, outside the
   aggregate because it brings up kind and needs Docker and the network). The
   Kyverno CLI never runs the mutating webhook that pins a verified tag to its
-  digest, so this is the only gate that observes the pin.
+  digest, so this is the only gate that observes the pin. A transport failure
+  inside verification refuses with the policy's own identity message, so a
+  refusal is decided on the API server's message and the admission controller's
+  log together, and one whose cause is a transport failure exits 2. Both gates
+  read those failures through the one pattern in `scripts/transport-failure.sh`.
 - **Secret scan** — gitleaks over the working tree (CI job `secrets`)
 - **Pods name ServiceAccounts that exist** — `scripts/check-serviceaccount-bindings.py`
   (CI job `serviceaccount-bindings`)

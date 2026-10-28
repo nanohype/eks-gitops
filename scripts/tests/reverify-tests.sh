@@ -1517,6 +1517,55 @@ rejects "attempts: report the first transport failure as final" test_kyverno_tes
   test_one_that_clears_is_run_again
 res $F
 
+# Each run is bounded, and a run the bound ended is a transport failure: a read
+# that stops answering holds the CLI, and the job's timeout would otherwise end
+# the run with no diagnostic at all.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('out="$("$BOUND" "$RUN_BOUND" kyverno test ', 'out="$(kyverno test ', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "bound: run the suite unbounded" test_kyverno_test \
+  test_each_run_is_bounded \
+  test_gtimeout_bounds_the_run_where_timeout_is_absent
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('  if [ "$rc" -eq 124 ]; then\n', '  if false; then\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "bound: decide a run the bound ended on its rows" test_kyverno_test \
+  test_one_cut_off_is_run_again \
+  test_one_cut_off_every_time_cannot_run
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('if [ -z "$BOUND" ]; then\n', 'if false; then\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "bound: run with neither timeout nor gtimeout" test_kyverno_test \
+  test_no_bound_cannot_run_and_tests_nothing
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("\nRUN_BOUND=240\n", "\nRUN_BOUND=600\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "bound: let every attempt outlast the job" test_kyverno_test \
+  test_every_attempt_fits_inside_the_jobs_timeout
+res $F
+
 # The verdict on a foreign identity, one function for the pod and the
 # ephemeral container alike.
 F=scripts/check-digest-rewrite.sh
@@ -1536,13 +1585,133 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('  elif network_failure <"$WORK/err"; then\n    show_err\n    cannot_run "$rel could not reach the registry or Rekor for $what."\n',
-              '', 1)
+m = s.replace('  cannot_run_on_transport "$what"\n  if ! grep -qF "$IDENTITY_MESSAGE"',
+              '  if ! grep -qF "$IDENTITY_MESSAGE"', 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
 rejects "foreign: read a network refusal as a regression" test_digest_rewrite \
   test_refused_for_a_network_failure_cannot_run
+res $F
+
+# A transport failure inside verification refuses with the policy's identity
+# message, which under Deny is what a correct denial says. Only the verifier's
+# log names the cause, and only a log carrying the verifier's own line is the
+# verifier's log for that request.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    read_verifier_log\n    cause="$(transport_failures <"$WORK/log")"\n',
+              '    read_verifier_log\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "refusal: read the refusal text and not the verifier's log" test_digest_rewrite \
+  test_a_trusted_root_that_could_not_be_fetched_is_not_a_denial \
+  test_a_rekor_5xx_is_not_a_denial
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('      [ -s "$WORK/log" ] \\\n        || cannot_run',
+              '      true \\\n        || cannot_run', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "identity: decide a denial on the message alone" test_digest_rewrite \
+  test_a_log_without_the_verifiers_line_decides_no_denial
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace(' -l "$VERIFIER_PODS" --tail=-1 \\\n', ' -l "$VERIFIER_PODS" \\\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "log: read ten lines a replica" test_digest_rewrite \
+  test_the_log_is_read_whole_from_every_admission_controller_replica
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('uncoloured <"$WORK/log.raw" | grep -F "$VERIFIER_FAILED" >"$WORK/log"\n',
+              'uncoloured <"$WORK/log.raw" >"$WORK/log"\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "log: read the controller's own errors as the verifier's" test_digest_rewrite \
+  test_a_connection_the_webhook_server_dropped_is_not_the_verifiers
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace(' >"$WORK/log.raw" 2>"$WORK/log.err"; then\n',
+              ' >"$WORK/log.raw" 2>"$WORK/log.err" || true; then\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "log: decide over a log that could not be read" test_digest_rewrite \
+  test_a_log_that_cannot_be_read_decides_no_refusal
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('. "$ROOT/scripts/transport-failure.sh"\n',
+              'uncoloured() { cat; }\n'
+              "transport_failures() { grep -iE 'no such host|i/o timeout|connection refused|"
+              "context deadline|TLS handshake|unexpected status code 5[0-9][0-9]|toomanyrequests'; }\n",
+              1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "pattern: classify with a list of its own" test_digest_rewrite \
+  test_both_gates_source_the_shared_pattern \
+  test_no_gate_words_a_transport_failure_of_its_own \
+  test_a_trusted_root_that_could_not_be_fetched_is_not_a_denial \
+  test_a_registry_429_refusal_cannot_run
+res $F
+
+# The one pattern both gates read. Each phrase a fixture carries alone is held
+# by the test naming that outage.
+F=scripts/transport-failure.sh
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("|tuf: failed to download|", "|", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "pattern: miss a trusted root that could not be fetched" test_digest_rewrite \
+  test_a_trusted_root_that_could_not_be_fetched_is_not_a_denial
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("|unexpected status code (429|5[0-9][0-9])|",
+              "|unexpected status code 5[0-9][0-9]|", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "pattern: miss a throttled registry" test_digest_rewrite \
+  test_a_registry_429_refusal_cannot_run
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("|\\]\\[(429|5[0-9][0-9])\\]'", "'", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "pattern: miss a Rekor 5xx" test_digest_rewrite \
+  test_a_rekor_5xx_is_not_a_denial
 res $F
 
 echo
@@ -1562,7 +1731,7 @@ echo "RESULT pass=$pass fail=$fail"
 # The floor this harness owes for the same reason the gates owe theirs: with
 # every `rejects` line deleted it would report pass=0 fail=0 and exit 0, which is
 # a green run over nothing planted.
-MIN_PROBES=91
+MIN_PROBES=104
 total=$((pass + fail))
 if [ "$total" -lt "$MIN_PROBES" ]; then
   echo "FAIL  ran $total probe(s), under the floor of $MIN_PROBES — this harness"

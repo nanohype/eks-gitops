@@ -565,8 +565,10 @@ jobs:
     name: Kyverno policy tests
     runs-on: ubuntu-latest
     # The verify-images rows reach the registry, the Sigstore TUF mirror and
-    # Rekor, and kyverno-test.sh repeats a run that met a transport failure.
-    # This bounds the job if one of them stops answering partway through a read.
+    # Rekor. kyverno-test.sh bounds each run of the suite, counts a run the bound
+    # ends as a transport failure and repeats it; this sits above every attempt
+    # at that bound, so a read that stops answering ends on the script's own
+    # diagnostic. scripts/tests/test_kyverno_test.py holds the two together.
     timeout-minutes: 20
     steps:
       - name: Checkout
