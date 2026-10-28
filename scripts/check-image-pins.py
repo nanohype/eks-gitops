@@ -83,6 +83,14 @@ gatelib = importlib.util.module_from_spec(_gs)
 sys.modules["gatelib"] = gatelib
 _gs.loader.exec_module(gatelib)
 
+# The registry client, loaded by path the same way.
+_rl = pathlib.Path(__file__).resolve().parent / "registry.py"
+_rs = importlib.util.spec_from_file_location("registry", _rl)
+assert _rs and _rs.loader, f"{_rl} is not loadable as a module"
+registry = importlib.util.module_from_spec(_rs)
+sys.modules["registry"] = registry
+_rs.loader.exec_module(registry)
+
 
 # Reuse render-addons' discovery, repo setup and render path rather than
 # re-deriving which chart a path belongs to. Three earlier attempts at a local
@@ -179,8 +187,8 @@ def inventory(env: str, seen: set[str] | None = None
         if (d / f"values-{env}.yaml").exists():
             vf += ["-f", str(d / f"values-{env}.yaml")]
         try:
-            archive = gatelib.chart_archive(u.source, u.chart, u.version)
-        except gatelib.ChartUnavailable as exc:
+            archive = registry.chart_archive(u.source, u.chart, u.version)
+        except registry.ChartUnavailable as exc:
             unrendered.append((u.path, f"{u.chart} {u.version} could not be fetched "
                                        f"— {exc}"[:200]))
             continue

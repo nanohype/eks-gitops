@@ -115,6 +115,14 @@ gatelib = importlib.util.module_from_spec(_gs)
 sys.modules["gatelib"] = gatelib
 _gs.loader.exec_module(gatelib)
 
+# The registry client, loaded by path the same way.
+_rl = pathlib.Path(__file__).resolve().parent / "registry.py"
+_rs = importlib.util.spec_from_file_location("registry", _rl)
+assert _rs and _rs.loader, f"{_rl} is not loadable as a module"
+registry = importlib.util.module_from_spec(_rs)
+sys.modules["registry"] = registry
+_rs.loader.exec_module(registry)
+
 
 # Helm charts occasionally emit the YAML `=` default-value sentinel (e.g. `- =`
 # inside a ConfigMap payload). PyYAML's SafeLoader has no constructor for it and
@@ -420,7 +428,7 @@ def render_fleet(dest: pathlib.Path) -> tuple[int, set[str]]:
             env_file = unit_dir / f"values-{env}.yaml"
             if not env_file.exists():
                 continue  # addon not deployed to this env
-            archive = gatelib.chart_archive_or_exit(u.source, u.chart, u.version)
+            archive = registry.chart_archive_or_exit(u.source, u.chart, u.version)
             cmd = ["helm", "template", u.chart, str(archive), "-n", u.namespace]
             for name, value in u.params:
                 cmd += ["--set", f"{name}={value}"]

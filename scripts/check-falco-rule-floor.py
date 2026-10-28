@@ -70,6 +70,14 @@ gatelib = importlib.util.module_from_spec(_gs)
 sys.modules["gatelib"] = gatelib
 _gs.loader.exec_module(gatelib)
 
+# The registry client, loaded by path the same way.
+_rl = pathlib.Path(__file__).resolve().parent / "registry.py"
+_rs = importlib.util.spec_from_file_location("registry", _rl)
+assert _rs and _rs.loader, f"{_rl} is not loadable as a module"
+registry = importlib.util.module_from_spec(_rs)
+sys.modules["registry"] = registry
+_rs.loader.exec_module(registry)
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 APPSET = ROOT / "applicationsets" / "addons-security.yaml"
 ADDON = ROOT / "addons" / "security" / "falco"
@@ -193,10 +201,10 @@ def _unreachable(exc: BaseException) -> NoReturn:
 
 
 def rulesfile(ref: str,
-              get: Callable[..., bytes] = gatelib.http_get) -> dict[str, str] | None:
+              get: Callable[..., bytes] = registry.http_get) -> dict[str, str] | None:
     """Filenames and contents a rulesfile ref installs, or None for a plugin.
 
-    Read through gatelib's registry client, so a 429 waits as long as the
+    Read through registry.py's client, so a 429 waits as long as the
     registry asks. The registry answering 404 for the ref is a finding about a
     ref in this repo; every other status, and a rate limit that outlasts the
     retries, is not this gate's to interpret.
@@ -204,9 +212,9 @@ def rulesfile(ref: str,
     name, tag = ref.rsplit(":", 1)
     repo = name if "/" in name else f"{INDEX_PREFIX}/{name}"
     repo = repo[len(f"{REGISTRY}/"):] if repo.startswith(f"{REGISTRY}/") else repo
-    registry = gatelib.OciRepository(f"{REGISTRY}/{repo}", get)
+    oci = registry.OciRepository(f"{REGISTRY}/{repo}", get)
     try:
-        manifest = json.loads(registry.read(f"manifests/{tag}", RULESFILE_ACCEPT))
+        manifest = json.loads(oci.read(f"manifests/{tag}", RULESFILE_ACCEPT))
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             fail(f"ref {ref!r} does not resolve: {REGISTRY}/{repo} answered 404 for "
@@ -214,16 +222,16 @@ def rulesfile(ref: str,
                  f"set carries is absent from every node.")
             return None
         cannot_run(f"Cannot run: {REGISTRY} answered {exc.code} for {repo}:{tag}.")
-    except (OSError, gatelib.RegistryError, ValueError) as exc:
+    except (OSError, registry.RegistryError, ValueError) as exc:
         _unreachable(exc)
     if (manifest.get("config") or {}).get("mediaType") != RULESFILE_CONFIG:
         return None  # a plugin, or a multi-arch index — installs no rules
     try:
-        blob = registry.blob(str(manifest["layers"][0]["digest"]))
+        blob = oci.blob(str(manifest["layers"][0]["digest"]))
     except urllib.error.HTTPError as exc:
         cannot_run(f"Cannot run: {REGISTRY} answered {exc.code} for a layer of "
                    f"{repo}:{tag}.")
-    except (OSError, gatelib.RegistryError) as exc:
+    except (OSError, registry.RegistryError) as exc:
         _unreachable(exc)
     out: dict[str, str] = {}
     with tarfile.open(fileobj=io.BytesIO(blob)) as tf:
@@ -261,7 +269,7 @@ def read_paths(falco: dict, env: str) -> tuple[set[str], set[str]]:
 def main() -> int:
     gatelib.require("helm")
     repo, chart, version = chart_pin()
-    archive = gatelib.chart_archive_or_exit(repo, chart, version)
+    archive = registry.chart_archive_or_exit(repo, chart, version)
     envs = environments()
     if not envs:
         fail(f"{ADDON.relative_to(ROOT)} carries no values-<env>.yaml, so this gate "

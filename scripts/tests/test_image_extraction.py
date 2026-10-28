@@ -603,7 +603,7 @@ class WhatCannotBeReadReachesAVerdict(unittest.TestCase):
 
 
 class WhatTheInventoryRenders(unittest.TestCase):
-    """`inventory` renders the archive gatelib fetched, never a registry ref.
+    """`inventory` renders the archive the registry client fetched, never a registry ref.
 
     So every chart reaches helm as a local file, which is what lets a registry's
     429 be waited out in one place, and a chart that cannot be fetched is a unit
@@ -645,17 +645,17 @@ class WhatTheInventoryRenders(unittest.TestCase):
             self.commands.append(cmd)
             return Completed(returncode, stdout, stderr)
 
-        saved = (gate.ROOT, gate.render_addons.discover, gate.gatelib.chart_archive,
+        saved = (gate.ROOT, gate.render_addons.discover, gate.registry.chart_archive,
                  gate.subprocess.run, gate.gatelib.require)
         gate.ROOT = root
         gate.render_addons.discover = lambda *a, **k: [self.Unit()]
-        gate.gatelib.chart_archive = chart_archive
+        gate.registry.chart_archive = chart_archive
         gate.subprocess.run = run
         gate.gatelib.require = lambda *a, **k: None
         try:
             return gate.inventory("production"), archive, unit_dir
         finally:
-            (gate.ROOT, gate.render_addons.discover, gate.gatelib.chart_archive,
+            (gate.ROOT, gate.render_addons.discover, gate.registry.chart_archive,
              gate.subprocess.run, gate.gatelib.require) = saved
 
     def test_helm_renders_the_fetched_archive(self):
@@ -677,7 +677,7 @@ class WhatTheInventoryRenders(unittest.TestCase):
 
     def test_a_chart_that_cannot_be_fetched_is_unrendered_not_passed(self):
         (images, unrendered, _), _, _ = self.inventory_with(
-            fetched=gate.gatelib.ChartUnavailable("HTTP 429 from r", answered=False))
+            fetched=gate.registry.ChartUnavailable("HTTP 429 from r", answered=False))
         self.assertEqual(images, {})
         self.assertEqual(self.commands, [])
         self.assertEqual(len(unrendered), 1)

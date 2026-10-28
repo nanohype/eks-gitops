@@ -9,7 +9,7 @@ short list — so the omission reports itself as a complete run.
 It fetches every chart from a registry, so the positive-control sweep exempts
 it. These exercise what decides the result without a network: which units exist,
 where each is fetched from, and what a render is handed. What an unavailable
-chart means is gatelib's, and is held in test_gatelib.
+chart means is registry.py's, and is held in test_registry.
 """
 
 from __future__ import annotations
@@ -174,7 +174,7 @@ class WhatARenderIsHanded(unittest.TestCase):
         ran = mock.Mock(return_value=mock.Mock(returncode=0, stdout="", stderr=""))
         fetch = mock.Mock(return_value=archive)
         with mock.patch.object(gate, "REPO_ROOT", root), \
-                mock.patch.object(gate.gatelib, "chart_archive_or_exit", fetch), \
+                mock.patch.object(gate.registry, "chart_archive_or_exit", fetch), \
                 mock.patch.object(gate.subprocess, "run", ran):
             result = gate.render(unit, env)
         return result, fetch, ran, archive, unit_dir
@@ -218,8 +218,8 @@ class FetchingTheChartCache(unittest.TestCase):
             pruned.append(set(keep))
             return 3
 
-        with mock.patch.object(gate.gatelib, "chart_archive_or_exit", archive), \
-                mock.patch.object(gate.gatelib, "prune_archives", prune), \
+        with mock.patch.object(gate.registry, "chart_archive_or_exit", archive), \
+                mock.patch.object(gate.registry, "prune_archives", prune), \
                 mock.patch.dict(gate.SKIP_CHARTS, skip or {}, clear=True), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
             rc = gate.fetch_all(units)

@@ -32,15 +32,13 @@ field that moved.
 
 HOW A PIN IS READ
 
-Through the registry client in gatelib, never through helm, and never from the
-chart cache: the question is what upstream publishes now. An OCI pin is read
+Through the registry client in registry.py, never through helm, and never from
+the chart cache: the question is what upstream publishes now. An OCI pin is read
 over the OCI distribution API — the manifest, then the config blob `helm push`
 writes, which is the chart's Chart.yaml metadata as JSON. An HTTPS pin is read
 from the repository's index.yaml, whose entry for a version carries the same
-fields. A 429 is retried a bounded number of times, waiting as long as
-Retry-After asks, and a Retry-After over gatelib.RETRY_MAX_WAIT_SECONDS is
-reported without waiting; every other status, and every network error, is
-reported on the attempt that produced it.
+fields. Which statuses the client retries, which it answers and which it reports
+is stated once, in registry.py's docstring.
 """
 
 from __future__ import annotations
@@ -52,14 +50,14 @@ import sys
 
 import yaml
 
-# Shared helpers and the registry client, loaded by path: these are hyphenated executables
-# run from varying working directories.
-_gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
-_gs = importlib.util.spec_from_file_location("gatelib", _gl)
-assert _gs and _gs.loader, f"{_gl} is not loadable as a module"
-gatelib = importlib.util.module_from_spec(_gs)
-sys.modules["gatelib"] = gatelib
-_gs.loader.exec_module(gatelib)
+# The registry client, loaded by path: these are hyphenated executables run from
+# varying working directories.
+_rl = pathlib.Path(__file__).resolve().parent / "registry.py"
+_rs = importlib.util.spec_from_file_location("registry", _rl)
+assert _rs and _rs.loader, f"{_rl} is not loadable as a module"
+registry = importlib.util.module_from_spec(_rs)
+sys.modules["registry"] = registry
+_rs.loader.exec_module(registry)
 
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -129,8 +127,8 @@ def load_records() -> dict:
 def fetch(chart: str, repo: str, version: str) -> dict:
     """Chart.yaml as upstream publishes it, or {"_error": why not}."""
     try:
-        return gatelib.chart_metadata(repo, chart, version)
-    except gatelib.ChartUnavailable as err:
+        return registry.chart_metadata(repo, chart, version)
+    except registry.ChartUnavailable as err:
         return {"_error": str(err)[:200]}
 
 

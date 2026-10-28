@@ -70,6 +70,14 @@ gatelib = importlib.util.module_from_spec(_gs)
 sys.modules["gatelib"] = gatelib
 _gs.loader.exec_module(gatelib)
 
+# The registry client, loaded by path the same way.
+_rl = pathlib.Path(__file__).resolve().parent / "registry.py"
+_rs = importlib.util.spec_from_file_location("registry", _rl)
+assert _rs and _rs.loader, f"{_rl} is not loadable as a module"
+registry = importlib.util.module_from_spec(_rs)
+sys.modules["registry"] = registry
+_rs.loader.exec_module(registry)
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 APPSET = ROOT / "applicationsets" / "addons-loki.yaml"
 ADDON = ROOT / "addons" / "observability" / "loki"
@@ -220,7 +228,7 @@ def environment_verdict(cfg: dict, warn: float | None,
 
 def main() -> int:
     repo, version = chart_pin()
-    archive = gatelib.chart_archive_or_exit(repo, "loki", version)
+    archive = registry.chart_archive_or_exit(repo, "loki", version)
     warn = alert_threshold()
     envs = environments()
     if not envs:

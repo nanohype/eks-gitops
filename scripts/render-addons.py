@@ -33,11 +33,11 @@ SOURCE OF TRUTH
     sync (e.g. aws-load-balancer-controller refuses to render without clusterName).
 
 FETCHING
-    Each chart is fetched through gatelib's registry client into the chart
+    Each chart is fetched through registry.py's client into the chart
     cache and rendered from that local archive, so helm never reaches a
     registry here. A registry that answers that the pinned version is not there
     exits 1 — a pin that does not resolve is a finding about this repo. Any
-    other fetch failure, a rate limit that outlasts gatelib's retries included,
+    other fetch failure, a rate limit that outlasts the client's retries included,
     exits 2: it says nothing about the catalogue.
 
 Run ``render-addons.py`` to render every env, or ``--env staging`` for one.
@@ -66,6 +66,14 @@ assert _gs and _gs.loader, f"{_gl} is not loadable as a module"
 gatelib = importlib.util.module_from_spec(_gs)
 sys.modules["gatelib"] = gatelib
 _gs.loader.exec_module(gatelib)
+
+# The registry client, loaded by path the same way.
+_rl = pathlib.Path(__file__).resolve().parent / "registry.py"
+_rs = importlib.util.spec_from_file_location("registry", _rl)
+assert _rs and _rs.loader, f"{_rl} is not loadable as a module"
+registry = importlib.util.module_from_spec(_rs)
+sys.modules["registry"] = registry
+_rs.loader.exec_module(registry)
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -119,7 +127,7 @@ class Unit:
 
     @property
     def source(self) -> str:
-        """Where gatelib fetches the chart from: its OCI reference, or the repo."""
+        """Where the registry client fetches the chart from: its OCI reference, or the repo."""
         return self.oci_ref() if self.is_oci else self.repo
 
     def oci_ref(self) -> str:
@@ -251,7 +259,7 @@ def render(unit: Unit, env: str | None) -> tuple[bool, str]:
             return (True, "no env delta")  # addon not deployed to this env
         value_files.append(env_file)
 
-    archive = gatelib.chart_archive_or_exit(unit.source, unit.chart, unit.version)
+    archive = registry.chart_archive_or_exit(unit.source, unit.chart, unit.version)
 
     # Render into the namespace ArgoCD will actually sync into. `helm template`
     # otherwise reports `.Release.Namespace` as "default", so anything keyed on
@@ -291,8 +299,8 @@ def stale_skips(units: list[Unit]) -> list[tuple[str, str]]:
         if u.chart not in SKIP_CHARTS:
             continue
         try:
-            gatelib.chart_archive(u.source, u.chart, u.version)
-        except gatelib.ChartUnavailable:
+            registry.chart_archive(u.source, u.chart, u.version)
+        except registry.ChartUnavailable:
             continue
         stale.append((u.chart, SKIP_CHARTS[u.chart]))
     return stale
@@ -313,14 +321,14 @@ def fetch_all(units: list[Unit]) -> int:
     read once per pin set rather than once per job, and the cache that job
     carries to the next pin set holds that set and nothing older.
     """
-    kept = {gatelib.chart_archive_or_exit(u.source, u.chart, u.version)
+    kept = {registry.chart_archive_or_exit(u.source, u.chart, u.version)
             for u in units if u.chart not in SKIP_CHARTS}
     if not kept:
         print("Cannot run: discovery found no chart to fetch, so an empty cache would "
               "read as a complete one.")
         return gatelib.CANNOT_RUN
-    dropped = gatelib.prune_archives(kept)
-    print(f"Fetched {len(kept)} pinned chart archive(s) into {gatelib.CHART_CACHE}; "
+    dropped = registry.prune_archives(kept)
+    print(f"Fetched {len(kept)} pinned chart archive(s) into {registry.CHART_CACHE}; "
           f"dropped {dropped} archive(s) no pin names.")
     return 0
 

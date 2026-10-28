@@ -7,7 +7,7 @@ way the gate exists to prevent. These concentrate on the decisions that produce
 it: which paths count as read, and which priorities count as loading a rule.
 
 Everything here is offline. The rule-set reader is exercised against a scripted
-registry through gatelib's client, the same path a run against ghcr.io takes.
+registry through registry.py's client, the same path a run against ghcr.io takes.
 """
 
 import contextlib
@@ -152,7 +152,7 @@ def _rules_layer(files: dict[str, str]) -> bytes:
 
 
 class ReadingARuleSetThroughTheSharedClient(unittest.TestCase):
-    """rulesfile() reads ghcr.io through gatelib's client, not a reader of its own.
+    """rulesfile() reads ghcr.io through the shared registry client, not a reader of its own.
 
     So the anonymous token comes from the challenge, a 429 waits as long as the
     registry asks, and the layer is checked against its digest — each of which
@@ -197,7 +197,7 @@ class ReadingARuleSetThroughTheSharedClient(unittest.TestCase):
                 raise step
             return io.BytesIO(step)
 
-        get = functools.partial(gate.gatelib.http_get, urlopen=urlopen,
+        get = functools.partial(gate.registry.http_get, urlopen=urlopen,
                                 sleep=self.waits.append, clock=lambda: 0.0,
                                 jitter=lambda: 0.0)
         with contextlib.redirect_stderr(io.StringIO()), \

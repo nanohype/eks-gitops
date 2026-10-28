@@ -69,7 +69,7 @@ pass=0; fail=0
 # mutant reads as a miss when a test does in fact catch it.
 ALL_MODULES="test_policy_admission test_platform_crs test_dashboards \
   test_render_addons test_image_pins test_log_volume_budget test_controls \
-  test_corpus_floors test_gatelib test_chart_deprecation test_falco_rule_floor \
+  test_corpus_floors test_registry test_chart_deprecation test_falco_rule_floor \
   test_image_vulnerabilities test_renovate_coverage"
 
 # Bytecode caching keys on (mtime, size). A restore and the next mutation inside
@@ -436,7 +436,7 @@ rejects "parity: read only the first exclude.any entry" test_policy_admission \
   test_the_union_of_both_entries_is_the_list
 res $F
 
-F=scripts/gatelib.py
+F=scripts/registry.py
 
 edit $F <<'PY'
 import pathlib, sys
@@ -446,21 +446,18 @@ m = s.replace('            if err.code != 429:\n                raise\n',
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
-rejects "429: retry every client error too" test_gatelib \
+rejects "429: retry every client error too" test_registry \
   test_other_statuses_are_reported_on_the_first_attempt
 res $F
 
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('    for attempt in range(1, RETRY_ATTEMPTS + 1):',
-              '    for attempt in range(1, RETRY_ATTEMPTS + 2):', 1)
-m = m.replace('if attempt == RETRY_ATTEMPTS:', 'if attempt == RETRY_ATTEMPTS + 1:')
-assert m.count('RETRY_ATTEMPTS + 2):') == 1, "mutation did not land"
+m = s.replace('if attempt == RETRY_ATTEMPTS:', 'if attempt == RETRY_ATTEMPTS + 1:')
 assert m.count('if attempt == RETRY_ATTEMPTS + 1:') == 2, "mutation did not land"
 p.write_text(m)
 PY
-rejects "bound: allow one request past RETRY_ATTEMPTS" test_gatelib \
+rejects "bound: allow one request past RETRY_ATTEMPTS" test_registry \
   test_a_registry_that_never_relents_is_reported_after_the_bound \
   test_a_rate_limit_after_the_challenge_is_reported_at_the_bound
 res $F
@@ -473,7 +470,7 @@ m = s.replace('            if asked is not None and asked > RETRY_MAX_WAIT_SECON
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
-rejects "cap: sleep however long Retry-After asks" test_gatelib \
+rejects "cap: sleep however long Retry-After asks" test_registry \
   test_a_wait_beyond_the_cap_is_reported_not_slept
 res $F
 
@@ -485,7 +482,7 @@ m = s.replace('                                clock())\n            err.close()
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
-rejects "close: sleep holding the refused response" test_gatelib \
+rejects "close: sleep holding the refused response" test_registry \
   test_the_refused_response_is_closed_before_the_wait
 res $F
 
@@ -497,7 +494,7 @@ m = s.replace('        when = when.replace(tzinfo=datetime.UTC)',
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
-rejects "Retry-After: read a zoneless date in the local zone" test_gatelib \
+rejects "Retry-After: read a zoneless date in the local zone" test_registry \
   test_a_naive_http_date_is_read_as_utc
 res $F
 
@@ -509,7 +506,7 @@ m = s.replace('    query = urllib.parse.parse_qsl(parts.query, keep_blank_values
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
-rejects "token: drop the query the realm carries" test_gatelib \
+rejects "token: drop the query the realm carries" test_registry \
   test_a_realm_that_already_carries_a_query_keeps_it
 res $F
 
@@ -521,19 +518,19 @@ m = s.replace('        return self._get(url, headers, f"Bearer {self.token}")',
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
-rejects "token: answer a 401 on a read that already carries one" test_gatelib \
+rejects "token: answer a 401 on a read that already carries one" test_registry \
   test_a_401_on_the_blob_read_is_reported_not_answered_again
 res $F
 
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('        if algorithm != "sha256" or hashlib.sha256(data).hexdigest() != expected:',
+m = s.replace('        if hashlib.sha256(data).hexdigest() != expected:',
               '        if False:', 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
-rejects "blob: keep bytes that do not match their digest" test_gatelib \
+rejects "blob: keep bytes that do not match their digest" test_registry \
   test_a_blob_that_does_not_match_its_digest_is_refused
 res $F
 
@@ -545,7 +542,7 @@ m = s.replace('answered=err.code == 404)',
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
-rejects "unavailable: call every HTTP status an answer" test_gatelib \
+rejects "unavailable: call every HTTP status an answer" test_registry \
   test_a_server_fault_or_network_error_was_not_answered
 res $F
 
@@ -556,8 +553,127 @@ m = s.replace("        if path.resolve() not in kept:", "        if False:", 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
-rejects "prune: carry every archive ever pinned" test_gatelib \
+rejects "prune: carry every archive ever pinned" test_registry \
   test_archives_no_pin_names_are_dropped_and_pinned_ones_kept
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        if algorithm != "sha256" or not expected:', '        if False:', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "blob: read by a digest there is nothing to check against" test_registry \
+  test_a_digest_that_is_not_sha256_is_refused_before_anything_is_read
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('                if attempt == RETRY_ATTEMPTS:\n'
+              '                    raise RegistryError(\n'
+              '                        f"{host} asked for a token',
+              '                if False:\n'
+              '                    raise RegistryError(\n'
+              '                        f"{host} asked for a token', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "token: answer a challenge with no attempt left to repeat it" test_registry \
+  test_a_challenge_on_the_last_attempt_is_reported_not_answered
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('READ_FAILURES = (OSError, http.client.HTTPException, RegistryError, ValueError)',
+              'READ_FAILURES = (OSError, http.client.HTTPException, RegistryError)', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "read failures: let a body that is not JSON escape" test_registry \
+  test_a_body_that_is_not_the_json_the_api_promises_was_not_answered \
+  test_a_realm_that_answers_something_other_than_json_raises_a_read_failure
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    bare = version.removeprefix("v")', '    bare = version', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "index: match a v-prefixed pin only to a v-prefixed entry" test_registry \
+  test_a_v_prefixed_pin_matches_a_bare_index_entry
+res $F
+
+# The digest is the only thing that makes a fetched archive the pinned one. An
+# entry publishing none, and a cached archive nobody re-checked, each render
+# bytes nothing verified while the run reads the same as one that did.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    if not digest:\n        raise ChartUnavailable(f"{index} publishes no digest',
+              '    if False:\n        raise ChartUnavailable(f"{index} publishes no digest', 1)
+m = m.replace('    if hashlib.sha256(data).hexdigest() != digest:',
+              '    if digest and hashlib.sha256(data).hexdigest() != digest:', 1)
+assert m.count("    if False:\n") == 1 and "if digest and hashlib" in m, "mutation did not land"
+p.write_text(m)
+PY
+rejects "digest: keep an archive its index publishes no digest for" test_registry \
+  test_an_entry_that_publishes_no_digest_is_refused_unfetched
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    if _intact(path):\n        return path\n',
+              '    if path.is_file():\n        return path\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "cache: hand out a cached archive on existence alone" test_registry \
+  test_an_archive_whose_bytes_changed_is_fetched_again \
+  test_an_archive_kept_with_no_record_is_fetched_again \
+  test_a_record_that_is_not_the_archives_digest_is_not_trusted
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    return hashlib.sha256(data).hexdigest() == recorded\n',
+              '    return bool(recorded)\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "cache: trust a record without hashing the archive" test_registry \
+  test_an_archive_whose_bytes_changed_is_fetched_again \
+  test_a_record_that_is_not_the_archives_digest_is_not_trusted
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    for target, content in ((archive, data), (digest_path(archive), digest)):',
+              '    for target, content in ((archive, data),):', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "keep: record no digest beside the archive" test_registry \
+  test_the_archive_is_fetched_relative_to_the_repository_and_kept \
+  test_an_oci_archive_is_kept_under_its_reference
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('root.glob("*/*")', 'root.glob("*/[!.]*")', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "prune: leave the partial an interrupted fetch wrote" test_registry \
+  test_a_partial_left_by_an_interrupted_fetch_is_dropped
 res $F
 
 
@@ -566,7 +682,7 @@ F=scripts/check-chart-deprecation.py
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('    except gatelib.ChartUnavailable as err:',
+m = s.replace('    except registry.ChartUnavailable as err:',
               '    except KeyError as err:', 1)
 assert m != s, "mutation did not land"
 p.write_text(m)

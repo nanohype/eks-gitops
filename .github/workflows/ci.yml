@@ -588,7 +588,7 @@ jobs:
   # client by its address, so a shared runner address can arrive with that
   # allowance spent, and no wait inside a job outlasts it. Six jobs fetching the
   # same charts draw six addresses and fail on whichever one is spent. Here one
-  # job fetches, through scripts/gatelib.py's client, which waits out a 429 that
+  # job fetches, through scripts/registry.py's client, which waits out a 429 that
   # does relent and checks each archive against its digest; a failure leaves one
   # job to re-run, and no rendering job starts without its charts.
   #

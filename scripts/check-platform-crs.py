@@ -41,7 +41,7 @@ valid against the CRDs this catalog installs", and those are different whenever
 a chart bump is in flight.
 
 It needs the network: the operator chart is fetched anonymously from ghcr.io
-through gatelib's registry client, which keeps it in the chart cache. With
+through registry.py's client, which keeps it in the chart cache. With
 --offline it skips instead of failing, so a local run without a registry is
 honest about having checked nothing.
 
@@ -69,6 +69,14 @@ assert _gs and _gs.loader, f"{_gl} is not loadable as a module"
 gatelib = importlib.util.module_from_spec(_gs)
 sys.modules["gatelib"] = gatelib
 _gs.loader.exec_module(gatelib)
+
+# The registry client, loaded by path the same way.
+_rl = pathlib.Path(__file__).resolve().parent / "registry.py"
+_rs = importlib.util.spec_from_file_location("registry", _rl)
+assert _rs and _rs.loader, f"{_rl} is not loadable as a module"
+registry = importlib.util.module_from_spec(_rs)
+sys.modules["registry"] = registry
+_rs.loader.exec_module(registry)
 
 
 try:
@@ -139,11 +147,11 @@ def pinned_chart_version() -> str:
 def crd_schemas(version: str, workdir: Path) -> dict[str, dict]:
     """kind -> spec schema, from the operator chart's shipped CRDs.
 
-    Fetched through gatelib, which tells a registry that answered "no such
-    version" (exit 1, a finding about the pin) from one that could not be read
-    (exit 2, which says nothing about the catalog's admissibility).
+    Fetched through the registry client, which tells a registry that answered
+    "no such version" (exit 1, a finding about the pin) from one that could not
+    be read (exit 2, which says nothing about the catalog's admissibility).
     """
-    archive = gatelib.chart_archive_or_exit(CHART, "operator", version)
+    archive = registry.chart_archive_or_exit(CHART, "operator", version)
     with tarfile.open(archive) as tf:
         tf.extractall(workdir, filter="data")
     crd_dir = workdir / "operator" / "crds"

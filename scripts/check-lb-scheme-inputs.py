@@ -73,6 +73,14 @@ gatelib = importlib.util.module_from_spec(_gs)
 sys.modules["gatelib"] = gatelib
 _gs.loader.exec_module(gatelib)
 
+# The registry client, loaded by path the same way.
+_rl = pathlib.Path(__file__).resolve().parent / "registry.py"
+_rs = importlib.util.spec_from_file_location("registry", _rl)
+assert _rs and _rs.loader, f"{_rl} is not loadable as a module"
+registry = importlib.util.module_from_spec(_rs)
+sys.modules["registry"] = registry
+_rs.loader.exec_module(registry)
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 APPSET = ROOT / "applicationsets" / "addons-networking.yaml"
 ADDON = ROOT / "addons" / "networking" / "aws-load-balancer-controller"
@@ -134,8 +142,8 @@ def chart_pin() -> dict:
 def app_version(pin: dict) -> str:
     """What the pinned chart says it installs — the tag the source is read at."""
     try:
-        meta = gatelib.chart_metadata(pin["chartRepo"], pin["chart"], pin["chartVersion"])
-    except gatelib.ChartUnavailable as exc:
+        meta = registry.chart_metadata(pin["chartRepo"], pin["chart"], pin["chartVersion"])
+    except registry.ChartUnavailable as exc:
         die(f"{pin['chart']} {pin['chartVersion']} would not resolve — {exc}")
     version = str(meta.get("appVersion") or "").strip()
     if not version:
@@ -148,8 +156,8 @@ def rendered_flags(pin: dict) -> dict:
     """The controller's effective configuration, as this catalog installs it."""
     gatelib.require("helm")
     try:
-        archive = gatelib.chart_archive(pin["chartRepo"], pin["chart"], pin["chartVersion"])
-    except gatelib.ChartUnavailable as exc:
+        archive = registry.chart_archive(pin["chartRepo"], pin["chart"], pin["chartVersion"])
+    except registry.ChartUnavailable as exc:
         die(f"{pin['chart']} {pin['chartVersion']} would not resolve — {exc}")
     values = [str(ADDON / "values.yaml")]
     proc = subprocess.run(

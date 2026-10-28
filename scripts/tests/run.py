@@ -39,6 +39,10 @@ EXPECTED = (
     "test_falco_rule_floor",
     "test_alert_severity_routes",
     "test_gatelib",
+    # The registry client every chart and OCI artifact is read through: which
+    # statuses it retries, answers or reports, and the digest each archive is
+    # checked against when it is fetched and again when the cache hands it out.
+    "test_registry",
     # The harness layer. controls.py excuses the harnesses from carrying a
     # positive control because each asserts its own outcome when it runs, and
     # the reader deciding whether anything runs them is covered nowhere else.
@@ -183,6 +187,12 @@ PER_GATE_FLOORS = {
     "scripts/check-label-values.py": 33,
     "scripts/check-sync-waves.py": 10,
     "scripts/gatelib.py": 55,
+    # The registry client checks every chart archive against a digest and
+    # handles a pull token. That is signature verification's path in the sense
+    # testing-rubric's `security-critical-100` uses, so its floor is that rule's
+    # 100 rather than a ratchet: a branch no test reaches here is a check that
+    # nothing proves still checks.
+    "scripts/registry.py": 100,
     # The control-exempt gates. Their floors are what keeps the verdict half
     # covered after the module that covers it is edited.
     "scripts/check-policy-admission.py": 63,

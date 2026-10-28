@@ -4,7 +4,7 @@ Two halves decide what this gate says. The offline verdict decides whether every
 pin has a record and every record a pin; the live verdict decides what a chart
 that redescribed itself, deprecated itself or could not be read turns into.
 
-The registry read itself is gatelib's, and is tested in test_gatelib. What is
+The registry read itself is registry.py's, and is tested in test_registry. What is
 held here is that a read that fails reaches the live verdict as a sentence
 rather than as an exception, and that --sync records what upstream says.
 """
@@ -35,7 +35,7 @@ class FetchReportsWhyNot(unittest.TestCase):
     """fetch() returns an `_error` the live check prints, never an exception."""
 
     def fetch_failing_with(self, exc):
-        with mock.patch.object(ccd.gatelib, "oci_chart_metadata", side_effect=exc):
+        with mock.patch.object(ccd.registry, "oci_chart_metadata", side_effect=exc):
             return ccd.fetch("c", "oci://r.example/c", "1.0.0")
 
     def test_an_http_status_names_the_status_and_the_url(self):
@@ -44,7 +44,7 @@ class FetchReportsWhyNot(unittest.TestCase):
         self.assertEqual(meta, {"_error": "HTTP 404 from https://r.example/v2/c/manifests/1.0.0"})
 
     def test_an_exhausted_rate_limit_is_reported_in_its_own_words(self):
-        meta = self.fetch_failing_with(ccd.gatelib.RegistryError("r.example answered HTTP 429"))
+        meta = self.fetch_failing_with(ccd.registry.RegistryError("r.example answered HTTP 429"))
         self.assertEqual(meta, {"_error": "RegistryError: r.example answered HTTP 429"})
 
     def test_a_network_error_is_reported(self):
@@ -59,7 +59,7 @@ class FetchReportsWhyNot(unittest.TestCase):
                 self.assertIn(type(exc).__name__, meta["_error"])
 
     def test_an_https_pin_is_read_from_its_repository_index(self):
-        with mock.patch.object(ccd.gatelib, "repo_index_entry",
+        with mock.patch.object(ccd.registry, "repo_index_entry",
                                return_value={"name": "c", "description": "a chart",
                                              "urls": ["c-1.0.0.tgz"], "digest": "ab"}):
             meta = ccd.fetch("c", "https://charts.example", "1.0.0")
