@@ -9,11 +9,13 @@ So a gate fetches each chart here and hands helm the local archive.
 What http_get does with each answer:
 
   * HTTP 429 is retried within RETRY_ATTEMPTS requests, waiting as long as
-    Retry-After asks. A Retry-After over RETRY_MAX_WAIT_SECONDS is reported
-    without waiting.
+    Retry-After asks, or a jittered backoff when it asks nothing. A Retry-After
+    over RETRY_MAX_WAIT_SECONDS is reported without waiting, and so is a 429 on
+    the last attempt.
   * HTTP 401, on a read that passes a challenge handler, is answered once: the
     handler turns the WWW-Authenticate header into a token and the request is
-    repeated inside the same RETRY_ATTEMPTS. A second 401 is reported.
+    repeated inside the same RETRY_ATTEMPTS. A second 401 is reported, and so
+    is a first one on the last attempt, which leaves no request to repeat.
   * Every other status, and every network error, is reported on the attempt
     that produced it.
 
