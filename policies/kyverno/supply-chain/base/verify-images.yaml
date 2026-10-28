@@ -39,11 +39,27 @@ spec:
             - kube-public
             - kube-node-lease
             - kyverno
+    # An ephemeral container is added through the pods/ephemeralcontainers
+    # subresource (`kubectl debug`), never by a pod CREATE or UPDATE. Matching
+    # pods alone leaves images.ephemeralContainers empty in every request the
+    # validations see, and an ephemeral nanohype image runs unverified.
     resourceRules:
       - apiGroups: [""]
         apiVersions: ["v1"]
         operations: ["CREATE", "UPDATE"]
-        resources: ["pods"]
+        resources: ["pods", "pods/ephemeralcontainers"]
+  # Pods only: no rule is generated for a Deployment, StatefulSet, DaemonSet,
+  # ReplicaSet, Job or CronJob. A generated rule pins the digest into the
+  # controller's pod template as well, and ArgoCD compares that template with
+  # git, so every nanohype workload it syncs would sit OutOfSync while selfHeal
+  # rewrote the tag and admission pinned it again. The pod a controller creates
+  # is matched, verified and pinned on its own, and nothing in git owns it.
+  # Under Deny, a controller whose template names an image that fails
+  # verification is admitted and its pods are refused, which surfaces as
+  # FailedCreate events on its ReplicaSet or Job.
+  autogen:
+    podControllers:
+      controllers: []
   matchImageReferences:
     - glob: "ghcr.io/nanohype/*"
   validationConfigurations:

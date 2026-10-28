@@ -183,6 +183,14 @@ spec:
 # build signed by ci.yml on refs/heads/main, a real org signature from a
 # workflow the policy does not trust.
 #
+# Both digests carry cosign's legacy format: a signature under the
+# sha256-<digest>.sig tag, the attestation under .att, and no Sigstore bundle
+# referrer (`cosign tree <image>` lists which). Kyverno verifies a bundle when
+# the image carries one and reads the legacy tags only when it carries none, so
+# every row here decides on the legacy path. Bundle verification is a separate
+# path through Kyverno, and only a fixture signed in the bundle format
+# exercises it.
+#
 # A non-nanohype image is outside matchImageReferences (ghcr.io/nanohype/*), so
 # nothing is verified and the pod passes. Widening the glob to "*" makes this
 # image subject to verification and flips it to fail.
@@ -200,7 +208,8 @@ spec:
     - name: app
       image: registry.k8s.io/pause:3.10
 ---
-# A release-signed, SBOM-attested nanohype image, pinned by digest.
+# A release-signed, SBOM-attested nanohype image in the legacy format, pinned by
+# digest.
 apiVersion: v1
 kind: Pod
 metadata:

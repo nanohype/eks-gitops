@@ -507,11 +507,14 @@ jobs:
           ./scripts/check-lb-scheme-inputs.py
           ./scripts/check-lb-scheme-inputs.py --self-test
 
-      # The unit tests above prove the release identity admits a release image
-      # and refuses a branch-signed one. They cannot see an identity weakened in
-      # a way both fixtures still satisfy — a widened subjectRegExp, a flipped
-      # `required`, the transparency log switched off, a namespace exclusion
-      # grown over a workload namespace. This structural gate refuses those.
+      # The unit tests above prove the release identity admits a release-signed
+      # image and refuses a branch-signed one. They cannot see an identity
+      # weakened in a way both fixtures still satisfy — a subjectRegExp other
+      # than the one release identity, a flipped `required`, the transparency
+      # log switched off, a namespace exclusion grown over a workload namespace.
+      # This structural gate refuses those: it holds the subjectRegExp to one
+      # expression, compared whole, and scripts/tests/test_image_verification.py
+      # applies each weakening and requires the refusal.
       - name: Verify-images signing-identity contract
         run: |
           pip install --require-hashes -r requirements.txt

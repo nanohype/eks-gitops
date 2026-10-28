@@ -70,20 +70,27 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
   attestation (in-toto type `https://spdx.dev/Document`), each from the GitHub
   Actions OIDC issuer with an anchored, org-scoped `subjectRegExp` bound to a
   `release.ya?ml` workflow on `refs/tags/`, and checked against the Rekor
-  transparency log. Verification reads both Sigstore bundles (cosign v3) and the
-  legacy `.sig`/`.att` tags, so either signing format satisfies it. Base is
-  `validationActions: [Audit]`; the **staging and production overlays patch it to
-  `[Deny]`**, blocking a failed verification at admission.
+  transparency log. Kyverno verifies a Sigstore bundle referrer (cosign v3) when
+  the image carries one and reads the legacy `.sig`/`.att` tags only when it
+  carries none. Base is `validationActions: [Audit]`; the **staging and
+  production overlays patch it to `[Deny]`**, blocking a failed verification at
+  admission. It matches Pods, and the `pods/ephemeralcontainers` subresource
+  through which `kubectl debug` adds a container, and it generates no rule for
+  pod controllers (`autogen.podControllers.controllers: []`), so a Deployment
+  whose template names a failing image is admitted and its pods are refused.
 - **Repudiation of a weakened policy** — `kyverno test` verifies real signatures
   (policies/kyverno/tests/kyverno-test.yaml), so it proves the release identity
-  admits a release image and refuses a branch-signed one, but an identity weakened
-  in a way both fixtures still satisfy passes it. The structural gate
+  admits a release-signed image and refuses a branch-signed one, but an identity
+  weakened in a way both fixtures still satisfy passes it. The structural gate
   `check-image-verification.py` closes that hole: it fails the build if `required`,
-  `mutateDigest` or `verifyDigest` flips, the issuer changes, the subjectRegExp
-  loses its anchor, org scope, release-workflow or `refs/tags` binding, the
+  `mutateDigest` or `verifyDigest` flips, the issuer changes, the subjectRegExp is
+  anything but the one release identity the gate holds (`SUBJECT_REGEXP`, which
+  its unit tests check against accepted and refused certificate subjects), the
   transparency log is switched off, the SPDX attestation stops being required, a
-  validation stops covering every container field, or the namespace exclusion
-  grows past the system namespaces — run in CI (job `kyverno`).
+  validation stops covering every container field, the ephemeral-container
+  subresource stops being matched, a rule is generated for pod controllers, or
+  the namespace exclusion grows past the system namespaces — run in CI (job
+  `kyverno`).
 - **Pinning** — `mutateDigest: true` in the base: admission resolves each matched
   tag to the digest it verified and rewrites the pod spec to it, at every tier,
   because an ImageValidatingPolicy pins under Audit as well as Deny.
@@ -95,15 +102,28 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
   That pinning is EXECUTED under real admission: `scripts/check-digest-rewrite.sh`
   (CI job `digest-rewrite`) brings up kind, installs the pinned Kyverno chart with
   this catalog's values, applies each rendered supply-chain overlay, and requires a
-  tag-only signed pod to come back pinned to `@sha256` and a branch-signed pod to
-  be denied wherever the overlay says Deny. The Kyverno CLI cannot establish this:
-  it runs the validating path only, never the mutating webhook that writes the pin.
+  tag-only signed pod to come back pinned to `@sha256` in its init, main and
+  ephemeral containers, a Deployment of the same tag to be stored with its
+  template as written while the pod its ReplicaSet creates comes back pinned,
+  and a branch-signed pod and ephemeral container to be denied wherever the
+  overlay says Deny. The Kyverno CLI cannot establish this: it runs the
+  validating path only, never the mutating webhook that writes the pin. The
+  template is left alone because ArgoCD compares it with git: a pin written there
+  is drift on every sync, which selfHeal and admission would rewrite in turn.
 
 - **Residual** — third-party images (anything outside `ghcr.io/nanohype/*`) are
   unmatched and pass unsigned — their trust is the upstream registry's, not this
   policy's. The four system namespaces (`kube-system`, `kube-public`,
   `kube-node-lease`, `kyverno`) are excluded, so a nanohype image placed there is
   not verified.
+
+  A gate exercises a signing format only through a fixture signed in it. The
+  release and branch-signed fixtures under `policies/kyverno/tests/` carry
+  cosign's legacy `.sig`/`.att` format (`cosign tree <image>` lists the tags and
+  any bundle referrer), so both gates above decide on Kyverno's legacy path, and
+  bundle verification rests on Kyverno's implementation with no fixture here
+  behind it. A release signed in the bundle format, pinned beside the legacy
+  fixtures, is what puts that path under the same gates.
 
 ## 4. Admission / pod security  (`policies/kyverno/{best-practices,pod-security-standards}/`)
 

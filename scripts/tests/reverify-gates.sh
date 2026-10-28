@@ -177,17 +177,19 @@ echo "── Known-bad fed in: every gate must REJECT ──"
 
 
 
+# Both readiness-checker pins, at whatever version the last chart bump left
+# them: the test hook's top-level block and the webhooksCleanup hook's image.
+# Matched by shape rather than by version, so a bump that moves the pins leaves
+# this mutation landing rather than asserting against a tag no longer there.
 F=addons/security/kyverno/values.yaml; mut $F
 python3 - "$F" <<'PY'
-import pathlib,sys
+import pathlib,re,sys
 p=pathlib.Path(sys.argv[1]); s=p.read_text()
-m=s.replace("""test:
-  image:
-    tag: v1.18.2
-""","").replace("""  image:
-    tag: v1.18.2
-""","",1)
-assert m!=s and "tag: v1.18.2" not in m, "mutation did not land"
+pin=r"  image:\n    tag: v\d+\.\d+\.\d+\n"
+m=re.sub(r"\ntest:\n"+pin, "\n", s, count=1)
+m=re.sub(r"(\nwebhooksCleanup:\n(?:  [^\n]*\n)*?)"+pin, r"\1", m, count=1)
+left=re.findall(r"^(?:test|webhooksCleanup):\n(?:  [^\n]*\n)*", m, re.M)
+assert m!=s and s.count("tag: v")-m.count("tag: v")==2 and not any("tag:" in b for b in left), "mutation did not land"
 p.write_text(m)
 PY
 run nonzero "image-pins: unpinned readiness-checker" ./scripts/check-image-pins.py

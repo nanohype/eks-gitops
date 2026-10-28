@@ -5,26 +5,30 @@
     │ WHAT kyverno test DOES NOT COVER — read first.                      │
     │                                                                     │
     │ The unit suite verifies real signatures, so it proves the release   │
-    │ identity admits a release image and refuses a branch-signed one.    │
-    │ It cannot see a WEAKENED identity that still admits both fixtures:  │
-    │ a subjectRegExp broadened to `.*` or any org, an issuer swapped for │
-    │ an issuerRegExp, `required: false`, a Rekor check switched off, or  │
-    │ a namespace exclusion grown over a workload namespace. Each renders │
-    │ and schema-validates clean and ships silently — the policy still    │
-    │ "verifies images", it just accepts more signers or checks fewer     │
-    │ pods. This structural gate refuses those.                           │
+    │ identity admits a release-signed image and refuses a branch-signed  │
+    │ one. It cannot see a WEAKENED identity that still admits both       │
+    │ fixtures: a subjectRegExp that also accepts another workflow, ref   │
+    │ or org, an issuer swapped for an issuerRegExp, `required: false`, a │
+    │ Rekor check switched off, or a namespace exclusion grown over a     │
+    │ workload namespace. Each renders and schema-validates clean and     │
+    │ ships silently — the policy still "verifies images", it just        │
+    │ accepts more signers or checks fewer pods. This structural gate     │
+    │ refuses those.                                                      │
     └─────────────────────────────────────────────────────────────────────┘
 
 Asserts, on policies/kyverno/supply-chain/base/verify-images.yaml (an
 ImageValidatingPolicy, policies.kyverno.io/v1):
   - matchImageReferences is scoped to ghcr.io/nanohype/*, never a bare "*";
-  - the policy fails closed (failurePolicy is not Ignore) and matches pods on
-    CREATE and UPDATE, excluding exactly the system namespaces in SYSTEM_NS;
+  - the policy fails closed (failurePolicy is not Ignore), matches pods on
+    CREATE and UPDATE and pods/ephemeralcontainers on UPDATE, and excludes
+    exactly the system namespaces in SYSTEM_NS;
+  - no rule is generated for pod controllers (autogen.podControllers.controllers
+    is an empty list), so admission pins the pod and leaves the template git
+    holds as written;
   - validationConfigurations sets required, mutateDigest and verifyDigest true;
   - every attestor is keyless Cosign: the GitHub Actions OIDC issuer exactly,
-    a subjectRegExp anchored (^...$), org-scoped to github.com/nanohype, bound
-    to a release workflow on refs/tags and not a wildcard, and the Rekor
-    transparency log checked;
+    SUBJECT_REGEXP exactly as the subjectRegExp, and the Rekor transparency log
+    checked;
   - an attestation of in-toto type https://spdx.dev/Document is declared;
   - one validation verifies image signatures and one verifies that SPDX
     attestation, each against the keyless attestor and over every container
@@ -37,6 +41,8 @@ import re
 import sys
 from pathlib import Path
 from typing import NoReturn
+
+import yaml
 
 POLICY = (
     Path(__file__).resolve().parent.parent
@@ -52,8 +58,50 @@ REGISTRY_PREFIX = "ghcr.io/nanohype/"
 # decision to run unverified nanohype images in it.
 SYSTEM_NS = {"kube-system", "kube-public", "kube-node-lease", "kyverno"}
 CONTAINER_FIELDS = ("images.containers", "images.initContainers", "images.ephemeralContainers")
-# A subjectRegExp is "permissive" if it would accept a signer outside the org.
-WILDCARD_SUBJECTS = {".*", ".+", "^.*$", "^.+$", "*"}
+# The only request that adds an ephemeral container.
+EPHEMERAL = "pods/ephemeralcontainers"
+
+# The one signer verify-images trusts: a release.yml or release.yaml workflow, in
+# a repository of the nanohype org, running on a tag push. Compared whole, as a
+# string. A regular expression is a language, and its parts say nothing about
+# what it accepts: `^https://github\.com/nanohype/.+release.+@refs/tags/.+$` is
+# anchored, org-scoped, names "release" and names a tag ref, and it admits
+# prerelease-check.yml on any tag. Trusting another identity is an edit to this
+# constant, which scripts/tests/test_image_verification.py holds to the two
+# subject lists below.
+SUBJECT_REGEXP = r"^https://github\.com/nanohype/[^/]+/\.github/workflows/release\.ya?ml@refs/tags/.+$"
+
+# Certificate subjects as Fulcio writes them for a GitHub Actions run
+# (<repository URL>/<workflow path>@<ref>). The release identity accepts the
+# first list and refuses the second. A policy whose subjectRegExp differs from
+# SUBJECT_REGEXP is reported against both, so the failure names what the
+# difference admits.
+ACCEPTED_SUBJECTS = (
+    "https://github.com/nanohype/eks-agent-platform/.github/workflows/release.yaml@refs/tags/operator-v0.6.1",
+    "https://github.com/nanohype/fab/.github/workflows/release.yml@refs/tags/v1.0.0",
+)
+REFUSED_SUBJECTS = (
+    # Another workflow of an org repository, on a tag.
+    "https://github.com/nanohype/fab/.github/workflows/ci.yml@refs/tags/v1.0.0",
+    # A workflow whose name contains "release", on a tag.
+    "https://github.com/nanohype/fab/.github/workflows/prerelease-check.yml@refs/tags/v1.0.0",
+    # The release workflow on a branch push and on a pull-request ref.
+    "https://github.com/nanohype/fab/.github/workflows/release.yml@refs/heads/main",
+    "https://github.com/nanohype/fab/.github/workflows/release.yml@refs/pull/1/merge",
+    # The release workflow on a ref that names no tag.
+    "https://github.com/nanohype/fab/.github/workflows/release.yml@refs/tags/",
+    # The same path under another organization.
+    "https://github.com/nanohype-fork/fab/.github/workflows/release.yml@refs/tags/v1.0.0",
+    "https://github.com/example/fab/.github/workflows/release.yml@refs/tags/v1.0.0",
+    # A release workflow below .github/workflows rather than in it.
+    "https://github.com/nanohype/fab/.github/workflows/nested/release.yml@refs/tags/v1.0.0",
+    # A repository segment carrying a slash.
+    "https://github.com/nanohype/fab/extra/.github/workflows/release.yml@refs/tags/v1.0.0",
+    # Hosts an unescaped or unanchored host would let through.
+    "https://githubxcom/nanohype/fab/.github/workflows/release.yml@refs/tags/v1.0.0",
+    "https://github.com.example.net/nanohype/fab/.github/workflows/release.yml@refs/tags/v1.0.0",
+    "prefix-https://github.com/nanohype/fab/.github/workflows/release.yml@refs/tags/v1.0.0",
+)
 
 
 def fail(msg: str) -> NoReturn:
@@ -93,6 +141,12 @@ def check_scope(spec: dict) -> None:
     if not {"CREATE", "UPDATE"} <= pod_ops:
         fail(f"resourceRules match pods on {sorted(pod_ops)} — CREATE and UPDATE are both "
              f"required, or a pod admitted one way swaps its image the other")
+    ephemeral_ops = {op for r in rules if EPHEMERAL in (r.get("resources") or [])
+                     for op in (r.get("operations") or [])}
+    if "UPDATE" not in ephemeral_ops:
+        fail(f"resourceRules do not match {EPHEMERAL} on UPDATE — an ephemeral container "
+             f"is added through that subresource and no other request, so its image runs "
+             f"unverified whatever the validations read from images.ephemeralContainers")
 
     exprs = ((mc.get("namespaceSelector") or {}).get("matchExpressions")) or []
     excluded = set()
@@ -104,6 +158,12 @@ def check_scope(spec: dict) -> None:
     if excluded != SYSTEM_NS:
         fail(f"namespaceSelector excludes {sorted(excluded)}, expected exactly "
              f"{sorted(SYSTEM_NS)} — a workload namespace on this list runs unverified images")
+
+    controllers = ((spec.get("autogen") or {}).get("podControllers") or {}).get("controllers")
+    if controllers != []:
+        fail(f"autogen.podControllers.controllers is {controllers!r}, not [] — a rule "
+             f"Kyverno generates for a pod controller pins the digest into its pod "
+             f"template, which ArgoCD compares with git and reports as drift on every sync")
 
 
 def check_validation_config(spec: dict) -> None:
@@ -153,25 +213,32 @@ def check_attestors(spec: dict) -> set[str]:
             subj = ident.get("subjectRegExp")
             if not subj:
                 fail("keyless identity has no subjectRegExp — any signer from the issuer would pass")
-            if subj.strip() in WILDCARD_SUBJECTS:
-                fail(f"subjectRegExp {subj!r} is a wildcard — it accepts any signer; pin the "
-                     f"org release workflow")
-            if not (subj.startswith("^") and subj.endswith("$")):
-                fail(f"subjectRegExp {subj!r} is not fully anchored (^...$) — a substring "
-                     f"match is bypassable")
-            if not subj.startswith(r"^https://github\.com/nanohype/"):
-                fail(f"subjectRegExp {subj!r} is not scoped to the nanohype org")
-            if "release" not in subj:
-                fail(f"subjectRegExp {subj!r} does not bind to a release workflow")
-            if "@refs/tags/" not in subj:
-                fail(f"subjectRegExp {subj!r} does not bind to a tag push (@refs/tags/) — a "
-                     f"branch build could sign")
-            try:
-                re.compile(subj)
-            except re.error as exc:
-                fail(f"subjectRegExp {subj!r} is not a valid regex: {exc}")
+            if subj != SUBJECT_REGEXP:
+                fail(f"subjectRegExp '{subj}' is not the release identity '{SUBJECT_REGEXP}'."
+                     + "".join(f"\n  {line}" for line in subject_difference(subj)))
         names.add(name)
     return names
+
+
+def subject_difference(subj: str) -> list[str]:
+    """What a subjectRegExp other than SUBJECT_REGEXP does to the subject corpus.
+
+    Matched the way cosign matches a subject, an unanchored search, so a pattern
+    missing an anchor shows up as the subject it admits. Python's regex dialect
+    stands in for Go's here; the two agree on every construct the release
+    identity uses, and the verdict is the string comparison either way.
+    """
+    try:
+        pattern = re.compile(subj)
+    except re.error as exc:
+        return [f"It does not compile as a regular expression: {exc}."]
+    admitted = [f"It admits {s}" for s in REFUSED_SUBJECTS if pattern.search(s)]
+    refused = [f"It refuses {s}" for s in ACCEPTED_SUBJECTS if not pattern.search(s)]
+    if admitted or refused:
+        return admitted + refused
+    return ["It decides every subject in the corpus the way the release identity does, "
+            "which shows only that the corpus does not tell the two apart. Trusting "
+            "another identity is a change to SUBJECT_REGEXP and the corpus together."]
 
 
 def check_attestations(spec: dict) -> str:
@@ -210,11 +277,6 @@ def check_validations(spec: dict, attestors: set[str], sbom: str) -> None:
 
 
 def main() -> None:
-    try:
-        import yaml
-    except ImportError:
-        fail("PyYAML is required (pip install pyyaml)")
-
     if not POLICY.exists():
         fail(f"policy not found at {POLICY}")
 
@@ -231,8 +293,8 @@ def main() -> None:
     check_validations(spec, attestors, sbom)
 
     print("verify-images identity contract OK: ghcr.io/nanohype/* scope, system-only "
-          "namespace exclusion, required + pinned digest, GitHub OIDC issuer, anchored "
-          "org-scoped release-on-tag subjectRegExp, Rekor, SPDX attestation required")
+          "namespace exclusion, required + pinned digest, GitHub OIDC issuer, the "
+          "release-on-tag subjectRegExp, Rekor, SPDX attestation required")
 
 
 if __name__ == "__main__":

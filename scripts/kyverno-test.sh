@@ -34,6 +34,27 @@ require_count() {
 }
 
 cd "$ROOT"
+
+# An ImageValidatingPolicy row verifies a real signature: Kyverno reads the
+# signature and attestation from the registry and checks each against Rekor.
+# With either unreachable, every row expecting a pass fails and every row
+# expecting a fail passes, neither for a reason the policy decided. So the two
+# are reached first, and an outage is reported as a run that could not verify
+# rather than as a policy regression or a pass.
+if grep -rqs --include='kyverno-test.yaml' 'isImageValidatingPolicy: true' "$TESTS"; then
+  command -v curl >/dev/null 2>&1 \
+    || { echo "Cannot run: curl is not on PATH, so the registry and Rekor cannot be reached first."; exit 2; }
+  for endpoint in https://ghcr.io/v2/ https://rekor.sigstore.dev/api/v1/log; do
+    code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$endpoint" 2>/dev/null)"
+    case "$code" in
+      2??|401) ;;
+      *) echo "Cannot run: $endpoint answered '${code:-nothing}', so the image-verification"
+         echo "rows would decide on an unreachable registry or log rather than on a signature."
+         exit 2 ;;
+    esac
+  done
+fi
+
 out="$(kyverno test "$TESTS" 2>&1)"
 rc=$?
 printf '%s\n' "$out"

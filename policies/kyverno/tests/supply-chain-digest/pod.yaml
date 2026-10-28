@@ -5,14 +5,19 @@
 # turned off — which is the state this suite exists to detect.
 #
 # The image is a release of the operator, keyless-signed and SPDX-attested by
-# release.yaml on a tag, so verification passes and the admitted spec shows
-# what the mutation wrote.
+# release.yaml on a tag in cosign's legacy .sig/.att format, so verification
+# passes and the admitted spec shows what the mutation wrote. The same tag runs
+# as an init container too: the mutation pins every container field, and this
+# is where the init field's pin is observed.
 apiVersion: v1
 kind: Pod
 metadata:
   name: signed-operator
   namespace: eks-agent-platform
 spec:
+  initContainers:
+    - name: init
+      image: ghcr.io/nanohype/eks-agent-platform/operator:0.6.1
   containers:
     - name: manager
       image: ghcr.io/nanohype/eks-agent-platform/operator:0.6.1

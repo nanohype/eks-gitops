@@ -1,0 +1,28 @@
+# The signed release image in a Deployment, the shape ArgoCD applies. Git holds
+# the Deployment, so admission must store its pod template as written: a digest
+# joined to the tag there is a live field that differs from git, which ArgoCD
+# reports as drift on every sync. The pin belongs on the pod the ReplicaSet
+# creates, which nothing in git owns, and that pod is where it is observed.
+#
+# The same tag as pod.yaml, release-signed in cosign's legacy .sig/.att format,
+# so every tier admits the pod and the check is the pin rather than a verdict.
+# The pod template's app.kubernetes.io/name label is the Deployment's name,
+# which is how the gate finds the pod.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: signed-operator-deployment
+  namespace: eks-agent-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: signed-operator-deployment
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: signed-operator-deployment
+    spec:
+      containers:
+        - name: manager
+          image: ghcr.io/nanohype/eks-agent-platform/operator:0.6.1

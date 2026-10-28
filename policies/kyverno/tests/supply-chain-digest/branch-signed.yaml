@@ -2,6 +2,8 @@
 # ci.yml on a branch push rather than a release workflow on a tag. A real
 # signature from a workflow the policy does not trust, so the denial is the
 # identity check deciding, not a missing signature or an unreachable registry.
+# The signature is in cosign's legacy .sig/.att format, as the release
+# fixture's is.
 #
 # Pinned by digest so the subject on the signature is fixed: a tag could later
 # name a release-signed build and turn this into a pod every tier admits.
