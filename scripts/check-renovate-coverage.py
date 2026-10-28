@@ -76,10 +76,12 @@ them would pass here and match nothing in production.
 
 from __future__ import annotations
 
+import dataclasses
 import importlib.util
 import pathlib
 import re
 import sys
+from collections.abc import Callable
 from typing import NamedTuple, NoReturn
 
 import yaml
@@ -710,9 +712,9 @@ def workflow_pins() -> list[DerivedPin]:
             # `run:` is arbitrary shell, so this reads the one install shape the
             # repository uses rather than pretending to read them all. The CI
             # tool binaries a job downloads are watched through their
-            # `# renovate:` annotations and asserted by check_ci_tool_pins; any
-            # other install shape in a run step is outside this population and
-            # is named as such in the summary.
+            # `# renovate:` annotations and asserted by the CI tool binary
+            # family in OTHER_FAMILIES; any other install shape in a run step is
+            # outside this population and is named as such in the summary.
             run = step.get("run")
             if isinstance(run, str):
                 for m in PIP_REQUIREMENTS.finditer(run):
@@ -841,16 +843,121 @@ def check_derived_pins(pins: list[DerivedPin]) -> int:
 
 
 # Version pins outside applicationsets/ chart elements. Each family names the
-# file that carries it and a regex for the pin; every match must be covered by
-# some manager, and a family whose regex matches nothing fails.
+# file that carries it, a regex for the pin, and the checker that decides
+# whether each pin the regex finds is watched; a family whose regex matches
+# nothing fails.
 #
 # Chart pins were the only family this gate read, and the sentence it printed —
 # "every one watched by a manager that resolves" — was true of the population it
 # scanned and read as true of the repo. The git-pinned CRDs, the CI tool
 # binaries and the Go module were all watched, by managers nothing asserted:
 # deleting one left the gate printing the same success.
+
+class Family(NamedTuple):
+    """One non-chart pin family: where its pins live and what certifies them.
+
+    The checker travels with the family so the set of families and the way each
+    is checked are one declaration. A family added without a checker cannot be
+    written, and no dispatch elsewhere can fall through to a checker meant for a
+    different family.
+    """
+
+    label: str
+    rel: str
+    pattern: re.Pattern[str]
+    check: Callable[[Family, str, list[re.Match[str]], list[CustomManager]], int]
+
+
+def check_git_pins(family: Family, text: str, hits: list[re.Match[str]],
+                   managers: list[CustomManager]) -> int:
+    """Every `repo` + `ver` pin is matched by a customManager that reaches the file."""
+    for m in hits:
+        repo, ver = m.group("repo"), m.group("ver")
+        what = f"{family.label} pin {repo} {ver}"
+        cm = covered_by_custom(text, repo, ver, managers)
+        if cm is None:
+            fail(f"{family.rel}: {what} is matched by no customManager. Nothing opens "
+                 f"a currency PR for it.")
+        else:
+            assert_reach(f"custom.regex {cm.where}",
+                         FilePatterns(cm.file_patterns, "renovate.json"), family.rel, what)
+    return len(hits)
+
+
+def check_gomod_pins(family: Family, text: str, hits: list[re.Match[str]],
+                     managers: list[CustomManager]) -> int:
+    """Every require is read by the built-in gomod manager, enabled and reaching the file.
+
+    The gomod manager reads go.mod wholesale, so there is no per-pin annotation to
+    check: the assertion is that the manager runs and opens this file.
+    """
+    cfg = gatelib.read_json(ROOT / "renovate.json")
+    for m in hits:
+        what = f"{family.label} pin {m.group('repo')} {m.group('ver')}"
+        if "gomod" not in enabled_managers():
+            fail(f"{family.rel}: the gomod manager is not in renovate.json's "
+                 f"enabledManagers, so {m.group('repo')} {m.group('ver')} is watched by "
+                 f"nothing.")
+        else:
+            assert_reach("gomod", manager_file_patterns(cfg, "gomod"), family.rel, what)
+    return len(hits)
+
+
+# The annotation that makes one CI tool pin watchable, spelled as Renovate's own
+# matchString spells it: the comment and the pin that follows are consumed in one
+# match, so an annotation covers ONE pin. A comment at the top of the block does
+# not adopt the versions added under it, and each of those needs its own.
+ANNOTATED = re.compile(
+    r"#\s*renovate:\s*datasource=(?P<ds>[a-z-]+)\s+depName=(?P<dep>\S+)\s*\n"
+    r"\s*(?P<var>[A-Z][A-Z0-9_]*_VERSION):")
+
+# The annotation over one schema catalog ref. A commit carries no name, so the
+# repository it belongs to is read from this line rather than from the pin.
+ANNOTATED_REF = re.compile(
+    r"#\s*renovate:\s*datasource=(?P<ds>[a-z-]+)\s+depName=(?P<dep>\S+)[^\n]*\n"
+    r"(?P<var>[A-Z][A-Z0-9_]*_REF)=")
+
+
+@dataclasses.dataclass(frozen=True)
+class AnnotatedPins:
+    """The checker for a family whose pins are each watched through the line above.
+
+    A `VAR=<version>` pin names no package, so the package comes from the
+    `# renovate:` annotation directly over it, read with `annotation` — a
+    pattern capturing `dep` and `var`. Keyed per variable: a pin is annotated
+    only when an annotation names that variable on the next line, which is how
+    Renovate's matchString consumes the two. The family regex finds pins by
+    their value rather than by the annotation, so the pin nothing watches — the
+    one with no annotation — is found and reported instead of skipped.
+    """
+
+    annotation: re.Pattern[str]
+
+    def __call__(self, family: Family, text: str, hits: list[re.Match[str]],
+                 managers: list[CustomManager]) -> int:
+        annotated = {m.group("var"): m.group("dep")
+                     for m in self.annotation.finditer(text)}
+        for m in hits:
+            var, ver = m.group("var"), m.group("ver")
+            dep = annotated.get(var)
+            if dep is None:
+                fail(f"{family.rel}: {var} pins {ver} with no `# renovate:` annotation "
+                     f"on the line above it. The customManager keys on that annotation, "
+                     f"so this {family.label} is watched by nothing and never moves.")
+                continue
+            cm = covered_by_custom(text, dep, ver, managers)
+            if cm is None:
+                fail(f"{family.rel}: {var} ({dep} {ver}) is annotated but matched by no "
+                     f"customManager, so nothing opens a pull request when {dep} moves.")
+            else:
+                assert_reach(f"custom.regex {cm.where}",
+                             FilePatterns(cm.file_patterns, "renovate.json"), family.rel,
+                             f"{family.label} {var} ({dep} {ver})")
+        return len(hits)
+
+
 OTHER_FAMILIES = [
-    (
+    Family(
         "git-pinned manifest directory",
         "applicationsets/gateway-api-crds.yaml",
         # depName as the shipped manager spells it: the org/repo pair, not the
@@ -858,8 +965,9 @@ OTHER_FAMILIES = [
         # manager never produces and report a watched pin as unwatched.
         re.compile(r"repoURL:\s*https://github\.com/(?P<repo>[^\s/]+/[^\s/]+)\s*\n\s*"
                    r"targetRevision:\s*(?P<ver>v[0-9]\S*)"),
+        check_git_pins,
     ),
-    (
+    Family(
         "CI tool binary",
         ".github/workflows/ci.yml",
         # Anchored on the pin, NOT on the annotation above it. Matching the
@@ -867,22 +975,25 @@ OTHER_FAMILIES = [
         # pin nothing watches is exactly the one that carries no `# renovate:`
         # line, so keying on the annotation finds every pin except the ones
         # that matter. The annotation is then checked as a property of each pin
-        # found, in check_ci_tool_pins.
+        # found, by AnnotatedPins.
         re.compile(r"^  (?P<var>[A-Z][A-Z0-9_]*_VERSION):\s*\"?(?P<ver>[^\"\s]+)\"?\s*$",
                    re.M),
+        AnnotatedPins(ANNOTATED),
     ),
-    (
+    Family(
         "Go module",
         "applicationsets/rendertest/go.mod",
         re.compile(r"^\t(?P<repo>[a-z0-9./-]+\S*)\s+(?P<ver>v[0-9]\S*)", re.M),
+        check_gomod_pins,
     ),
-    (
+    Family(
         "schema catalog ref",
         "scripts/kubeconform-scan.sh",
         # Anchored on the commit, not on the annotation, for the reason the CI
         # tool family gives: the ref nothing watches is the one with no
         # `# renovate:` line, and keying on the line would skip exactly that one.
         re.compile(r"^(?P<var>[A-Z][A-Z0-9_]*_REF)=\"?(?P<ver>[0-9a-f]{40})\"?\s*$", re.M),
+        AnnotatedPins(ANNOTATED_REF),
     ),
 ]
 
@@ -901,50 +1012,20 @@ PIN_SHAPED = re.compile(r"(?:targetRevision|chartVersion):\s*[\"\']?(?P<ver>v?[0
 
 def check_other_families(managers: list[CustomManager]) -> int:
     """Assert every non-chart pin family is watched, and the pin-free files are."""
-    cfg = gatelib.read_json(ROOT / "renovate.json")
     seen = 0
-    for label, rel, rx in OTHER_FAMILIES:
-        path = ROOT / rel
+    for family in OTHER_FAMILIES:
+        path = ROOT / family.rel
         if not path.exists():
-            fail(f"{rel} does not exist, but this gate asserts a {label} pin lives "
-                 f"there — the reference outlived the file.")
+            fail(f"{family.rel} does not exist, but this gate asserts a {family.label} "
+                 f"pin lives there — the reference outlived the file.")
             continue
         text = path.read_text()
-        hits = list(rx.finditer(text))
+        hits = list(family.pattern.finditer(text))
         if not hits:
-            fail(f"{rel}: found no {label} pin. The shape this gate looks for is gone, "
-                 f"so its coverage claim over that family is vacuous.")
+            fail(f"{family.rel}: found no {family.label} pin. The shape this gate looks "
+                 f"for is gone, so its coverage claim over that family is vacuous.")
             continue
-        if label == "CI tool binary":
-            seen += check_ci_tool_pins(text, rel, hits, managers)
-            continue
-        if label == "schema catalog ref":
-            seen += check_schema_catalog_refs(text, rel, hits, managers)
-            continue
-
-        for m in hits:
-            seen += 1
-            gd = m.groupdict()
-            if rel.endswith("go.mod"):
-                # The built-in gomod manager reads go.mod wholesale; there is no
-                # per-pin annotation to check, so the assertion is that the
-                # manager is enabled at all.
-                if "gomod" not in enabled_managers():
-                    fail(f"{rel}: the gomod manager is not in renovate.json's "
-                         f"enabledManagers, so {gd['repo']} {gd['ver']} is watched by "
-                         f"nothing.")
-                else:
-                    assert_reach("gomod", manager_file_patterns(cfg, "gomod"), rel,
-                                 f"{label} pin {gd['repo']} {gd['ver']}")
-                continue
-            cm = covered_by_custom(text, gd["repo"], gd["ver"], managers)
-            if cm is None:
-                fail(f"{rel}: {label} pin {gd['repo']} {gd['ver']} is matched by no "
-                     f"customManager. Nothing opens a currency PR for it.")
-            else:
-                assert_reach(f"custom.regex {cm.where}",
-                         FilePatterns(cm.file_patterns, "renovate.json"), rel,
-                         f"{label} pin {gd['repo']} {gd['ver']}")
+        seen += family.check(family, text, hits, managers)
 
     # NOT counted into `seen`: these files are asserted to hold zero pins, so
     # adding one per file reports pins the repo does not have — and the same
@@ -960,69 +1041,6 @@ def check_other_families(managers: list[CustomManager]) -> int:
                  f"annotation — so a literal here is both an unwatched pin and a "
                  f"hardcoded reference a fork would inherit.")
     return seen
-
-
-# The annotation that makes one CI tool pin watchable, spelled as Renovate's own
-# matchString spells it: the comment and the pin that follows are consumed in one
-# match, so an annotation covers ONE pin. A comment at the top of the block does
-# not adopt the versions added under it, and each of those needs its own.
-ANNOTATED = re.compile(
-    r"#\s*renovate:\s*datasource=(?P<ds>[a-z-]+)\s+depName=(?P<dep>\S+)\s*\n"
-    r"\s*(?P<var>[A-Z][A-Z0-9_]*_VERSION):")
-
-
-def check_ci_tool_pins(text: str, rel: str, hits,
-                       managers: list[CustomManager]) -> int:
-    """Every *_VERSION pin carries its own annotation and a manager that reads it."""
-    annotated = {m.group("var"): (m.group("dep"), m.group("ds"))
-                 for m in ANNOTATED.finditer(text)}
-    for m in hits:
-        var, ver = m.group("var"), m.group("ver")
-        if var not in annotated:
-            fail(f"{rel}: {var} pins {ver} with no `# renovate:` annotation on the line "
-                 f"above it. The customManager keys on that annotation, so this pin is "
-                 f"watched by nothing and ages silently.")
-            continue
-        dep, _ds = annotated[var]
-        cm = covered_by_custom(text, dep, ver, managers)
-        if cm is None:
-            fail(f"{rel}: {var} ({dep} {ver}) is annotated but matched by no "
-                 f"customManager — the annotation names a datasource nothing reads.")
-        else:
-            assert_reach(f"custom.regex {cm.where}",
-                         FilePatterns(cm.file_patterns, "renovate.json"), rel,
-                         f"CI tool pin {var} ({dep} {ver})")
-    return len(hits)
-
-
-# The annotation over one schema catalog ref. A commit carries no name, so the
-# repository it belongs to is read from this line rather than from the pin.
-ANNOTATED_REF = re.compile(
-    r"#\s*renovate:\s*datasource=(?P<ds>[a-z-]+)\s+depName=(?P<dep>\S+)[^\n]*\n"
-    r"(?P<var>[A-Z][A-Z0-9_]*_REF)=")
-
-
-def check_schema_catalog_refs(text: str, rel: str, hits,
-                              managers: list[CustomManager]) -> int:
-    """Every *_REF commit carries its own annotation and a manager that reads it."""
-    annotated = {m.group("var"): m.group("dep") for m in ANNOTATED_REF.finditer(text)}
-    for m in hits:
-        var, ver = m.group("var"), m.group("ver")
-        if var not in annotated:
-            fail(f"{rel}: {var} pins commit {ver} with no `# renovate:` annotation on "
-                 f"the line above it. The customManager keys on that annotation, so "
-                 f"this ref is watched by nothing and the schemas it selects never move.")
-            continue
-        dep = annotated[var]
-        cm = covered_by_custom(text, dep, ver, managers)
-        if cm is None:
-            fail(f"{rel}: {var} ({dep} @ {ver}) is annotated but matched by no "
-                 f"customManager — nothing opens a pull request when {dep} moves.")
-        else:
-            assert_reach(f"custom.regex {cm.where}",
-                         FilePatterns(cm.file_patterns, "renovate.json"), rel,
-                         f"schema catalog ref {var} ({dep} @ {ver})")
-    return len(hits)
 
 
 def check_oci_repourl_shape(pins: list[Pin]) -> int:

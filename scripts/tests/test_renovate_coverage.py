@@ -21,6 +21,11 @@ cov = load("check-renovate-coverage")
 ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 
 
+def family(label):
+    """The OTHER_FAMILIES entry carrying `label`."""
+    return next(f for f in cov.OTHER_FAMILIES if f.label == label)
+
+
 class SubstringFalsePositive(unittest.TestCase):
     """A chart name must not be matched by a longer chart's pin.
 
@@ -1176,10 +1181,9 @@ class EveryCiToolPinCarriesItsOwnAnnotation(unittest.TestCase):
             self.addCleanup(tally.clear)
 
     def verdict(self, text, managers=None):
-        hits = list(next(rx for label, _, rx in cov.OTHER_FAMILIES
-                         if label == "CI tool binary").finditer(text))
-        count = cov.check_ci_tool_pins(text, ".github/workflows/ci.yml", hits,
-                                       self.managers if managers is None else managers)
+        ci = family("CI tool binary")
+        hits = list(ci.pattern.finditer(text))
+        count = ci.check(ci, text, hits, self.managers if managers is None else managers)
         return count, list(cov.failures)
 
     ANNOTATED = ("  # renovate: datasource=github-releases depName=kyverno/kyverno\n"
@@ -1244,13 +1248,12 @@ class SchemaCatalogRefs(unittest.TestCase):
             tally.clear()
             self.addCleanup(tally.clear)
         self.managers = cov.load_custom_managers()
-        self.rx = next(rx for label, _rel, rx in cov.OTHER_FAMILIES
-                       if label == "schema catalog ref")
+        self.family = family("schema catalog ref")
+        self.rx = self.family.pattern
 
     def check(self, text):
         hits = list(self.rx.finditer(text))
-        return cov.check_schema_catalog_refs(
-            text, "scripts/kubeconform-scan.sh", hits, self.managers)
+        return self.family.check(self.family, text, hits, self.managers)
 
     def test_an_annotated_ref_is_claimed_by_the_git_refs_manager(self):
         cm = cov.covered_by_custom(self.ANNOTATED, "example/catalog", self.SHA,
@@ -1283,6 +1286,90 @@ class SchemaCatalogRefs(unittest.TestCase):
         self.assertEqual(refs, {"K8S_SCHEMA_REF", "CRD_CATALOG_REF"})
         self.assertEqual(self.check(text), 2)
         self.assertEqual(cov.failures, [])
+
+
+class EachFamilyRunsItsOwnChecker(unittest.TestCase):
+    """Every OTHER_FAMILIES entry carries the checker that decides its pins.
+
+    Each test hands one family an unwatched pin and requires the failure only
+    that family's checker writes. A family wired to another family's checker
+    passes or fails for the wrong reason, and the sentence names the wrong fix.
+    """
+
+    # label -> the test below that holds it.
+    TESTED = {
+        "git-pinned manifest directory": "test_a_git_pinned_directory_needs_a_custom_manager",
+        "CI tool binary": "test_a_ci_tool_binary_needs_its_own_annotation",
+        "Go module": "test_a_go_module_needs_the_gomod_manager",
+        "schema catalog ref": "test_a_schema_catalog_ref_needs_its_own_annotation",
+    }
+
+    def setUp(self):
+        cov.failures.clear()
+        self.addCleanup(cov.failures.clear)
+        for tally in (cov.reach_configured, cov.reach_recorded):
+            tally.clear()
+            self.addCleanup(tally.clear)
+
+    def run_family(self, label, text, managers):
+        fam = family(label)
+        hits = list(fam.pattern.finditer(text))
+        self.assertEqual(len(hits), 1, f"the {label} pattern finds the planted pin")
+        count = fam.check(fam, text, hits, managers)
+        return count, list(cov.failures)
+
+    def test_every_family_has_a_test_here(self):
+        self.assertEqual(set(self.TESTED), {f.label for f in cov.OTHER_FAMILIES})
+        for name in self.TESTED.values():
+            self.assertTrue(callable(getattr(self, name, None)), name)
+
+    def test_a_git_pinned_directory_needs_a_custom_manager(self):
+        count, failures = self.run_family(
+            "git-pinned manifest directory",
+            "        repoURL: https://github.com/kubernetes-sigs/gateway-api\n"
+            "        targetRevision: v1.2.1\n",
+            managers=[])
+        self.assertEqual(count, 1)
+        self.assertEqual(len(failures), 1)
+        self.assertIn("git-pinned manifest directory pin kubernetes-sigs/gateway-api "
+                      "v1.2.1 is matched by no customManager", failures[0])
+        self.assertIn("Nothing opens a currency PR", failures[0])
+
+    def test_a_ci_tool_binary_needs_its_own_annotation(self):
+        count, failures = self.run_family(
+            "CI tool binary", '  KYVERNO_VERSION: "1.18.2"\n',
+            managers=cov.load_custom_managers())
+        self.assertEqual(count, 1)
+        self.assertEqual(len(failures), 1)
+        self.assertIn("KYVERNO_VERSION pins 1.18.2 with no `# renovate:` annotation",
+                      failures[0])
+        self.assertIn("this CI tool binary is watched by nothing", failures[0])
+
+    def test_a_go_module_needs_the_gomod_manager(self):
+        cfg = json.loads((ROOT / "renovate.json").read_text())
+        cfg["enabledManagers"] = [m for m in cfg["enabledManagers"] if m != "gomod"]
+        root = pathlib.Path(tempfile.mkdtemp())
+        (root / "renovate.json").write_text(json.dumps(cfg))
+        original, cov.ROOT = cov.ROOT, root
+        self.addCleanup(setattr, cov, "ROOT", original)
+        count, failures = self.run_family(
+            "Go module", "require (\n\tgithub.com/x/y v1.2.3\n)\n",
+            managers=cov.load_custom_managers())
+        self.assertEqual(count, 1)
+        self.assertEqual(len(failures), 1)
+        self.assertIn("the gomod manager is not in renovate.json's enabledManagers, so "
+                      "github.com/x/y v1.2.3 is watched by nothing", failures[0])
+
+    def test_a_schema_catalog_ref_needs_its_own_annotation(self):
+        sha = "0123456789abcdef0123456789abcdef01234567"
+        count, failures = self.run_family(
+            "schema catalog ref", f'CATALOG_REF="{sha}"\n',
+            managers=cov.load_custom_managers())
+        self.assertEqual(count, 1)
+        self.assertEqual(len(failures), 1)
+        self.assertIn(f"CATALOG_REF pins {sha} with no `# renovate:` annotation",
+                      failures[0])
+        self.assertIn("this schema catalog ref is watched by nothing", failures[0])
 
 
 if __name__ == "__main__":
