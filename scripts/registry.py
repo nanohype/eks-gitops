@@ -8,16 +8,21 @@ So a gate fetches each chart here and hands helm the local archive.
 
 What http_get does with each answer:
 
-  * HTTP 429 is retried within RETRY_ATTEMPTS requests, waiting as long as
-    Retry-After asks, or a jittered backoff when it asks nothing. A Retry-After
-    over RETRY_MAX_WAIT_SECONDS is reported without waiting, and so is a 429 on
-    the last attempt.
+  * HTTP 429, 502, 503 and 504 (RETRYABLE) are retried within RETRY_ATTEMPTS
+    requests, waiting at least as long as Retry-After asks, or a backoff when
+    it asks nothing, either one stretched by up to RETRY_JITTER of itself. A
+    Retry-After over RETRY_MAX_WAIT_SECONDS is reported without waiting, and so
+    is a retryable status on the last attempt.
   * HTTP 401, on a read that passes a challenge handler, is answered once: the
     handler turns the WWW-Authenticate header into a token and the request is
     repeated inside the same RETRY_ATTEMPTS. A second 401 is reported, and so
     is a first one on the last attempt, which leaves no request to repeat.
   * Every other status, and every network error, is reported on the attempt
     that produced it.
+
+Every call runs to one deadline, CALL_BOUND_SECONDS after it starts, and the
+token request a 401 challenge leads to runs to that same deadline. A call that
+reaches it is reported, naming the host.
 
 An archive is kept only once it hashes to the digest its registry publishes,
 and is handed out of the cache only while it still hashes to the digest it was
@@ -34,6 +39,7 @@ from __future__ import annotations
 
 import datetime
 import email.utils
+import functools
 import hashlib
 import http.client
 import json
@@ -51,28 +57,39 @@ from typing import Any, NoReturn
 
 import gatelib
 
-# A 429 is the registry rate-limiting this client, not an answer about what it
-# holds, so it is the one status retried. RETRY_ATTEMPTS bounds the requests one
-# http_get call makes to its URL, the repeat after a 401 challenge included; the
-# token request that challenge leads to is a call of its own, under its own
-# bound. The wait before a retry is the registry's Retry-After when it sends
-# one, and RETRY_BASE_SECONDS doubling per retry when it does not, stretched by
-# up to RETRY_JITTER of itself so jobs the registry throttled together do not
-# come back together. A Retry-After over RETRY_MAX_WAIT_SECONDS is reported
-# without waiting, naming the wait the registry asked for: a job sleeping past
-# its own timeout reports nothing at all.
+# A 429 is the registry rate-limiting this client, and a 502, 503 or 504 is a
+# proxy or server in front of it that could not answer this time. None of them
+# is an answer about what the registry holds, so they are the statuses retried.
+# RETRY_ATTEMPTS bounds the requests one http_get call makes to its URL, the
+# repeat after a 401 challenge included; the token request that challenge leads
+# to makes requests of its own, inside the deadline of the call it answers. The
+# wait before a retry is the registry's Retry-After when it sends one, and
+# RETRY_BASE_SECONDS doubling per retry when it does not, stretched by up to
+# RETRY_JITTER of itself so jobs the registry throttled together do not come
+# back together. A Retry-After over RETRY_MAX_WAIT_SECONDS is reported without
+# waiting, naming the wait the registry asked for: a job sleeping past its own
+# timeout reports nothing at all.
+RETRYABLE = frozenset({429, 502, 503, 504})
 RETRY_ATTEMPTS = 4
 RETRY_BASE_SECONDS = 5.0
 RETRY_JITTER = 0.25
 RETRY_MAX_WAIT_SECONDS = 120.0
 HTTP_TIMEOUT = 60
 
-# The longest one http_get call waits on a registry that stops answering or
-# keeps answering 429: RETRY_ATTEMPTS requests of up to HTTP_TIMEOUT each, and
-# before every retry the longest wait it can take, stretched by RETRY_JITTER. A
-# CI job reading through this client allows longer than this, so a call throttled
-# to the bound reports before the job is cancelled; test_registry holds the jobs
-# in .github/workflows/ci.yml to it.
+# The deadline one http_get call runs to, measured from when it starts: room for
+# RETRY_ATTEMPTS requests of up to HTTP_TIMEOUT each and, before every retry,
+# the longest wait it can take, stretched by RETRY_JITTER. The token request a
+# 401 challenge leads to spends the same deadline rather than starting one of
+# its own. Each request is given the smaller of HTTP_TIMEOUT and what the call
+# has left, and a wait that would end at or past the deadline is reported
+# instead of taken, so a call refused or left unanswered at every request ends
+# inside it. urlopen's timeout bounds each wait on the socket rather than the
+# whole response, so a body that keeps trickling in is the one read that can
+# run past it.
+#
+# A CI job reading through this client allows longer than this, so a call
+# throttled to its deadline fits inside the job and reports which host refused
+# it; test_registry holds those jobs in .github/workflows/ to it.
 CALL_BOUND_SECONDS = (
     RETRY_ATTEMPTS * HTTP_TIMEOUT
     + (RETRY_ATTEMPTS - 1) * (1 + RETRY_JITTER)
@@ -100,9 +117,9 @@ CHART_CACHE = pathlib.Path.home() / ".cache" / "eks-gitops" / "charts"
 
 _CHALLENGE_PARAM = re.compile(r'(\w+)="([^"]*)"')
 
-# What every registry read is handed: url, headers, Authorization, and an
-# optional `challenge` keyword. http_get is the one implementation; tests pass a
-# scripted one.
+# What every registry read is handed: url, headers, Authorization, and the
+# optional `challenge` and `deadline` keywords. http_get is the one
+# implementation; tests pass a scripted one.
 Getter = Callable[..., bytes]
 
 
@@ -113,12 +130,16 @@ class RegistryError(Exception):
 class ChartUnavailable(Exception):
     """A chart pin that could not be read, and whether its source said why.
 
-    `answered` is True only when the registry or chart repository replied and
-    its reply rules the pin out: the chart or version is not there, or the index
-    lists it with no archive to fetch or no digest to check one against. That is
-    a finding about the pin, and asking again gets the same reply. Every other
-    failure, a rate limit that outlasted the retries included, says nothing
-    about this repository.
+    `answered` is True only when the registry or chart repository answered a
+    request for the pin itself and the answer rules the pin out: HTTP 404 for
+    its manifest, a blob, the index or the archive, or an index that does not
+    list the version, or lists it with no archive to fetch or no digest to
+    check one against. That is a finding about the pin, and asking again gets
+    the same answer. Every other failure says nothing about this repository:
+    any other status, a retryable one that outlasted the retries or the call's
+    deadline, a network error, a body that is not what the API promises, and
+    any refusal from the token realm a challenge names, which issues tokens and
+    holds no charts.
     """
 
     def __init__(self, message: str, *, answered: bool) -> None:
@@ -149,24 +170,36 @@ def retry_after(value: str | None, now: float) -> float | None:
 
 def http_get(url: str, headers: Mapping[str, str] | None = None,
              authorization: str | None = None, *,
-             challenge: Callable[[str], str] | None = None,
+             challenge: Callable[[str, float], str] | None = None,
+             deadline: float | None = None,
              urlopen: Callable[..., Any] = urllib.request.urlopen,
              sleep: Callable[[float], None] = time.sleep,
              clock: Callable[[], float] = time.time,
+             timer: Callable[[], float] = time.monotonic,
              jitter: Callable[[], float] = random.random) -> bytes:
-    """GET `url`, retrying HTTP 429 within RETRY_ATTEMPTS requests.
+    """GET `url`, retrying RETRYABLE statuses within RETRY_ATTEMPTS requests.
 
-    `challenge`, when given, answers one HTTP 401: it receives the
-    WWW-Authenticate header and returns the Authorization to repeat the request
-    with, and the repeat counts toward the bound. A 401 on the last attempt
-    leaves no request to repeat it with, and is reported. A second 401
+    The call runs to `deadline`, a `timer` reading, or to CALL_BOUND_SECONDS
+    after it starts when none is given; `clock` is the wall clock a Retry-After
+    date is measured against. `challenge`, when given, answers one HTTP 401: it
+    receives the WWW-Authenticate header and the deadline, and returns the
+    Authorization to repeat the request with. The token it fetches spends that
+    deadline, and the repeat counts toward RETRY_ATTEMPTS. A 401 on the last
+    attempt leaves no request to repeat it with, and is reported. A second 401
     propagates, as do every other HTTPError and every URLError, from the
     request that raised it.
     """
     host = urllib.parse.urlsplit(url).netloc
+    if deadline is None:
+        deadline = timer() + CALL_BOUND_SECONDS
     attempt = 0
     while True:
         attempt += 1
+        left = deadline - timer()
+        if left <= 0:
+            raise RegistryError(
+                f"{host}: the {CALL_BOUND_SECONDS:.0f}s one call is allowed ran out "
+                f"before request {attempt} of {RETRY_ATTEMPTS} at {url}")
         req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT,
                                                    **dict(headers or {})})
         if authorization:
@@ -174,7 +207,7 @@ def http_get(url: str, headers: Mapping[str, str] | None = None,
             # rejects a request carrying the registry's bearer token.
             req.add_unredirected_header("Authorization", authorization)
         try:
-            with urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+            with urlopen(req, timeout=min(HTTP_TIMEOUT, left)) as resp:
                 return resp.read()
         except urllib.error.HTTPError as err:
             if err.code == 401 and challenge is not None:
@@ -186,26 +219,33 @@ def http_get(url: str, headers: Mapping[str, str] | None = None,
                         f"{host} asked for a token on the last of {RETRY_ATTEMPTS} "
                         f"attempts at {url}, leaving none to repeat it with"
                     ) from err
-                authorization = answer(asked_for)
+                authorization = answer(asked_for, deadline)
                 continue
-            if err.code != 429:
+            if err.code not in RETRYABLE:
                 raise
             asked = retry_after(err.headers.get("Retry-After") if err.headers else None,
                                 clock())
             err.close()
             if attempt == RETRY_ATTEMPTS:
                 raise RegistryError(
-                    f"{host} answered HTTP 429 to all {RETRY_ATTEMPTS} attempts at {url}"
+                    f"{host} answered HTTP {err.code} to the last of {RETRY_ATTEMPTS} "
+                    f"attempts at {url}"
                 ) from err
             if asked is not None and asked > RETRY_MAX_WAIT_SECONDS:
                 raise RegistryError(
-                    f"{host} answered HTTP 429 with Retry-After {asked:.0f}s, beyond the "
-                    f"{RETRY_MAX_WAIT_SECONDS:.0f}s this client waits, at {url}"
+                    f"{host} answered HTTP {err.code} with Retry-After {asked:.0f}s, beyond "
+                    f"the {RETRY_MAX_WAIT_SECONDS:.0f}s this client waits, at {url}"
                 ) from err
             base = asked if asked is not None else RETRY_BASE_SECONDS * 2 ** (attempt - 1)
             wait = base * (1 + RETRY_JITTER * jitter())
+            if timer() + wait >= deadline:
+                raise RegistryError(
+                    f"{host} answered HTTP {err.code} at {url}, and the {wait:.0f}s wait "
+                    f"before a retry would end past the {CALL_BOUND_SECONDS:.0f}s one "
+                    f"call is allowed"
+                ) from err
             source = "Retry-After" if asked is not None else "backoff"
-            print(f"  {host}: request {attempt} of {RETRY_ATTEMPTS} answered HTTP 429, "
+            print(f"  {host}: request {attempt} of {RETRY_ATTEMPTS} answered HTTP {err.code}, "
                   f"retrying in {wait:.0f}s ({source})", file=sys.stderr)
             sleep(wait)
 
@@ -214,6 +254,9 @@ def anonymous_token(challenge: str, path: str, get: Getter = http_get) -> str:
     """A pull token for `path` from the realm a registry's Bearer challenge names.
 
     The scope and service are added to whatever query the realm already carries.
+    A status the realm answers with is raised as a RegistryError, whatever it
+    is: the realm issues tokens and holds no charts, so a 404 from it says
+    nothing about whether `path` holds the pin.
     """
     scheme, _, params = challenge.strip().partition(" ")
     if scheme.lower() != "bearer":
@@ -229,8 +272,14 @@ def anonymous_token(challenge: str, path: str, get: Getter = http_get) -> str:
     if fields.get("service"):
         query.append(("service", fields["service"]))
     url = urllib.parse.urlunsplit(parts._replace(query=urllib.parse.urlencode(query)))
-    body = json.loads(get(url, {}, None))
-    token = body.get("token") or body.get("access_token") if isinstance(body, dict) else None
+    try:
+        raw = get(url, {}, None)
+    except urllib.error.HTTPError as err:
+        err.close()
+        raise RegistryError(f"{realm} answered HTTP {err.code} to a token request for "
+                            f"repository:{path}:pull") from err
+    body = json.loads(raw)
+    token = (body.get("token") or body.get("access_token")) if isinstance(body, dict) else None
     if not token:
         raise RegistryError(f"{realm} returned no token for repository:{path}:pull")
     return str(token)
@@ -258,12 +307,14 @@ class OciRepository:
             return self._get(url, headers, None, challenge=self._authorize)
         return self._get(url, headers, f"Bearer {self.token}")
 
-    def _authorize(self, www_authenticate: str) -> str:
-        self.token = anonymous_token(www_authenticate, self.path, self._get)
+    def _authorize(self, www_authenticate: str, deadline: float) -> str:
+        """The Authorization a challenge asks for, fetched inside the challenged call's deadline."""
+        get = functools.partial(self._get, deadline=deadline)
+        self.token = anonymous_token(www_authenticate, self.path, get)
         return f"Bearer {self.token}"
 
-    def manifest(self, reference: str) -> dict:
-        doc = json.loads(self.read(f"manifests/{reference}", OCI_MANIFEST))
+    def manifest(self, reference: str, accept: str = OCI_MANIFEST) -> dict:
+        doc = json.loads(self.read(f"manifests/{reference}", accept))
         if not isinstance(doc, dict):
             raise RegistryError(f"{self.base}/manifests/{reference} is not a JSON object")
         return doc
@@ -344,6 +395,13 @@ def repo_index_entry(repo: str, chart: str, version: str,
 
 
 def _unavailable(err: BaseException) -> ChartUnavailable:
+    """What a failed read says about the pin.
+
+    An HTTPError arriving here answered a request for the pin itself — its
+    manifest, a blob, the index or the archive — because anonymous_token raises
+    every refusal from a token realm as a RegistryError. So a 404 here is the
+    registry saying the pin is not there.
+    """
     if isinstance(err, urllib.error.HTTPError):
         return ChartUnavailable(f"HTTP {err.code} from {err.url}", answered=err.code == 404)
     return ChartUnavailable(f"{type(err).__name__}: {err}", answered=False)
@@ -497,11 +555,12 @@ def chart_archive_or_exit(source: str, chart: str, version: str) -> pathlib.Path
     try:
         return chart_archive(source, chart, version)
     except ChartUnavailable as exc:
-        _refuse_chart(chart, version, source, exc)
+        refuse_chart(chart, version, source, exc)
 
 
-def _refuse_chart(chart: str, version: str, source: str,
-                  exc: ChartUnavailable) -> NoReturn:
+def refuse_chart(chart: str, version: str, source: str,
+                 exc: ChartUnavailable) -> NoReturn:
+    """Exit with the status `exc` earns, saying why: 1 when answered, else CANNOT_RUN."""
     if exc.answered:
         print(f"{chart} {version}: {source} answered, and its answer rules the pin out "
               f"— {exc}")

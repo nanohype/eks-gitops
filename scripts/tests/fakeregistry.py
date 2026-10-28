@@ -39,16 +39,26 @@ class Transport:
     A step is bytes (a 200), an exception (raised), or a callable taking the
     request and returning either — which is how a registry whose answer depends
     on the Authorization header is written.
+
+    `elapsed` is the time the client has spent on this transport, on the timer
+    http_get's deadline reads. Every request is charged the whole timeout the
+    client gave it, as one that never answers is, and every wait the time it
+    asked to sleep, so a deadline the client keeps is one it keeps in the worst
+    case.
     """
 
     def __init__(self, *steps):
         self.steps = list(steps)
         self.requests: list = []
+        self.timeouts: list[float] = []
         self.waits: list[float] = []
+        self.elapsed = 0.0
         self.on_sleep = None
 
     def urlopen(self, req, timeout=None):
         self.requests.append(req)
+        self.timeouts.append(timeout)
+        self.elapsed += timeout or 0.0
         step = self.steps.pop(0)
         if callable(step) and not isinstance(step, BaseException):
             step = step(req)
@@ -60,11 +70,14 @@ class Transport:
         if self.on_sleep:
             self.on_sleep()
         self.waits.append(seconds)
+        self.elapsed += seconds
 
     def bind(self, http_get, jitter: float = 0.0):
-        """`http_get` over this transport, with a fixed clock and a fixed jitter draw."""
+        """`http_get` over this transport, with a fixed wall clock, the transport's
+        own timer and a fixed jitter draw."""
         return functools.partial(http_get, urlopen=self.urlopen, sleep=self.sleep,
-                                 clock=lambda: NOW, jitter=lambda: jitter)
+                                 clock=lambda: NOW, timer=lambda: self.elapsed,
+                                 jitter=lambda: jitter)
 
     def urls(self) -> list[str]:
         return [r.full_url for r in self.requests]

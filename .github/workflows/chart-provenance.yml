@@ -28,10 +28,17 @@ on:
 permissions:
   contents: read
 
+# The jobs that read through scripts/registry.py's client set a timeout above
+# registry.CALL_BOUND_SECONDS, the deadline one client call runs to, for the
+# reason ci.yml's charts job records: a call the registry throttles to its
+# deadline reports which host refused it before the job is cancelled, and a
+# registry that throttles call after call ends the job at its timeout rather
+# than at the runner's ceiling. test_registry holds them to it.
 jobs:
   live:
     name: pinned charts still are what they were
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -83,6 +90,7 @@ jobs:
   scheme-inputs:
     name: the controller still decides schemes the way the policy reads them
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

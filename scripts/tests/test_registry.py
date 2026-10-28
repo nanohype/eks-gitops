@@ -11,6 +11,10 @@ with no bound turns a registry that keeps answering 429 into a job that hits its
 own timeout and reports nothing at all. A digest check that passes over a
 missing digest, or a cache that hands out whatever bytes it holds, renders a
 chart nobody verified and reports it as the pinned one.
+
+Time is read off the fake transport, which charges every request the whole
+timeout the client gave it and every wait the time it slept. A deadline held
+there is one the client keeps when nothing answers in time.
 """
 
 import contextlib
@@ -22,12 +26,14 @@ import io
 import json
 import os
 import pathlib
+import re
 import shutil
 import tempfile
 import time
 import unittest
 import urllib.error
 import urllib.parse
+from unittest import mock
 
 import fakeregistry as fake
 import yaml
@@ -93,7 +99,7 @@ class ReadingRetryAfter(unittest.TestCase):
         self.assertIsNone(registry.retry_after("-5", NOW))
 
 
-class RetryingOnlyARateLimit(unittest.TestCase):
+class RetryingOnlyWhatMayClear(unittest.TestCase):
     URL = "https://registry.example/v2/x/manifests/1.0.0"
 
     def get(self, t: Transport, jitter: float = 0.0, **kw):
@@ -151,16 +157,50 @@ class RetryingOnlyARateLimit(unittest.TestCase):
         self.assertIn(self.URL, str(caught.exception))
 
     def test_a_call_throttled_at_every_retry_ends_inside_the_bound(self):
-        """Each request is charged its whole HTTP_TIMEOUT, as one that never answers is."""
+        """Every attempt is made, and the call still ends inside its deadline.
+
+        The deadline is derived to fit RETRY_ATTEMPTS requests and the longest
+        wait before each retry. One left short of that spends the attempts the
+        client promises on a deadline instead, and reports a deadline rather
+        than the status the registry kept answering with.
+        """
         longest = str(int(registry.RETRY_MAX_WAIT_SECONDS))
         cases = {"the longest Retry-After": {"Retry-After": longest}, "backoff": {}}
         for label, headers in cases.items():
             with self.subTest(label):
                 t = Transport(*[http_error(self.URL, 429, headers)] * registry.RETRY_ATTEMPTS)
-                with self.assertRaises(registry.RegistryError):
+                with self.assertRaises(registry.RegistryError) as caught:
                     self.get(t, jitter=1.0)
-                spent = len(t.requests) * registry.HTTP_TIMEOUT + sum(t.waits)
-                self.assertLessEqual(spent, registry.CALL_BOUND_SECONDS)
+                self.assertEqual(len(t.requests), registry.RETRY_ATTEMPTS)
+                self.assertIn(f"HTTP 429 to the last of {registry.RETRY_ATTEMPTS}",
+                              str(caught.exception))
+                self.assertLessEqual(t.elapsed, registry.CALL_BOUND_SECONDS)
+
+    def test_no_request_is_given_longer_than_the_call_has_left(self):
+        t = Transport(b"ok")
+        self.get(t, deadline=t.elapsed + 7)
+        self.assertEqual(t.timeouts, [7])
+
+    def test_a_wait_that_would_end_past_the_deadline_is_reported_not_slept(self):
+        t = Transport(http_error(self.URL, 503, {"Retry-After": "30"}), b"ok")
+        with self.assertRaises(registry.RegistryError) as caught:
+            self.get(t, deadline=registry.HTTP_TIMEOUT + 20)
+        self.assertEqual(t.waits, [])
+        self.assertEqual(len(t.requests), 1)
+        self.assertIn("would end past", str(caught.exception))
+
+    def test_a_call_whose_deadline_has_passed_makes_no_request(self):
+        t = Transport(b"ok")
+        with self.assertRaisesRegex(registry.RegistryError, "ran out before request 1"):
+            self.get(t, deadline=t.elapsed)
+        self.assertEqual(t.requests, [])
+
+    def test_a_retry_after_at_the_cap_is_slept(self):
+        """The cap is the longest wait taken, not the shortest refused."""
+        cap = str(int(registry.RETRY_MAX_WAIT_SECONDS))
+        t = Transport(http_error(self.URL, 429, {"Retry-After": cap}), b"ok")
+        self.assertEqual(self.get(t), b"ok")
+        self.assertEqual(t.waits, [registry.RETRY_MAX_WAIT_SECONDS])
 
     def test_a_wait_beyond_the_cap_is_reported_not_slept(self):
         asked = int(registry.RETRY_MAX_WAIT_SECONDS) + 1
@@ -171,8 +211,22 @@ class RetryingOnlyARateLimit(unittest.TestCase):
         self.assertEqual(len(t.requests), 1)
         self.assertIn(f"Retry-After {asked}s", str(caught.exception))
 
+    def test_a_gateway_or_an_unavailable_server_is_retried(self):
+        """A 502, 503 or 504 is a proxy or server that could not answer this time."""
+        for code in (502, 503, 504):
+            with self.subTest(code=code):
+                t = Transport(http_error(self.URL, code), b"ok")
+                self.assertEqual(self.get(t), b"ok")
+                self.assertEqual(len(t.requests), 2)
+                self.assertEqual(t.waits, [registry.RETRY_BASE_SECONDS])
+
+    def test_a_503_waits_as_long_as_its_retry_after_asks(self):
+        t = Transport(http_error(self.URL, 503, {"Retry-After": "9"}), b"ok")
+        self.assertEqual(self.get(t), b"ok")
+        self.assertEqual(t.waits, [9.0])
+
     def test_other_statuses_are_reported_on_the_first_attempt(self):
-        for code in (400, 401, 403, 404, 500, 502, 503):
+        for code in (400, 401, 403, 404, 500):
             with self.subTest(code=code):
                 t = Transport(http_error(self.URL, code, {"Retry-After": "1"}), b"ok")
                 with self.assertRaises(urllib.error.HTTPError) as caught:
@@ -206,7 +260,7 @@ class RetryingOnlyARateLimit(unittest.TestCase):
         t = Transport(http_error(self.URL, 401, {"WWW-Authenticate": "Bearer x"}), b"ok")
         seen = []
 
-        def answer(www):
+        def answer(www, _deadline):
             seen.append(www)
             return "Bearer fresh"
 
@@ -214,12 +268,19 @@ class RetryingOnlyARateLimit(unittest.TestCase):
         self.assertEqual(seen, ["Bearer x"])
         self.assertEqual([auth(r) for r in t.requests], [None, "Bearer fresh"])
 
+    def test_the_challenge_is_handed_the_calls_own_deadline(self):
+        t = Transport(http_error(self.URL, 401, {"WWW-Authenticate": "Bearer x"}), b"ok")
+        handed = []
+        self.get(t, deadline=500.0,
+                 challenge=lambda _www, deadline: handed.append(deadline) or "Bearer t")
+        self.assertEqual(handed, [500.0])
+
     def test_a_second_401_is_reported_not_answered_again(self):
         t = Transport(http_error(self.URL, 401, {"WWW-Authenticate": "Bearer x"}),
                       http_error(self.URL, 401, {"WWW-Authenticate": "Bearer x"}), b"ok")
         answers = []
         with self.assertRaises(urllib.error.HTTPError) as caught:
-            self.get(t, challenge=lambda www: answers.append(www) or "Bearer t")
+            self.get(t, challenge=lambda www, _d: answers.append(www) or "Bearer t")
         self.assertEqual(caught.exception.code, 401)
         self.assertEqual(len(answers), 1)
         self.assertEqual(len(t.requests), 2)
@@ -232,7 +293,7 @@ class RetryingOnlyARateLimit(unittest.TestCase):
                       b"ok")
         answers = []
         with self.assertRaises(registry.RegistryError) as caught:
-            self.get(t, challenge=lambda www: answers.append(www) or "Bearer t")
+            self.get(t, challenge=lambda www, _d: answers.append(www) or "Bearer t")
         self.assertIn(f"asked for a token on the last of {registry.RETRY_ATTEMPTS}",
                       str(caught.exception))
         self.assertEqual(answers, [])
@@ -240,46 +301,81 @@ class RetryingOnlyARateLimit(unittest.TestCase):
 
 
 class TheJobsReadingThroughTheClient(unittest.TestCase):
-    """Every CI job that keeps or restores the chart cache outlasts one client call.
+    """Every workflow job that reads through the client outlasts one client call.
 
     A job cancelled while a call waits out a 429 reports nothing about which
     registry refused it, and a job with no timeout waits on a registry that
-    throttles call after call until the runner's own ceiling. Each of those jobs
-    also reads the cache under the key the charts job keeps it under, or it
-    finds nothing and fetches every chart from its own address.
+    throttles call after call until the runner's own ceiling. A job reads
+    through the client when it keeps or restores the chart cache, or when it
+    runs a gate that imports registry with --live or --fetch, the flags a gate
+    reads upstream under. Each job restoring the cache also reads it under the
+    key the charts job keeps it under, or it finds nothing and fetches every
+    chart from its own address.
     """
 
-    WORKFLOW = pathlib.Path(__file__).resolve().parents[2] / ".github/workflows/ci.yml"
+    ROOT = pathlib.Path(__file__).resolve().parents[2]
+    NETWORK_FLAGS = {"--live", "--fetch"}
+    SCRIPT = re.compile(r"(?:\./)?scripts/([\w.-]+\.py)")
 
-    def chart_cache_jobs(self):
-        jobs = yaml.safe_load(self.WORKFLOW.read_text())["jobs"]
+    def client_scripts(self) -> set[str]:
+        """Gate scripts that import the registry client."""
+        return {p.name for p in (self.ROOT / "scripts").glob("*.py")
+                if re.search(r"^import registry$|^from registry import ", p.read_text(), re.M)}
+
+    def cache_key(self, step) -> str | None:
+        uses = str(step.get("uses", ""))
+        path = str((step.get("with") or {}).get("path", ""))
+        if uses.startswith("actions/cache") and path.endswith("/eks-gitops/charts"):
+            return str(step["with"]["key"])
+        return None
+
+    def reads_upstream(self, step, clients: set[str]) -> bool:
+        for line in str(step.get("run", "")).splitlines():
+            words = line.split()
+            for i, word in enumerate(words):
+                found = self.SCRIPT.fullmatch(word)
+                if found and found.group(1) in clients and self.NETWORK_FLAGS & set(words[i + 1:]):
+                    return True
+        return False
+
+    def client_jobs(self) -> dict[str, tuple[dict, str | None, bool]]:
+        """{workflow:job: (job, chart cache key or None, runs a gate reading upstream)}."""
+        clients = self.client_scripts()
         found = {}
-        for name, job in jobs.items():
-            for step in job.get("steps") or []:
-                uses = str(step.get("uses", ""))
-                path = str((step.get("with") or {}).get("path", ""))
-                if uses.startswith("actions/cache") and path.endswith("/eks-gitops/charts"):
-                    found[name] = (job, step["with"]["key"])
+        for workflow in sorted((self.ROOT / ".github/workflows").glob("*.yml")):
+            for name, job in (yaml.safe_load(workflow.read_text())["jobs"] or {}).items():
+                steps = job.get("steps") or []
+                key = next((k for k in map(self.cache_key, steps) if k), None)
+                upstream = any(self.reads_upstream(step, clients) for step in steps)
+                if key or upstream:
+                    found[f"{workflow.name}:{name}"] = (job, key, upstream)
         return found
 
     def test_the_charts_job_and_its_readers_are_found(self):
-        jobs = self.chart_cache_jobs()
-        self.assertIn("charts", jobs)
-        self.assertGreater(len(jobs), 1, "no job restores what the charts job keeps")
+        jobs = self.client_jobs()
+        self.assertIn("ci.yml:charts", jobs)
+        readers = [n for n, (_, key, _) in jobs.items() if key and n != "ci.yml:charts"]
+        self.assertTrue(readers, "no job restores what the charts job keeps")
+
+    def test_the_scheduled_reads_of_upstream_are_found(self):
+        """The --live gates read the registry without the cache, on a schedule."""
+        live = [n for n, (_, key, upstream) in self.client_jobs().items()
+                if upstream and not key]
+        self.assertTrue(live, "no job runs a gate that reads upstream through the client")
 
     def test_each_allows_longer_than_one_call(self):
-        for name, (job, _) in self.chart_cache_jobs().items():
+        for name, (job, _, _) in self.client_jobs().items():
             with self.subTest(job=name):
                 minutes = job.get("timeout-minutes")
                 self.assertIsInstance(minutes, int, f"{name} sets no timeout-minutes")
                 self.assertGreater(minutes * 60, registry.CALL_BOUND_SECONDS)
 
     def test_each_reads_the_key_the_charts_job_keeps(self):
-        jobs = self.chart_cache_jobs()
-        kept = jobs["charts"][1]
+        jobs = {n: key for n, (_, key, _) in self.client_jobs().items() if key}
+        kept = jobs["ci.yml:charts"]
         self.assertIn("scripts/registry.py", kept,
                       "a client change would hand every job the archives the last one kept")
-        for name, (_, key) in jobs.items():
+        for name, key in jobs.items():
             with self.subTest(job=name):
                 self.assertEqual(key, kept)
 
@@ -382,6 +478,43 @@ class ReadingAnOciChart(unittest.TestCase):
         self.assertEqual(t.waits, [registry.RETRY_BASE_SECONDS * 2, 2.0])
         self.assertEqual([auth(r) for r in t.requests if r.full_url == manifest],
                          [None] + [f"Bearer {reg.TOKEN}"] * 3)
+
+    def test_a_challenged_call_throttled_everywhere_ends_inside_the_bound(self):
+        """The token request a 401 leads to spends the deadline of the call it answers.
+
+        Given one of its own, a realm that throttles to the longest wait it can
+        ask for runs a whole bound inside the call that asked for the token, and
+        the call runs past the bound the CI jobs are held above.
+        """
+        longest = {"Retry-After": str(int(registry.RETRY_MAX_WAIT_SECONDS))}
+        manifest = "https://r.example/v2/c/manifests/1.0.0"
+        realm = 'Bearer realm="https://auth.example/token",service="registry.example"'
+
+        def throttled(realm_relents_after):
+            asked = []
+
+            def answer(req):
+                if req.full_url.startswith("https://auth.example/token?"):
+                    asked.append(req.full_url)
+                    if len(asked) > realm_relents_after:
+                        return json.dumps({"token": "t"}).encode()
+                    return http_error(req.full_url, 429, longest)
+                if auth(req) is None:
+                    return http_error(manifest, 401, {"WWW-Authenticate": realm})
+                return http_error(manifest, 429, longest)
+            return answer
+
+        cases = {"the realm refuses every request": registry.RETRY_ATTEMPTS,
+                 "the realm relents, the registry does not": 2}
+        for label, relents_after in cases.items():
+            with self.subTest(label):
+                t = Transport(*[throttled(relents_after)] * (2 * registry.RETRY_ATTEMPTS))
+                repo = registry.OciRepository("oci://r.example/c", t.get(jitter=1.0))
+                with contextlib.redirect_stderr(io.StringIO()), \
+                        self.assertRaises(registry.RegistryError):
+                    repo.manifest("1.0.0")
+                self.assertTrue(any(u.startswith("https://auth.example/") for u in t.urls()))
+                self.assertLessEqual(t.elapsed, registry.CALL_BOUND_SECONDS)
 
     def test_a_rate_limit_after_the_challenge_is_reported_at_the_bound(self):
         """The challenge's repeat is one of the RETRY_ATTEMPTS, not extra."""
@@ -651,6 +784,22 @@ class ReusingACachedArchive(unittest.TestCase):
         self.fetch(t)
         self.assertEqual(len(t.requests), 2)
 
+    def test_an_archive_cut_off_before_its_rename_leaves_no_record(self):
+        """The archive is renamed into place first, so a write that stops there
+        leaves no record for _intact to vouch for it by."""
+        archive = self.cache / "c-1.0.0.tgz"
+        real = os.replace
+
+        def replace(src, dst):
+            if pathlib.Path(dst) == archive:
+                raise OSError("no space left on device")
+            return real(src, dst)
+
+        with mock.patch.object(registry.os, "replace", replace), \
+                self.assertRaises(OSError):
+            registry._keep(archive, self.archive)
+        self.assertFalse(registry.digest_path(archive).exists())
+
     def test_an_archive_that_cannot_be_fetched_again_is_not_handed_out(self):
         path = self.kept()
         path.write_bytes(b"truncated")
@@ -738,6 +887,26 @@ class WhatAnUnavailableChartMeans(unittest.TestCase):
                                * registry.RETRY_ATTEMPTS)
         self.assertFalse(exc.answered)
         self.assertIn("429", str(exc))
+
+    def test_a_404_from_the_token_realm_was_not_answered(self):
+        """The realm issues tokens and holds no charts: its 404 says nothing about the pin."""
+        reg = Registry("r.example", "c", "1.0.0", {"name": "c"})
+
+        def realm_404(req):
+            if req.full_url.startswith("https://auth.example/token?"):
+                return http_error(req.full_url, 404)
+            return reg(req)
+
+        exc = self.unavailable(realm_404, realm_404, source=self.OCI)
+        self.assertFalse(exc.answered)
+        self.assertIn("https://auth.example/token answered HTTP 404 to a token request",
+                      str(exc))
+
+    def test_a_gateway_that_never_recovers_was_not_answered(self):
+        exc = self.unavailable(*[http_error(f"{self.REPO}/index.yaml", 503)]
+                               * registry.RETRY_ATTEMPTS)
+        self.assertFalse(exc.answered)
+        self.assertIn("HTTP 503", str(exc))
 
     def test_a_server_fault_or_network_error_was_not_answered(self):
         for step in (http_error(f"{self.REPO}/index.yaml", 500),

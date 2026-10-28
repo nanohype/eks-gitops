@@ -480,8 +480,8 @@ F=scripts/registry.py
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('            if err.code != 429:\n                raise\n',
-              '            if err.code >= 500:\n                raise\n', 1)
+m = s.replace('            if err.code not in RETRYABLE:\n',
+              '            if err.code >= 500 and err.code not in RETRYABLE:\n', 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
