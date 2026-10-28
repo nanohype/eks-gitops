@@ -375,6 +375,18 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("            for u in units if u.chart not in SKIP_CHARTS}",
+              "            for u in units}", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "fetch: fetch the charts SKIP_CHARTS says cannot be fetched" test_render_addons \
+  test_a_skipped_chart_is_neither_fetched_nor_kept
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
 m = s.replace('        if self.repo.rsplit("/", 1)[-1] == self.chart:', "        if False:", 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
@@ -535,6 +547,17 @@ p.write_text(m)
 PY
 rejects "unavailable: call every HTTP status an answer" test_gatelib \
   test_a_server_fault_or_network_error_was_not_answered
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("        if path.resolve() not in kept:", "        if False:", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "prune: carry every archive ever pinned" test_gatelib \
+  test_archives_no_pin_names_are_dropped_and_pinned_ones_kept
 res $F
 
 
@@ -782,7 +805,7 @@ echo "RESULT pass=$pass fail=$fail"
 # The floor this harness owes for the same reason the gates owe theirs: with
 # every `rejects` line deleted it would report pass=0 fail=0 and exit 0, which is
 # a green run over nothing planted.
-MIN_PROBES=46
+MIN_PROBES=48
 total=$((pass + fail))
 if [ "$total" -lt "$MIN_PROBES" ]; then
   echo "FAIL  ran $total probe(s), under the floor of $MIN_PROBES — this harness"

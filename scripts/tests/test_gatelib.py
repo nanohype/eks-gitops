@@ -25,6 +25,7 @@ import io
 import json
 import os
 import pathlib
+import shutil
 import tempfile
 import time
 import unittest
@@ -626,6 +627,40 @@ class ReadingAnHttpsRepository(unittest.TestCase):
                                          cache=pathlib.Path(tmp), get=reg.transport().get())
             self.assertEqual(path.read_bytes(), b"oci-tgz")
             self.assertEqual(path.relative_to(tmp).as_posix(), "r.example_org_c/c-1.0.0.tgz")
+
+
+class PruningTheChartCache(unittest.TestCase):
+    """A cache carried across pin sets keeps the current set and nothing older."""
+
+    def setUp(self):
+        self.root = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root, True)
+
+    def archive(self, source, chart, version):
+        path = gatelib.archive_path(source, chart, version, self.root)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"tgz")
+        return path
+
+    def test_archives_no_pin_names_are_dropped_and_pinned_ones_kept(self):
+        current = self.archive("https://charts.example", "a", "2.0.0")
+        older = self.archive("https://charts.example", "a", "1.0.0")
+        retired = self.archive("oci://r.example/b", "b", "1.0.0")
+        dropped = gatelib.prune_archives({current}, self.root)
+        self.assertEqual(dropped, 2)
+        self.assertTrue(current.is_file())
+        self.assertFalse(older.exists())
+        self.assertFalse(retired.exists())
+
+    def test_a_folder_left_empty_goes_with_its_archives(self):
+        keep = self.archive("https://charts.example", "a", "1.0.0")
+        gone = self.archive("oci://r.example/b", "b", "1.0.0")
+        gatelib.prune_archives({keep}, self.root)
+        self.assertFalse(gone.parent.exists())
+        self.assertTrue(keep.parent.is_dir())
+
+    def test_an_absent_cache_drops_nothing(self):
+        self.assertEqual(gatelib.prune_archives(set(), self.root / "absent"), 0)
 
 
 class WhatAnUnavailableChartMeans(unittest.TestCase):

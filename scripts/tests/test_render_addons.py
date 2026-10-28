@@ -14,6 +14,8 @@ chart means is gatelib's, and is held in test_gatelib.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import pathlib
 import tempfile
 import unittest
@@ -196,6 +198,61 @@ class WhatARenderIsHanded(unittest.TestCase):
         self.assertEqual(result, (True, "no env delta"))
         fetch.assert_not_called()
         ran.assert_not_called()
+
+
+class FetchingTheChartCache(unittest.TestCase):
+    """--fetch fills the cache every rendering job reads, and only with pins."""
+
+    def unit(self, chart, repo):
+        return gate.Unit(appset="a.yaml", chart=chart, version="1.0.0",
+                         repo=repo, path=f"addons/x/{chart}")
+
+    def fetch(self, units, skip=None):
+        fetched, pruned = [], []
+
+        def archive(source, chart, version):
+            fetched.append((source, chart, version))
+            return pathlib.Path(f"/cache/{chart}-{version}.tgz")
+
+        def prune(keep):
+            pruned.append(set(keep))
+            return 3
+
+        with mock.patch.object(gate.gatelib, "chart_archive_or_exit", archive), \
+                mock.patch.object(gate.gatelib, "prune_archives", prune), \
+                mock.patch.dict(gate.SKIP_CHARTS, skip or {}, clear=True), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            rc = gate.fetch_all(units)
+        return rc, fetched, pruned, out.getvalue()
+
+    def test_every_pinned_chart_is_fetched_from_its_source(self):
+        rc, fetched, pruned, out = self.fetch([
+            self.unit("operator", "oci://ghcr.io/nanohype/charts"),
+            self.unit("kyverno", "https://kyverno.github.io/kyverno"),
+        ])
+        self.assertEqual(rc, 0)
+        self.assertEqual(fetched, [
+            ("oci://ghcr.io/nanohype/charts/operator", "operator", "1.0.0"),
+            ("https://kyverno.github.io/kyverno", "kyverno", "1.0.0"),
+        ])
+        self.assertEqual(pruned, [{pathlib.Path("/cache/operator-1.0.0.tgz"),
+                                   pathlib.Path("/cache/kyverno-1.0.0.tgz")}])
+        self.assertIn("dropped 3 archive(s) no pin names", out)
+
+    def test_a_skipped_chart_is_neither_fetched_nor_kept(self):
+        rc, fetched, pruned, _ = self.fetch(
+            [self.unit("kyverno", "https://kyverno.github.io/kyverno"),
+             self.unit("private", "https://charts.private.example")],
+            skip={"private": "needs credentials"})
+        self.assertEqual(rc, 0)
+        self.assertEqual([c for _, c, _ in fetched], ["kyverno"])
+        self.assertEqual(pruned, [{pathlib.Path("/cache/kyverno-1.0.0.tgz")}])
+
+    def test_nothing_to_fetch_cannot_run_and_prunes_nothing(self):
+        rc, fetched, pruned, out = self.fetch([])
+        self.assertEqual(rc, gate.gatelib.CANNOT_RUN)
+        self.assertEqual((fetched, pruned), ([], []))
+        self.assertIn("Cannot run", out)
 
 
 class TheDiscoveredCorpus(unittest.TestCase):

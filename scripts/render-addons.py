@@ -41,7 +41,9 @@ FETCHING
     exits 2: it says nothing about the catalogue.
 
 Run ``render-addons.py`` to render every env, or ``--env staging`` for one.
-``--list`` prints the discovered units without rendering.
+``--list`` prints the discovered units without rendering. ``--fetch`` fills
+the chart cache with every pinned chart, renders nothing, and drops the cached
+archives no pin names.
 """
 
 from __future__ import annotations
@@ -304,11 +306,32 @@ def stale_skips(units: list[Unit]) -> list[tuple[str, str]]:
 MIN_COMBINATIONS = 60
 
 
+def fetch_all(units: list[Unit]) -> int:
+    """Fetch every pinned chart into the chart cache; drop the archives no pin names.
+
+    CI runs this in one job that every rendering job waits on, so a registry is
+    read once per pin set rather than once per job, and the cache that job
+    carries to the next pin set holds that set and nothing older.
+    """
+    kept = {gatelib.chart_archive_or_exit(u.source, u.chart, u.version)
+            for u in units if u.chart not in SKIP_CHARTS}
+    if not kept:
+        print("Cannot run: discovery found no chart to fetch, so an empty cache would "
+              "read as a complete one.")
+        return gatelib.CANNOT_RUN
+    dropped = gatelib.prune_archives(kept)
+    print(f"Fetched {len(kept)} pinned chart archive(s) into {gatelib.CHART_CACHE}; "
+          f"dropped {dropped} archive(s) no pin names.")
+    return 0
+
+
 def main() -> int:
-    gatelib.require('helm')
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--env", choices=ENVIRONMENTS, help="render one environment (default: all)")
     ap.add_argument("--list", action="store_true", help="print discovered units and exit")
+    ap.add_argument("--fetch", action="store_true",
+                    help="fetch every pinned chart into the chart cache, render nothing, "
+                         "and drop cached archives no pin names")
     args = ap.parse_args()
 
     units = discover()
@@ -317,6 +340,10 @@ def main() -> int:
             tag = "  [SKIP]" if u.chart in SKIP_CHARTS else ""
             print(f"{u.appset:32} {u.chart:32} {u.version:12} {u.path}{tag}")
         return 0
+    if args.fetch:
+        return fetch_all(units)
+
+    gatelib.require('helm')
 
     rendered = [u for u in units if u.chart not in SKIP_CHARTS]
     skipped = [u for u in units if u.chart in SKIP_CHARTS]

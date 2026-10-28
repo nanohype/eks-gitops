@@ -344,8 +344,8 @@ def http_get(url: str, headers: Mapping[str, str] | None = None,
             base = asked if asked is not None else RETRY_BASE_SECONDS * 2 ** (attempt - 1)
             wait = base * (1 + RETRY_JITTER * jitter())
             source = "Retry-After" if asked is not None else "backoff"
-            print(f"  {host}: HTTP 429, retry {attempt}/{RETRY_ATTEMPTS - 1} in "
-                  f"{wait:.0f}s ({source})", file=sys.stderr)
+            print(f"  {host}: request {attempt} of {RETRY_ATTEMPTS} answered HTTP 429, "
+                  f"retrying in {wait:.0f}s ({source})", file=sys.stderr)
             sleep(wait)
     raise AssertionError("unreachable: the last attempt returns or raises")
 
@@ -501,6 +501,35 @@ def chart_metadata(source: str, chart: str, version: str,
         raise _unavailable(err) from err
 
 
+def archive_path(source: str, chart: str, version: str,
+                 cache: pathlib.Path | None = None) -> pathlib.Path:
+    """Where chart_archive keeps chart@version from `source`."""
+    parts = urllib.parse.urlsplit(source)
+    where = re.sub(r"[^A-Za-z0-9._-]+", "_", f"{parts.netloc}{parts.path}").strip("_")
+    return (CHART_CACHE if cache is None else cache) / where / f"{chart}-{version}.tgz"
+
+
+def prune_archives(keep: set[pathlib.Path], cache: pathlib.Path | None = None) -> int:
+    """Delete every cached archive not in `keep`; return how many went.
+
+    A cache carried from one pin set to the next would otherwise hold every
+    version ever pinned.
+    """
+    root = CHART_CACHE if cache is None else cache
+    if not root.is_dir():
+        return 0
+    kept = {p.resolve() for p in keep}
+    dropped = 0
+    for path in sorted(root.glob("*/*.tgz")):
+        if path.resolve() not in kept:
+            path.unlink()
+            dropped += 1
+    for folder in sorted(root.iterdir()):
+        if folder.is_dir() and not any(folder.iterdir()):
+            folder.rmdir()
+    return dropped
+
+
 def chart_archive(source: str, chart: str, version: str, *,
                   cache: pathlib.Path | None = None, get: Getter = http_get) -> pathlib.Path:
     """A local archive of chart@version, fetched once into the chart cache.
@@ -510,9 +539,7 @@ def chart_archive(source: str, chart: str, version: str, *,
     Every archive is checked against the digest its registry publishes before it
     is kept. Raises ChartUnavailable.
     """
-    parts = urllib.parse.urlsplit(source)
-    where = re.sub(r"[^A-Za-z0-9._-]+", "_", f"{parts.netloc}{parts.path}").strip("_")
-    path = (CHART_CACHE if cache is None else cache) / where / f"{chart}-{version}.tgz"
+    path = archive_path(source, chart, version, cache)
     if path.is_file():
         return path
     try:
