@@ -399,7 +399,9 @@ class SpacingRequestsToAHost(unittest.TestCase):
         self.assertSpaced(t.sent_at)
 
     def test_a_retry_waits_its_backoff_and_no_spacing_on_top(self):
-        """The shortest backoff outlasts every spacing, so a retry is never spaced."""
+        """The shortest backoff outlasts every spacing, so a retry after a backoff
+        waits nothing more, and the room the deadline holds for a retry's wait
+        covers the spacing whichever of the two is longer."""
         url = f"https://{self.HOST}/v2/x/manifests/1.2.3"
         t = self.transport(http_error(url, 429), b"ok")
         with contextlib.redirect_stderr(io.StringIO()):
@@ -407,6 +409,31 @@ class SpacingRequestsToAHost(unittest.TestCase):
         self.assertEqual(t.waits, [registry.RETRY_BASE_SECONDS])
         self.assertGreater(registry.RETRY_BASE_SECONDS,
                            max(registry.REQUEST_SPACING_SECONDS.values()))
+
+    def test_a_retry_after_inside_the_spacing_is_followed_by_what_it_left(self):
+        """A registry naming no wait at all is still asked again no sooner than
+        the spacing after the request it refused, and no later."""
+        url = f"https://{self.HOST}/v2/x/manifests/1.2.3"
+        t = self.transport(http_error(url, 429, {"Retry-After": "0"}), b"ok")
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(t.get()(url, {}, None), b"ok")
+        self.assertEqual(len(t.waits), 2)
+        self.assertEqual(t.waits[0], 0.0)
+        self.assertAlmostEqual(t.waits[1], self.spacing - self.LATENCY)
+        self.assertSpaced(t.sent_at)
+
+    def test_a_retry_after_that_outlasts_the_spacing_has_no_spacing_on_top(self):
+        """The spacing runs from the refused request, so the wait before the retry
+        counts toward it, and nothing is added to a wait that outlasts it."""
+        url = f"https://{self.HOST}/v2/x/manifests/1.2.3"
+        asked = 1.0
+        self.assertGreater(self.LATENCY + asked, self.spacing,
+                           "the fixture must outlast the spacing")
+        t = self.transport(http_error(url, 429, {"Retry-After": f"{asked:.0f}"}), b"ok")
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(t.get()(url, {}, None), b"ok")
+        self.assertEqual(t.waits, [asked])
+        self.assertSpaced(t.sent_at)
 
     def test_a_spacing_wait_that_would_end_past_the_deadline_is_reported_not_slept(self):
         t = self.transport(b"ok", b"ok")

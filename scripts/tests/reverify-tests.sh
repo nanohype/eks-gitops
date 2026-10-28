@@ -939,6 +939,34 @@ rejects "spacing: start every call from an empty record" test_registry \
   test_calls_given_no_record_share_the_processes
 res $F
 
+# A Retry-After shorter than the spacing still leaves the retry spaced from the
+# request it answered, and one longer than it counts toward the spacing rather
+# than having it added on top.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        _space(host, last_sent, deadline, where, sleep, timer)\n',
+              '        if attempt == 1:\n'
+              '            _space(host, last_sent, deadline, where, sleep, timer)\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "spacing: skip it before a retry" test_registry \
+  test_a_retry_after_inside_the_spacing_is_followed_by_what_it_left
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('file=sys.stderr)\n            sleep(wait)\n',
+              'file=sys.stderr)\n            sleep(wait)\n            last_sent[host] = timer()\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "spacing: run it from the end of a retry's wait" test_registry \
+  test_a_retry_after_that_outlasts_the_spacing_has_no_spacing_on_top
+res $F
+
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
@@ -1024,13 +1052,67 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('cache-primary-key }}-partial-${{ github.run_id }}-${{ github.run_attempt }}',
-              'cache-primary-key }}', 1)
+m = s.replace("          key: charts-partial-${{ hashFiles('applicationsets/*.yaml', "
+              "'scripts/registry.py') }}-${{ github.run_id }}-${{ github.run_attempt }}\n",
+              "          key: ${{ steps.chart-cache.outputs.cache-primary-key }}\n", 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
 rejects "cache: keep a partial set under the key the rendering jobs restore" test_workflows \
-  test_what_a_failed_or_cancelled_fetch_verified_is_kept_under_a_key_of_its_own
+  test_what_a_failed_or_cancelled_fetch_verified_is_kept_under_a_key_of_its_own \
+  test_no_incomplete_set_is_kept_under_a_key_the_rendering_jobs_restore
+res $F
+
+# A restore that misses its key exactly takes the newest key beginning with it,
+# so a partial key that extends the rendering jobs' key is one they restore.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("          key: charts-partial-${{ hashFiles('applicationsets/*.yaml', "
+              "'scripts/registry.py') }}-${{ github.run_id }}-${{ github.run_attempt }}\n",
+              "          key: ${{ steps.chart-cache.outputs.cache-primary-key }}"
+              "-partial-${{ github.run_id }}-${{ github.run_attempt }}\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "cache: keep a partial set under a key extending the restored one" test_workflows \
+  test_no_incomplete_set_is_kept_under_a_key_the_rendering_jobs_restore
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("            charts-partial-${{ hashFiles('applicationsets/*.yaml', "
+              "'scripts/registry.py') }}-\n", "", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "cache: restore any pins' newest set before these pins' own" test_workflows \
+  test_restore_keys_try_the_incomplete_set_these_pins_left_first
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("          key: charts-partial-${{ hashFiles('applicationsets/*.yaml', "
+              "'scripts/registry.py') }}-",
+              "          key: charts-partial-${{ hashFiles('applicationsets/*.yaml') }}-", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "cache: keep a partial set under a pins hash its restore key misses" test_workflows \
+  test_restore_keys_try_the_incomplete_set_these_pins_left_first
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("            charts-\n", "", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "cache: restore nothing for pins no set was kept for" test_workflows \
+  test_restore_keys_then_hand_a_pin_bump_the_newest_set_complete_or_not
 res $F
 
 edit $F <<'PY'

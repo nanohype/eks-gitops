@@ -237,7 +237,7 @@ PER_GATE_FLOORS = {
     "scripts/check-log-volume-budget.py": 60,
     "scripts/check-falco-rule-floor.py": 50,
     "scripts/check-alert-severity-routes.py": 95,
-    "scripts/check-image-vulnerabilities.py": 50,
+    "scripts/check-image-vulnerabilities.py": 75,
     "scripts/check-image-pins.py": 90,
     # The half of the directory-size gate that decides the verdict. The rest is
     # `--sync`, `--live` and `--self-test`, which run against a clone.

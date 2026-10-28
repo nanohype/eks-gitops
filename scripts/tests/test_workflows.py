@@ -149,8 +149,11 @@ class KeepingTheChartCache(unittest.TestCase):
     of them, and the next run read every chart again. The key every rendering
     job restores must name only a complete set, though, because a saved key is
     never replaced: an incomplete set saved there is what every later run with
-    the same pins restores. So the conditions on the save steps are evaluated
-    for each outcome the fetch can have, and the keys they save under rendered.
+    the same pins restores. A restore that misses its key exactly takes the
+    newest key that begins with it, so an incomplete set kept under a key that
+    begins with it is restored as well. So the conditions on the save steps are
+    evaluated for each outcome the fetch can have, and the keys they save under
+    rendered.
     """
 
     RUN = {"github.run_id": "4242", "github.run_attempt": "2"}
@@ -192,6 +195,17 @@ class KeepingTheChartCache(unittest.TestCase):
 
     def primary(self) -> str:
         return render(self.restore["with"]["key"], {})
+
+    def pins(self) -> str:
+        """The pins hash the primary key names, as render() writes it."""
+        found = re.findall(r"<hashFiles\(.*?\)>", self.primary())
+        self.assertEqual(len(found), 1, f"{self.primary()} names the pins once")
+        return found[0]
+
+    def restore_keys(self) -> list[str]:
+        """The charts job's restore-keys, rendered, in the order a restore tries them."""
+        text = str(self.restore["with"].get("restore-keys", ""))
+        return [render(line.strip(), {}) for line in text.splitlines() if line.strip()]
 
     def test_the_cache_is_restored_and_saved_as_separate_steps_around_the_fetch(self):
         self.assertEqual(self.combined, [], "a combined cache step saves only on success")
@@ -238,18 +252,49 @@ class KeepingTheChartCache(unittest.TestCase):
         self.assertIn("hashFiles(", key)
         self.assertNotIn("github.", key)
 
-    def test_restore_keys_hand_a_run_the_last_set_kept_complete_or_not(self):
+    def test_no_incomplete_set_is_kept_under_a_key_the_rendering_jobs_restore(self):
+        """Not under their key, and not under one beginning with it, which a
+        rendering job restores whenever the complete set was never saved or was
+        evicted."""
+        primary = self.primary()
+        for outcome in ("failure", "cancelled"):
+            for hit in (False, True):
+                with self.subTest(outcome=outcome, hit=hit):
+                    saved = self.saved(outcome, hit)
+                    self.assertTrue(saved, f"a {outcome} fetch keeps nothing")
+                    for key in saved:
+                        self.assertFalse(key.startswith(primary),
+                                         f"{key} begins with the rendering jobs' {primary}")
+
+    def test_restore_keys_try_the_incomplete_set_these_pins_left_first(self):
+        """An earlier attempt at the same pins kept everything it verified, so a
+        re-run starting from it fetches only what that attempt did not reach. The
+        newest set kept under any key can be for other pins, missing every chart
+        these moved."""
+        keys = self.restore_keys()
+        self.assertTrue(keys, "no restore-keys")
+        self.assertIn(self.pins(), keys[0],
+                      "the first restore key names no pins, so any pins' set can come first")
+        self.assertTrue(self.saved("failure", hit=False)[0].startswith(keys[0]),
+                        "the first restore key does not reach the set these pins left")
+
+    def test_restore_keys_then_hand_a_pin_bump_the_newest_set_complete_or_not(self):
+        """A restore key naming no pins reaches the sets every pin set kept, so a
+        pin bump fetches only the chart it moved."""
         primary = self.primary()
         partial = self.saved("failure", hit=False)[0]
-        prefixes = str(self.restore["with"].get("restore-keys", "")).split()
-        self.assertTrue(prefixes, "no restore-keys, so a pin bump starts from nothing")
-        for prefix in prefixes:
+        broad = [key for key in self.restore_keys() if self.pins() not in key]
+        self.assertTrue(broad, "every restore key names these pins, so a pin bump "
+                               "starts from nothing")
+        for prefix in broad:
             with self.subTest(prefix=prefix):
                 self.assertTrue(primary.startswith(prefix))
                 self.assertTrue(partial.startswith(prefix))
 
     def test_every_rendering_job_restores_the_key_a_complete_set_is_kept_under(self):
-        """Each restores exactly that key, so none restores an incomplete set."""
+        """Each restores that key with no restore-keys, so the only other key it
+        can restore is one beginning with that key, which no incomplete set is
+        kept under."""
         readers = 0
         for name, job in jobs().items():
             for step in job.get("steps") or []:

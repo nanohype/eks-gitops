@@ -29,13 +29,12 @@ token request a 401 challenge leads to runs to that same deadline. The deadline
 is checked before each request, before each wait between requests, a retry's or
 the spacing a host is held to, and before each read of a response body from the
 socket, a chunked body's framing included, and a call that reaches it is
-reported, naming the host. A check cannot cut short a socket wait already
-under way, and each one is bounded by the request's timeout, at most
-HTTP_TIMEOUT, so a call ends within CALL_BOUND_SECONDS: its deadline plus
-HTTP_TIMEOUT. The exception is urlopen
-itself, which connects and reads the status line and headers with no check of
-the deadline between its socket waits, so a call whose deadline passes inside
-urlopen ends when urlopen does.
+reported, naming the host. A check cannot cut short a socket wait already under
+way, and each one is bounded by the request's timeout, at most HTTP_TIMEOUT, so
+a call ends within CALL_BOUND_SECONDS: its deadline plus HTTP_TIMEOUT. The
+exception is urlopen itself, which connects and reads the status line and
+headers with no check of the deadline between its socket waits, so a call whose
+deadline passes inside urlopen ends when urlopen does.
 
 An archive is kept only once it hashes to the digest its registry publishes,
 and is handed out of the cache only while it still hashes to the digest it was
@@ -105,11 +104,15 @@ HTTP_TIMEOUT = 60
 # at or past the deadline is reported instead of taken.
 #
 # The spacing REQUEST_SPACING_SECONDS holds a host to is one of those waits, and
-# it has no room of its own: it is spent from what the deadline leaves the
-# requests. Every retry waits at least RETRY_BASE_SECONDS, longer than any
-# spacing, so a retry is never spaced; the waits fall before a call's first
-# request and around the token request a challenge leads to, each under one
-# spacing.
+# it has no room of its own. It runs from when the last request to the host went
+# out, so the wait before a retry counts toward it. A backoff, never shorter than
+# RETRY_BASE_SECONDS, outlasts every spacing. A Retry-After shorter than the
+# spacing is followed by what the spacing has left of it, so the waits before a
+# retry together last no longer than the longer of the two, which the room held
+# for a retry's wait covers while every spacing stays under RETRY_BASE_SECONDS.
+# The other spacing waits fall before a call's first request and around the
+# token request a challenge leads to, each under one spacing, and are spent from
+# what the deadline leaves the requests.
 CALL_DEADLINE_SECONDS = (
     RETRY_ATTEMPTS * HTTP_TIMEOUT
     + (RETRY_ATTEMPTS - 1) * (1 + RETRY_JITTER)

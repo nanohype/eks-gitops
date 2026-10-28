@@ -107,11 +107,8 @@ jobs:
   # The key is the appset pins and the client that verified the archives, so a
   # run that moves neither fetches nothing, and names nothing about the branch
   # or the run, so a pull request whose pins match main's restores main's set.
-  # restore-keys hands a pin bump the previous set, so only the moved chart is
-  # fetched; a client change hands it archives the client re-checks against
-  # their digest records, and fetches again any that carry none. --fetch removes
-  # every cached file no pin names, so the carried set holds the current pins
-  # and nothing older.
+  # --fetch removes every cached file no pin names, so whatever set a run starts
+  # from, the set it keeps holds the current pins and nothing older.
   #
   # The cache is restored and saved as separate steps, because a combined
   # actions/cache step saves only when the whole job succeeds: a fetch that
@@ -119,10 +116,19 @@ jobs:
   # them, and the next run would read every chart again from an address in the
   # same position. The save runs whatever the fetch did. A complete set goes
   # under the key every rendering job restores. A set the fetch left incomplete
-  # goes under a key carrying the run and its attempt, which no rendering job
-  # restores and no later save collides with, since a saved key is never
-  # replaced; restore-keys hands it to the next run, which fetches only what it
-  # lacks.
+  # goes under a key of its own, charts-partial- followed by the same pins hash,
+  # the run and its attempt, so no later save collides with it, since a saved
+  # key is never replaced.
+  #
+  # A restore that misses its key exactly takes the newest key the key is a
+  # prefix of, before it reads restore-keys, so no incomplete set's key begins
+  # with the key the rendering jobs restore: they restore a complete set or
+  # nothing. This job's restore-keys hand it, in order, the newest set an earlier
+  # attempt at the same pins left incomplete, so a re-run fetches only what that
+  # attempt did not reach, and then the newest set kept for any pins, so a pin
+  # bump fetches only the moved chart. A client change hands it archives the
+  # client re-checks against their digest records, and fetches again any that
+  # carry none.
   #
   # ECR Public serves an anonymous client one image pull a second, and one chart
   # read is several requests to it, so REQUEST_SPACING_SECONDS in
@@ -169,6 +175,7 @@ jobs:
           path: &chart-cache ~/.cache/eks-gitops/charts
           key: &chart-cache-key charts-${{ hashFiles('applicationsets/*.yaml', 'scripts/registry.py') }}
           restore-keys: |
+            charts-partial-${{ hashFiles('applicationsets/*.yaml', 'scripts/registry.py') }}-
             charts-
 
       - name: Fetch every pinned chart
@@ -187,7 +194,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: *chart-cache
-          key: ${{ steps.chart-cache.outputs.cache-primary-key }}-partial-${{ github.run_id }}-${{ github.run_attempt }}
+          key: charts-partial-${{ hashFiles('applicationsets/*.yaml', 'scripts/registry.py') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
   # ── Dashboard gate ───────────────────────────────────────────────────
   # Every spec.grafanaCom.id must (a) still exist on grafana.com and (b) be
