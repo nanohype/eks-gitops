@@ -181,7 +181,8 @@ def check_live() -> int:
                 problems.append(f"{chart}: upstream answered, and its answer rules the pin "
                                 f"out — {meta['_error']}")
             else:
-                unread.append(f"{chart}: could not read upstream metadata — {meta['_error']}")
+                unread.append(f"{chart} {pin['version']} from {pin['repo']} — "
+                              f"{meta['_error']}")
             continue
         rec = recorded.get(chart, {})
         if meta.get("deprecated") is True:
@@ -204,12 +205,7 @@ def check_live() -> int:
         for p in problems:
             print(f"        {p}")
     if unread:
-        print(f"Cannot run: {len(unread)} of {len(live)} pinned chart(s) could not be "
-              f"read from upstream, so they were compared against nothing:")
-        for u in unread:
-            print(f"        {u}")
-        print("An unreachable or rate-limiting registry is a fact about the network, not "
-              "about the catalogue.")
+        gatelib.cannot_read(f"{len(unread)} of {len(live)} pinned chart(s)", unread)
     if problems:
         return 1
     if unread:

@@ -106,11 +106,6 @@ def die(msg: str) -> NoReturn:
     sys.exit(1)
 
 
-def cannot_run(msg: str) -> NoReturn:
-    print(f"lb-scheme-inputs: cannot run: {msg}", file=sys.stderr)
-    sys.exit(gatelib.CANNOT_RUN)
-
-
 # ------------------------------------------------------------------- the chart
 
 
@@ -145,9 +140,8 @@ def app_version(pin: dict) -> str:
     except registry.ChartUnavailable as exc:
         if exc.answered:
             die(f"{pin['chart']} {pin['chartVersion']} does not resolve — {exc}")
-        cannot_run(f"{pin['chart']} {pin['chartVersion']} could not be read from "
-                   f"{pin['chartRepo']} — {exc}. An unreachable chart repository is a "
-                   f"fact about the network, not about the pin.")
+        sys.exit(gatelib.cannot_read(
+            f"{pin['chart']} {pin['chartVersion']} from {pin['chartRepo']}", [str(exc)]))
     version = str(meta.get("appVersion") or "").strip()
     if not version:
         die(f"{pin['chart']} {pin['chartVersion']} publishes no appVersion, so which "
@@ -158,7 +152,7 @@ def app_version(pin: dict) -> str:
 def rendered_flags(pin: dict) -> dict:
     """The controller's effective configuration, as this catalog installs it."""
     gatelib.require("helm")
-    archive = registry.chart_archive_or_exit(pin["chartRepo"], pin["chart"], pin["chartVersion"])
+    archive = gatelib.chart_archive_or_exit(pin["chartRepo"], pin["chart"], pin["chartVersion"])
     values = [str(ADDON / "values.yaml")]
     proc = subprocess.run(
         ["helm", "template", ADDON_NAME, str(archive), "-n", "kube-system",

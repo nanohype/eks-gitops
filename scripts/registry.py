@@ -39,8 +39,8 @@ is refused rather than trusted.
 
 Gates import this module by name, as they import gatelib (see its docstring),
 so a process holds one instance of each and every gate in it catches the same
-exception classes. This module imports gatelib in turn, for the exit status a
-chart that could not be fetched earns.
+exception classes. Every failure here is raised: what status a failed chart
+read earns is gatelib.refuse_chart's to decide.
 """
 
 from __future__ import annotations
@@ -62,9 +62,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping
-from typing import Any, NoReturn
-
-import gatelib
+from typing import Any
 
 # A 429 is the registry rate-limiting this client, and a 502, 503 or 504 is a
 # proxy or server in front of it that could not answer this time. None of them
@@ -602,32 +600,3 @@ def chart_archive(source: str, chart: str, version: str, *,
         raise _unavailable(err) from err
     _keep(path, data)
     return path
-
-
-def chart_archive_or_exit(source: str, chart: str, version: str) -> pathlib.Path:
-    """chart_archive, or exit with the status the failure earns.
-
-    1 when the registry answered and its answer rules the pin out — a pin that
-    does not resolve to an archive this client can verify is a finding about
-    this repository. CANNOT_RUN for every other failure, which says nothing
-    about it.
-    """
-    try:
-        return chart_archive(source, chart, version)
-    except ChartUnavailable as exc:
-        refuse_chart(chart, version, source, exc)
-
-
-def refuse_chart(chart: str, version: str, source: str,
-                 exc: ChartUnavailable) -> NoReturn:
-    """Exit with the status `exc` earns, saying why: 1 when answered, else CANNOT_RUN."""
-    if exc.answered:
-        print(f"{chart} {version}: {source} answered, and its answer rules the pin out "
-              f"— {exc}")
-        print("A pin that does not resolve to an archive this client can verify is a "
-              "finding about this repo.")
-        sys.exit(1)
-    print(f"Cannot run: {chart} {version} could not be fetched from {source} — {exc}")
-    print("Nothing was rendered from it, which is not the same as nothing being wrong.")
-    print("An unreachable registry is a fact about the network, not about the catalogue.")
-    sys.exit(gatelib.CANNOT_RUN)

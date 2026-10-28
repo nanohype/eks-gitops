@@ -368,10 +368,11 @@ class TheJobsReadingThroughTheClient(unittest.TestCase):
     registry refused it, and a job with no timeout waits on a registry that
     throttles call after call until the runner's own ceiling. A job reads
     through the client when it keeps or restores the chart cache, or when it
-    runs a gate that imports registry with --live or --fetch, the flags a gate
-    reads upstream under. Each job restoring the cache also reads it under the
-    key the charts job keeps it under, or it finds nothing and fetches every
-    chart from its own address.
+    runs a gate that reads through it — importing registry, or reading a chart
+    with gatelib.chart_archive_or_exit — with --live or --fetch, the flags a
+    gate reads upstream under. Each job restoring the cache also reads it under
+    the key the charts job keeps it under, or it finds nothing and fetches
+    every chart from its own address.
     """
 
     ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -379,9 +380,10 @@ class TheJobsReadingThroughTheClient(unittest.TestCase):
     SCRIPT = re.compile(r"(?:\./)?scripts/([\w.-]+\.py)")
 
     def client_scripts(self) -> set[str]:
-        """Gate scripts that import the registry client."""
+        """Gate scripts that read through the registry client."""
+        reads = r"^import registry$|^from registry import |\bgatelib\.chart_archive_or_exit\("
         return {p.name for p in (self.ROOT / "scripts").glob("*.py")
-                if re.search(r"^import registry$|^from registry import ", p.read_text(), re.M)}
+                if re.search(reads, p.read_text(), re.M)}
 
     def cache_key(self, step) -> str | None:
         uses = str(step.get("uses", ""))
@@ -917,10 +919,11 @@ class PruningTheChartCache(unittest.TestCase):
 
 
 class WhatAnUnavailableChartMeans(unittest.TestCase):
-    """Exit 1 is a finding about a pin; exit 2 is a fact about the network.
+    """`answered` is a finding about a pin; anything else is a fact about the network.
 
     Collapsing them makes an outage read as a defect in the catalogue, and trains
-    readers to re-run a red gate rather than read it.
+    readers to re-run a red gate rather than read it. The exit status each earns
+    is gatelib.refuse_chart's, held in test_gatelib.
     """
 
     REPO = "https://charts.example"
@@ -990,33 +993,6 @@ class WhatAnUnavailableChartMeans(unittest.TestCase):
                 self.assertFalse(exc.answered)
                 self.assertIn("JSONDecodeError", str(exc))
 
-    def test_the_exit_status_follows_the_answer(self):
-        for answered, status in ((True, 1), (False, registry.gatelib.CANNOT_RUN)):
-            with self.subTest(answered=answered):
-                exc = registry.ChartUnavailable("why", answered=answered)
-                original = registry.chart_archive
-
-                def refuse(*_a, _exc=exc, **_k):
-                    raise _exc
-
-                registry.chart_archive = refuse
-                try:
-                    with contextlib.redirect_stdout(io.StringIO()) as out, \
-                            self.assertRaises(SystemExit) as caught:
-                        registry.chart_archive_or_exit(self.REPO, "c", "1.0.0")
-                finally:
-                    registry.chart_archive = original
-                self.assertEqual(caught.exception.code, status)
-                self.assertIn("why", out.getvalue())
-
-    def test_an_archive_that_is_fetched_is_returned(self):
-        original = registry.chart_archive
-        registry.chart_archive = lambda *_a, **_k: pathlib.Path("/cache/c-1.0.0.tgz")
-        try:
-            got = registry.chart_archive_or_exit(self.REPO, "c", "1.0.0")
-        finally:
-            registry.chart_archive = original
-        self.assertEqual(got, pathlib.Path("/cache/c-1.0.0.tgz"))
 
 
 if __name__ == "__main__":

@@ -4,16 +4,18 @@ Small on purpose. The gates are standalone executables and mostly should stay
 that way; what belongs here is the handful of things that are wrong in the same
 way when each gate does them itself: reading the manifest a gate derives from,
 requiring a tool, walking an ApplicationSet's generators, telling chart source
-from a manifest, and the exit status that says a gate could not run. Reading a
-registry is one more of those, and it is a client rather than a helper, so it
-lives beside this file in registry.py.
+from a manifest, and the exit status that says a gate could not run, a registry
+that could not be read among them. Reading a registry is a client rather than a
+helper, so it lives beside this file in registry.py, and raises; the status a
+failed read earns, and the words that say so, are decided here.
 
 Loading it: `import gatelib`, and `import registry` for the client. Python puts
 a script's own directory first on sys.path whichever directory it is run from,
 so a gate in scripts/ resolves both by name, and every gate in one process
-shares one instance of each. A hyphenated gate is not a module name, so a gate
-that reuses another — check-policy-admission.py reading render-addons.py — loads
-that one by path.
+shares one instance of each. This module imports registry only inside the
+functions that read a chart, so a gate that reads none loads no client. A
+hyphenated gate is not a module name, so a gate that reuses another —
+check-policy-admission.py reading render-addons.py — loads that one by path.
 """
 
 from __future__ import annotations
@@ -22,6 +24,11 @@ import json
 import pathlib
 import shutil
 import sys
+from collections.abc import Iterable
+from typing import TYPE_CHECKING, NoReturn
+
+if TYPE_CHECKING:
+    import registry
 
 # Exit code for "this gate could not run", distinct from 1 for "this gate
 # rejected the tree". A caller that cannot tell those apart reads a missing
@@ -114,6 +121,52 @@ def require(*tools: str) -> None:
     print("nothing. Install the tool(s) and re-run; the versions CI pins are in")
     print("the env block at the top of .github/workflows/ci.yml.")
     sys.exit(CANNOT_RUN)
+
+
+def cannot_read(what: str, reasons: Iterable[str]) -> int:
+    """Say that `what` could not be read from its registry, and return CANNOT_RUN.
+
+    For a read that failed without the registry answering about the pin itself:
+    a registry.ChartUnavailable that was not `answered`, or one of
+    registry.READ_FAILURES a gate catches itself. Each of `reasons` is one
+    failed read. A gate reports such a read through this, and exits with what it
+    returns, or with 1 when it has a finding to report as well.
+    """
+    print(f"Cannot run: {what} could not be read:")
+    for reason in reasons:
+        print(f"        {reason}")
+    print("What could not be read was not examined, which is not the same as nothing "
+          "being wrong: an unreachable or rate-limiting registry is a fact about the "
+          "network, not about this repo.")
+    return CANNOT_RUN
+
+
+def refuse_chart(chart: str, version: str, source: str,
+                 exc: registry.ChartUnavailable) -> NoReturn:
+    """Exit with the status `exc` earns, saying why: 1 when answered, else CANNOT_RUN."""
+    if exc.answered:
+        print(f"{chart} {version}: {source} answered, and its answer rules the pin out "
+              f"— {exc}")
+        print("A pin that does not resolve to an archive the registry client can verify "
+              "is a finding about this repo.")
+        sys.exit(1)
+    sys.exit(cannot_read(f"{chart} {version} from {source}", [str(exc)]))
+
+
+def chart_archive_or_exit(source: str, chart: str, version: str) -> pathlib.Path:
+    """registry.chart_archive, or exit with the status the failure earns.
+
+    1 when the registry answered and its answer rules the pin out — a pin that
+    does not resolve to an archive the client can verify is a finding about
+    this repository. CANNOT_RUN for every other failure, which says nothing
+    about it.
+    """
+    import registry
+
+    try:
+        return registry.chart_archive(source, chart, version)
+    except registry.ChartUnavailable as exc:
+        refuse_chart(chart, version, source, exc)
 
 
 def matrix_generators(doc: dict):

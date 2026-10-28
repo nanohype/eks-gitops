@@ -65,7 +65,6 @@ except ImportError:  # pragma: no cover
     sys.exit("PyYAML required: pip install pyyaml")
 
 import gatelib
-import registry
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -134,7 +133,7 @@ def crd_schemas(version: str, workdir: Path) -> dict[str, dict]:
     "no such version" (exit 1, a finding about the pin) from one that could not
     be read (exit 2, which says nothing about the catalog's admissibility).
     """
-    archive = registry.chart_archive_or_exit(CHART, "operator", version)
+    archive = gatelib.chart_archive_or_exit(CHART, "operator", version)
     with tarfile.open(archive) as tf:
         tf.extractall(workdir, filter="data")
     crd_dir = workdir / "operator" / "crds"

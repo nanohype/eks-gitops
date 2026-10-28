@@ -61,7 +61,6 @@ import subprocess
 import sys
 
 import gatelib
-import registry
 import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -214,7 +213,7 @@ def environment_verdict(cfg: dict, warn: float | None,
 
 def main() -> int:
     repo, version = chart_pin()
-    archive = registry.chart_archive_or_exit(repo, "loki", version)
+    archive = gatelib.chart_archive_or_exit(repo, "loki", version)
     warn = alert_threshold()
     envs = environments()
     if not envs:

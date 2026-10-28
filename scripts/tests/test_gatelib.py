@@ -6,14 +6,20 @@ walk had exactly that failure in two gates simultaneously: it returned on the
 first list generator, and the count each gate printed was derived from the same
 truncated list, so neither could expose its own omission.
 
-The registry client is tested in test_registry.
+The registry client is tested in test_registry; the exit status and the words
+a read that failed earns are held here.
 """
 
+import contextlib
+import io
+import pathlib
 import unittest
+from unittest import mock
 
 from gateloader import load
 
 gatelib = load("gatelib")
+registry = load("registry")
 
 
 def appset(*generators):
@@ -141,6 +147,52 @@ class TheRealCatalogIsWalkedWhole(unittest.TestCase):
             "catalog changed shape or the fixture-only tests above are all that "
             "remain",
         )
+
+
+class AReadThatFailed(unittest.TestCase):
+    """Exit 1 is a finding about a pin; CANNOT_RUN is a fact about the network.
+
+    Collapsing them makes an outage read as a defect in the catalogue, and trains
+    readers to re-run a red gate rather than read it. Every gate says the second
+    in one set of words, so a reader learns one sentence rather than one per gate.
+    """
+
+    REPO = "https://charts.example"
+
+    def test_the_report_names_what_and_why_and_returns_cannot_run(self):
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            status = gatelib.cannot_read("2 of 5 pinned chart(s)", ["a: HTTP 503", "b: timed out"])
+        self.assertEqual(status, gatelib.CANNOT_RUN)
+        lines = out.getvalue().splitlines()
+        self.assertEqual(lines[:3], ["Cannot run: 2 of 5 pinned chart(s) could not be read:",
+                                     "        a: HTTP 503", "        b: timed out"])
+        self.assertIn("a fact about the network, not about this repo", lines[3])
+
+    def exit_status(self, answered: bool):
+        exc = registry.ChartUnavailable("why", answered=answered)
+        with mock.patch.object(registry, "chart_archive", side_effect=exc), \
+                contextlib.redirect_stdout(io.StringIO()) as out, \
+                self.assertRaises(SystemExit) as caught:
+            gatelib.chart_archive_or_exit(self.REPO, "c", "1.0.0")
+        return caught.exception.code, out.getvalue()
+
+    def test_a_pin_the_registry_ruled_out_exits_1(self):
+        code, said = self.exit_status(answered=True)
+        self.assertEqual(code, 1)
+        self.assertIn(f"c 1.0.0: {self.REPO} answered, and its answer rules the pin out — why",
+                      said)
+        self.assertNotIn("Cannot run", said)
+
+    def test_a_chart_that_could_not_be_read_cannot_run(self):
+        code, said = self.exit_status(answered=False)
+        self.assertEqual(code, gatelib.CANNOT_RUN)
+        self.assertIn(f"Cannot run: c 1.0.0 from {self.REPO} could not be read:\n        why\n",
+                      said)
+
+    def test_an_archive_that_is_fetched_is_returned(self):
+        archive = pathlib.Path("/cache/c-1.0.0.tgz")
+        with mock.patch.object(registry, "chart_archive", return_value=archive):
+            self.assertEqual(gatelib.chart_archive_or_exit(self.REPO, "c", "1.0.0"), archive)
 
 
 if __name__ == "__main__":

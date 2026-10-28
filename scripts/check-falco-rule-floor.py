@@ -179,10 +179,8 @@ RULESFILE_ACCEPT = ("application/vnd.oci.image.manifest.v1+json,"
                     "application/vnd.oci.image.index.v1+json")
 
 
-def _unreachable(exc: BaseException) -> NoReturn:
-    cannot_run(f"Cannot run: {REGISTRY} could not be read — {type(exc).__name__}: {exc}.",
-               "An unreachable or rate-limiting registry is a fact about the network, "
-               "not about the rule sets this repo pins.")
+def _unreachable(where: str, exc: BaseException) -> NoReturn:
+    sys.exit(gatelib.cannot_read(where, [f"{type(exc).__name__}: {exc}"]))
 
 
 def rulesfile_layer(manifest: dict, where: str) -> str | None:
@@ -232,19 +230,16 @@ def rulesfile(ref: str,
                  f"tag {tag!r}. falcoctl installs nothing for it, so every rule that "
                  f"set carries is absent from every node.")
             return None
-        cannot_run(f"Cannot run: {REGISTRY} answered {exc.code} for {repo}:{tag}.")
+        _unreachable(f"{REGISTRY}/{repo}:{tag}", exc)
     except registry.READ_FAILURES as exc:
-        _unreachable(exc)
+        _unreachable(f"{REGISTRY}/{repo}:{tag}", exc)
     digest = rulesfile_layer(manifest, f"{REGISTRY}/{repo}:{tag}")
     if digest is None:
         return None
     try:
         blob = oci.blob(digest)
-    except urllib.error.HTTPError as exc:
-        cannot_run(f"Cannot run: {REGISTRY} answered {exc.code} for a layer of "
-                   f"{repo}:{tag}.")
     except registry.READ_FAILURES as exc:
-        _unreachable(exc)
+        _unreachable(f"a layer of {REGISTRY}/{repo}:{tag}", exc)
     out: dict[str, str] = {}
     try:
         with tarfile.open(fileobj=io.BytesIO(blob)) as tf:
@@ -285,7 +280,7 @@ def read_paths(falco: dict, env: str) -> tuple[set[str], set[str]]:
 def main() -> int:
     gatelib.require("helm")
     repo, chart, version = chart_pin()
-    archive = registry.chart_archive_or_exit(repo, chart, version)
+    archive = gatelib.chart_archive_or_exit(repo, chart, version)
     envs = environments()
     if not envs:
         fail(f"{ADDON.relative_to(ROOT)} carries no values-<env>.yaml, so this gate "

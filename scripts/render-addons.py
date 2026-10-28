@@ -243,7 +243,7 @@ def render(unit: Unit, env: str | None) -> tuple[bool, str]:
             return (True, "no env delta")  # addon not deployed to this env
         value_files.append(env_file)
 
-    archive = registry.chart_archive_or_exit(unit.source, unit.chart, unit.version)
+    archive = gatelib.chart_archive_or_exit(unit.source, unit.chart, unit.version)
 
     # Render into the namespace ArgoCD will actually sync into. `helm template`
     # otherwise reports `.Release.Namespace` as "default", so anything keyed on
@@ -305,7 +305,7 @@ def fetch_all(units: list[Unit]) -> int:
     read once per pin set rather than once per job, and the cache that job
     carries to the next pin set holds that set and nothing older.
     """
-    kept = {registry.chart_archive_or_exit(u.source, u.chart, u.version)
+    kept = {gatelib.chart_archive_or_exit(u.source, u.chart, u.version)
             for u in units if u.chart not in SKIP_CHARTS}
     if not kept:
         print("Cannot run: discovery found no chart to fetch, so an empty cache would "

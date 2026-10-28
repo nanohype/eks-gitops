@@ -180,7 +180,7 @@ class WhatARenderIsHanded(unittest.TestCase):
                                                stderr=stderr))
         fetch = mock.Mock(return_value=archive)
         with mock.patch.object(gate, "REPO_ROOT", root), \
-                mock.patch.object(gate.registry, "chart_archive_or_exit", fetch), \
+                mock.patch.object(gate.gatelib, "chart_archive_or_exit", fetch), \
                 mock.patch.object(gate.subprocess, "run", ran):
             result = gate.render(unit, env)
         return result, fetch, ran, archive, unit_dir
@@ -238,7 +238,7 @@ class FetchingTheChartCache(unittest.TestCase):
             pruned.append(set(keep))
             return 3
 
-        with mock.patch.object(gate.registry, "chart_archive_or_exit", archive), \
+        with mock.patch.object(gate.gatelib, "chart_archive_or_exit", archive), \
                 mock.patch.object(gate.registry, "prune_archives", prune), \
                 mock.patch.dict(gate.SKIP_CHARTS, skip or {}, clear=True), \
                 contextlib.redirect_stdout(io.StringIO()) as out:

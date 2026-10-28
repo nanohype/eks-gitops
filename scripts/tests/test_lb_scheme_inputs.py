@@ -539,13 +539,13 @@ class ReadingThePinnedChart(unittest.TestCase):
         gate.gatelib.require = lambda tool: None
         try:
             with self.assertRaises(SystemExit) as caught, \
-                    contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stdout(io.StringIO()) as out, \
                     contextlib.redirect_stderr(io.StringIO()) as err:
                 call(PIN)
         finally:
             setattr(gate.registry, attr, real)
             gate.gatelib.require = real_require
-        return caught.exception.code, err.getvalue()
+        return caught.exception.code, out.getvalue() + err.getvalue()
 
     def test_metadata_ruled_out_by_the_repository_is_a_finding(self):
         code, said = self.exit_status("chart_metadata", True, gate.app_version)
@@ -555,7 +555,8 @@ class ReadingThePinnedChart(unittest.TestCase):
     def test_metadata_that_could_not_be_read_cannot_run(self):
         code, said = self.exit_status("chart_metadata", False, gate.app_version)
         self.assertEqual(code, gate.gatelib.CANNOT_RUN)
-        self.assertIn("cannot run", said)
+        self.assertIn(f"Cannot run: {PIN['chart']} {PIN['chartVersion']} from "
+                      f"{PIN['chartRepo']} could not be read:", said)
 
     def test_an_archive_ruled_out_by_the_repository_is_a_finding(self):
         code, _ = self.exit_status("chart_archive", True, gate.rendered_flags)
@@ -572,6 +573,43 @@ class ReadingThePinnedChart(unittest.TestCase):
             self.assertEqual(gate.app_version(PIN), "v2.8.1")
         finally:
             gate.registry.chart_metadata = real
+
+
+class FindingThePin(unittest.TestCase):
+    """The controller's chart coordinates come from its ApplicationSet element.
+
+    An element missing one of them, or no element at all, leaves this gate no
+    version to read the controller at: a defect in the tree, exit 1, said in a
+    sentence naming the ApplicationSet rather than a KeyError's traceback.
+    """
+
+    def pin_from(self, *docs):
+        real = gate.gatelib.read_yaml_all
+        gate.gatelib.read_yaml_all = lambda _path: list(docs)
+        try:
+            with self.assertRaises(SystemExit) as caught, \
+                    contextlib.redirect_stderr(io.StringIO()) as err:
+                gate.chart_pin()
+        finally:
+            gate.gatelib.read_yaml_all = real
+        return caught.exception.code, err.getvalue()
+
+    @staticmethod
+    def appset(*elements):
+        return {"kind": "ApplicationSet",
+                "spec": {"generators": [{"list": {"elements": list(elements)}}]}}
+
+    def test_an_element_missing_its_version_is_a_finding(self):
+        element = {"appName": gate.ADDON_NAME, "chartRepo": PIN["chartRepo"],
+                   "chart": PIN["chart"]}
+        code, said = self.pin_from({"kind": "ConfigMap"}, self.appset(element))
+        self.assertEqual(code, 1)
+        self.assertIn(f"names {gate.ADDON_NAME} without chartVersion", said)
+
+    def test_an_appset_with_no_controller_element_is_a_finding(self):
+        code, said = self.pin_from(self.appset({"appName": "something-else"}))
+        self.assertEqual(code, 1)
+        self.assertIn(f"carries no {gate.ADDON_NAME} element", said)
 
 
 class TheShippedCatalog(unittest.TestCase):

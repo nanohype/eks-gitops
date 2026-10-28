@@ -105,7 +105,6 @@ import sys
 import tempfile
 
 import gatelib
-import registry
 import yaml
 
 # Helm charts occasionally emit the YAML `=` default-value sentinel (e.g. `- =`
@@ -412,7 +411,7 @@ def render_fleet(dest: pathlib.Path) -> tuple[int, set[str]]:
             env_file = unit_dir / f"values-{env}.yaml"
             if not env_file.exists():
                 continue  # addon not deployed to this env
-            archive = registry.chart_archive_or_exit(u.source, u.chart, u.version)
+            archive = gatelib.chart_archive_or_exit(u.source, u.chart, u.version)
             cmd = ["helm", "template", u.chart, str(archive), "-n", u.namespace]
             for name, value in u.params:
                 cmd += ["--set", f"{name}={value}"]

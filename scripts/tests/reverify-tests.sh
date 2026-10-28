@@ -964,9 +964,11 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('        cannot_run(f"Cannot run: {REGISTRY} answered {exc.code} for {repo}:{tag}.")',
+m = s.replace('            return None\n'
+              '        _unreachable(f"{REGISTRY}/{repo}:{tag}", exc)\n',
+              '            return None\n'
               '        fail(f"{REGISTRY} answered {exc.code} for {repo}:{tag}.")\n'
-              '        return None', 1)
+              '        return None\n', 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
@@ -1044,7 +1046,7 @@ edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
 m = s.replace(
-    '    archive = registry.chart_archive_or_exit(pin["chartRepo"], pin["chart"], '
+    '    archive = gatelib.chart_archive_or_exit(pin["chartRepo"], pin["chart"], '
     'pin["chartVersion"])\n',
     '    try:\n'
     '        archive = registry.chart_archive(pin["chartRepo"], pin["chart"], '
@@ -1187,7 +1189,7 @@ edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
 m = s.replace('            if exc.answered:\n'
-              '                registry.refuse_chart(u.chart, u.version, u.source, exc)\n', '', 1)
+              '                gatelib.refuse_chart(u.chart, u.version, u.source, exc)\n', '', 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
