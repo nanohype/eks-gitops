@@ -13,8 +13,8 @@ Two assertions close that:
     fails rather than silently shrinking coverage
   * at least MIN_TESTS tests actually execute
 
-Both are floors, not exact counts: adding tests must never require editing this
-file, or the floor becomes something people lower to make a run go green.
+Both are floors, not exact counts: adding tests must never require editing
+either, or the floor becomes something people lower to make a run go green.
 """
 
 from __future__ import annotations
@@ -168,27 +168,26 @@ MIN_TESTS = 31
 COMBINED_FLOOR = 45
 
 # A ceiling on gate scripts carrying NO unit coverage at all, complementing the
-# floors below. The floors stop a covered file regressing; nothing stopped a NEW
-# gate arriving with no tests.
+# floors below. The floors stop a covered file regressing; this stops a gate
+# arriving with no tests.
 #
-# Ratchets downward only. Adding a gate without tests fails here rather than
-# diluting the combined figure by a percentage point nobody notices.
+# Held equal to the count, not above it. check_coverage fails when more gates
+# than this read as uncovered, and fails when fewer do, naming the value to
+# lower it to, so the change whose tests cover a gate is the one that lowers it.
+# A ceiling above the count would be room for that many gates to arrive untested
+# and pass; held equal, a gate arriving without tests fails here rather than
+# diluting the combined figure by a percentage point nobody notices. A count
+# cannot see one change that adds an untested gate and covers another.
 #
-# Two of the files this counts as covered are covered by IMPORT, not by tests.
-# check-image-vulnerabilities.py loads check-image-pins.py by path so the two
-# cannot disagree about what the fleet is, and that loads render-addons.py in
-# turn; a test module importing the first executes the module bodies of all
-# three. Coverage cannot tell that from a test, so both read as non-zero while
-# carrying no assertions of their own. The ceiling is lowered anyway, because a
-# ratchet that declines to move is one nobody can regress against — but it is
-# the weaker half of this file's claim, and the per-gate floors and the controls
-# in scripts/tests/controls.py are where the real one lives.
-#
-# So this number moves by what a change actually covered, not by what the run
-# reports. A gate arriving with its own tests lowers it; a gate that starts
-# reading as covered because something new imports it does not, and an import
-# removed later would give that coverage back with nothing lost.
-MAX_UNCOVERED_GATES = 9
+# "Uncovered" is coverage's reading, and coverage cannot tell a test from an
+# import. A gate a test module only loads — to read a constant, or because a
+# gate under test loads it by path — executes its module body and reads as
+# covered while carrying no assertion of its own; if that load goes, the gate is
+# back in the count and the run fails until it has tests or the ceiling is
+# raised with the reason. That is the weaker half of this file's claim, and the
+# per-gate floors and the controls in scripts/tests/controls.py are where a
+# gate's behaviour is asserted.
+MAX_UNCOVERED_GATES = 7
 
 PER_GATE_FLOORS = {
     "scripts/check-named-things.py": 40,
@@ -362,6 +361,13 @@ def check_coverage() -> int:
             f"above the ceiling of {MAX_UNCOVERED_GATES}: "
             f"{', '.join(uncovered[:4])}{' …' if len(uncovered) > 4 else ''}"
         )
+    elif len(uncovered) < MAX_UNCOVERED_GATES:
+        failures.append(
+            f"{len(uncovered)} of {len(gates)} gate scripts carry no unit coverage, "
+            f"under the ceiling of {MAX_UNCOVERED_GATES}, which leaves room for "
+            f"{MAX_UNCOVERED_GATES - len(uncovered)} gate(s) to arrive without "
+            f"tests and pass. Lower MAX_UNCOVERED_GATES to {len(uncovered)}"
+        )
 
     exempt, exempt_problem = control_exempt_gates()
     if exempt_problem:
@@ -380,8 +386,9 @@ def check_coverage() -> int:
         print()
         for f in failures:
             print(f"FAIL  {f}")
-        print("\n  Coverage floors ratchet. Add the tests that restore the number, or "
-              "\n  lower the floor deliberately in scripts/tests/run.py with the reason.")
+        print("\n  Coverage floors and the uncovered-gate ceiling ratchet. Add the tests "
+              "\n  that restore the number, or move the bound deliberately in "
+              "\n  scripts/tests/run.py with the reason.")
         return 1
 
     print(f"coverage ratchet OK: {total:.1f}% combined statement+branch "
