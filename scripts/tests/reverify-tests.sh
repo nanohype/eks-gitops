@@ -69,7 +69,8 @@ pass=0; fail=0
 # mutant reads as a miss when a test does in fact catch it.
 ALL_MODULES="test_policy_admission test_platform_crs test_dashboards \
   test_render_addons test_image_pins test_log_volume_budget test_controls \
-  test_corpus_floors"
+  test_corpus_floors test_gatelib test_chart_deprecation test_falco_rule_floor \
+  test_image_vulnerabilities test_renovate_coverage"
 
 # Bytecode caching keys on (mtime, size). A restore and the next mutation inside
 # the same second can hand the run the PREVIOUS mutant's module, and the suite
@@ -350,14 +351,25 @@ F=scripts/render-addons.py
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace("    return (any(t in low for t in _NOT_FOUND)\n"
-              "            and not any(t in low for t in _UNREACHABLE))",
-              "    return any(t in low for t in _NOT_FOUND)", 1)
+m = s.replace("        return self.oci_ref() if self.is_oci else self.repo",
+              "        return self.repo", 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
-rejects "helm failure: call every missing-chart message a finding" test_render_addons \
-  test_a_message_naming_both_is_read_as_unreachable
+rejects "source: fetch an OCI chart from its bare repoURL" test_render_addons \
+  test_an_oci_chart_is_fetched_from_its_reference
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    cmd = ["helm", "template", unit.chart, str(archive)]',
+              '    cmd = ["helm", "template", unit.chart, unit.source, "--version", unit.version]', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "render: hand helm the registry reference, not the archive" test_render_addons \
+  test_the_archive_is_fetched_from_the_unit_source_and_rendered
 res $F
 
 edit $F <<'PY'
@@ -410,6 +422,194 @@ p.write_text(m)
 PY
 rejects "parity: read only the first exclude.any entry" test_policy_admission \
   test_the_union_of_both_entries_is_the_list
+res $F
+
+F=scripts/gatelib.py
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('            if err.code != 429:\n                raise\n',
+              '            if err.code >= 500:\n                raise\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "429: retry every client error too" test_gatelib \
+  test_other_statuses_are_reported_on_the_first_attempt
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    for attempt in range(1, RETRY_ATTEMPTS + 1):',
+              '    for attempt in range(1, RETRY_ATTEMPTS + 2):', 1)
+m = m.replace('if attempt == RETRY_ATTEMPTS:', 'if attempt == RETRY_ATTEMPTS + 1:')
+assert m.count('RETRY_ATTEMPTS + 2):') == 1, "mutation did not land"
+assert m.count('if attempt == RETRY_ATTEMPTS + 1:') == 2, "mutation did not land"
+p.write_text(m)
+PY
+rejects "bound: allow one request past RETRY_ATTEMPTS" test_gatelib \
+  test_a_registry_that_never_relents_is_reported_after_the_bound \
+  test_a_rate_limit_after_the_challenge_is_reported_at_the_bound
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('            if asked is not None and asked > RETRY_MAX_WAIT_SECONDS:',
+              '            if False:', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "cap: sleep however long Retry-After asks" test_gatelib \
+  test_a_wait_beyond_the_cap_is_reported_not_slept
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('                                clock())\n            err.close()\n',
+              '                                clock())\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "close: sleep holding the refused response" test_gatelib \
+  test_the_refused_response_is_closed_before_the_wait
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        when = when.replace(tzinfo=datetime.UTC)',
+              '        pass', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "Retry-After: read a zoneless date in the local zone" test_gatelib \
+  test_a_naive_http_date_is_read_as_utc
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    query = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)',
+              '    query = []', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "token: drop the query the realm carries" test_gatelib \
+  test_a_realm_that_already_carries_a_query_keeps_it
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        return self._get(url, headers, f"Bearer {self.token}")',
+              '        return self._get(url, headers, f"Bearer {self.token}", challenge=self._authorize)', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "token: answer a 401 on a read that already carries one" test_gatelib \
+  test_a_401_on_the_blob_read_is_reported_not_answered_again
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        if algorithm != "sha256" or hashlib.sha256(data).hexdigest() != expected:',
+              '        if False:', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "blob: keep bytes that do not match their digest" test_gatelib \
+  test_a_blob_that_does_not_match_its_digest_is_refused
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('answered=err.code == 404)',
+              'answered=True)', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "unavailable: call every HTTP status an answer" test_gatelib \
+  test_a_server_fault_or_network_error_was_not_answered
+res $F
+
+
+F=scripts/check-chart-deprecation.py
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    except gatelib.ChartUnavailable as err:',
+              '    except KeyError as err:', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "fetch: let an unreadable chart raise" test_chart_deprecation \
+  test_an_http_status_names_the_status_and_the_url \
+  test_an_exhausted_rate_limit_is_reported_in_its_own_words \
+  test_a_network_error_is_reported
+res $F
+
+
+F=scripts/check-falco-rule-floor.py
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        if exc.code == 404:',
+              '        if exc.code == 0:', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "rulesfile: read a 404 as the network's fault" test_falco_rule_floor \
+  test_a_ref_the_registry_does_not_have_is_a_finding
+res $F
+
+
+F=scripts/check-image-vulnerabilities.py
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        today = datetime.datetime.now(datetime.UTC).date()',
+              '        today = datetime.date.today()', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "review_by: count days on the runner's local calendar" test_image_vulnerabilities \
+  test_an_entry_dated_the_local_day_is_due_on_the_utc_day
+res $F
+
+
+F=scripts/check-renovate-coverage.py
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        AnnotatedPins(ANNOTATED_REF),',
+              '        AnnotatedPins(ANNOTATED),', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "schema refs: read their annotation as a CI tool's" test_renovate_coverage \
+  test_an_annotated_ref_is_claimed_by_the_git_refs_manager \
+  test_the_shipped_scan_pins_both_catalogs
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        check_gomod_pins,\n',
+              '        check_git_pins,\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "Go modules: check them as git-pinned directories" test_renovate_coverage \
+  test_a_go_module_needs_the_gomod_manager
 res $F
 
 F=scripts/check-image-pins.py
@@ -582,7 +782,7 @@ echo "RESULT pass=$pass fail=$fail"
 # The floor this harness owes for the same reason the gates owe theirs: with
 # every `rejects` line deleted it would report pass=0 fail=0 and exit 0, which is
 # a green run over nothing planted.
-MIN_PROBES=31
+MIN_PROBES=46
 total=$((pass + fail))
 if [ "$total" -lt "$MIN_PROBES" ]; then
   echo "FAIL  ran $total probe(s), under the floor of $MIN_PROBES — this harness"
