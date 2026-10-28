@@ -586,10 +586,15 @@ class RenderingTheFleet(unittest.TestCase):
             (d / f"values-{env}.yaml").write_text("{}\n")
 
     def render(self, units, tools, skip=(), kustomize=()):
-        aliases = {u.repo: "alias" for u in units}
+        self.fetched: list[tuple[str, str, str]] = []
+
+        def archive(source, chart, version):
+            self.fetched.append((source, chart, version))
+            return pathlib.Path("cache") / f"{chart}-{version}.tgz"
+
         with mock.patch.object(gate, "REPO_ROOT", self.root), \
              mock.patch.object(gate, "discover", return_value=units), \
-             mock.patch.object(gate, "add_repos", return_value=aliases), \
+             mock.patch.object(gate.gatelib, "chart_archive_or_exit", archive), \
              mock.patch.object(gate, "SKIP_CHARTS", dict.fromkeys(skip, "reason")), \
              mock.patch.object(gate, "KUSTOMIZE_WORKLOADS", list(kustomize)), \
              mock.patch.object(gate, "_run", tools):
@@ -603,7 +608,8 @@ class RenderingTheFleet(unittest.TestCase):
         self.assertEqual(landed, {"monitoring"})
         helm = tools.calls[0]
         self.assertEqual(helm[:3], ["helm", "template", "loki"])
-        self.assertIn("alias/loki", helm)
+        self.assertEqual(helm[3], str(pathlib.Path("cache") / "loki-1.0.0.tgz"))
+        self.assertEqual(self.fetched[0], ("https://grafana.github.io/helm-charts", "loki", "1.0.0"))
         self.assertEqual(helm[helm.index("-n") + 1], "monitoring")
         self.assertIn("a.b=1", helm)
         self.assertTrue(helm[-1].endswith("values-staging.yaml"))
@@ -619,14 +625,14 @@ class RenderingTheFleet(unittest.TestCase):
         self.assertEqual((self.out / "zz-policy-gate-runtime-pod.yaml").read_text(),
                          gate.RUNTIME_POD_MANIFEST)
 
-    def test_an_oci_chart_is_rendered_by_its_reference(self):
+    def test_an_oci_chart_is_fetched_by_its_reference(self):
         self.addon(envs=("production",), base=False)
         tools = Tools(helm=completed(stdout=DEPLOYMENT))
-        u = unit(chart="operator", repo="oci://ghcr.io/example/charts/operator")
+        u = unit(chart="operator", repo="oci://ghcr.io/example/charts")
         (count, _), _ = self.render([u], tools)
         self.assertEqual(count, 1)
+        self.assertEqual(self.fetched, [("oci://ghcr.io/example/charts/operator", "operator", "1.0.0")])
         helm = tools.calls[0]
-        self.assertIn("oci://ghcr.io/example/charts/operator", helm)
         self.assertEqual(sum(1 for a in helm if a == "-f"), 1,
                          "with no base values file, only the env file is passed")
 
@@ -706,7 +712,7 @@ class BuildingAndApplyingThePolicies(unittest.TestCase):
         self.assertEqual((proc.returncode, proc.stdout), (0, "ran\n"))
         with mock.patch.object(gate.subprocess, "run") as run:
             gate._run(["true"])
-        self.assertEqual(run.call_args.kwargs["timeout"], gate.NETWORK_TIMEOUT)
+        self.assertEqual(run.call_args.kwargs["timeout"], gate.RENDER_TIMEOUT)
 
 
 class TheWholeRun(unittest.TestCase):
