@@ -1157,10 +1157,11 @@ def main() -> int:
     # chart at all, so certifying them alongside the pins would claim coverage
     # over a population this never examined.
     bearing = len({p.appset for p in pins})
+    *rest, last = [f.label for f in OTHER_FAMILIES]
+    families = f"{', '.join(rest)} and {last}" if rest else last
     print(f"renovate coverage OK: {total} chart pin(s) across {bearing} of "
           f"{len(appset_files())} ApplicationSets, plus {others} pin(s) "
-          f"in the git-pinned CRDs, the CI tool binaries, the Go module and the "
-          f"schema catalogs kubeconform reads — "
+          f"of kind {families} — "
           f"every one watched by a manager that resolves. {oci} of the chart pins "
           f"are OCI and also assert repoURL repeats their chart name; "
           f"{len(NO_PINS)} file(s) are asserted to pin nothing")

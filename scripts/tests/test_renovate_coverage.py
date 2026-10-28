@@ -811,6 +811,14 @@ class RepointingAnyManagerInTheShippedConfig(unittest.TestCase):
         rc, _ = self.run_with(self.cfg)
         self.assertEqual(rc, 0, f"unmutated run failed: {cov.failures}")
 
+    def test_the_success_sentence_names_every_non_chart_family(self):
+        """Built from OTHER_FAMILIES, so a family declared there is one it names."""
+        rc, out = self.run_with(self.cfg)
+        self.assertEqual(rc, 0, f"unmutated run failed: {cov.failures}")
+        first = out.splitlines()[0]
+        for fam in cov.OTHER_FAMILIES:
+            self.assertIn(fam.label, first)
+
     def test_repointing_any_configured_manager_is_caught(self):
         blocks = [k for k, v in self.cfg.items()
                   if isinstance(v, dict) and "managerFilePatterns" in v]
