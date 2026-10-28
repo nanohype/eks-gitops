@@ -7,7 +7,7 @@
 # 1-indexed. Those readings measured nothing.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-cd "$ROOT"
+cd "$ROOT" || exit 2
 SP="$(mktemp -d)"
 
 # Backups live OUTSIDE $SP, and that placement is the whole fix. This harness
@@ -603,7 +603,7 @@ run nonzero "policy-validity: kyverno discards the policy" ./scripts/check-polic
 res $F
 
 F=docs/runbooks/troubleshooting.md; mut $F
-printf '\nRun `task nonexistent-target-probe`.\n' >> $F
+printf "\nRun \`task nonexistent-target-probe\`.\n" >> "$F"
 run nonzero "named-things: fabricated task target" ./scripts/check-named-things.py
 res $F
 
@@ -630,8 +630,8 @@ printf 'a: 1\na: 2\nb: 3   \n' > ./rv-lint.yaml
 run nonzero "yamllint: duplicate key + trailing space" yamllint -c .yamllint.yaml .
 rm -f ./rv-lint.yaml
 
-mkdir -p $SP/tbad
-cat > $SP/tbad/bad.yaml <<'YAML'
+mkdir -p "$SP/tbad"
+cat > "$SP/tbad/bad.yaml" <<'YAML'
 apiVersion: v1
 kind: Pod
 metadata: {name: bad}
@@ -642,10 +642,10 @@ spec:
       image: nginx:latest
       securityContext: {privileged: true, runAsUser: 0}
 YAML
-run nonzero "trivy config: privileged pod" trivy config --exit-code 1 --severity MEDIUM,HIGH,CRITICAL --quiet $SP/tbad
+run nonzero "trivy config: privileged pod" trivy config --exit-code 1 --severity MEDIUM,HIGH,CRITICAL --quiet "$SP/tbad"
 
-mkdir -p $SP/wbad/.github/workflows
-cat > $SP/wbad/.github/workflows/bad.yml <<'YAML'
+mkdir -p "$SP/wbad/.github/workflows"
+cat > "$SP/wbad/.github/workflows/bad.yml" <<'YAML'
 on: push
 jobs:
   a:
@@ -653,19 +653,19 @@ jobs:
     steps:
       - uses: actions/checkout@main
 YAML
-run nonzero "zizmor: unpinned action" ./scripts/check-workflows.sh $SP/wbad/.github/workflows
+run nonzero "zizmor: unpinned action" ./scripts/check-workflows.sh "$SP/wbad/.github/workflows"
 
 # A rejection is only as useful as what reaches the log: the line naming the
 # manifest, and the two catalog commits the scan read its schemas at. The status
 # alone says neither, so the captured output is read as well.
-mkdir -p $SP/kbad
-cat > $SP/kbad/rv-bad.yaml <<'YAML'
+mkdir -p "$SP/kbad"
+cat > "$SP/kbad/rv-bad.yaml" <<'YAML'
 apiVersion: v1
 kind: ConfigMap
 metadata: {name: rv-bad}
 data: {a: 1}
 YAML
-run 1 "kubeconform-scan: a manifest the schema rejects" ./scripts/kubeconform-scan.sh $SP/kbad
+run 1 "kubeconform-scan: a manifest the schema rejects" ./scripts/kubeconform-scan.sh "$SP/kbad"
 for want in "rv-bad.yaml" "FAIL  kubeconform exited 1." \
     "yannh/kubernetes-json-schema@$(sed -n 's/^K8S_SCHEMA_REF="\(.*\)"$/\1/p' scripts/kubeconform-scan.sh)" \
     "datreeio/CRDs-catalog@$(sed -n 's/^CRD_CATALOG_REF="\(.*\)"$/\1/p' scripts/kubeconform-scan.sh)"; do

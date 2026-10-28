@@ -18,14 +18,16 @@ MIN_TESTS=24
 ATTEMPTS=3
 PAUSE=5
 
-# The seconds one run of the suite may take. A read the registry, the TUF mirror
-# or Rekor stops answering partway through can hold the CLI for as long as the
-# connection stays open, so a run that does not finish inside this counts as a
-# transport failure like any other. Every attempt at this bound, with the
-# probes and pauses around them, fits inside the kyverno job's timeout-minutes,
-# so the job ends on this script's diagnostic rather than on the runner's;
-# scripts/tests/test_kyverno_test.py holds the two together.
-RUN_BOUND=240
+# The seconds one run of the suite may take, and the seconds a run still going
+# after that is given to stop before it is killed. A read the registry, the TUF
+# mirror or Rekor stops answering partway through can hold the CLI for as long
+# as the connection stays open, so a run that does not finish inside
+# RUN_TIMEOUT counts as a transport failure like any other. Every attempt at
+# both, with the probes and pauses around them, fits inside the kyverno job's
+# timeout-minutes, so the job ends on this script's diagnostic rather than on
+# the runner's; scripts/tests/test_kyverno_test.py holds the two together.
+RUN_TIMEOUT=240
+KILL_TIMEOUT=10
 
 # shellcheck source=transport-failure.sh
 . "$ROOT/scripts/transport-failure.sh"
@@ -38,8 +40,8 @@ fi
 
 # GNU coreutils' timeout, which macOS ships under neither name: Homebrew's
 # coreutils installs it as gtimeout.
-BOUND="$(command -v timeout || command -v gtimeout)"
-if [ -z "$BOUND" ]; then
+TIMEOUT_CMD="$(command -v timeout || command -v gtimeout)"
+if [ -z "$TIMEOUT_CMD" ]; then
   echo "Cannot run: neither timeout nor gtimeout is on PATH, so a run stalled on a"
   echo "read could hold this job until the runner ends it. On macOS,"
   echo "\`brew install coreutils\` installs gtimeout."
@@ -74,7 +76,7 @@ cd "$ROOT" || { echo "Cannot run: $ROOT cannot be entered."; exit 2; }
 # with --detailed-results (the message column) and -v 1 (the log).
 #
 # So the three are reached first, and a run whose output carries a transport
-# failure anywhere, or that does not finish within RUN_BOUND, has not decided
+# failure anywhere, or that does not finish within RUN_TIMEOUT, has not decided
 # its image-verification rows either way. It is run again, up to ATTEMPTS
 # times, and a transport failure in every attempt exits 2: a run that could not
 # verify, not a regression and not a pass. A run carrying none is decided on
@@ -96,14 +98,17 @@ fi
 
 attempt=1
 while :; do
-  out="$("$BOUND" "$RUN_BOUND" kyverno test "$TESTS" --detailed-results -v 1 2>&1)"
+  out="$("$TIMEOUT_CMD" -k "$KILL_TIMEOUT" "$RUN_TIMEOUT" kyverno test "$TESTS" --detailed-results -v 1 2>&1)"
   rc=$?
-  # timeout exits 124 when it ended the run, whatever the run had printed.
-  if [ "$rc" -eq 124 ]; then
-    transport="kyverno test did not finish within ${RUN_BOUND}s"
-  else
-    transport="$(printf '%s\n' "$out" | transport_failures)"
-  fi
+  # timeout exits 124 when its TERM ended the run, and 137 when the run was
+  # still going KILL_TIMEOUT seconds later and was killed. A run killed for any
+  # other reason exits 137 too. None of them finished, so none decided a row,
+  # whatever it had printed.
+  case "$rc" in
+    124) transport="kyverno test did not finish within ${RUN_TIMEOUT}s" ;;
+    137) transport="kyverno test was killed before it finished" ;;
+    *) transport="$(printf '%s\n' "$out" | transport_failures)" ;;
+  esac
   [ -z "$transport" ] && break
   if [ "$attempt" -ge "$ATTEMPTS" ]; then
     printf '%s\n' "$out"

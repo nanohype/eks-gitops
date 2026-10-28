@@ -14,8 +14,9 @@ These run the real script with stubs named kyverno, timeout, curl and sleep
 first on PATH, and the few tools it reads output with linked beside them, so a
 kyverno installed on the machine cannot answer in the stub's place. Each
 kyverno call prints the next scripted run and records the arguments it was
-given; the timeout stub records the bound and runs what it was handed, so a
-scripted run exiting 124 is what timeout reports for a run it ended.
+given; the timeout stub records the bounds and runs what it was handed, so a
+scripted run exiting 124 or 137 is what timeout reports for a run it ended or
+killed.
 """
 
 from __future__ import annotations
@@ -50,7 +51,8 @@ def _setting(name: str) -> int:
 
 ATTEMPTS = _setting("ATTEMPTS")
 PAUSE = _setting("PAUSE")
-RUN_BOUND = _setting("RUN_BOUND")
+RUN_TIMEOUT = _setting("RUN_TIMEOUT")
+KILL_TIMEOUT = _setting("KILL_TIMEOUT")
 
 # Bash builtins only: the PATH the script runs under holds nothing else.
 KYVERNO = """#!{bash}
@@ -70,10 +72,12 @@ SLEEP = """#!{bash}
 printf '%s\\n' "$1" >> '{bin}/slept'
 """
 
-# GNU timeout's shape, `timeout DURATION COMMAND...`, under either name.
+# GNU timeout's shape, `timeout [OPTION]... DURATION COMMAND...`, under either
+# name. What precedes the command is recorded as the bounds it was given.
 TIMEOUT = """#!{bash}
-printf '%s %s\\n' "$1" "$2" >> '{bin}/bounds'
-shift
+bounds=()
+while [ "$#" -gt 0 ] && [ "$1" != kyverno ]; do bounds+=("$1"); shift; done
+printf '%s\\n' "${{bounds[*]}}" >> '{bin}/bounds'
 exec "$@"
 """
 
@@ -140,6 +144,12 @@ THROTTLED = ("\n".join([row(15, "vi-signed", "Fail", "Want pass, got fail", IDEN
 
 # A run timeout ended partway through its table.
 CUT_OFF = (row(15, "vi-signed", "Pass", "Ok", "success"), 124)
+
+# A run still going KILL_TIMEOUT after that, which timeout killed.
+KILLED = (row(15, "vi-signed", "Pass", "Ok", "success"), 137)
+
+# What timeout is handed before the command it bounds.
+BOUNDS = f"-k {KILL_TIMEOUT} {RUN_TIMEOUT}"
 
 MARKED = "results:\n  - policy: verify-images\n    isImageValidatingPolicy: true\n"
 
@@ -272,22 +282,34 @@ class ARunThatMetATransportFailure(KyvernoTestScript):
 class ARunThatDoesNotFinish(KyvernoTestScript):
     """A read that stops answering holds the CLI; the bound ends it as a transport failure."""
 
-    def test_each_run_is_bounded(self):
+    def test_each_run_is_bounded_and_killed_if_it_outlasts_the_bound(self):
         self.run_script(GOT_ERROR, CLEAN)
-        self.assertEqual(self.bounds(), [f"{RUN_BOUND} kyverno"] * 2)
+        self.assertEqual(self.bounds(), [BOUNDS] * 2)
 
     def test_one_cut_off_is_run_again(self):
         rc, said = self.run_script(CUT_OFF, CLEAN)
         self.assertEqual(rc, 0, said)
         self.assertEqual(self.calls(), 2)
-        self.assertIn(f"kyverno test did not finish within {RUN_BOUND}s", said)
+        self.assertIn(f"kyverno test did not finish within {RUN_TIMEOUT}s", said)
+
+    def test_one_killed_is_run_again(self):
+        rc, said = self.run_script(KILLED, CLEAN)
+        self.assertEqual(rc, 0, said)
+        self.assertEqual(self.calls(), 2)
+        self.assertIn("kyverno test was killed before it finished", said)
+
+    def test_one_killed_every_time_cannot_run(self):
+        rc, said = self.run_script(KILLED)
+        self.assertEqual(rc, 2, said)
+        self.assertEqual(self.calls(), ATTEMPTS)
+        self.assertIn("killed before it finished", said.split("Cannot run:")[1])
 
     def test_one_cut_off_every_time_cannot_run(self):
         rc, said = self.run_script(CUT_OFF)
         self.assertEqual(rc, 2, said)
         self.assertEqual(self.calls(), ATTEMPTS)
         self.assertIn(f"Cannot run: all {ATTEMPTS} runs met a transport failure", said)
-        self.assertIn(f"did not finish within {RUN_BOUND}s", said.split("Cannot run:")[1])
+        self.assertIn(f"did not finish within {RUN_TIMEOUT}s", said.split("Cannot run:")[1])
 
     def test_gtimeout_bounds_the_run_where_timeout_is_absent(self):
         """macOS ships neither name, and Homebrew's coreutils installs this one."""
@@ -295,7 +317,7 @@ class ARunThatDoesNotFinish(KyvernoTestScript):
         self.stub("gtimeout", TIMEOUT)
         rc, said = self.run_script(CLEAN)
         self.assertEqual(rc, 0, said)
-        self.assertEqual(self.bounds(), [f"{RUN_BOUND} kyverno"])
+        self.assertEqual(self.bounds(), [BOUNDS])
 
     def test_no_bound_cannot_run_and_tests_nothing(self):
         (self.bin / "timeout").unlink()
@@ -308,12 +330,13 @@ class ARunThatDoesNotFinish(KyvernoTestScript):
         """The job ends on the script's diagnostic, not on the runner cancelling it.
 
         The worst case is every probe taking its whole --max-time, every attempt
-        cut off at the bound, and every pause between them.
+        outlasting its bound and the grace after it until it is killed, and
+        every pause between them.
         """
         probe = re.search(r"--max-time (\d+)", SCRIPT.read_text())
         self.assertIsNotNone(probe, f"{SCRIPT.name} bounds no endpoint probe")
         assert probe is not None
-        worst = (len(ENDPOINTS) * int(probe.group(1)) + ATTEMPTS * RUN_BOUND
+        worst = (len(ENDPOINTS) * int(probe.group(1)) + ATTEMPTS * (RUN_TIMEOUT + KILL_TIMEOUT)
                  + PAUSE * sum(range(1, ATTEMPTS)))
         job = yaml.safe_load(CI.read_text())["jobs"]["kyverno"]
         self.assertIn("./scripts/kyverno-test.sh policies/kyverno/tests",
