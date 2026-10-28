@@ -602,187 +602,101 @@ class WhatCannotBeReadReachesAVerdict(unittest.TestCase):
         self.assertIn("rendered no images at all", out)
 
 
-class WhatHelmReportsPulling(unittest.TestCase):
-    """An OCI registry serves charts and container images through one grammar.
+class WhatTheInventoryRenders(unittest.TestCase):
+    """`inventory` renders the archive gatelib fetched, never a registry ref.
 
-    `public.ecr.aws/karpenter/karpenter:1.14.0` is indistinguishable from an
-    image by shape, and it is the chart — the container beside it is
-    `public.ecr.aws/karpenter/controller`. Nothing in the reference says which,
-    and no walk over the render can, because a chart coordinate reaches no pod
-    template by construction.
-
-    helm answers it, about this run: it prints what it fetched as a chart. That
-    is an observation rather than a name somebody wrote down, which matters
-    because a declaration here could not survive. `declaration_rot` removes an
-    entry the render does not support, and the render carries these only under
-    the helm builds that print the report to stdout — so one rule would demand
-    the entry and the other remove it.
+    So every chart reaches helm as a local file, which is what lets a registry's
+    429 be waited out in one place, and a chart that cannot be fetched is a unit
+    the gate did not examine rather than one it passed. helm itself is stubbed:
+    the tool is the external input, and what varies is what it is handed.
     """
-
-    REPORT = ("Pulled: public.ecr.aws/karpenter/karpenter:1.14.0\n"
-              "Digest: sha256:" + "4c1e" + "a" * 60 + "\n")
-
-    def test_the_report_names_the_artifact(self):
-        self.assertEqual(gate.chart_artifacts(self.REPORT),
-                         {"public.ecr.aws/karpenter/karpenter:1.14.0"})
-
-    def test_a_render_with_no_report_names_nothing(self):
-        self.assertEqual(gate.chart_artifacts(DEPLOYMENT), set())
-
-    def test_the_digest_line_is_not_an_artifact(self):
-        """It names the artifact above it, not another one."""
-        self.assertNotIn("sha256:" + "4c1e" + "a" * 60,
-                         gate.chart_artifacts(self.REPORT))
-
-    def test_a_pulled_chart_is_not_an_unplaceable_reference(self):
-        """The whole finding, end to end. The report leads the manifests, so on
-        the helm builds that print it to stdout every OCI-sourced chart puts its
-        own coordinates into the stream this parses."""
-        rendered = self.REPORT + DEPLOYMENT
-        unrendered: list[tuple[str, str]] = []
-        unclassified: list[tuple[str, str]] = []
-        found = gate.extract_images(rendered, "karpenter", unrendered, unclassified,
-                                    None, gate.chart_artifacts(rendered))
-        self.assertEqual((unrendered, unclassified), ([], []))
-        self.assertEqual(found, {"ghcr.io/example/app:1.0.0"})
-
-    def test_without_the_report_the_same_stream_is_unplaceable(self):
-        """The control on the case above: it passes because the report was read,
-        not because the reference stopped being image-shaped."""
-        rendered = self.REPORT + DEPLOYMENT
-        unrendered: list[tuple[str, str]] = []
-        unclassified: list[tuple[str, str]] = []
-        gate.extract_images(rendered, "karpenter", unrendered, unclassified)
-        self.assertEqual(len(unclassified), 1)
-        self.assertIn("public.ecr.aws/karpenter/karpenter:1.14.0", unclassified[0][1])
-
-    def test_a_container_sharing_the_repository_path_is_not_passed_over(self):
-        """Compared whole, not on the bare name.
-
-        A registry can serve a chart and an image from one path, and passing
-        over every reference sharing a pulled chart's name would take the image
-        with it — the one direction this gate must never fail in.
-        """
-        rendered = ("Pulled: ghcr.io/example/thing:1.0.0\n"
-                    "Digest: sha256:" + "b" * 64 + "\n"
-                    "apiVersion: v1\nkind: ConfigMap\ndata:\n"
-                    "  cfg: |\n    image: ghcr.io/example/thing:9.9.9\n")
-        unrendered: list[tuple[str, str]] = []
-        unclassified: list[tuple[str, str]] = []
-        gate.extract_images(rendered, "thing", unrendered, unclassified,
-                            None, gate.chart_artifacts(rendered))
-        self.assertEqual(len(unclassified), 1)
-        self.assertIn("ghcr.io/example/thing:9.9.9", unclassified[0][1])
-
-    def test_the_same_artifact_carrying_a_digest_is_recognised(self):
-        """`<ref>@sha256:<hex>` and `<ref>` are one artifact; the report names
-        the second and the render can carry either."""
-        ref = "ghcr.io/example/chart:1.0.0"
-        rendered = (f"Pulled: {ref}\n"
-                    "apiVersion: v1\nkind: ConfigMap\ndata:\n"
-                    f"  cfg: |\n    chart: {ref}@sha256:{'c' * 64}\n")
-        unrendered: list[tuple[str, str]] = []
-        unclassified: list[tuple[str, str]] = []
-        gate.extract_images(rendered, "chart", unrendered, unclassified,
-                            None, gate.chart_artifacts(rendered))
-        self.assertEqual(unclassified, [])
-
-    def test_a_pulled_artifact_still_reaches_the_declaration_record(self):
-        """`seen` is what the render CONTAINED, so declaration_rot keeps reading
-        the same corpus whether or not a reference was passed over."""
-        rendered = self.REPORT + DEPLOYMENT
-        seen: set[str] = set()
-        gate.extract_images(rendered, "karpenter", [], [], seen,
-                            gate.chart_artifacts(rendered))
-        self.assertIn("public.ecr.aws/karpenter/karpenter", seen)
-
-
-class TheReportIsReadFromEitherStream(unittest.TestCase):
-    """Which stream carries it is a property of the helm build, not of this repo.
-
-    Some helm builds write the OCI pull report to stdout, where it lands in the
-    manifest stream this gate parses; some write it to stderr, where nothing sees
-    it. Reading one only makes the gate's answer depend on which helm ran it —
-    green on the machine that renders, red in the job that installs a different
-    build, with the same tree.
-
-    So `inventory` is exercised here against both stream shapes, with helm itself
-    stubbed: the tool is the external input, and what varies is the input.
-    """
-
-    REPORT = ("Pulled: public.ecr.aws/karpenter/karpenter:1.14.0\n"
-              "Digest: sha256:" + "4c1e" + "a" * 60 + "\n")
 
     class Unit:
         chart = "karpenter"
         path = "addons/operations/karpenter"
-        repo = "https://example.com"
         version = "1.14.0"
         namespace = "kube-system"
-        params: tuple = ()
-        is_oci = True
+        params: tuple = (("settings.clusterName", "c"),)
+        source = "oci://public.ecr.aws/karpenter/karpenter"
 
-        def oci_ref(self):
-            return "oci://public.ecr.aws/karpenter/karpenter"
-
-    def inventory_with(self, stdout, stderr):
-        """inventory() over one unit whose helm run produced these two streams."""
+    def inventory_with(self, *, fetched=None, returncode=0, stdout=DEPLOYMENT,
+                       stderr="", values=("values.yaml", "values-production.yaml")):
+        """inventory() over one unit, recording what was fetched and run."""
         root = pathlib.Path(tempfile.mkdtemp())
-        (root / self.Unit.path).mkdir(parents=True)
+        unit_dir = root / self.Unit.path
+        unit_dir.mkdir(parents=True)
+        for name in values:
+            (unit_dir / name).write_text("{}\n")
+        archive = root / "karpenter-1.14.0.tgz"
+        self.fetches: list[tuple] = []
+        self.commands: list[list[str]] = []
 
         class Completed:
-            returncode = 0
+            def __init__(self, rc, out, err):
+                self.returncode, self.stdout, self.stderr = rc, out, err
 
-            def __init__(self, out, err):
-                self.stdout, self.stderr = out, err
+        def chart_archive(source, chart, version, **_):
+            self.fetches.append((source, chart, version))
+            if isinstance(fetched, BaseException):
+                raise fetched
+            return archive
 
-        saved = (gate.ROOT, gate.render_addons.discover, gate.render_addons.add_repos,
+        def run(cmd, **_):
+            self.commands.append(cmd)
+            return Completed(returncode, stdout, stderr)
+
+        saved = (gate.ROOT, gate.render_addons.discover, gate.gatelib.chart_archive,
                  gate.subprocess.run, gate.gatelib.require)
         gate.ROOT = root
         gate.render_addons.discover = lambda *a, **k: [self.Unit()]
-        gate.render_addons.add_repos = lambda *a, **k: {}
-        gate.subprocess.run = lambda *a, **k: Completed(stdout, stderr)
+        gate.gatelib.chart_archive = chart_archive
+        gate.subprocess.run = run
         gate.gatelib.require = lambda *a, **k: None
         try:
-            return gate.inventory("production")
+            return gate.inventory("production"), archive, unit_dir
         finally:
-            (gate.ROOT, gate.render_addons.discover, gate.render_addons.add_repos,
+            (gate.ROOT, gate.render_addons.discover, gate.gatelib.chart_archive,
              gate.subprocess.run, gate.gatelib.require) = saved
 
-    def test_a_report_on_stdout_is_read(self):
-        """The shape that fails: the report is in the manifest stream, so the
-        chart's own coordinates are a reference the classifier must place."""
-        _, unrendered, unclassified = self.inventory_with(self.REPORT + DEPLOYMENT, "")
-        self.assertEqual((unrendered, unclassified), ([], []))
-
-    # A chart carrying its own OCI coordinate in its rendered content. Whether
-    # the pull report reaches the gate then decides the verdict on the SAME
-    # render, which is what makes the stream choice observable at all.
-    SELF_REFERENCING = ("apiVersion: v1\nkind: ConfigMap\ndata:\n"
-                        "  cfg: |\n"
-                        "    chart: public.ecr.aws/karpenter/karpenter:1.14.0\n")
-
-    def test_a_report_on_stderr_is_read(self):
-        """The render carries the coordinate and the report does not, so a gate
-        reading stdout alone has no evidence and reports the chart's own
-        reference as one it cannot place."""
-        _, unrendered, unclassified = self.inventory_with(
-            DEPLOYMENT + "---\n" + self.SELF_REFERENCING, self.REPORT)
-        self.assertEqual((unrendered, unclassified), ([], []))
-
-    def test_both_stream_shapes_produce_the_same_verdict(self):
-        """The property, stated directly: one tree, two helm builds, one answer."""
-        body = DEPLOYMENT + "---\n" + self.SELF_REFERENCING
-        on_out = self.inventory_with(self.REPORT + body, "")
-        on_err = self.inventory_with(body, self.REPORT)
-        self.assertEqual(on_out[0], on_err[0])
-        self.assertEqual((on_out[1], on_out[2]), (on_err[1], on_err[2]))
-        self.assertEqual(on_err[2], [])
-
-    def test_no_report_at_all_leaves_the_render_unchanged(self):
-        images, unrendered, unclassified = self.inventory_with(DEPLOYMENT, "")
+    def test_helm_renders_the_fetched_archive(self):
+        (images, unrendered, unclassified), archive, unit_dir = self.inventory_with()
+        self.assertEqual(self.fetches, [(self.Unit.source, "karpenter", "1.14.0")])
+        self.assertEqual(self.commands, [[
+            "helm", "template", "karpenter", str(archive),
+            "--namespace", "kube-system",
+            "--set", "settings.clusterName=c",
+            "-f", str(unit_dir / "values.yaml"),
+            "-f", str(unit_dir / "values-production.yaml"),
+        ]])
         self.assertEqual((unrendered, unclassified), ([], []))
         self.assertEqual(images, {"ghcr.io/example/app:1.0.0": {"karpenter"}})
+
+    def test_an_absent_env_delta_is_not_passed(self):
+        self.inventory_with(values=("values.yaml",))
+        self.assertNotIn("values-production.yaml", " ".join(self.commands[0]))
+
+    def test_a_chart_that_cannot_be_fetched_is_unrendered_not_passed(self):
+        (images, unrendered, _), _, _ = self.inventory_with(
+            fetched=gate.gatelib.ChartUnavailable("HTTP 429 from r", answered=False))
+        self.assertEqual(images, {})
+        self.assertEqual(self.commands, [])
+        self.assertEqual(len(unrendered), 1)
+        self.assertIn("could not be fetched", unrendered[0][1])
+        self.assertIn("HTTP 429", unrendered[0][1])
+
+    def test_a_render_that_fails_is_unrendered_with_helms_reason(self):
+        (images, unrendered, _), _, _ = self.inventory_with(
+            returncode=1, stdout="", stderr="Error: values don't meet the schema")
+        self.assertEqual(images, {})
+        self.assertEqual(unrendered, [(self.Unit.path, "Error: values don't meet the schema")])
+
+    def test_only_the_manifest_stream_is_read_for_images(self):
+        """helm writes warnings to stderr; an image-shaped string there is not
+        something the chart deploys."""
+        (images, _, unclassified), _, _ = self.inventory_with(
+            stderr="WARNING: ghcr.io/example/other:2.0.0 is deprecated\n")
+        self.assertEqual(set(images), {"ghcr.io/example/app:1.0.0"})
+        self.assertEqual(unclassified, [])
 
 
 # Run the pattern in a child, so a pattern that does not return FAILS instead of
@@ -894,33 +808,3 @@ class TheHostGrammarHasOneParse(unittest.TestCase):
             [c for grp in gate.IMAGE_REF.findall("registry.local:5000/x/y:1.0")
              for c in grp if c],
             ["registry.local:5000/x/y:1.0"])
-
-
-class OneCorpus(unittest.TestCase):
-    """`inventory` and the per-chart floor read the same units, not two views.
-
-    `discover()` is asserted per file elsewhere — every ApplicationSet pinning a
-    chart contributes a unit, every matrix element pinning one appears among
-    that appset's units. `inventory` walks exactly those units, and
-    `chart_coverage` then requires each of them to have contributed an image.
-
-    Passing over a reference helm reported pulling sits between the two, so the
-    question is whether it can take a chart's only contribution with it. It
-    cannot take a real one: a chart artifact is not an image the chart deploys,
-    and it never entered the population in the first place. What it must not do
-    is leave a chart looking covered when it contributed nothing — so that is
-    asserted here rather than reasoned about.
-    """
-
-    def test_a_chart_contributing_only_its_own_coordinate_is_reported(self):
-        """The whole risk in one case. The reference is passed over, the chart
-        contributed no image, and the per-chart floor says so — silence here
-        would be a chart dropping out of every question both gates ask."""
-        rendered = ("Pulled: ghcr.io/example/chart:1.0.0\n"
-                    "apiVersion: v1\nkind: ConfigMap\ndata: {}\n")
-        found = gate.extract_images(rendered, "chart", [], [],
-                                    None, gate.chart_artifacts(rendered))
-        self.assertEqual(found, set())
-        problems = gate.chart_coverage({}, [Unit("chart")])
-        self.assertTrue(any("chart rendered and contributed no image" in p
-                            for p in problems), problems)

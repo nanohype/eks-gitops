@@ -6,11 +6,19 @@ while a tier sits unread on disk — because that failure is silent in exactly t
 way the gate exists to prevent. These concentrate on the decisions that produce
 it: which paths count as read, and which priorities count as loading a rule.
 
-Everything here is offline. The gate's registry and helm calls are exercised by
-the controls sweep against a mutated tree, not from here.
+Everything here is offline. The rule-set reader is exercised against a scripted
+registry through gatelib's client, the same path a run against ghcr.io takes.
 """
 
+import contextlib
+import email.message
+import functools
+import hashlib
+import io
+import json
+import tarfile
 import unittest
+import urllib.error
 
 from gateloader import load
 
@@ -122,6 +130,118 @@ class DerivedFromTheTree(unittest.TestCase):
         envs = gate.environments()
         self.assertIn("production", envs)
         self.assertTrue(envs, "no environment discovered — the gate would check none")
+
+
+
+def _error(url, code, headers=None):
+    msg = email.message.Message()
+    for k, v in (headers or {}).items():
+        msg[k] = v
+    return urllib.error.HTTPError(url, code, f"status {code}", msg, io.BytesIO(b""))
+
+
+def _rules_layer(files: dict[str, str]) -> bytes:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for name, text in files.items():
+            data = text.encode()
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+class ReadingARuleSetThroughTheSharedClient(unittest.TestCase):
+    """rulesfile() reads ghcr.io through gatelib's client, not a reader of its own.
+
+    So the anonymous token comes from the challenge, a 429 waits as long as the
+    registry asks, and the layer is checked against its digest — each of which
+    a second reader would have to get right separately.
+    """
+
+    REPO = "falcosecurity/rules/falco-rules"
+    BASE = f"https://ghcr.io/v2/{REPO}"
+    CHALLENGE = (f'Bearer realm="https://ghcr.io/token",service="ghcr.io",'
+                 f'scope="repository:{REPO}:pull"')
+
+    def setUp(self):
+        gate.failures.clear()
+        self.addCleanup(gate.failures.clear)
+        self.layer = _rules_layer({"falco_rules.yaml": "- rule: one\n  priority: INFO\n"})
+        self.digest = "sha256:" + hashlib.sha256(self.layer).hexdigest()
+        self.requests = []
+        self.waits = []
+
+    def registry(self, req):
+        url = req.full_url
+        if url.startswith("https://ghcr.io/token?"):
+            return json.dumps({"token": "t"}).encode()
+        if req.unredirected_hdrs.get("Authorization") != "Bearer t":
+            return _error(url, 401, {"WWW-Authenticate": self.CHALLENGE})
+        if url == f"{self.BASE}/manifests/4":
+            return json.dumps({"config": {"mediaType": gate.RULESFILE_CONFIG},
+                               "layers": [{"digest": self.digest}]}).encode()
+        if url == f"{self.BASE}/blobs/{self.digest}":
+            return self.layer
+        return _error(url, 404)
+
+    def read(self, *steps, ref="falco-rules:4"):
+        script = list(steps)
+
+        def urlopen(req, timeout=None):
+            self.requests.append(req)
+            step = script.pop(0) if script else self.registry
+            if callable(step) and not isinstance(step, BaseException):
+                step = step(req)
+            if isinstance(step, BaseException):
+                raise step
+            return io.BytesIO(step)
+
+        get = functools.partial(gate.gatelib.http_get, urlopen=urlopen,
+                                sleep=self.waits.append, clock=lambda: 0.0,
+                                jitter=lambda: 0.0)
+        with contextlib.redirect_stderr(io.StringIO()), \
+                contextlib.redirect_stdout(io.StringIO()):
+            return gate.rulesfile(ref, get)
+
+    def test_a_rule_set_is_read_with_a_token_the_challenge_named(self):
+        files = self.read()
+        self.assertEqual(files, {"falco_rules.yaml": "- rule: one\n  priority: INFO\n"})
+        urls = [r.full_url for r in self.requests]
+        token = [u for u in urls if u.startswith("https://ghcr.io/token?")]
+        self.assertEqual(len(token), 1)
+        self.assertIn(f"scope=repository%3A{self.REPO.replace('/', '%2F')}%3Apull",
+                      token[0])
+        self.assertEqual(urls.count(f"{self.BASE}/manifests/4"), 2)
+        self.assertEqual(gate.failures, [])
+
+    def test_a_rate_limit_waits_as_long_as_the_registry_asks(self):
+        manifest = f"{self.BASE}/manifests/4"
+        files = self.read(self.registry, self.registry,
+                          _error(manifest, 429, {"Retry-After": "7"}))
+        self.assertIn("falco_rules.yaml", files)
+        self.assertEqual(self.waits, [7.0])
+
+    def test_a_rate_limit_that_never_relents_cannot_run(self):
+        manifest = f"{self.BASE}/manifests/4"
+        steps = [self.registry, self.registry] + [_error(manifest, 429)] * 3
+        with self.assertRaises(SystemExit) as caught:
+            self.read(*steps)
+        self.assertEqual(caught.exception.code, gate.gatelib.CANNOT_RUN)
+        self.assertEqual(gate.failures, [])
+
+    def test_a_ref_the_registry_does_not_have_is_a_finding(self):
+        files = self.read(ref="falco-rules:99")
+        self.assertIsNone(files)
+        self.assertEqual(len(gate.failures), 1)
+        self.assertIn("does not resolve", gate.failures[0])
+
+    def test_a_layer_that_does_not_match_its_digest_cannot_run(self):
+        self.layer, good = b"tampered", self.layer
+        self.digest = "sha256:" + hashlib.sha256(good).hexdigest()
+        with self.assertRaises(SystemExit) as caught:
+            self.read()
+        self.assertEqual(caught.exception.code, gate.gatelib.CANNOT_RUN)
 
 
 if __name__ == "__main__":

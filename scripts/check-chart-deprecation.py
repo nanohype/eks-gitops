@@ -32,39 +32,27 @@ field that moved.
 
 HOW A PIN IS READ
 
-An HTTPS pin is read with `helm show chart`. An OCI pin is read over the OCI
-distribution API directly: the manifest, then the config blob `helm push`
-writes, which is the chart's Chart.yaml metadata as JSON. Public OCI registries
-rate-limit anonymous clients with HTTP 429 and say when to come back in a
-Retry-After header. helm reports a 429 as a line of error text with the header
-dropped, so a retry wrapped around helm could only guess at the wait and would
-have to parse prose to tell a rate limit from a missing chart. Reading the
-registry here, a 429 is retried a bounded number of times, waiting as long as
-Retry-After asks; every other status, and every network error, is reported on
-the first attempt. An HTTPS repository that answers 429 is reported like any
-other failure, without a retry.
+Through the registry client in gatelib, never through helm, and never from the
+chart cache: the question is what upstream publishes now. An OCI pin is read
+over the OCI distribution API — the manifest, then the config blob `helm push`
+writes, which is the chart's Chart.yaml metadata as JSON. An HTTPS pin is read
+from the repository's index.yaml, whose entry for a version carries the same
+fields. A 429 is retried a bounded number of times, waiting as long as
+Retry-After asks, and a Retry-After over gatelib.RETRY_MAX_WAIT_SECONDS is
+reported without waiting; every other status, and every network error, is
+reported on the attempt that produced it.
 """
 
 from __future__ import annotations
 
-import email.utils
-import hashlib
-import http.client
 import importlib.util
 import json
 import pathlib
-import re
-import subprocess
 import sys
-import time
-import urllib.error
-import urllib.parse
-import urllib.request
-from collections.abc import Callable, Mapping
 
 import yaml
 
-# Shared precondition helper, loaded by path: these are hyphenated executables
+# Shared helpers and the registry client, loaded by path: these are hyphenated executables
 # run from varying working directories.
 _gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
 _gs = importlib.util.spec_from_file_location("gatelib", _gl)
@@ -139,168 +127,11 @@ def load_records() -> dict:
 
 
 def fetch(chart: str, repo: str, version: str) -> dict:
-    """Chart.yaml as upstream currently publishes it, or {"_error": why not}."""
-    if repo.startswith("oci://"):
-        try:
-            return oci_chart_metadata(repo, version)
-        except urllib.error.HTTPError as err:
-            return {"_error": f"HTTP {err.code} from {err.url}"}
-        # OSError covers URLError, timeouts and a dropped connection;
-        # HTTPException a response cut off mid-body; ValueError a body that is
-        # not the JSON the API promises.
-        except (OSError, http.client.HTTPException, RegistryError, ValueError,
-                KeyError) as err:
-            return {"_error": f"{type(err).__name__}: {err}"[:200]}
-    cmd = ["helm", "show", "chart", "--repo", repo, chart, "--version", version]
-    out = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-    if out.returncode != 0:
-        return {"_error": (out.stderr or out.stdout).strip().splitlines()[-1][:200]}
-    return yaml.safe_load(out.stdout) or {}
-
-
-# ------------------------------------------------------------ registry reads
-
-# A 429 is the registry rate-limiting this client, not an answer about the
-# chart, so it is the one status retried. RETRY_ATTEMPTS bounds the requests
-# per URL. The wait before each retry is the registry's Retry-After when it
-# sends one, and RETRY_BASE_SECONDS doubling per attempt when it does not. A
-# Retry-After beyond RETRY_MAX_WAIT_SECONDS is reported rather than waited out,
-# with the wait the registry asked for: a scheduled job sleeping past its own
-# timeout reports nothing at all.
-RETRY_ATTEMPTS = 4
-RETRY_BASE_SECONDS = 5.0
-RETRY_MAX_WAIT_SECONDS = 120.0
-HTTP_TIMEOUT = 60
-
-OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json"
-HELM_CONFIG = "application/vnd.cncf.helm.config.v1+json"
-
-# Docker Hub serves the distribution API from a host other than the one its
-# references name.
-REGISTRY_API_HOSTS = {"docker.io": "registry-1.docker.io"}
-
-_CHALLENGE_PARAM = re.compile(r'(\w+)="([^"]*)"')
-
-Getter = Callable[[str, Mapping[str, str], "str | None"], bytes]
-
-
-class RegistryError(Exception):
-    """A registry read that did not produce chart metadata, with the reason."""
-
-
-def retry_after(value: str | None, now: float) -> float | None:
-    """Seconds a Retry-After header asks for, or None when it states nothing usable.
-
-    The header is either delta-seconds or an HTTP-date. A date already past asks
-    for no wait at all.
-    """
-    if value is None:
-        return None
-    value = value.strip()
-    if value.isdigit():
-        return float(value)
+    """Chart.yaml as upstream publishes it, or {"_error": why not}."""
     try:
-        when = email.utils.parsedate_to_datetime(value)
-    except (TypeError, ValueError):
-        return None
-    if when.tzinfo is None:
-        return None
-    return max(0.0, when.timestamp() - now)
-
-
-def http_get(url: str, headers: Mapping[str, str], authorization: str | None, *,
-             urlopen=urllib.request.urlopen, sleep=time.sleep,
-             clock=time.time) -> bytes:
-    """GET url, retrying HTTP 429 as the module constants bound it.
-
-    Every other HTTPError, and every URLError, propagates from the attempt that
-    raised it.
-    """
-    host = urllib.parse.urlsplit(url).netloc
-    for attempt in range(1, RETRY_ATTEMPTS + 1):
-        req = urllib.request.Request(url, headers=dict(headers))
-        if authorization:
-            # Unredirected: a blob read redirects to object storage, which
-            # rejects a request carrying the registry's bearer token.
-            req.add_unredirected_header("Authorization", authorization)
-        try:
-            with urlopen(req, timeout=HTTP_TIMEOUT) as resp:
-                return resp.read()
-        except urllib.error.HTTPError as err:
-            if err.code != 429:
-                raise
-            asked = retry_after(err.headers.get("Retry-After") if err.headers else None,
-                                clock())
-            if attempt == RETRY_ATTEMPTS:
-                raise RegistryError(
-                    f"{host} answered HTTP 429 to all {RETRY_ATTEMPTS} attempts at {url}"
-                ) from err
-            wait = asked if asked is not None else RETRY_BASE_SECONDS * 2 ** (attempt - 1)
-            if wait > RETRY_MAX_WAIT_SECONDS:
-                raise RegistryError(
-                    f"{host} answered HTTP 429 with Retry-After {wait:.0f}s, beyond the "
-                    f"{RETRY_MAX_WAIT_SECONDS:.0f}s this check waits, at {url}"
-                ) from err
-            source = "Retry-After" if asked is not None else "backoff"
-            print(f"  {host}: HTTP 429, retry {attempt}/{RETRY_ATTEMPTS - 1} in "
-                  f"{wait:.0f}s ({source})", file=sys.stderr)
-            sleep(wait)
-    raise AssertionError("unreachable: the last attempt returns or raises")
-
-
-def anonymous_token(challenge: str, path: str, get: Getter) -> str:
-    """A pull token from the realm a registry's Bearer challenge names."""
-    scheme, _, params = challenge.partition(" ")
-    if scheme.lower() != "bearer":
-        raise RegistryError(f"the registry asked for {scheme or 'no'} authentication, "
-                            f"and only an anonymous bearer token is supported")
-    fields = dict(_CHALLENGE_PARAM.findall(params))
-    realm = fields.get("realm")
-    if not realm:
-        raise RegistryError(f"the bearer challenge names no realm: {challenge!r}")
-    query = {"scope": f"repository:{path}:pull"}
-    if fields.get("service"):
-        query["service"] = fields["service"]
-    body = json.loads(get(f"{realm}?{urllib.parse.urlencode(query)}", {}, None))
-    token = body.get("token") or body.get("access_token")
-    if not token:
-        raise RegistryError(f"{realm} returned no token for repository:{path}:pull")
-    return str(token)
-
-
-def oci_chart_metadata(repo: str, version: str, get: Getter = http_get) -> dict:
-    """The Chart.yaml metadata `helm push` stores as an OCI chart's config blob."""
-    registry, _, path = repo[len("oci://"):].partition("/")
-    base = f"https://{REGISTRY_API_HOSTS.get(registry, registry)}/v2/{path}"
-    token: str | None = None
-
-    def read(url: str, accept: str | None = None) -> bytes:
-        nonlocal token
-        headers = {"Accept": accept} if accept else {}
-        try:
-            return get(url, headers, f"Bearer {token}" if token else None)
-        except urllib.error.HTTPError as err:
-            if err.code != 401 or token is not None:
-                raise
-            challenge = err.headers.get("WWW-Authenticate", "") if err.headers else ""
-            token = anonymous_token(challenge, path, get)
-            return get(url, headers, f"Bearer {token}")
-
-    manifest = json.loads(read(f"{base}/manifests/{version}", OCI_MANIFEST))
-    config = manifest.get("config") or {}
-    if config.get("mediaType") != HELM_CONFIG:
-        raise RegistryError(f"{repo}:{version} is not a Helm chart: its config media "
-                            f"type is {config.get('mediaType')!r}")
-    digest = str(config.get("digest", ""))
-    blob = read(f"{base}/blobs/{digest}")
-    algorithm, _, expected = digest.partition(":")
-    if algorithm != "sha256" or hashlib.sha256(blob).hexdigest() != expected:
-        raise RegistryError(f"{repo}:{version}: the config blob does not match its "
-                            f"digest {digest}")
-    meta = json.loads(blob)
-    if not isinstance(meta, dict):
-        raise RegistryError(f"{repo}:{version}: the config blob is not a JSON object")
-    return meta
+        return gatelib.chart_metadata(repo, chart, version)
+    except gatelib.ChartUnavailable as err:
+        return {"_error": str(err)[:200]}
 
 
 # ---------------------------------------------------------------- offline gate
@@ -478,10 +309,8 @@ def main() -> int:
     if "--self-test" in sys.argv:
         return self_test()
     if "--sync" in sys.argv:
-        gatelib.require("helm")     # --sync resolves every chart upstream
         return sync()
     if "--live" in sys.argv:
-        gatelib.require("helm")     # --live fetches each pinned chart
         return check_live()
     return check_offline(pins(), load_records())
 

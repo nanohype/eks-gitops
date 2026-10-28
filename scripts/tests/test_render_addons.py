@@ -6,14 +6,18 @@ re-deriving which chart a path belongs to. A unit it does not find is a unit
 three gates never examine, and all three print a count derived from the same
 short list — so the omission reports itself as a complete run.
 
-It templates every chart against a registry, so the positive-control sweep
-exempts it. These exercise the two halves that decide what happens without a
-network: which units exist, and what a helm failure means.
+It fetches every chart from a registry, so the positive-control sweep exempts
+it. These exercise what decides the result without a network: which units exist,
+where each is fetched from, and what a render is handed. What an unavailable
+chart means is gatelib's, and is held in test_gatelib.
 """
 
 from __future__ import annotations
 
+import pathlib
+import tempfile
 import unittest
+from unittest import mock
 
 import yaml
 from gateloader import load
@@ -53,6 +57,14 @@ class OciReferences(unittest.TestCase):
     def test_an_https_repo_is_not_an_oci_one(self):
         self.assertFalse(self.unit("https://kyverno.github.io/kyverno", "kyverno").is_oci)
         self.assertTrue(self.unit("oci://ghcr.io/x/y", "y").is_oci)
+
+    def test_an_oci_chart_is_fetched_from_its_reference(self):
+        u = self.unit("oci://ghcr.io/nanohype/charts", "operator")
+        self.assertEqual(u.source, "oci://ghcr.io/nanohype/charts/operator")
+
+    def test_an_https_chart_is_fetched_from_its_repository(self):
+        u = self.unit("https://kyverno.github.io/kyverno", "kyverno")
+        self.assertEqual(u.source, "https://kyverno.github.io/kyverno")
 
 
 class RecognisingATemplatedField(unittest.TestCase):
@@ -139,39 +151,51 @@ class TheAddonPathFromValueFiles(unittest.TestCase):
         self.assertIsNone(gate._path_from_valuefiles({"valueFiles": None}))
 
 
-class UnreachableIsNotAVerdict(unittest.TestCase):
-    """Exit 1 is a finding about a pin; exit 2 is a fact about the network.
+class WhatARenderIsHanded(unittest.TestCase):
+    """helm renders the fetched archive, never a registry reference.
 
-    Collapsing them makes an outage read as a defect in the catalogue, and
-    trains readers to re-run a red gate rather than read it.
+    A reference would put helm back on the network, where a 429 arrives as a
+    line of text with the wait the registry asked for dropped.
     """
 
-    def test_a_missing_chart_version_is_a_finding_about_this_repo(self):
-        for err in ('Error: chart "loki" version "9.9.9" not found',
-                    "Error: no chart version found for kyverno-3.99.0",
-                    "Error: failed to fetch ...: 404 Not Found"):
-            with self.subTest(err=err):
-                self.assertTrue(gate.registry_answered(err))
+    def render(self, env_files=("values.yaml", "values-staging.yaml"), env="staging"):
+        root = pathlib.Path(tempfile.mkdtemp())
+        unit_dir = root / "addons" / "x" / "y"
+        unit_dir.mkdir(parents=True)
+        for name in env_files:
+            (unit_dir / name).write_text("{}\n")
+        unit = gate.Unit(appset="a.yaml", chart="karpenter", version="1.15.1",
+                         repo="oci://public.ecr.aws/karpenter/karpenter",
+                         path="addons/x/y", params=[("clusterName", "ci-cluster")],
+                         namespace="kube-system")
+        archive = root / "karpenter-1.15.1.tgz"
+        ran = mock.Mock(return_value=mock.Mock(returncode=0, stdout="", stderr=""))
+        fetch = mock.Mock(return_value=archive)
+        with mock.patch.object(gate, "REPO_ROOT", root), \
+                mock.patch.object(gate.gatelib, "chart_archive_or_exit", fetch), \
+                mock.patch.object(gate.subprocess, "run", ran):
+            result = gate.render(unit, env)
+        return result, fetch, ran, archive, unit_dir
 
-    def test_a_connection_failure_is_a_fact_about_the_network(self):
-        for err in ("Error: dial tcp 1.2.3.4:443: i/o timeout",
-                    "Get https://x: dial tcp: lookup x: no such host",
-                    "Error: TLS handshake timeout",
-                    "Error: connection refused"):
-            with self.subTest(err=err):
-                self.assertFalse(gate.registry_answered(err))
+    def test_the_archive_is_fetched_from_the_unit_source_and_rendered(self):
+        result, fetch, ran, archive, unit_dir = self.render()
+        self.assertEqual(result, (True, "rendered"))
+        fetch.assert_called_once_with("oci://public.ecr.aws/karpenter/karpenter",
+                                      "karpenter", "1.15.1")
+        cmd = ran.call_args.args[0]
+        self.assertEqual(cmd[:4], ["helm", "template", "karpenter", str(archive)])
+        self.assertNotIn("--version", cmd)
+        self.assertFalse(any(str(a).startswith("oci://") for a in cmd))
+        self.assertEqual(cmd[4:], ["--namespace", "kube-system",
+                                   "--set", "clusterName=ci-cluster",
+                                   "-f", str(unit_dir / "values.yaml"),
+                                   "-f", str(unit_dir / "values-staging.yaml")])
 
-    def test_a_message_naming_both_is_read_as_unreachable(self):
-        """An unreachable registry cannot testify about what it holds."""
-        self.assertFalse(gate.registry_answered(
-            "Error: chart not found: dial tcp 1.2.3.4:443: i/o timeout"))
-
-    def test_an_unrecognised_failure_is_not_treated_as_a_finding(self):
-        self.assertFalse(gate.registry_answered("Error: something entirely new"))
-
-    def test_the_classification_ignores_case(self):
-        self.assertTrue(gate.registry_answered("Error: NO CHART VERSION FOUND"))
-        self.assertFalse(gate.registry_answered("Error: I/O Timeout"))
+    def test_an_environment_with_no_delta_fetches_nothing(self):
+        result, fetch, ran, _, _ = self.render(env_files=("values.yaml",))
+        self.assertEqual(result, (True, "no env delta"))
+        fetch.assert_not_called()
+        ran.assert_not_called()
 
 
 class TheDiscoveredCorpus(unittest.TestCase):

@@ -133,17 +133,10 @@ def chart_pin() -> dict:
 
 def app_version(pin: dict) -> str:
     """What the pinned chart says it installs — the tag the source is read at."""
-    gatelib.require("helm")
-    proc = subprocess.run(
-        ["helm", "show", "chart", "--repo", pin["chartRepo"], pin["chart"],
-         "--version", pin["chartVersion"]],
-        capture_output=True, text=True, timeout=NETWORK_TIMEOUT)
-    if proc.returncode != 0:
-        last = ((proc.stderr or "") + (proc.stdout or "")).strip().splitlines()
-        die(f"{pin['chart']} {pin['chartVersion']} would not resolve — "
-            f"{last[-1][:200] if last else 'no output'}")
-    import yaml
-    meta = yaml.safe_load(proc.stdout) or {}
+    try:
+        meta = gatelib.chart_metadata(pin["chartRepo"], pin["chart"], pin["chartVersion"])
+    except gatelib.ChartUnavailable as exc:
+        die(f"{pin['chart']} {pin['chartVersion']} would not resolve — {exc}")
     version = str(meta.get("appVersion") or "").strip()
     if not version:
         die(f"{pin['chart']} {pin['chartVersion']} publishes no appVersion, so which "
@@ -154,10 +147,13 @@ def app_version(pin: dict) -> str:
 def rendered_flags(pin: dict) -> dict:
     """The controller's effective configuration, as this catalog installs it."""
     gatelib.require("helm")
+    try:
+        archive = gatelib.chart_archive(pin["chartRepo"], pin["chart"], pin["chartVersion"])
+    except gatelib.ChartUnavailable as exc:
+        die(f"{pin['chart']} {pin['chartVersion']} would not resolve — {exc}")
     values = [str(ADDON / "values.yaml")]
     proc = subprocess.run(
-        ["helm", "template", ADDON_NAME, pin["chart"], "--repo", pin["chartRepo"],
-         "--version", pin["chartVersion"], "-n", "kube-system",
+        ["helm", "template", ADDON_NAME, str(archive), "-n", "kube-system",
          *sum((["-f", v] for v in values), []), "--set", "clusterName=fixture"],
         capture_output=True, text=True, timeout=NETWORK_TIMEOUT)
     if proc.returncode != 0:

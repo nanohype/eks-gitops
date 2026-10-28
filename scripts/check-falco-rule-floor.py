@@ -58,7 +58,7 @@ import subprocess
 import sys
 import tarfile
 import urllib.error
-import urllib.request
+from collections.abc import Callable
 from typing import NoReturn
 
 import yaml
@@ -111,7 +111,7 @@ REGISTRY = "ghcr.io"
 # every rulesfile to this repository prefix.
 INDEX_PREFIX = "falcosecurity/rules"
 
-NETWORK_TIMEOUT = 120
+RENDER_TIMEOUT = 120
 
 failures: list[str] = []
 
@@ -153,13 +153,12 @@ def environments() -> list[str]:
                   for p in ADDON.glob("values-*.yaml"))
 
 
-def render(repo: str, chart: str, version: str, env: str) -> tuple[dict, dict]:
+def render(archive: pathlib.Path, env: str) -> tuple[dict, dict]:
     """The falco and falcoctl configs as the chart produces them for one env."""
-    cmd = ["helm", "template", "falco", chart, "--repo", repo, "--version", version,
-           "-n", "falco",
+    cmd = ["helm", "template", "falco", str(archive), "-n", "falco",
            "-f", str(ADDON / "values.yaml"),
            "-f", str(ADDON / f"values-{env}.yaml")]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=NETWORK_TIMEOUT)
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=RENDER_TIMEOUT)
     if proc.returncode != 0:
         cannot_run(f"Cannot run: helm could not render falco for {env}.",
                    ((proc.stderr or "") + (proc.stdout or "")).strip())
@@ -180,59 +179,52 @@ def render(repo: str, chart: str, version: str, env: str) -> tuple[dict, dict]:
     return found["falco"], found["falcoctl"]
 
 
-def ghcr(repo: str, path: str, accept: str | None = None) -> bytes:
-    """One anonymous ghcr.io read, classifying its own failure."""
-    try:
-        token_url = (f"https://{REGISTRY}/token?scope=repository:{repo}:pull"
-                     f"&service={REGISTRY}")
-        with urllib.request.urlopen(token_url, timeout=NETWORK_TIMEOUT) as resp:
-            token = json.load(resp)["token"]
-        req = urllib.request.Request(f"https://{REGISTRY}/v2/{repo}/{path}",
-                                     headers={"Authorization": f"Bearer {token}"})
-        if accept:
-            req.add_header("Accept", accept)
-        with urllib.request.urlopen(req, timeout=NETWORK_TIMEOUT) as resp:
-            return resp.read()
-    except urllib.error.HTTPError as exc:
-        # The registry answered. 404 on a pinned major is a finding about a ref
-        # in this repo; anything else is not this gate's to interpret.
-        raise _RegistrySaidNo(exc.code) from exc
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        cannot_run(f"Cannot run: {REGISTRY} could not be reached — {exc}.",
-                   "An unreachable registry is a fact about the network, not about "
-                   "the rule sets this repo pins.")
+# What a rulesfile ref's manifest is read as. An index is accepted so a plugin
+# published multi-arch resolves to something rather than a 404, and is then
+# skipped below like any other artifact that installs no rules.
+RULESFILE_ACCEPT = ("application/vnd.oci.image.manifest.v1+json,"
+                    "application/vnd.oci.image.index.v1+json")
 
 
-class _RegistrySaidNo(Exception):
-    def __init__(self, code: int):
-        super().__init__(str(code))
-        self.code = code
+def _unreachable(exc: BaseException) -> NoReturn:
+    cannot_run(f"Cannot run: {REGISTRY} could not be read — {type(exc).__name__}: {exc}.",
+               "An unreachable or rate-limiting registry is a fact about the network, "
+               "not about the rule sets this repo pins.")
 
 
-def rulesfile(ref: str) -> dict[str, str] | None:
-    """Filenames and contents a rulesfile ref installs, or None for a plugin."""
+def rulesfile(ref: str,
+              get: Callable[..., bytes] = gatelib.http_get) -> dict[str, str] | None:
+    """Filenames and contents a rulesfile ref installs, or None for a plugin.
+
+    Read through gatelib's registry client, so a 429 waits as long as the
+    registry asks. The registry answering 404 for the ref is a finding about a
+    ref in this repo; every other status, and a rate limit that outlasts the
+    retries, is not this gate's to interpret.
+    """
     name, tag = ref.rsplit(":", 1)
     repo = name if "/" in name else f"{INDEX_PREFIX}/{name}"
     repo = repo[len(f"{REGISTRY}/"):] if repo.startswith(f"{REGISTRY}/") else repo
+    registry = gatelib.OciRepository(f"{REGISTRY}/{repo}", get)
     try:
-        manifest = json.loads(ghcr(
-            repo, f"manifests/{tag}",
-            "application/vnd.oci.image.manifest.v1+json,"
-            "application/vnd.oci.image.index.v1+json"))
-    except _RegistrySaidNo as exc:
+        manifest = json.loads(registry.read(f"manifests/{tag}", RULESFILE_ACCEPT))
+    except urllib.error.HTTPError as exc:
         if exc.code == 404:
             fail(f"ref {ref!r} does not resolve: {REGISTRY}/{repo} answered 404 for "
                  f"tag {tag!r}. falcoctl installs nothing for it, so every rule that "
                  f"set carries is absent from every node.")
             return None
         cannot_run(f"Cannot run: {REGISTRY} answered {exc.code} for {repo}:{tag}.")
-    if manifest.get("config", {}).get("mediaType") != RULESFILE_CONFIG:
+    except (OSError, gatelib.RegistryError, ValueError) as exc:
+        _unreachable(exc)
+    if (manifest.get("config") or {}).get("mediaType") != RULESFILE_CONFIG:
         return None  # a plugin, or a multi-arch index — installs no rules
     try:
-        blob = ghcr(repo, f"blobs/{manifest['layers'][0]['digest']}")
-    except _RegistrySaidNo as exc:
+        blob = registry.blob(str(manifest["layers"][0]["digest"]))
+    except urllib.error.HTTPError as exc:
         cannot_run(f"Cannot run: {REGISTRY} answered {exc.code} for a layer of "
                    f"{repo}:{tag}.")
+    except (OSError, gatelib.RegistryError) as exc:
+        _unreachable(exc)
     out: dict[str, str] = {}
     with tarfile.open(fileobj=io.BytesIO(blob)) as tf:
         for member in tf.getmembers():
@@ -269,6 +261,7 @@ def read_paths(falco: dict, env: str) -> tuple[set[str], set[str]]:
 def main() -> int:
     gatelib.require("helm")
     repo, chart, version = chart_pin()
+    archive = gatelib.chart_archive_or_exit(repo, chart, version)
     envs = environments()
     if not envs:
         fail(f"{ADDON.relative_to(ROOT)} carries no values-<env>.yaml, so this gate "
@@ -276,7 +269,7 @@ def main() -> int:
 
     summary: list[tuple[str, int, int]] = []
     for env in envs:
-        falco, falcoctl = render(repo, chart, version, env)
+        falco, falcoctl = render(archive, env)
         rel = f"addons/security/falco/values-{env}.yaml"
 
         floor = falco.get("priority")

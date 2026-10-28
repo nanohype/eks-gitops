@@ -194,6 +194,13 @@ jobs:
           python-version-file: .python-version
       - name: Install Python dependencies
         run: pip install --require-hashes -r requirements.txt
+      - name: Cache chart archives
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.cache/eks-gitops/charts
+          key: charts-${{ github.job }}-${{ hashFiles('applicationsets/*.yaml') }}
+          restore-keys: |
+            charts-${{ github.job }}-
       # The platform's own CRDs are on kubeconform-scan.sh's skip list — their
       # schemas are published to no public catalog — and that skip's comment says
       # these kinds are validated out-of-band against a real webhook. This closes
@@ -242,12 +249,12 @@ jobs:
       - name: Install Python dependencies
         run: pip install --require-hashes -r requirements.txt
       # The positive controls exercise every gate, and three of them shell out:
-      # check-policy-validity needs kustomize and kyverno, check-platform-crs
-      # and render-addons need helm. Without these the control cannot establish
-      # that the gate is clean before mutating, so it proves nothing — which is
-      # exactly what this job reported before they were installed.
+      # check-policy-validity needs kustomize and kyverno, and
+      # check-serviceaccount-bindings and render-addons need helm. Without these
+      # the control cannot establish that the gate is clean before mutating, so
+      # it proves nothing.
       #
-      # Those gates now exit 2 with a sentence when a tool is absent rather than
+      # Those gates exit 2 with a sentence when a tool is absent rather than
       # raising FileNotFoundError, so a missing binary is distinguishable from a
       # finding. Installing them here is the other half: a gate that CAN run
       # should.
@@ -372,6 +379,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+      - name: Cache chart archives
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.cache/eks-gitops/charts
+          key: charts-${{ github.job }}-${{ hashFiles('applicationsets/*.yaml') }}
+          restore-keys: |
+            charts-${{ github.job }}-
       # Downloading a rule set and loading it are different things, and the
       # values file is where both look correct. falcoctl writes each ref to the
       # root of rulesfilesDir; Falco reads only what falco.rules_files names. A
@@ -393,6 +407,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+      - name: Cache chart archives
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.cache/eks-gitops/charts
+          key: charts-${{ github.job }}-${{ hashFiles('applicationsets/*.yaml') }}
+          restore-keys: |
+            charts-${{ github.job }}-
       # Loki bounds nothing by stored bytes: retention reacts to the age of a
       # chunk, never to the size of the volume. The only disk-aware control is
       # the ingester's WAL threshold, and crossing it rejects every push on the
@@ -571,8 +592,16 @@ jobs:
   # version with the committed base + each env's values, so a bad key, a
   # malformed override, or a chart bump that drops a value fails the build
   # instead of the fleet. Chart coordinates are DERIVED from the ApplicationSets —
-  # the single source of truth — by scripts/render-addons.py; charts are cached,
-  # keyed on the appset pins so a version bump refetches.
+  # the single source of truth — by scripts/render-addons.py.
+  #
+  # Every job that renders a pinned chart fetches it through scripts/gatelib.py,
+  # which waits out a registry's 429 for as long as Retry-After asks, within a
+  # bound, and checks each archive against its digest. The archives are cached
+  # per job, keyed on the appset pins, so a run that moves no pin fetches no
+  # chart. The key carries the job because each job fetches a different set
+  # of charts: one key shared across jobs is saved by whichever finishes first,
+  # and every other job then restores an exact hit that lacks its charts and
+  # can never save over it.
   helm-render:
     name: Helm-render addons
     runs-on: ubuntu-latest
@@ -592,13 +621,13 @@ jobs:
       - name: Install Python dependencies
         run: pip install --require-hashes -r requirements.txt
 
-      - name: Cache Helm charts
+      - name: Cache chart archives
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
-          path: ~/.cache/helm
-          key: helm-charts-${{ hashFiles('applicationsets/*.yaml') }}
+          path: ~/.cache/eks-gitops/charts
+          key: charts-${{ github.job }}-${{ hashFiles('applicationsets/*.yaml') }}
           restore-keys: |
-            helm-charts-
+            charts-${{ github.job }}-
 
       - name: Render every addon across every environment
         run: ./scripts/render-addons.py
@@ -662,13 +691,13 @@ jobs:
           cache: true
           version: ${{ env.TRIVY_VERSION }} # zizmor: ignore[unpinned-tools]
 
-      - name: Cache Helm charts
+      - name: Cache chart archives
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
-          path: ~/.cache/helm
-          key: helm-charts-${{ hashFiles('applicationsets/*.yaml') }}
+          path: ~/.cache/eks-gitops/charts
+          key: charts-${{ github.job }}-${{ hashFiles('applicationsets/*.yaml') }}
           restore-keys: |
-            helm-charts-
+            charts-${{ github.job }}-
 
       - name: Every fixed CRITICAL is acknowledged
         run: ./scripts/check-image-vulnerabilities.py
@@ -728,13 +757,13 @@ jobs:
           sudo install -m 0755 /tmp/kyverno /usr/local/bin/kyverno
           kyverno version
 
-      - name: Cache Helm charts
+      - name: Cache chart archives
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
-          path: ~/.cache/helm
-          key: helm-charts-${{ hashFiles('applicationsets/*.yaml') }}
+          path: ~/.cache/eks-gitops/charts
+          key: charts-${{ github.job }}-${{ hashFiles('applicationsets/*.yaml') }}
           restore-keys: |
-            helm-charts-
+            charts-${{ github.job }}-
 
       - name: Render the fleet and apply the Enforce-tier policies
         run: ./scripts/check-policy-admission.py

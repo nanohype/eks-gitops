@@ -132,28 +132,6 @@ run 0 "controls floor" ./scripts/tests/controls.py
 run 0 "check-workflows.sh (zizmor)" ./scripts/check-workflows.sh
 run 0 "check-image-pins.py" ./scripts/check-image-pins.py
 
-# The same tree under the other helm stream shape. Some helm builds write the
-# OCI pull report to stdout, where it lands in the manifest stream the gate
-# parses and every OCI-sourced chart puts its own coordinates there; some write
-# it to stderr, where nothing sees it. A gate reading one only is green on the
-# machine that renders and red in the job that installs the other build, with
-# nothing in the tree different — which is not a verdict about the tree.
-#
-# Reproduced rather than described: a shim runs the real helm and folds stderr
-# into stdout, with a cold OCI cache, because helm reports nothing on a hit.
-mkdir -p "$SP/oldhelm"
-REAL_HELM="$(command -v helm)"
-cat > "$SP/oldhelm/helm" <<SHIM
-#!/usr/bin/env bash
-exec "$REAL_HELM" "\$@" 2>&1
-SHIM
-chmod +x "$SP/oldhelm/helm"
-run 0 "image-pins: a helm reporting OCI pulls on stdout" \
-  env "PATH=$SP/oldhelm:$PATH" \
-      "HELM_CACHE_HOME=$SP/oldhelm/cache" \
-      "HELM_CONFIG_HOME=$SP/oldhelm/config" \
-      "HELM_DATA_HOME=$SP/oldhelm/data" \
-  ./scripts/check-image-pins.py
 run 0 "check-renovate-coverage.py" ./scripts/check-renovate-coverage.py
 run 0 "check-ai-config.py" ./scripts/check-ai-config.py
 run 0 "check-alert-severity-routes.py" ./scripts/check-alert-severity-routes.py
