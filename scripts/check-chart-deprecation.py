@@ -43,22 +43,12 @@ is stated once, in registry.py's docstring.
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import pathlib
 import sys
 
+import registry
 import yaml
-
-# The registry client, loaded by path: these are hyphenated executables run from
-# varying working directories.
-_rl = pathlib.Path(__file__).resolve().parent / "registry.py"
-_rs = importlib.util.spec_from_file_location("registry", _rl)
-assert _rs and _rs.loader, f"{_rl} is not loadable as a module"
-registry = importlib.util.module_from_spec(_rs)
-sys.modules["registry"] = registry
-_rs.loader.exec_module(registry)
-
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 APPSETS = ROOT / "applicationsets"

@@ -53,36 +53,19 @@ honest about having checked nothing.
 from __future__ import annotations
 
 import argparse
-import importlib.util
-import pathlib
 import re
 import sys
 import tarfile
 import tempfile
 from pathlib import Path
 
-# Shared precondition helper, loaded by path: these are hyphenated executables
-# run from varying working directories.
-_gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
-_gs = importlib.util.spec_from_file_location("gatelib", _gl)
-assert _gs and _gs.loader, f"{_gl} is not loadable as a module"
-gatelib = importlib.util.module_from_spec(_gs)
-sys.modules["gatelib"] = gatelib
-_gs.loader.exec_module(gatelib)
-
-# The registry client, loaded by path the same way.
-_rl = pathlib.Path(__file__).resolve().parent / "registry.py"
-_rs = importlib.util.spec_from_file_location("registry", _rl)
-assert _rs and _rs.loader, f"{_rl} is not loadable as a module"
-registry = importlib.util.module_from_spec(_rs)
-sys.modules["registry"] = registry
-_rs.loader.exec_module(registry)
-
-
 try:
     import yaml
 except ImportError:  # pragma: no cover
     sys.exit("PyYAML required: pip install pyyaml")
+
+import gatelib
+import registry
 
 ROOT = Path(__file__).resolve().parent.parent
 

@@ -703,7 +703,8 @@ class WhatTheInventoryRenders(unittest.TestCase):
 # hanging the suite. An in-process timing assertion cannot be reached by a
 # matcher that never finishes — the very case it exists to catch.
 _MATCH_IN_CHILD = """
-import importlib.util, sys
+import importlib.util, os, sys
+sys.path.insert(0, os.path.dirname(sys.argv[1]))
 spec = importlib.util.spec_from_file_location("g", sys.argv[1])
 g = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(g)

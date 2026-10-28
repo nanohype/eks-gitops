@@ -8,18 +8,12 @@ from a manifest, and the exit status that says a gate could not run. Reading a
 registry is one more of those, and it is a client rather than a helper, so it
 lives beside this file in registry.py.
 
-Loading it: the gates are hyphenated filenames and are run from varying working
-directories, so they load this by path rather than by import name, the pattern
-check-policy-admission.py uses for render-addons.py too:
-
-    import importlib.util, pathlib, sys
-    _p = pathlib.Path(__file__).resolve().parent / "gatelib.py"
-    _s = importlib.util.spec_from_file_location("gatelib", _p)
-    gatelib = importlib.util.module_from_spec(_s)
-    sys.modules["gatelib"] = gatelib
-    _s.loader.exec_module(gatelib)
-
-registry.py is loaded the same way, under the name `registry`.
+Loading it: `import gatelib`, and `import registry` for the client. Python puts
+a script's own directory first on sys.path whichever directory it is run from,
+so a gate in scripts/ resolves both by name, and every gate in one process
+shares one instance of each. A hyphenated gate is not a module name, so a gate
+that reuses another — check-policy-admission.py reading render-addons.py — loads
+that one by path.
 """
 
 from __future__ import annotations

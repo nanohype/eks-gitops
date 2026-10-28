@@ -16,10 +16,14 @@ running the gate, not from here.
 
 from __future__ import annotations
 
+import contextlib
 import datetime
+import io
 import pathlib
+import tempfile
 import types
 import unittest
+from unittest import mock
 
 import yaml
 from gateloader import load
@@ -293,6 +297,41 @@ class TheFloorsThatStopAVacuousPass(unittest.TestCase):
 
     def test_the_blocking_severity_is_among_the_ones_scanned_for(self):
         self.assertIn(gate.BLOCKING_SEVERITY, gate.REPORTED_SEVERITIES)
+
+
+class ReadingTheAdvisories(unittest.TestCase):
+    """With no advisories to read, every finding would be reported as
+    unacknowledged, so an absent or keyless file is a gate that cannot run."""
+
+    def read(self, text):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "image-advisories.yaml"
+            if text is not None:
+                path.write_text(text)
+            out = io.StringIO()
+            with mock.patch.object(gate, "ADVISORIES", path), contextlib.redirect_stdout(out):
+                try:
+                    return gate.read_advisories(), out.getvalue()
+                except SystemExit as exc:
+                    return exc.code, out.getvalue()
+
+    def test_the_entries_are_returned(self):
+        entries, _ = self.read("advisories:\n  - id: CVE-1\n    image: x\n")
+        self.assertEqual(entries, [{"id": "CVE-1", "image": "x"}])
+
+    def test_an_empty_list_is_no_advisories(self):
+        self.assertEqual(self.read("advisories: []\n")[0], [])
+
+    def test_an_absent_file_cannot_run(self):
+        rc, out = self.read(None)
+        self.assertEqual(rc, gate.gatelib.CANNOT_RUN)
+        self.assertIn("image-advisories.yaml does not exist", out)
+        self.assertIn("examined nothing", out)
+
+    def test_a_file_with_no_advisories_key_cannot_run(self):
+        rc, out = self.read("entries: []\n")
+        self.assertEqual(rc, gate.gatelib.CANNOT_RUN)
+        self.assertIn("declares no `advisories` key", out)
 
 
 if __name__ == "__main__":

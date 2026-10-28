@@ -14,6 +14,7 @@ actually contains.
 from __future__ import annotations
 
 import pathlib
+import tempfile
 import unittest
 
 from gateloader import load
@@ -91,6 +92,35 @@ class FenceHandling(unittest.TestCase):
         doc = "see `scripts/check-sync-waves.py` for the table\n"
         refs = [r for _, r, _ in gate.candidates(doc)]
         self.assertIn("scripts/check-sync-waves.py", refs)
+
+    def test_both_link_syntaxes_are_claims_on_their_own_line(self):
+        doc = ("intro\n"
+               "see [the runbook](docs/runbooks/rollback.md \"title\")\n"
+               "[waves]: <scripts/check-sync-waves.py>\n")
+        self.assertEqual(list(gate.candidates(doc)),
+                         [(2, "docs/runbooks/rollback.md", True),
+                          (3, "scripts/check-sync-waves.py", True)])
+
+
+class TaskfileTargets(unittest.TestCase):
+    """The targets a `task` command may name are the Taskfile's own, read from the
+    tree under test."""
+
+    def test_top_level_and_namespaced_targets_are_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root / "Taskfile.yaml").write_text(
+                "version: '3'\n"
+                "tasks:\n"
+                "  lint:\n"
+                "    cmds: [ruff check .]\n"
+                "  validate:helm-render:\n"
+                "    desc: render every addon\n"
+                "  reverify:gates:\n"
+                "    cmds:\n"
+                "      - task: validate\n")
+            self.assertEqual(gate.task_targets(root),
+                             {"lint", "validate:helm-render", "reverify:gates"})
 
 
 class Citations(unittest.TestCase):

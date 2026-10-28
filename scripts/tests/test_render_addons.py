@@ -162,18 +162,22 @@ class WhatARenderIsHanded(unittest.TestCase):
     line of text with the wait the registry asked for dropped.
     """
 
-    def render(self, env_files=("values.yaml", "values-staging.yaml"), env="staging"):
-        root = pathlib.Path(tempfile.mkdtemp())
+    def render(self, env_files=("values.yaml", "values-staging.yaml"), env="staging",
+               path="addons/x/y", returncode=0, stderr=""):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = pathlib.Path(tmp.name)
         unit_dir = root / "addons" / "x" / "y"
         unit_dir.mkdir(parents=True)
         for name in env_files:
             (unit_dir / name).write_text("{}\n")
         unit = gate.Unit(appset="a.yaml", chart="karpenter", version="1.15.1",
                          repo="oci://public.ecr.aws/karpenter/karpenter",
-                         path="addons/x/y", params=[("clusterName", "ci-cluster")],
+                         path=path, params=[("clusterName", "ci-cluster")],
                          namespace="kube-system")
         archive = root / "karpenter-1.15.1.tgz"
-        ran = mock.Mock(return_value=mock.Mock(returncode=0, stdout="", stderr=""))
+        ran = mock.Mock(return_value=mock.Mock(returncode=returncode, stdout="",
+                                               stderr=stderr))
         fetch = mock.Mock(return_value=archive)
         with mock.patch.object(gate, "REPO_ROOT", root), \
                 mock.patch.object(gate.registry, "chart_archive_or_exit", fetch), \
@@ -200,6 +204,20 @@ class WhatARenderIsHanded(unittest.TestCase):
         self.assertEqual(result, (True, "no env delta"))
         fetch.assert_not_called()
         ran.assert_not_called()
+
+    def test_a_path_that_is_not_there_fails_rather_than_skipping(self):
+        """An element pointing at nothing would otherwise leave the fleet one
+        unit short with every render green."""
+        result, fetch, ran, _, _ = self.render(path="addons/x/typo")
+        self.assertFalse(result[0])
+        self.assertIn("path 'addons/x/typo' does not exist", result[1])
+        fetch.assert_not_called()
+        ran.assert_not_called()
+
+    def test_a_render_helm_refuses_fails_with_what_helm_said(self):
+        result, _, _, _, _ = self.render(returncode=1,
+                                         stderr="Error: values don't meet the schema\n")
+        self.assertEqual(result, (False, "Error: values don't meet the schema"))
 
 
 class FetchingTheChartCache(unittest.TestCase):

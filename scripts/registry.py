@@ -24,11 +24,10 @@ and is handed out of the cache only while it still hashes to the digest it was
 kept with. A chart repository that publishes no digest for the pinned version
 is refused rather than trusted.
 
-Loaded by path, the way the gates load gatelib (see its docstring), under the
-name `registry`. Each loading gate gets its own instance, so a gate catches the
-exception classes of the instance it called — never another gate's. This module
-loads gatelib in turn, for the exit status a chart that could not be fetched
-earns.
+Gates import this module by name, as they import gatelib (see its docstring),
+so a process holds one instance of each and every gate in it catches the same
+exception classes. This module imports gatelib in turn, for the exit status a
+chart that could not be fetched earns.
 """
 
 from __future__ import annotations
@@ -37,7 +36,6 @@ import datetime
 import email.utils
 import hashlib
 import http.client
-import importlib.util
 import json
 import os
 import pathlib
@@ -51,12 +49,7 @@ import urllib.request
 from collections.abc import Callable, Mapping
 from typing import Any, NoReturn
 
-_gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
-_gs = importlib.util.spec_from_file_location("gatelib", _gl)
-assert _gs and _gs.loader, f"{_gl} is not loadable as a module"
-gatelib = importlib.util.module_from_spec(_gs)
-sys.modules["gatelib"] = gatelib
-_gs.loader.exec_module(gatelib)
+import gatelib
 
 # A 429 is the registry rate-limiting this client, not an answer about what it
 # holds, so it is the one status retried. RETRY_ATTEMPTS bounds the requests one
