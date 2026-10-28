@@ -177,10 +177,11 @@ echo "── Known-bad fed in: every gate must REJECT ──"
 
 
 
-# Both readiness-checker pins, at whatever version the last chart bump left
-# them: the test hook's top-level block and the webhooksCleanup hook's image.
-# Matched by shape rather than by version, so a bump that moves the pins leaves
-# this mutation landing rather than asserting against a tag no longer there.
+# Both readiness-checker pins, at whatever version the chart pin sets them to:
+# the test hook's top-level block and the webhooksCleanup hook's image. Matched
+# by shape rather than by version, so a chart bump that moves the pins leaves
+# this mutation landing rather than searching for a version the file does not
+# carry.
 F=addons/security/kyverno/values.yaml; mut $F
 python3 - "$F" <<'PY'
 import pathlib,re,sys
