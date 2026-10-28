@@ -65,7 +65,7 @@
     },
     {
       "customType": "regex",
-      "description": "CLI tools the CI workflow downloads as release tarballs or installs through a setup action (kyverno/gitleaks/kubeconform/trivy). These are release binaries rather than GitHub Actions, so the built-in managers do not see them and they age silently otherwise. Each pin in ci.yml's top-level env block carries a `# renovate:` comment naming its datasource + GitHub repo; a bump also fails the hardcoded checksum next to it until a human confirms the new SHA256, so it never auto-merges blind.",
+      "description": "CI tools pinned in ci.yml's top-level env block: release binaries the workflow downloads (kyverno, kind, kubectl, gitleaks, kubeconform), trivy through its setup action, and the renovate package from npm. None is a GitHub Action, so the built-in managers do not see them and they age silently otherwise. Each pin this manager reads carries a `# renovate:` comment naming its datasource and package. A pin with a `*_SHA256` beside it fails that checksum on a bump until a human confirms the new one, so it never auto-merges blind. KIND_NODE_IMAGE carries no annotation, for the reason the kubectl and kind rule gives.",
       "managerFilePatterns": [
         "/^\\.github/workflows/ci\\.ya?ml$/"
       ],

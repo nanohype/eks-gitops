@@ -82,15 +82,21 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
   (policies/kyverno/tests/kyverno-test.yaml), so it proves the release identity
   admits a release-signed image and refuses a branch-signed one, but an identity
   weakened in a way both fixtures still satisfy passes it. The structural gate
-  `check-image-verification.py` closes that hole: it fails the build if `required`,
-  `mutateDigest` or `verifyDigest` flips, the issuer changes, the subjectRegExp is
-  anything but the one release identity the gate holds (`SUBJECT_REGEXP`, which
-  its unit tests check against accepted and refused certificate subjects), the
-  transparency log is switched off, the SPDX attestation stops being required, a
-  validation stops covering every container field, the ephemeral-container
-  subresource stops being matched, a rule is generated for pod controllers, or
-  the namespace exclusion grows past the system namespaces — run in CI (job
-  `kyverno`).
+  `check-image-verification.py` closes that hole on the base and on each
+  supply-chain overlay as kustomize renders it, since a cluster installs the
+  overlay: it fails the build if `required`, `mutateDigest` or `verifyDigest`
+  flips, the issuer changes, the subjectRegExp is anything but the one release
+  identity the gate holds (`SUBJECT_REGEXP`, which its unit tests check against
+  accepted and refused certificate subjects), an attestor brings a root bundle,
+  log key or transparency log of its own or switches the log off, the SPDX
+  attestation stops being required, either validation differs from the
+  expression the gate holds, compared whole, the scope narrows from
+  `ghcr.io/nanohype/*`, admission-time evaluation is switched off, an image
+  extractor shadows a container field, the ephemeral-container subresource
+  stops being matched, a rule is generated for pod controllers, the namespace
+  exclusion grows past the system namespaces, or a tier's `validationActions`
+  departs from its environment's (`[Audit]` in development, `[Deny]` in staging
+  and production) — run in CI (job `kyverno`).
 - **Pinning** — `mutateDigest: true` in the base: admission resolves each matched
   tag to the digest it verified and rewrites the pod spec to it, at every tier,
   because an ImageValidatingPolicy pins under Audit as well as Deny.

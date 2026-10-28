@@ -540,9 +540,10 @@ def report_json(stdout: str) -> dict | None:
     opens a JSON object. Anything after the object is ignored; anything that
     does not decode to an object is no report.
     """
-    for i, line in enumerate(stdout.splitlines(keepends=True)):
+    lines = stdout.splitlines(keepends=True)
+    for i, line in enumerate(lines):
         if line.startswith("{"):
-            rest = "".join(stdout.splitlines(keepends=True)[i:])
+            rest = "".join(lines[i:])
             try:
                 doc, _ = json.JSONDecoder().raw_decode(rest)
             except json.JSONDecodeError:

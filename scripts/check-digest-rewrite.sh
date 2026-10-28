@@ -60,6 +60,51 @@ cannot_run() {
   exit 2
 }
 
+# The API server's refusal, with the checkout path elided so the reason fits.
+show_err() {
+  sed -e "s#$ROOT/##g" -e 's/^/        /' "$WORK/err" | cut -c1-240
+}
+
+network_failure() {
+  grep -qiE 'no such host|i/o timeout|connection refused|context deadline|TLS handshake|unexpected status code 5[0-9][0-9]|toomanyrequests'
+}
+
+# A foreign identity, decided: an overlay whose validationActions include Deny
+# refuses it with the policy's identity message, and any other admits it and
+# reports it. $1 names what was submitted and $2 is "admitted" or "refused";
+# the refusal is in $WORK/err and the overlay's actions in $actions. A
+# refusal for another reason is a FAIL, and one naming a network failure is a
+# verification that never ran.
+decide_foreign() {
+  local what="$1" outcome="$2"
+  if [ "$outcome" = admitted ]; then
+    case ",$actions," in
+      *,Deny,*) fail=1
+                echo "  FAIL  admitted $what under Deny." ;;
+      *) echo "  ok    admitted $what under $actions (reported, not blocked)" ;;
+    esac
+  elif grep -qF "$IDENTITY_MESSAGE" "$WORK/err"; then
+    case ",$actions," in
+      *,Deny,*) echo "  ok    denied $what: $IDENTITY_MESSAGE" ;;
+      *) fail=1
+         echo "  FAIL  denied $what under $actions, which reports and does not block." ;;
+    esac
+  elif network_failure <"$WORK/err"; then
+    show_err
+    cannot_run "$rel could not reach the registry or Rekor for $what."
+  else
+    fail=1
+    echo "  FAIL  $what was refused for a reason other than its identity:"
+    show_err
+  fi
+}
+
+# Sourced, this file defines the functions above and runs nothing, so
+# scripts/tests/test_digest_rewrite.py can decide a verdict without a cluster.
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then
+  return 0
+fi
+
 # ── The tree first, so an absent corpus refuses before any cluster exists ──
 
 OVERLAYS=()
@@ -178,15 +223,6 @@ for f in "$SUITE"/*.yaml; do
   [ -n "$ns" ] && kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 done
 
-# The API server's refusal, with the checkout path elided so the reason fits.
-show_err() {
-  sed -e "s#$ROOT/##g" -e 's/^/        /' "$WORK/err" | cut -c1-240
-}
-
-network_failure() {
-  grep -qiE 'no such host|i/o timeout|connection refused|context deadline|TLS handshake|unexpected status code 5[0-9][0-9]|toomanyrequests'
-}
-
 # The tag joined to a digest, and nothing else.
 TAGGED_RE="$(printf '%s' "$TAGGED" | sed 's/[.]/\\./g')"
 pinned() {
@@ -257,30 +293,15 @@ registered and an admitted pod would prove nothing."
       echo "  FAIL  refused the release-signed $TAGGED as an ephemeral container:"
       show_err
     fi
-    if kubectl patch pod "$POD" -n "$POD_NS" --subresource=ephemeralcontainers \
-          --type=strategic -p "{\"spec\":{\"ephemeralContainers\":[{\"name\":\"foreign\",\"image\":\"$FOREIGN\"}]}}" \
-          -o name >/dev/null 2>"$WORK/err"; then
-      case ",$actions," in
-        *,Deny,*)
-          fail=1
-          echo "  FAIL  admitted a branch-signed ephemeral container under Deny." ;;
-        *) echo "  ok    admitted a branch-signed ephemeral container under $actions (reported, not blocked)" ;;
-      esac
-    elif grep -qF "$IDENTITY_MESSAGE" "$WORK/err"; then
-      case ",$actions," in
-        *,Deny,*) echo "  ok    denied a branch-signed ephemeral container: $IDENTITY_MESSAGE" ;;
-        *) fail=1
-           echo "  FAIL  denied a branch-signed ephemeral container under $actions, which reports and does not block." ;;
-      esac
-    elif network_failure <"$WORK/err"; then
-      show_err
-      cannot_run "$rel could not reach the registry or Rekor for the branch-signed ephemeral container."
-    else
-      fail=1
-      echo "  FAIL  the branch-signed ephemeral container was refused for a reason other than its identity:"
-      show_err
-    fi
-    kubectl delete -f "$SUITE/pod.yaml" --wait=true --timeout=120s >/dev/null 2>&1
+    outcome=refused
+    kubectl patch pod "$POD" -n "$POD_NS" --subresource=ephemeralcontainers \
+        --type=strategic -p "{\"spec\":{\"ephemeralContainers\":[{\"name\":\"foreign\",\"image\":\"$FOREIGN\"}]}}" \
+        -o name >/dev/null 2>"$WORK/err" && outcome=admitted
+    decide_foreign "the branch-signed ephemeral container" "$outcome"
+    # The next overlay creates the same pod, and one still here would refuse it
+    # as already existing, which reads as that overlay denying a signed image.
+    kubectl delete -f "$SUITE/pod.yaml" --wait=true --timeout=120s >/dev/null 2>"$WORK/err" \
+      || cannot_run "$rel: the signed pod was not deleted within 120s — $(head -1 "$WORK/err")"
   elif network_failure <"$WORK/err"; then
     show_err
     cannot_run "$rel could not reach the registry or Rekor, so the signed pod was never
@@ -292,9 +313,17 @@ verified and nothing was observed about the rewrite."
   fi
 
   # The Deployment, stored as git wrote it; the pod it creates, pinned. A pod
-  # left from an earlier overlay would answer for this one, so none may remain.
+  # left from an earlier overlay would answer for this one, so none may remain:
+  # the wait bounds how long one may take to go, and the listing after it is
+  # what establishes that none is left. The wait's own status is not read,
+  # because a selector matching nothing is not a failure to delete.
   kubectl wait --for=delete pod -n "$DEPLOYMENT_NS" -l "app.kubernetes.io/name=$DEPLOYMENT" \
     --timeout=120s >/dev/null 2>&1
+  left="$(kubectl get pod -n "$DEPLOYMENT_NS" -l "app.kubernetes.io/name=$DEPLOYMENT" \
+    -o name 2>"$WORK/err")" \
+    || cannot_run "$rel: the Deployment's pods could not be listed — $(head -1 "$WORK/err")"
+  [ -z "$left" ] || cannot_run "$rel: $left from an earlier overlay was still present after
+120s, so it would answer for this overlay's Deployment."
   if stored="$(kubectl create -f "$SUITE/deployment.yaml" -o jsonpath='{.spec.template.spec.containers[0].image}' 2>"$WORK/err")"; then
     if [ "$stored" = "$TAGGED" ]; then
       echo "  ok    stored the Deployment's pod template as written ($TAGGED)"
@@ -330,7 +359,8 @@ verified and nothing was observed about the rewrite."
       echo "        must carry the digest admission verified."
     fi
     kubectl delete -f "$SUITE/deployment.yaml" --cascade=foreground --wait=true \
-      --timeout=120s >/dev/null 2>&1
+      --timeout=120s >/dev/null 2>"$WORK/err" \
+      || cannot_run "$rel: the Deployment was not deleted within 120s — $(head -1 "$WORK/err")"
   elif network_failure <"$WORK/err"; then
     show_err
     cannot_run "$rel could not reach the registry or Rekor for the Deployment."
@@ -342,26 +372,11 @@ verified and nothing was observed about the rewrite."
 
   # The identity, decided. Deny refuses it; Audit admits and reports it.
   if kubectl create -f "$SUITE/branch-signed.yaml" -o name >/dev/null 2>"$WORK/err"; then
-    kubectl delete -f "$SUITE/branch-signed.yaml" --wait=false >/dev/null 2>&1
-    case ",$actions," in
-      *,Deny,*)
-        fail=1
-        echo "  FAIL  admitted a branch-signed image under Deny." ;;
-      *) echo "  ok    admitted the branch-signed image under $actions (reported, not blocked)" ;;
-    esac
-  elif grep -qF "$IDENTITY_MESSAGE" "$WORK/err"; then
-    case ",$actions," in
-      *,Deny,*) echo "  ok    denied the branch-signed image: $IDENTITY_MESSAGE" ;;
-      *) fail=1
-         echo "  FAIL  denied the branch-signed image under $actions, which reports and does not block." ;;
-    esac
-  elif network_failure <"$WORK/err"; then
-    show_err
-    cannot_run "$rel could not reach the registry or Rekor for the branch-signed image."
+    decide_foreign "the branch-signed image" admitted
+    kubectl delete -f "$SUITE/branch-signed.yaml" --wait=true --timeout=120s >/dev/null 2>"$WORK/err" \
+      || cannot_run "$rel: the branch-signed pod was not deleted within 120s — $(head -1 "$WORK/err")"
   else
-    fail=1
-    echo "  FAIL  the branch-signed image was refused for a reason other than its identity:"
-    show_err
+    decide_foreign "the branch-signed image" refused
   fi
 
   kubectl delete -f "$rendered" --wait=true >/dev/null 2>&1

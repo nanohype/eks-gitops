@@ -104,7 +104,9 @@ class TheRun(unittest.TestCase):
 
     def setUp(self):
         gate.failures.clear()
-        self.root = pathlib.Path(tempfile.mkdtemp())
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = pathlib.Path(tmp.name)
         self.policies = self.root / "policies" / "kyverno"
 
     def tearDown(self):

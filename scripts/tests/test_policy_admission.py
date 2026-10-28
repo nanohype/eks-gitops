@@ -573,7 +573,9 @@ class RenderingTheFleet(unittest.TestCase):
     """
 
     def setUp(self):
-        self.root = pathlib.Path(tempfile.mkdtemp())
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = pathlib.Path(tmp.name)
         self.out = self.root / "rendered"
         self.out.mkdir()
 
@@ -677,8 +679,13 @@ class RenderingTheFleet(unittest.TestCase):
 
 
 class BuildingAndApplyingThePolicies(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.out = pathlib.Path(tmp.name)
+
     def test_each_group_overlay_is_built_into_its_own_file(self):
-        out = pathlib.Path(tempfile.mkdtemp())
+        out = self.out
         tools = Tools(kustomize=lambda cmd: completed(stdout=f"# {cmd[-1]}\n"))
         with mock.patch.object(gate, "_run", tools):
             files = gate.build_policies("production", out)
@@ -690,7 +697,7 @@ class BuildingAndApplyingThePolicies(unittest.TestCase):
     def test_an_overlay_that_does_not_build_cannot_be_evaluated(self):
         tools = Tools(kustomize=completed(1, stderr="missing base"))
         with mock.patch.object(gate, "_run", tools), self.assertRaises(SystemExit) as raised:
-            quietly(gate.build_policies, "production", pathlib.Path(tempfile.mkdtemp()))
+            quietly(gate.build_policies, "production", self.out)
         self.assertEqual(raised.exception.code, 2)
 
     def test_apply_asks_for_a_json_report_and_warns_only_in_audit(self):

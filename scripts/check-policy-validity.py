@@ -19,7 +19,8 @@ kubeconform (the schema permits both fields independently), and passes
 validation. It then fails to apply on every cluster whose overlay is Audit. A
 policy Kyverno cannot load at all fails the same way and is quieter still:
 `kyverno apply` drops it and reports `error: 0`. The policy-admission gate
-renders only the Enforce tier, so an invalid Audit overlay never reaches it.
+renders only the groups in its POLICY_GROUPS, so an invalid overlay of any
+other group never reaches it.
 
 So this renders EVERY policy overlay — every group, every environment — and runs
 each through Kyverno's own validation. An overlay the API server would reject
