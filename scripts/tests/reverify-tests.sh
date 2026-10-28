@@ -780,6 +780,47 @@ rejects "deadline: make a request after it has passed" test_registry \
   test_a_call_whose_deadline_has_passed_makes_no_request
 res $F
 
+# urlopen's timeout bounds one wait on the socket, not a body. Read in one call,
+# or with one check covering several socket reads, a body that keeps arriving
+# inside that timeout runs the call past its deadline and every job timeout
+# above it. A bound that leaves out the read under way when the deadline passes
+# is one a call cut off mid-body exceeds.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('                resp.fp = io.BufferedReader(_Paced(resp.fp, deadline, timer, host, url))\n',
+              '', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "body: read it in one call, whatever the deadline" test_registry \
+  test_a_body_that_trickles_past_the_deadline_is_cut_off_and_reported
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        data = self._beneath.read1(len(view))\n',
+              '        data = self._beneath.read(len(view))\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "body: let one check cover many socket reads" test_registry \
+  test_a_body_that_trickles_past_the_deadline_is_cut_off_and_reported
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('CALL_BOUND_SECONDS = CALL_DEADLINE_SECONDS + HTTP_TIMEOUT\n',
+              'CALL_BOUND_SECONDS = CALL_DEADLINE_SECONDS\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "bound: leave out the socket read under way at the deadline" test_registry \
+  test_a_body_that_trickles_past_the_deadline_is_cut_off_and_reported
+res $F
+
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
@@ -1297,7 +1338,7 @@ echo "RESULT pass=$pass fail=$fail"
 # The floor this harness owes for the same reason the gates owe theirs: with
 # every `rejects` line deleted it would report pass=0 fail=0 and exit 0, which is
 # a green run over nothing planted.
-MIN_PROBES=85
+MIN_PROBES=88
 total=$((pass + fail))
 if [ "$total" -lt "$MIN_PROBES" ]; then
   echo "FAIL  ran $total probe(s), under the floor of $MIN_PROBES — this harness"

@@ -3,7 +3,9 @@
 What a registry serves is stated here rather than read from the client under
 test: the media types are the ones the OCI and Helm specifications name, so a
 client that drifted from them fails against this fake instead of agreeing with
-itself.
+itself. A 200 is the http.client.HTTPResponse urlopen hands back, parsed from
+the bytes a server would send, so the client reads a body, Content-Length or
+chunked, through the same code it reads one through in CI.
 """
 
 from __future__ import annotations
@@ -11,9 +13,11 @@ from __future__ import annotations
 import email.message
 import functools
 import hashlib
+import http.client
 import io
 import json
 import urllib.error
+from collections.abc import Callable
 
 NOW = 1_800_000_000.0
 
@@ -33,18 +37,97 @@ def auth(req) -> str | None:
     return req.unredirected_hdrs.get("Authorization")
 
 
+class Wire(io.RawIOBase):
+    """What a server sends on one connection, one segment per read of the socket.
+
+    A read takes at most the next segment and charges `charge` the seconds that
+    segment was scripted to take. A server that keeps sending inside every
+    socket timeout is a run of segments each charged just under it.
+    """
+
+    def __init__(self, segments: list[tuple[bytes, float]],
+                 charge: Callable[[float], None] | None = None) -> None:
+        super().__init__()
+        self.segments = list(segments)
+        self.charge = charge
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, buffer) -> int:
+        if not self.segments:
+            return 0
+        data, seconds = self.segments.pop(0)
+        n = min(len(buffer), len(data))
+        buffer[:n] = data[:n]
+        if n < len(data):
+            self.segments.insert(0, (data[n:], 0.0))
+        if self.charge:
+            self.charge(seconds)
+        return n
+
+    def unsent(self) -> int:
+        """Bytes the server had still to send."""
+        return sum(len(data) for data, _ in self.segments)
+
+
+class _Socket:
+    """The one call http.client.HTTPResponse makes on its socket."""
+
+    def __init__(self, wire: Wire) -> None:
+        self.wire = wire
+
+    def makefile(self, mode: str) -> io.BufferedReader:
+        return io.BufferedReader(self.wire)
+
+
+class Served(http.client.HTTPResponse):
+    """A 200 as urlopen returns it, with the wire it is read from."""
+
+    wire: Wire
+
+
+def served(body: bytes, *, piece: int | None = None, seconds: float = 0.0,
+           chunked: bool = False, length: int | None = None,
+           charge: Callable[[float], None] | None = None) -> Served:
+    """A 200 carrying `body`, its status line and headers already read.
+
+    The status line and headers arrive on one read of the socket, and what
+    follows them `piece` bytes per read, each read charged `seconds`. `chunked`
+    sends the body in chunks of `piece`, framing and all; otherwise a
+    Content-Length of `length`, the body's own by default, says how much is
+    coming.
+    """
+    piece = piece or max(len(body), 1)
+    if chunked:
+        framing = "Transfer-Encoding: chunked"
+        chunks = [body[i:i + piece] for i in range(0, len(body), piece)]
+        payload = b"".join(b"%x\r\n%s\r\n" % (len(c), c) for c in chunks) + b"0\r\n\r\n"
+    else:
+        framing = f"Content-Length: {len(body) if length is None else length}"
+        payload = body
+    head = f"HTTP/1.1 200 OK\r\n{framing}\r\n\r\n".encode()
+    wire = Wire([(head, 0.0)] + [(payload[i:i + piece], seconds)
+                                 for i in range(0, len(payload), piece)], charge)
+    resp = Served(_Socket(wire), method="GET")  # type: ignore[arg-type]
+    resp.wire = wire
+    resp.begin()
+    return resp
+
+
 class Transport:
     """An urlopen stand-in that answers each request with the next scripted step.
 
-    A step is bytes (a 200), an exception (raised), or a callable taking the
-    request and returning either — which is how a registry whose answer depends
-    on the Authorization header is written.
+    A step is bytes (a 200 carrying them), a response (returned as it is), an
+    exception (raised), or a callable taking the request and returning any of
+    those — which is how a registry whose answer depends on the Authorization
+    header is written.
 
     `elapsed` is the time the client has spent on this transport, on the timer
     http_get's deadline reads. Every request is charged the whole timeout the
-    client gave it, as one that never answers is, and every wait the time it
-    asked to sleep, so a deadline the client keeps is one it keeps in the worst
-    case.
+    client gave it, as one that never answers is, every wait the time it asked
+    to sleep, and every read of a trickled body the seconds it was scripted to
+    take, so a deadline the client keeps is one it keeps in the worst case.
     """
 
     def __init__(self, *steps):
@@ -52,6 +135,7 @@ class Transport:
         self.requests: list = []
         self.timeouts: list[float] = []
         self.waits: list[float] = []
+        self.responses: list[Served] = []
         self.elapsed = 0.0
         self.on_sleep = None
 
@@ -64,13 +148,25 @@ class Transport:
             step = step(req)
         if isinstance(step, BaseException):
             raise step
-        return io.BytesIO(step)
+        if isinstance(step, bytes):
+            step = served(step)
+        self.responses.append(step)
+        return step
 
     def sleep(self, seconds: float) -> None:
         if self.on_sleep:
             self.on_sleep()
         self.waits.append(seconds)
         self.elapsed += seconds
+
+    def charge(self, seconds: float) -> None:
+        self.elapsed += seconds
+
+    def trickle(self, body: bytes, *, piece: int, seconds: float, chunked: bool = False):
+        """A step serving `body` `piece` bytes per read of the socket, each read
+        charged `seconds` on this transport's timer."""
+        return lambda _req: served(body, piece=piece, seconds=seconds, chunked=chunked,
+                                   charge=self.charge)
 
     def bind(self, http_get, jitter: float = 0.0):
         """`http_get` over this transport, with a fixed wall clock, the transport's

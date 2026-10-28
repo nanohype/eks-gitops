@@ -88,16 +88,18 @@ jobs:
   # again any that carry none. --fetch removes every cached file no pin names, so
   # the carried set holds the current pins and nothing older.
   #
-  # This job and every job that restores its archives allow longer than one
-  # client call can take. Each call runs to a deadline, registry.CALL_BOUND_SECONDS
-  # after it starts, and the token request a 401 challenge leads to spends that
-  # same deadline: room for RETRY_ATTEMPTS requests of up to HTTP_TIMEOUT each
-  # and, before every retry, a wait of at most RETRY_MAX_WAIT_SECONDS stretched by
-  # RETRY_JITTER. A call the registry throttles to its deadline then reports
-  # which host refused it before the job is cancelled, and a registry that
-  # throttles call after call ends the job at its timeout rather than at the
-  # runner's ceiling. test_registry holds each of those jobs above the bound and
-  # on this job's cache key.
+  # This job and every job that restores its archives allow longer than
+  # registry.CALL_BOUND_SECONDS. Each call runs to a deadline,
+  # registry.CALL_DEADLINE_SECONDS after it starts, and the token request a 401
+  # challenge leads to spends that same deadline: room for RETRY_ATTEMPTS
+  # requests of up to HTTP_TIMEOUT each and, before every retry, a wait of at
+  # most RETRY_MAX_WAIT_SECONDS stretched by RETRY_JITTER. The bound adds the
+  # one socket read, of up to HTTP_TIMEOUT, that a body still arriving at the
+  # deadline can have under way. A call the registry throttles to its deadline,
+  # or trickles a body past it, then reports which host it was reading before
+  # the job is cancelled, and a registry that throttles call after call ends the
+  # job at its timeout rather than at the runner's ceiling. test_registry holds
+  # each of those jobs above the bound and on this job's cache key.
   #
   # The cache path and key are anchored here. The jobs that restore the archives
   # alias one restore step, defined on the first of them, so none of them can

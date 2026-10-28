@@ -323,7 +323,7 @@ class FetchingOverTheRegistryClient(unittest.TestCase):
             answer = self.oci(req)
         if isinstance(answer, BaseException):
             raise answer
-        return io.BytesIO(answer)
+        return fake.served(answer)
 
     def units(self):
         return [gate.Unit(appset="a.yaml", chart="kyverno", version="1.0.0",

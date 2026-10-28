@@ -20,9 +20,17 @@ What http_get does with each answer:
   * Every other status, and every network error, is reported on the attempt
     that produced it.
 
-Every call runs to one deadline, CALL_BOUND_SECONDS after it starts, and the
-token request a 401 challenge leads to runs to that same deadline. A call that
-reaches it is reported, naming the host.
+Every call runs to one deadline, CALL_DEADLINE_SECONDS after it starts, and the
+token request a 401 challenge leads to runs to that same deadline. The deadline
+is checked before each request, before each wait between requests and before
+each read of a response body from the socket, a chunked body's framing
+included, and a call that reaches it is reported, naming the host. A check
+cannot cut short a socket wait already under way, and each one is bounded by
+the request's timeout, at most HTTP_TIMEOUT, so a call ends within
+CALL_BOUND_SECONDS: its deadline plus HTTP_TIMEOUT. The exception is urlopen
+itself, which connects and reads the status line and headers with no check of
+the deadline between its socket waits, so a call whose deadline passes inside
+urlopen ends when urlopen does.
 
 An archive is kept only once it hashes to the digest its registry publishes,
 and is handed out of the cache only while it still hashes to the digest it was
@@ -42,6 +50,7 @@ import email.utils
 import functools
 import hashlib
 import http.client
+import io
 import json
 import os
 import pathlib
@@ -82,19 +91,29 @@ HTTP_TIMEOUT = 60
 # 401 challenge leads to spends the same deadline rather than starting one of
 # its own. Each request is given the smaller of HTTP_TIMEOUT and what the call
 # has left, and a wait that would end at or past the deadline is reported
-# instead of taken, so a call refused or left unanswered at every request ends
-# inside it. urlopen's timeout bounds each wait on the socket rather than the
-# whole response, so a body that keeps trickling in is the one read that can
-# run past it.
-#
-# A CI job reading through this client allows longer than this, so a call
-# throttled to its deadline fits inside the job and reports which host refused
-# it; test_registry holds those jobs in .github/workflows/ to it.
-CALL_BOUND_SECONDS = (
+# instead of taken.
+CALL_DEADLINE_SECONDS = (
     RETRY_ATTEMPTS * HTTP_TIMEOUT
     + (RETRY_ATTEMPTS - 1) * (1 + RETRY_JITTER)
     * max(RETRY_MAX_WAIT_SECONDS, RETRY_BASE_SECONDS * 2 ** (RETRY_ATTEMPTS - 2))
 )
+
+# The longest one http_get call takes. urlopen's timeout bounds each wait on the
+# socket rather than a whole response, so a body that keeps arriving inside that
+# timeout would keep one read going for as long as the server kept sending. The
+# body is read through _Paced instead, which checks the deadline before every
+# read from the socket, a chunked body's framing included. A check cannot cut
+# short the read under way, and the response exposes no socket to shorten that
+# read's wait on, so a call that reaches its deadline mid-body ends within one
+# more wait of up to HTTP_TIMEOUT. The exception is urlopen itself: it connects
+# and reads the status line and headers with no check between their socket
+# waits, so a call whose deadline passes inside it ends when urlopen does.
+#
+# A CI job reading through this client allows longer than this, so a call
+# throttled to its deadline, or cut off mid-body at it, fits inside the job and
+# reports which host it was reading; test_registry holds those jobs in
+# .github/workflows/ to it.
+CALL_BOUND_SECONDS = CALL_DEADLINE_SECONDS + HTTP_TIMEOUT
 
 # CDNs in front of chart hosts refuse urllib's default User-Agent
 # (Python-urllib/<version>) with a 403, which this client reports rather than
@@ -168,6 +187,48 @@ def retry_after(value: str | None, now: float) -> float | None:
     return max(0.0, when.timestamp() - now)
 
 
+def _ran_out(host: str, where: str) -> RegistryError:
+    """The RegistryError for a call whose deadline passed `where`, naming its host."""
+    return RegistryError(f"{host}: the {CALL_DEADLINE_SECONDS:.0f}s one call is allowed "
+                         f"ran out {where}")
+
+
+class _Paced(io.RawIOBase):
+    """A response's stream from the socket, read only while its call has time left.
+
+    http.client reads a body, and the size lines and trailer of a chunked one,
+    through the response's `fp`. Laid beneath it, this checks the deadline before
+    every read and serves each read with `read1` from the stream it replaced,
+    which takes at most one read from the socket. So no read from the socket
+    starts after the deadline, and one that starts before it waits at most the
+    request's timeout.
+    """
+
+    def __init__(self, beneath: io.BufferedIOBase, deadline: float,
+                 timer: Callable[[], float], host: str, url: str) -> None:
+        super().__init__()
+        self._beneath = beneath
+        self._deadline = deadline
+        self._timer = timer
+        self._host = host
+        self._url = url
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, buffer: Any) -> int:
+        if self._deadline - self._timer() <= 0:
+            raise _ran_out(self._host, f"while the body of {self._url} was arriving")
+        view = memoryview(buffer)
+        data = self._beneath.read1(len(view))
+        view[:len(data)] = data
+        return len(data)
+
+    def close(self) -> None:
+        self._beneath.close()
+        super().close()
+
+
 def http_get(url: str, headers: Mapping[str, str] | None = None,
              authorization: str | None = None, *,
              challenge: Callable[[str, float], str] | None = None,
@@ -179,27 +240,25 @@ def http_get(url: str, headers: Mapping[str, str] | None = None,
              jitter: Callable[[], float] = random.random) -> bytes:
     """GET `url`, retrying RETRYABLE statuses within RETRY_ATTEMPTS requests.
 
-    The call runs to `deadline`, a `timer` reading, or to CALL_BOUND_SECONDS
-    after it starts when none is given; `clock` is the wall clock a Retry-After
-    date is measured against. `challenge`, when given, answers one HTTP 401: it
-    receives the WWW-Authenticate header and the deadline, and returns the
-    Authorization to repeat the request with. The token it fetches spends that
-    deadline, and the repeat counts toward RETRY_ATTEMPTS. A 401 on the last
-    attempt leaves no request to repeat it with, and is reported. A second 401
-    propagates, as do every other HTTPError and every URLError, from the
-    request that raised it.
+    The call runs to `deadline`, a `timer` reading, or to CALL_DEADLINE_SECONDS
+    after it starts when none is given, and its body is read through _Paced on
+    that deadline; `clock` is the wall clock a Retry-After date is measured
+    against. `challenge`, when given, answers one HTTP 401: it receives the
+    WWW-Authenticate header and the deadline, and returns the Authorization to
+    repeat the request with. The token it fetches spends that deadline, and the
+    repeat counts toward RETRY_ATTEMPTS. A 401 on the last attempt leaves no
+    request to repeat it with, and is reported. A second 401 propagates, as do
+    every other HTTPError and every URLError, from the request that raised it.
     """
     host = urllib.parse.urlsplit(url).netloc
     if deadline is None:
-        deadline = timer() + CALL_BOUND_SECONDS
+        deadline = timer() + CALL_DEADLINE_SECONDS
     attempt = 0
     while True:
         attempt += 1
         left = deadline - timer()
         if left <= 0:
-            raise RegistryError(
-                f"{host}: the {CALL_BOUND_SECONDS:.0f}s one call is allowed ran out "
-                f"before request {attempt} of {RETRY_ATTEMPTS} at {url}")
+            raise _ran_out(host, f"before request {attempt} of {RETRY_ATTEMPTS} at {url}")
         req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT,
                                                    **dict(headers or {})})
         if authorization:
@@ -208,6 +267,7 @@ def http_get(url: str, headers: Mapping[str, str] | None = None,
             req.add_unredirected_header("Authorization", authorization)
         try:
             with urlopen(req, timeout=min(HTTP_TIMEOUT, left)) as resp:
+                resp.fp = io.BufferedReader(_Paced(resp.fp, deadline, timer, host, url))
                 return resp.read()
         except urllib.error.HTTPError as err:
             if err.code == 401 and challenge is not None:
@@ -241,7 +301,7 @@ def http_get(url: str, headers: Mapping[str, str] | None = None,
             if timer() + wait >= deadline:
                 raise RegistryError(
                     f"{host} answered HTTP {err.code} at {url}, and the {wait:.0f}s wait "
-                    f"before a retry would end past the {CALL_BOUND_SECONDS:.0f}s one "
+                    f"before a retry would end past the {CALL_DEADLINE_SECONDS:.0f}s one "
                     f"call is allowed"
                 ) from err
             source = "Retry-After" if asked is not None else "backoff"

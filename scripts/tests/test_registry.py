@@ -13,8 +13,9 @@ missing digest, or a cache that hands out whatever bytes it holds, renders a
 chart nobody verified and reports it as the pinned one.
 
 Time is read off the fake transport, which charges every request the whole
-timeout the client gave it and every wait the time it slept. A deadline held
-there is one the client keeps when nothing answers in time.
+timeout the client gave it, every wait the time it slept and every read of a
+trickled body the time the server took over it. A deadline held there is one
+the client keeps when nothing answers in time.
 """
 
 import contextlib
@@ -174,11 +175,12 @@ class RetryingOnlyWhatMayClear(unittest.TestCase):
                 self.assertEqual(len(t.requests), registry.RETRY_ATTEMPTS)
                 self.assertIn(f"HTTP 429 to the last of {registry.RETRY_ATTEMPTS}",
                               str(caught.exception))
-                self.assertLessEqual(t.elapsed, registry.CALL_BOUND_SECONDS)
+                self.assertLessEqual(t.elapsed, registry.CALL_DEADLINE_SECONDS)
 
     def test_no_request_is_given_longer_than_the_call_has_left(self):
-        t = Transport(b"ok")
-        self.get(t, deadline=t.elapsed + 7)
+        t = Transport(urllib.error.URLError("timed out"))
+        with self.assertRaises(urllib.error.URLError):
+            self.get(t, deadline=t.elapsed + 7)
         self.assertEqual(t.timeouts, [7])
 
     def test_a_wait_that_would_end_past_the_deadline_is_reported_not_slept(self):
@@ -298,6 +300,65 @@ class RetryingOnlyWhatMayClear(unittest.TestCase):
                       str(caught.exception))
         self.assertEqual(answers, [])
         self.assertEqual(len(t.requests), registry.RETRY_ATTEMPTS)
+
+
+class ReadingABody(unittest.TestCase):
+    """A body is read a socket read at a time, each only while the call has time left.
+
+    urlopen's timeout bounds each wait on the socket, not the body, so a server
+    that keeps sending inside it keeps one read of the whole body going for as
+    long as it likes. Read that way, a call outlives its deadline and every job
+    timeout above it, and the job is cancelled with nothing said about the host.
+    """
+
+    URL = "https://registry.example/v2/x/blobs/sha256:abc"
+    BODY = bytes(range(256)) * 64
+
+    def get(self, t: Transport) -> bytes:
+        with contextlib.redirect_stderr(io.StringIO()):
+            return t.get()(self.URL, {}, None)
+
+    def test_a_body_that_trickles_past_the_deadline_is_cut_off_and_reported(self):
+        """Each read is charged just under HTTP_TIMEOUT, so no socket wait times out.
+
+        The call is reported once its deadline has passed, with the rest of the
+        body unread, and it ends within CALL_BOUND_SECONDS: the deadline plus the
+        one socket read already under way when it passed. Chunked, the size line
+        ahead of each chunk arrives a read at a time too, and is held to the
+        same deadline.
+        """
+        for chunked in (False, True):
+            with self.subTest(chunked=chunked):
+                t = Transport()
+                t.steps.append(t.trickle(self.BODY, piece=256, chunked=chunked,
+                                         seconds=registry.HTTP_TIMEOUT - 1))
+                with self.assertRaises(registry.RegistryError) as caught:
+                    self.get(t)
+                said = str(caught.exception)
+                self.assertIn(f"registry.example: the {registry.CALL_DEADLINE_SECONDS:.0f}s "
+                              f"one call is allowed ran out while the body of {self.URL}",
+                              said)
+                wire = t.responses[0].wire
+                self.assertGreater(wire.unsent(), 0, "the body was read to its end")
+                self.assertTrue(wire.closed, "the connection was left open")
+                self.assertGreater(t.elapsed, registry.CALL_DEADLINE_SECONDS)
+                self.assertLessEqual(t.elapsed, registry.CALL_BOUND_SECONDS)
+
+    def test_a_body_arriving_over_many_reads_is_read_whole(self):
+        for chunked in (False, True):
+            with self.subTest(chunked=chunked):
+                t = Transport()
+                t.steps.append(t.trickle(self.BODY, piece=1000, seconds=1.0,
+                                         chunked=chunked))
+                self.assertEqual(self.get(t), self.BODY)
+                self.assertEqual(t.responses[0].wire.unsent(), 0)
+
+    def test_a_body_cut_off_before_its_content_length_is_an_incomplete_read(self):
+        """Short of what Content-Length promised is a read that failed, which
+        READ_FAILURES classifies, not a smaller body handed to the caller."""
+        t = Transport(lambda _req: fake.served(b"short", length=10))
+        with self.assertRaises(http.client.IncompleteRead):
+            self.get(t)
 
 
 class TheJobsReadingThroughTheClient(unittest.TestCase):
@@ -483,8 +544,9 @@ class ReadingAnOciChart(unittest.TestCase):
         """The token request a 401 leads to spends the deadline of the call it answers.
 
         Given one of its own, a realm that throttles to the longest wait it can
-        ask for runs a whole bound inside the call that asked for the token, and
-        the call runs past the bound the CI jobs are held above.
+        ask for runs a whole deadline inside the call that asked for the token,
+        and the call runs past its own deadline and the bound the CI jobs are
+        held above.
         """
         longest = {"Retry-After": str(int(registry.RETRY_MAX_WAIT_SECONDS))}
         manifest = "https://r.example/v2/c/manifests/1.0.0"
@@ -514,7 +576,7 @@ class ReadingAnOciChart(unittest.TestCase):
                         self.assertRaises(registry.RegistryError):
                     repo.manifest("1.0.0")
                 self.assertTrue(any(u.startswith("https://auth.example/") for u in t.urls()))
-                self.assertLessEqual(t.elapsed, registry.CALL_BOUND_SECONDS)
+                self.assertLessEqual(t.elapsed, registry.CALL_DEADLINE_SECONDS)
 
     def test_a_rate_limit_after_the_challenge_is_reported_at_the_bound(self):
         """The challenge's repeat is one of the RETRY_ATTEMPTS, not extra."""
