@@ -62,7 +62,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Any, Protocol
 
 # A 429 is the registry rate-limiting this client, and a 502, 503 or 504 is a
 # proxy or server in front of it that could not answer this time. None of them
@@ -134,10 +134,21 @@ CHART_CACHE = pathlib.Path.home() / ".cache" / "eks-gitops" / "charts"
 
 _CHALLENGE_PARAM = re.compile(r'(\w+)="([^"]*)"')
 
-# What every registry read is handed: url, headers, Authorization, and the
-# optional `challenge` and `deadline` keywords. http_get is the one
-# implementation; tests pass a scripted one.
-Getter = Callable[..., bytes]
+class Getter(Protocol):
+    """What every registry read is handed. http_get is the one implementation;
+    tests pass it bound to a scripted transport.
+
+    The keywords are the contract the OCI reads rest on: OciRepository passes
+    `challenge` on a read that carries no token yet, and binds `deadline` for
+    the token request that challenge leads to, so that request spends the
+    challenged call's deadline rather than starting one of its own.
+    """
+
+    def __call__(self, url: str, headers: Mapping[str, str] | None = None,
+                 authorization: str | None = None, *,
+                 challenge: Callable[[str, float], str] | None = None,
+                 deadline: float | None = None) -> bytes:
+        """The body at `url`, or the failure http_get documents."""
 
 
 class RegistryError(Exception):

@@ -56,7 +56,6 @@ import subprocess
 import sys
 import tarfile
 import urllib.error
-from collections.abc import Callable
 from typing import NoReturn
 
 import gatelib
@@ -208,7 +207,7 @@ def rulesfile_layer(manifest: dict, where: str) -> str | None:
 
 
 def rulesfile(ref: str,
-              get: Callable[..., bytes] = registry.http_get) -> dict[str, str] | None:
+              get: registry.Getter = registry.http_get) -> dict[str, str] | None:
     """Filenames and contents a rulesfile ref installs, or None for a plugin.
 
     Read through registry.py's client, so a 429 waits as long as the

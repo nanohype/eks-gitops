@@ -118,8 +118,8 @@ yaml.SafeLoader.add_constructor(
     lambda loader, node: loader.construct_scalar(node),  # type: ignore[arg-type]
 )
 
-# Reuse render-addons' discovery + repo setup — the ApplicationSets are the one
-# source of truth for what the fleet is and where each addon lands. The module
+# Reuse render-addons' discovery and its SKIP_CHARTS — the ApplicationSets are the
+# one source of truth for what the fleet is and where each addon lands. The module
 # file is hyphenated (render-addons.py), so it is loaded by path rather than
 # imported by name.
 _ra_path = pathlib.Path(__file__).resolve().parent / "render-addons.py"

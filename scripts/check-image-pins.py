@@ -76,11 +76,12 @@ import gatelib
 import registry
 import yaml
 
-# Reuse render-addons' discovery, repo setup and render path rather than
-# re-deriving which chart a path belongs to. Three earlier attempts at a local
-# resolver each got a different subset of the fleet: the matrix shape only, then
-# the matrix plus single-source shapes, then a parameter scan loose enough to
-# apply one appset's `--set` values to another chart — which is the failure the
+# Reuse render-addons' discovery rather than re-deriving which chart a path
+# belongs to: each Unit it yields carries the chart, its source and version, the
+# appset's `--set` parameters and the destination namespace, as the
+# ApplicationSets give them. A resolver kept here reads a different subset of
+# the appset shapes than the render gate does, or scans parameters loosely
+# enough to apply one appset's `--set` values to another chart — the failure the
 # karpenter appset's own comment warns about, a stray settings.clusterName
 # failing a chart whose schema rejects unknown keys.
 #
