@@ -71,7 +71,7 @@ ALL_MODULES="test_policy_admission test_platform_crs test_dashboards \
   test_render_addons test_image_pins test_log_volume_budget test_controls \
   test_corpus_floors test_registry test_chart_deprecation test_falco_rule_floor \
   test_image_vulnerabilities test_renovate_coverage test_lb_scheme_inputs \
-  test_kubeconform_scan"
+  test_kubeconform_scan test_image_extraction"
 
 # Bytecode caching keys on (mtime, size). A restore and the next mutation inside
 # the same second can hand the run the PREVIOUS mutant's module, and the suite
@@ -730,6 +730,123 @@ rejects "bound: leave the jitter out of a call's worst case" test_registry \
   test_a_call_throttled_at_every_retry_ends_inside_the_bound
 res $F
 
+# One deadline covers a call and the token request its challenge leads to. A
+# token request given a deadline of its own, a wait taken past the deadline, or
+# a request given longer than the call has left each let one call outlast the
+# job reading through it, which is then cancelled with nothing reported.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        get = functools.partial(self._get, deadline=deadline)\n',
+              '        get = self._get\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "deadline: give the token request one of its own" test_registry \
+  test_a_challenged_call_throttled_everywhere_ends_inside_the_bound
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('            if timer() + wait >= deadline:\n', '            if False:\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "deadline: take a wait that ends past it" test_registry \
+  test_a_wait_that_would_end_past_the_deadline_is_reported_not_slept \
+  test_a_challenged_call_throttled_everywhere_ends_inside_the_bound
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('timeout=min(HTTP_TIMEOUT, left)', 'timeout=HTTP_TIMEOUT', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "deadline: give a request longer than the call has left" test_registry \
+  test_no_request_is_given_longer_than_the_call_has_left
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        if left <= 0:\n', '        if False:\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "deadline: make a request after it has passed" test_registry \
+  test_a_call_whose_deadline_has_passed_makes_no_request
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('RETRYABLE = frozenset({429, 502, 503, 504})', 'RETRYABLE = frozenset({429})', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "retryable: report a gateway or unavailable server at once" test_registry \
+  test_a_gateway_or_an_unavailable_server_is_retried \
+  test_a_503_waits_as_long_as_its_retry_after_asks
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('asked > RETRY_MAX_WAIT_SECONDS:', 'asked >= RETRY_MAX_WAIT_SECONDS:', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "cap: report a Retry-After of exactly the cap" test_registry \
+  test_a_retry_after_at_the_cap_is_slept
+res $F
+
+# The token realm issues tokens and holds no charts. Its status passed through
+# as an HTTPError reaches _unavailable as if the registry had answered for the
+# pin, and a realm's 404 then reads as a pin that does not exist.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    except urllib.error.HTTPError as err:\n'
+              '        err.close()\n'
+              '        raise RegistryError(f"{realm} answered HTTP',
+              '    except KeyError as err:\n'
+              '        raise RegistryError(f"{realm} answered HTTP', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "realm: let its status read as the registry's answer" test_registry \
+  test_a_404_from_the_token_realm_was_not_answered
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    for target, content in ((archive, data), (digest_path(archive), digest)):',
+              '    for target, content in ((digest_path(archive), digest), (archive, data)):', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "keep: record the digest before the archive is in place" test_registry \
+  test_an_archive_cut_off_before_its_rename_leaves_no_record
+res $F
+
+# A job that reads through the client and allows no longer than one call is
+# cancelled mid-call. The scheduled reads of upstream are held to it as much as
+# the jobs that restore the chart cache.
+F=.github/workflows/chart-provenance.yml
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+assert s.count('    timeout-minutes: 20\n') == 2, "mutation did not land"
+p.write_text(s.replace('    timeout-minutes: 20\n', ''))
+PY
+rejects "jobs: leave a scheduled upstream read on the runner default" test_registry \
+  test_each_allows_longer_than_one_call
+res $F
+
 
 
 F=scripts/check-chart-deprecation.py
@@ -746,6 +863,32 @@ rejects "fetch: let an unreadable chart raise" test_chart_deprecation \
   test_an_http_status_names_the_status_and_the_url \
   test_an_exhausted_rate_limit_is_reported_in_its_own_words \
   test_a_network_error_is_reported
+res $F
+
+# A chart upstream could not be read for says nothing about the pin. Filing it
+# as a finding hands a network failure to whoever reads the scheduled run.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('            if meta.get("_answered"):\n', '            if True:\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "live: read every unreadable chart as a finding" test_chart_deprecation \
+  test_an_unreadable_chart_cannot_run \
+  test_a_finding_outweighs_a_chart_that_could_not_be_read
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('"_answered": err.answered}', '}', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "fetch: drop whether upstream answered" test_chart_deprecation \
+  test_an_http_status_names_the_status_and_the_url \
+  test_an_exhausted_rate_limit_is_reported_in_its_own_words
 res $F
 
 
@@ -800,6 +943,43 @@ p.write_text(m)
 PY
 rejects "rulesfile: unpack a plugin as if it carried rules" test_falco_rule_floor \
   test_an_artifact_that_is_not_a_rulesfile_installs_no_rules
+res $F
+
+# The manifest and the layer are upstream's. Indexed into unchecked, a shape the
+# OCI image spec does not describe escapes as a traceback with exit status 1,
+# the status this gate gives a finding about a ref in this repo.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    if not isinstance(digest, str) or not digest:\n', '    if False:\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "rulesfile: read a rule set with no layer digest" test_falco_rule_floor \
+  test_a_manifest_of_the_wrong_shape_cannot_run
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    if config is not None and not isinstance(config, dict):\n', '    if False:\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "rulesfile: read a config that is not an object" test_falco_rule_floor \
+  test_a_manifest_of_the_wrong_shape_cannot_run
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    except (tarfile.TarError, UnicodeDecodeError) as exc:\n',
+              '    except UnicodeDecodeError as exc:\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "rulesfile: unpack a layer that is not an archive" test_falco_rule_floor \
+  test_a_layer_that_is_not_a_rule_set_archive_cannot_run
 res $F
 
 
@@ -869,6 +1049,17 @@ rejects "scan: fail without naming the catalog commits" test_kubeconform_scan \
   test_a_scan_that_validated_nothing_names_the_refs_too
 res $F
 
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('-schema-location "$K8S_SCHEMAS"', '-schema-location default', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "scan: validate against the unpinned default catalog" test_kubeconform_scan \
+  test_kubeconform_reads_only_the_pinned_catalogs
+res $F
+
 
 F=scripts/check-image-vulnerabilities.py
 
@@ -898,6 +1089,18 @@ PY
 rejects "schema refs: read their annotation as a CI tool's" test_renovate_coverage \
   test_an_annotated_ref_is_claimed_by_the_git_refs_manager \
   test_the_shipped_scan_pins_both_catalogs
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('(?P<ver>[0-9a-f]{40})\\"?\\s*$", re.M),\n        AnnotatedPins(ANNOTATED_REF),',
+              '(?P<ver>[0-9a-f]{7,40})\\"?\\s*$", re.M),\n        AnnotatedPins(ANNOTATED_REF),', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "schema refs: read a short commit as a ref" test_renovate_coverage \
+  test_only_a_full_commit_is_read_as_a_ref
 res $F
 
 edit $F <<'PY'
@@ -937,6 +1140,18 @@ PY
 rejects "exemptions: stop re-checking them against the render" test_image_pins \
   test_an_exemption_the_fleet_no_longer_renders_mutably_fails \
   test_an_exemption_for_an_image_now_pinned_by_tag_fails
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('            if exc.answered:\n'
+              '                registry.refuse_chart(u.chart, u.version, u.source, exc)\n', '', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "inventory: file a pin the registry ruled out as unrendered" test_image_extraction \
+  test_a_pin_the_registry_ruled_out_is_a_finding
 res $F
 
 F=scripts/check-log-volume-budget.py
@@ -1082,7 +1297,7 @@ echo "RESULT pass=$pass fail=$fail"
 # The floor this harness owes for the same reason the gates owe theirs: with
 # every `rejects` line deleted it would report pass=0 fail=0 and exit 0, which is
 # a green run over nothing planted.
-MIN_PROBES=48
+MIN_PROBES=85
 total=$((pass + fail))
 if [ "$total" -lt "$MIN_PROBES" ]; then
   echo "FAIL  ran $total probe(s), under the floor of $MIN_PROBES — this harness"

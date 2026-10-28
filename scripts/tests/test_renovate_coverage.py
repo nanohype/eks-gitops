@@ -1282,6 +1282,14 @@ class SchemaCatalogRefs(unittest.TestCase):
         self.assertEqual(len(cov.failures), 1)
         self.assertIn("no `# renovate:` annotation", cov.failures[0])
 
+    def test_only_a_full_commit_is_read_as_a_ref(self):
+        """renovate.json's git-refs manager reads only a 40-hex commit, so a short
+        one is a ref nothing would move. The shipped scan is held to full commits
+        by test_the_shipped_scan_pins_both_catalogs."""
+        for short in (self.SHA[:7], self.SHA[:12], self.SHA[:39]):
+            with self.subTest(length=len(short)):
+                self.assertEqual(list(self.rx.finditer(f'CATALOG_REF="{short}"\n')), [])
+
     def test_an_annotation_no_manager_reads_is_reported(self):
         text = self.ANNOTATED.replace("datasource=git-refs", "datasource=git-tags")
         self.check(text)

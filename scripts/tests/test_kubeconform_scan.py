@@ -4,7 +4,9 @@ The script captures kubeconform's output to read the summary, so what reaches
 the log on a rejection is the script's doing rather than kubeconform's. These
 run the real script with a stub named kubeconform first on PATH, and hold what
 a reader of a failed CI job depends on: the scan output naming the manifest, the
-status kubeconform exited with, and the two catalog commits the run read.
+status kubeconform exited with, and the two catalog commits the run read. The stub
+records the arguments it was given, so the commits printed are held to be the
+commits kubeconform was pointed at.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 SCRIPT = ROOT / "scripts" / "kubeconform-scan.sh"
 
 STUB = """#!{bash}
+printf '%s\\0' "$@" > '{argv}'
 printf '%s\\n' {lines}
 exit {status}
 """
@@ -57,7 +60,8 @@ class WhatTheScanLeavesInTheLog(unittest.TestCase):
         if stub:
             quoted = " ".join("'" + line.replace("'", "'\\''") + "'" for line in lines)
             exe = self.bin / "kubeconform"
-            exe.write_text(STUB.format(bash=self.bash, lines=quoted, status=status))
+            exe.write_text(STUB.format(bash=self.bash, argv=self.bin / "argv", lines=quoted,
+                                       status=status))
             exe.chmod(0o755)
         env = {"PATH": self.path, "HOME": str(self.bin)}
         proc = subprocess.run([self.bash, str(SCRIPT), "rendered/"], capture_output=True,
@@ -102,6 +106,18 @@ class WhatTheScanLeavesInTheLog(unittest.TestCase):
         rc, said = self.scan(stub=False)
         self.assertEqual(rc, 2, said)
         self.assertIn("kubeconform is not on PATH", said)
+
+    def test_kubeconform_reads_only_the_pinned_catalogs(self):
+        rc, said = self.scan("Summary: 3 resources found in 2 files - Valid: 3, Invalid: 0")
+        self.assertEqual(rc, 0, said)
+        argv = (self.bin / "argv").read_text().split("\0")[:-1]
+        locations = [argv[i + 1] for i, a in enumerate(argv) if a == "-schema-location"]
+        self.assertEqual(len(locations), 2, argv)
+        k8s = f"/yannh/kubernetes-json-schema/{_ref('K8S_SCHEMA_REF')}/"
+        crds = f"/datreeio/CRDs-catalog/{_ref('CRD_CATALOG_REF')}/"
+        self.assertEqual([k8s in loc for loc in locations], [True, False], locations)
+        self.assertEqual([crds in loc for loc in locations], [False, True], locations)
+        self.assertNotIn("default", locations)
 
     def test_a_clean_scan_passes_without_the_refs(self):
         rc, said = self.scan("Summary: 3 resources found in 2 files - Valid: 3, Invalid: 0")
