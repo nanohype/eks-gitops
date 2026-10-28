@@ -49,6 +49,14 @@ CRD_CATALOG_REF="3eb90d47aba8d61919d4419dd38301536e32a94b"
 K8S_SCHEMAS="https://raw.githubusercontent.com/yannh/kubernetes-json-schema/${K8S_SCHEMA_REF}/{{ .NormalizedKubernetesVersion }}-standalone{{ .StrictSuffix }}/{{ .ResourceKind }}{{ .KindSuffix }}.json"
 CRD_SCHEMAS="https://raw.githubusercontent.com/datreeio/CRDs-catalog/${CRD_CATALOG_REF}/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"
 
+# Every non-zero exit ends with the two refs, from whichever line exits. A
+# schema that changed between catalog pins fails an unchanged manifest, and the
+# two read the same unless the log says which catalogs the run was pinned to.
+trap '[ "$?" -eq 0 ] || printf "      %s\n" \
+  "Schema catalogs pinned for this run:" \
+  "yannh/kubernetes-json-schema@${K8S_SCHEMA_REF}" \
+  "datreeio/CRDs-catalog@${CRD_CATALOG_REF}"' EXIT
+
 # kubeconform decides whether anything was validated at all, so its absence is
 # a refusal and not a finding. Without this, `exec` fails with 127 and a raw
 # shell message: non-zero, so CI does stop, but the status is the same shape a
@@ -68,16 +76,12 @@ args=(-strict -summary -schema-location "$K8S_SCHEMAS" -schema-location "$CRD_SC
 # printed before its status is acted on. Under `set -e` an assignment from a
 # failing command substitution exits on the spot, so the status is collected with
 # `||` instead: a rejected manifest has to reach the log with the line naming it,
-# or the job fails with nothing to read. On failure the refs are printed too,
-# because a schema that changed between catalog pins fails an unchanged manifest
-# and the two read the same.
+# or the job fails with nothing to read.
 rc=0
 out="$(kubeconform "${args[@]}" "$@" 2>&1)" || rc=$?
 printf '%s\n' "$out"
 if [ "$rc" -ne 0 ]; then
-  echo "FAIL  kubeconform exited $rc. Schemas were read from"
-  echo "      yannh/kubernetes-json-schema@${K8S_SCHEMA_REF} and"
-  echo "      datreeio/CRDs-catalog@${CRD_CATALOG_REF}."
+  echo "FAIL  kubeconform exited $rc."
   exit "$rc"
 fi
 
