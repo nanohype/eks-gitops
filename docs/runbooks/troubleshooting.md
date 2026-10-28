@@ -82,6 +82,8 @@ task kustomize:build:env ENVIRONMENT=development
 
 4. A `ghcr.io/nanohype/*` pod denied by `verify-images` with "image is not signed by a nanohype release workflow" or "carries no SPDX SBOM attestation" was not signed and attested by a `release.yml`/`release.yaml` workflow on a tag push. Inspect the signer with `cosign tree <image>` and `cosign verify <image> --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-identity-regexp '.*'`. That `--certificate-identity-regexp '.*'` accepts a signature from any workflow, so its output names who signed and proves nothing about whether the policy would admit the image; never carry it into a verification step. An admitted pod's image carries `@sha256:` — admission pins the tag to the digest it verified.
 
+5. `verify-images` matches Pods, never their controllers, so a Deployment, StatefulSet, DaemonSet or Job naming an image that fails verification is admitted and its pods are refused. The denial shows up as `FailedCreate` events on the ReplicaSet or Job (`kubectl get events -n <namespace> --field-selector reason=FailedCreate`), and the controller's pod template keeps the tag git holds.
+
 ## Velero Backup Issues
 
 1. Verify Velero is running:
