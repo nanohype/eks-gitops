@@ -116,7 +116,13 @@ UNSCANNABLE IS NOT CLEAN
 
 An image that could not be pulled contributed no findings. Counting the rest as
 the whole fleet is how a partial scan reads as a complete one, so any image that
-fails to scan exits 2 with the image named.
+fails to scan exits 2 with the image named and what trivy wrote to stderr about
+it.
+
+A registry that refuses for a reason that clears — an HTTP 429, or a 5xx from it
+or a proxy in front of it — has said nothing about the image, so that scan is
+run again after a backoff, up to SCAN_ATTEMPTS invocations. Every other failure
+is reported on the invocation that produced it.
 """
 
 from __future__ import annotations
@@ -127,8 +133,12 @@ import datetime
 import importlib.util
 import json
 import pathlib
+import random
+import re
 import subprocess
 import sys
+import time
+from collections.abc import Callable
 from typing import NoReturn
 
 import gatelib
@@ -150,6 +160,28 @@ ADVISORIES = ROOT / "image-advisories.yaml"
 # registry into a job that hangs until the CI runner's own ceiling, with no
 # diagnostic naming the image that stalled.
 SCAN_TIMEOUT = 600
+
+# How trivy says a registry refused it for a reason that clears. trivy reads
+# registries, and its own vulnerability database, through go-containerregistry,
+# which names a refusal by the distribution error code its body carries —
+# TOOMANYREQUESTS for a 429, UNAVAILABLE for a 503 — and a status whose body
+# carries none as "unexpected status code <status> <reason>".
+REFUSED_FOR_NOW = re.compile(
+    r"\b(?:TOOMANYREQUESTS|UNAVAILABLE): |unexpected status code (?:429|5\d\d)\b")
+
+# Invocations one image is given while a registry refuses it for now, and the
+# wait before each retry: SCAN_BACKOFF_SECONDS doubling per retry, stretched by
+# up to SCAN_JITTER of itself so images a registry refused together are not
+# retried together. trivy retries a refused request itself, inside a few
+# seconds; ECR Public's per-address quota, shared by every job on a runner
+# address, outlasts that.
+SCAN_ATTEMPTS = 4
+SCAN_BACKOFF_SECONDS = 20.0
+SCAN_JITTER = 0.25
+
+# The most of trivy's stderr a report quotes, from its end, where trivy writes
+# the error that stopped it.
+STDERR_LINES = 20
 
 # The severity that blocks. HIGH is counted and printed; see the header.
 BLOCKING_SEVERITY = "CRITICAL"
@@ -204,21 +236,68 @@ def bare(ref: str) -> str:
     return ref.rsplit(":", 1)[0] if ":" in name else ref
 
 
-def scan(ref: str) -> list[Finding] | None:
-    """Fixed findings at the reported severities, or None if the image did not scan."""
+class Unscannable(Exception):
+    """An image trivy did not scan: why, and what trivy wrote to stderr."""
+
+    def __init__(self, reason: str, stderr: str | bytes | None) -> None:
+        super().__init__(reason)
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode(errors="replace")
+        self.stderr = (stderr or "").strip()
+
+    def lines(self, indent: str) -> list[str]:
+        """The reason, then the end of trivy's stderr, each line under `indent`."""
+        said = self.stderr.splitlines()[-STDERR_LINES:]
+        if not said:
+            return [f"{indent}{self}; trivy wrote nothing to stderr"]
+        return [f"{indent}{self}; trivy's stderr ends:",
+                *(f"{indent}  {line}" for line in said)]
+
+
+def scan(ref: str, *, sleep: Callable[[float], None] = time.sleep,
+         jitter: Callable[[], float] = random.random) -> list[Finding]:
+    """Fixed findings at the reported severities, or Unscannable saying why not.
+
+    An invocation a registry refused for now, by REFUSED_FOR_NOW, is repeated
+    up to SCAN_ATTEMPTS invocations, each wait printed to stderr. Any other
+    failure is raised on the invocation that produced it.
+    """
     cmd = ["trivy", "image", "--quiet", "--scanners", "vuln",
            "--severity", ",".join(REPORTED_SEVERITIES),
            "--ignore-unfixed", "--format", "json", ref]
-    try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=SCAN_TIMEOUT)
-    except subprocess.TimeoutExpired:
-        return None
-    if proc.returncode != 0:
-        return None
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True,
+                                  timeout=SCAN_TIMEOUT)
+        except subprocess.TimeoutExpired as exc:
+            raise Unscannable(f"trivy ran past the {SCAN_TIMEOUT}s one scan is allowed",
+                              exc.stderr) from exc
+        if proc.returncode == 0:
+            return _findings(ref, proc)
+        refused = REFUSED_FOR_NOW.search(proc.stderr or "")
+        if refused is None:
+            raise Unscannable(f"trivy exited {proc.returncode}", proc.stderr)
+        if attempt == SCAN_ATTEMPTS:
+            raise Unscannable(f"trivy exited {proc.returncode} on each of {SCAN_ATTEMPTS} "
+                              f"attempts, a registry refusing it every time",
+                              proc.stderr)
+        wait = SCAN_BACKOFF_SECONDS * 2 ** (attempt - 1) * (1 + SCAN_JITTER * jitter())
+        print(f"  {ref}: attempt {attempt} of {SCAN_ATTEMPTS} was refused with "
+              f"'{refused.group(0).strip(': ')}', retrying in {wait:.0f}s", file=sys.stderr)
+        sleep(wait)
+
+
+def _findings(ref: str, proc: subprocess.CompletedProcess[str]) -> list[Finding]:
+    """The findings in a run trivy finished, or Unscannable when it wrote no report."""
     try:
         report = json.loads(proc.stdout)
-    except json.JSONDecodeError:
-        return None
+    except json.JSONDecodeError as exc:
+        raise Unscannable("trivy exited 0 and wrote no JSON report", proc.stderr) from exc
+    if not isinstance(report, dict):
+        raise Unscannable("trivy exited 0 and wrote a report that is not a JSON object",
+                          proc.stderr)
     out = []
     for result in report.get("Results") or []:
         for v in result.get("Vulnerabilities") or []:
@@ -362,10 +441,12 @@ def verdict(findings: list[Finding], advisories: list[dict],
 
 def run_canary() -> int:
     """Prove the scanner reports something before believing it reported nothing."""
-    found = scan(CANARY)
-    if found is None:
+    try:
+        found = scan(CANARY)
+    except Unscannable as exc:
         cannot_run("Cannot run: the canary image could not be scanned.",
                    f"  {CANARY}",
+                   *exc.lines("    "),
                    "An unreachable registry is a fact about the network, not about "
                    "the images this catalog pins.")
     critical = [f for f in found if f.severity == BLOCKING_SEVERITY]
@@ -382,6 +463,28 @@ def run_canary() -> int:
           f"silence — "
           + ", ".join(sorted({f"{f.id} ({f.package})" for f in critical})))
     return 0
+
+
+def scan_all(images: dict[str, set[str]]) -> list[Finding]:
+    """Every image's findings, or exit 2 naming each image that did not scan.
+
+    `images` maps each reference to the charts rendering it. Each image that did
+    not scan is named with those charts, why, and the end of trivy's stderr.
+    """
+    findings: list[Finding] = []
+    unscannable: list[tuple[str, Unscannable]] = []
+    for ref in sorted(images):
+        try:
+            findings.extend(scan(ref))
+        except Unscannable as exc:
+            unscannable.append((ref, exc))
+    if unscannable:
+        cannot_run("Cannot run: these images could not be scanned, and the ones that "
+                   "were say nothing about them:",
+                   *(line for ref, exc in unscannable
+                     for line in (f"  {ref}  (via {', '.join(sorted(images[ref]))})",
+                                  *exc.lines("    "))))
+    return findings
 
 
 def main() -> int:
@@ -426,19 +529,7 @@ def main() -> int:
                    f"contributes at least one, so the walk got smaller rather than "
                    f"the catalog.")
 
-    findings: list[Finding] = []
-    unscannable: list[str] = []
-    for ref in sorted(images):
-        got = scan(ref)
-        if got is None:
-            unscannable.append(ref)
-            continue
-        findings.extend(got)
-    if unscannable:
-        cannot_run("Cannot run: these images could not be scanned, and the ones that "
-                   "were say nothing about them:",
-                   *(f"  {ref}  (via {', '.join(sorted(images[ref]))})"
-                     for ref in unscannable))
+    findings = scan_all(images)
 
     if args.list:
         for f in sorted(findings, key=lambda f: (f.severity, f.image, f.id)):

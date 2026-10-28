@@ -20,14 +20,19 @@ What http_get does with each answer:
   * Every other status, and every network error, is reported on the attempt
     that produced it.
 
+A request to a host named in REQUEST_SPACING_SECONDS goes out no sooner than
+that spacing after the last request to the same host, from any call in the
+process, the token request a challenge leads to included.
+
 Every call runs to one deadline, CALL_DEADLINE_SECONDS after it starts, and the
 token request a 401 challenge leads to runs to that same deadline. The deadline
-is checked before each request, before each wait between requests and before
-each read of a response body from the socket, a chunked body's framing
-included, and a call that reaches it is reported, naming the host. A check
-cannot cut short a socket wait already under way, and each one is bounded by
-the request's timeout, at most HTTP_TIMEOUT, so a call ends within
-CALL_BOUND_SECONDS: its deadline plus HTTP_TIMEOUT. The exception is urlopen
+is checked before each request, before each wait between requests, a retry's or
+the spacing a host is held to, and before each read of a response body from the
+socket, a chunked body's framing included, and a call that reaches it is
+reported, naming the host. A check cannot cut short a socket wait already
+under way, and each one is bounded by the request's timeout, at most
+HTTP_TIMEOUT, so a call ends within CALL_BOUND_SECONDS: its deadline plus
+HTTP_TIMEOUT. The exception is urlopen
 itself, which connects and reads the status line and headers with no check of
 the deadline between its socket waits, so a call whose deadline passes inside
 urlopen ends when urlopen does.
@@ -70,30 +75,45 @@ from typing import Any, Protocol
 # RETRY_ATTEMPTS bounds the requests one http_get call makes to its URL, the
 # repeat after a 401 challenge included; the token request that challenge leads
 # to makes requests of its own, inside the deadline of the call it answers. The
-# wait before a retry is the registry's Retry-After when it sends one, and
-# RETRY_BASE_SECONDS doubling per retry when it does not, stretched by up to
-# RETRY_JITTER of itself so jobs the registry throttled together do not come
-# back together. A Retry-After over RETRY_MAX_WAIT_SECONDS is reported without
-# waiting, naming the wait the registry asked for: a job sleeping past its own
-# timeout reports nothing at all.
+# wait before a retry is the registry's Retry-After when it sends one, and a
+# backoff when it does not, either one stretched by up to RETRY_JITTER of itself
+# so jobs the registry throttled together do not come back together. A
+# Retry-After over RETRY_MAX_WAIT_SECONDS is reported without waiting, naming
+# the wait the registry asked for: a job sleeping past its own timeout reports
+# nothing at all.
+#
+# The backoff starts at RETRY_BASE_SECONDS and doubles per retry, and the base
+# is derived so the last retry waits RETRY_MAX_WAIT_SECONDS: the call's deadline
+# holds room for that wait before every retry whether or not the registry names
+# it, and a registry that throttles without naming a wait is the one a short
+# backoff serves worst. ECR Public answers its 429 with no Retry-After, and a
+# backoff that stops short of the cap spends every attempt while the
+# throttling it is waiting out still holds.
 RETRYABLE = frozenset({429, 502, 503, 504})
 RETRY_ATTEMPTS = 4
-RETRY_BASE_SECONDS = 5.0
-RETRY_JITTER = 0.25
 RETRY_MAX_WAIT_SECONDS = 120.0
+RETRY_BASE_SECONDS = RETRY_MAX_WAIT_SECONDS / 2 ** (RETRY_ATTEMPTS - 2)
+RETRY_JITTER = 0.25
 HTTP_TIMEOUT = 60
 
 # The deadline one http_get call runs to, measured from when it starts: room for
 # RETRY_ATTEMPTS requests of up to HTTP_TIMEOUT each and, before every retry,
-# the longest wait it can take, stretched by RETRY_JITTER. The token request a
-# 401 challenge leads to spends the same deadline rather than starting one of
-# its own. Each request is given the smaller of HTTP_TIMEOUT and what the call
-# has left, and a wait that would end at or past the deadline is reported
-# instead of taken.
+# the longest wait it can take, RETRY_MAX_WAIT_SECONDS stretched by
+# RETRY_JITTER. The token request a 401 challenge leads to spends the same
+# deadline rather than starting one of its own. Each request is given the
+# smaller of HTTP_TIMEOUT and what the call has left, and a wait that would end
+# at or past the deadline is reported instead of taken.
+#
+# The spacing REQUEST_SPACING_SECONDS holds a host to is one of those waits, and
+# it has no room of its own: it is spent from what the deadline leaves the
+# requests. Every retry waits at least RETRY_BASE_SECONDS, longer than any
+# spacing, so a retry is never spaced; the waits fall before a call's first
+# request and around the token request a challenge leads to, each under one
+# spacing.
 CALL_DEADLINE_SECONDS = (
     RETRY_ATTEMPTS * HTTP_TIMEOUT
     + (RETRY_ATTEMPTS - 1) * (1 + RETRY_JITTER)
-    * max(RETRY_MAX_WAIT_SECONDS, RETRY_BASE_SECONDS * 2 ** (RETRY_ATTEMPTS - 2))
+    * RETRY_MAX_WAIT_SECONDS
 )
 
 # The longest one http_get call takes. urlopen's timeout bounds each wait on the
@@ -125,6 +145,26 @@ HELM_CHART_CONTENT = "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
 # Docker Hub serves the distribution API from a host other than the one its
 # references name.
 REGISTRY_API_HOSTS = {"docker.io": "registry-1.docker.io"}
+
+# The least time between the starts of two requests to a host that serves an
+# anonymous client a fixed number of requests a second, by the host a request's
+# URL names.
+#
+# ECR Public allows an unauthenticated client one image pull a second, a quota
+# AWS does not adjust:
+# https://docs.aws.amazon.com/AmazonECR/latest/public/public-service-quotas.html
+# One chart read is several requests to it — the anonymous manifest read its
+# 401 refuses, the token request, the manifest again and the content blob — and
+# sent back to back they draw the 429 the retries then have to wait out. Every
+# request is spaced rather than every chart, which holds this client under the
+# quota however ECR Public counts a pull's requests toward it. The spacing sits a
+# tenth of a second above the quota, so two requests whose connection setup
+# takes different times still arrive in different seconds.
+REQUEST_SPACING_SECONDS = {"public.ecr.aws": 1.1}
+
+# When the last request to each host went out, on http_get's timer: the process's
+# record, which every call reads its spacing from.
+_LAST_SENT: dict[str, float] = {}
 
 # Where chart_archive keeps what it fetched. A published chart version is read
 # as immutable — the assumption helm's own repository cache makes — so an
@@ -238,6 +278,24 @@ class _Paced(io.RawIOBase):
         super().close()
 
 
+def _space(host: str, last_sent: Mapping[str, float], deadline: float, where: str,
+           sleep: Callable[[float], None], timer: Callable[[], float]) -> None:
+    """Wait out what is left of the spacing REQUEST_SPACING_SECONDS holds `host` to.
+
+    The spacing runs from the last request `last_sent` records for the host. A
+    wait that would end at or past the deadline is reported instead of taken.
+    """
+    spacing = REQUEST_SPACING_SECONDS.get(host)
+    if spacing is None or host not in last_sent:
+        return
+    wait = last_sent[host] + spacing - timer()
+    if wait <= 0:
+        return
+    if timer() + wait >= deadline:
+        raise _ran_out(host, f"{where}, inside the {spacing:g}s kept between requests to it")
+    sleep(wait)
+
+
 def http_get(url: str, headers: Mapping[str, str] | None = None,
              authorization: str | None = None, *,
              challenge: Callable[[str, float], str] | None = None,
@@ -246,7 +304,8 @@ def http_get(url: str, headers: Mapping[str, str] | None = None,
              sleep: Callable[[float], None] = time.sleep,
              clock: Callable[[], float] = time.time,
              timer: Callable[[], float] = time.monotonic,
-             jitter: Callable[[], float] = random.random) -> bytes:
+             jitter: Callable[[], float] = random.random,
+             last_sent: dict[str, float] | None = None) -> bytes:
     """GET `url`, retrying RETRYABLE statuses within RETRY_ATTEMPTS requests.
 
     The call runs to `deadline`, a `timer` reading, or to CALL_DEADLINE_SECONDS
@@ -258,16 +317,25 @@ def http_get(url: str, headers: Mapping[str, str] | None = None,
     repeat counts toward RETRY_ATTEMPTS. A 401 on the last attempt leaves no
     request to repeat it with, and is reported. A second 401 propagates, as do
     every other HTTPError and every URLError, from the request that raised it.
+
+    Each request to a host in REQUEST_SPACING_SECONDS waits out that spacing
+    from the last request `last_sent` records, the process's own record when
+    none is given, and records its own.
     """
     host = urllib.parse.urlsplit(url).netloc
     if deadline is None:
         deadline = timer() + CALL_DEADLINE_SECONDS
+    if last_sent is None:
+        last_sent = _LAST_SENT
     attempt = 0
     while True:
         attempt += 1
+        where = f"before request {attempt} of {RETRY_ATTEMPTS} at {url}"
+        _space(host, last_sent, deadline, where, sleep, timer)
         left = deadline - timer()
         if left <= 0:
-            raise _ran_out(host, f"before request {attempt} of {RETRY_ATTEMPTS} at {url}")
+            raise _ran_out(host, where)
+        last_sent[host] = timer()
         req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT,
                                                    **dict(headers or {})})
         if authorization:

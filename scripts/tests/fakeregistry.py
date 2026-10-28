@@ -128,6 +128,12 @@ class Transport:
     client gave it, as one that never answers is, every wait the time it asked
     to sleep, and every read of a trickled body the seconds it was scripted to
     take, so a deadline the client keeps is one it keeps in the worst case.
+    A `latency` charges each request that many seconds instead, which is how a
+    registry answering faster than the spacing it holds a client to is written.
+
+    `sent_at` is the `elapsed` reading each request went out at, and `sent` is
+    the record of the last request to each host that http_get spaces requests
+    by, one per transport so no test inherits another's.
     """
 
     def __init__(self, *steps):
@@ -137,12 +143,16 @@ class Transport:
         self.waits: list[float] = []
         self.responses: list[Served] = []
         self.elapsed = 0.0
+        self.latency: float | None = None
+        self.sent_at: list[float] = []
+        self.sent: dict[str, float] = {}
         self.on_sleep = None
 
     def urlopen(self, req, timeout=None):
         self.requests.append(req)
         self.timeouts.append(timeout)
-        self.elapsed += timeout or 0.0
+        self.sent_at.append(self.elapsed)
+        self.elapsed += (timeout or 0.0) if self.latency is None else self.latency
         step = self.steps.pop(0)
         if callable(step) and not isinstance(step, BaseException):
             step = step(req)
@@ -170,25 +180,31 @@ class Transport:
 
     def bind(self, http_get, jitter: float = 0.0):
         """`http_get` over this transport, with a fixed wall clock, the transport's
-        own timer and a fixed jitter draw."""
+        own timer, its own record of the last request to each host and a fixed
+        jitter draw."""
         return functools.partial(http_get, urlopen=self.urlopen, sleep=self.sleep,
                                  clock=lambda: NOW, timer=lambda: self.elapsed,
-                                 jitter=lambda: jitter)
+                                 jitter=lambda: jitter, last_sent=self.sent)
 
     def urls(self) -> list[str]:
         return [r.full_url for r in self.requests]
 
 
 class OciRegistry:
-    """One chart in one OCI repository, served only to a bearer token it issued."""
+    """One chart in one OCI repository, served only to a bearer token it issued.
+
+    The token realm is on a host of its own unless `realm` names another, as
+    ECR Public's is on the registry's own host.
+    """
 
     TOKEN = "t0k"
-    CHALLENGE = ('Bearer realm="https://auth.example/token",service="registry.example",'
+    REALM = "https://auth.example/token"
+    CHALLENGE = (f'Bearer realm="{REALM}",service="registry.example",'
                  'scope="aws"')
     transport_class = Transport
 
     def __init__(self, host, path, version, config, *, content=b"chart-tgz",
-                 media_type=None, digest=None):
+                 media_type=None, digest=None, realm=None):
         self.base = f"https://{host}/v2/{path}"
         self.version = version
         self.blob = json.dumps(config).encode()
@@ -196,13 +212,15 @@ class OciRegistry:
         self.content = content
         self.content_digest = "sha256:" + hashlib.sha256(content).hexdigest()
         self.media_type = media_type or HELM_CONFIG
+        self.realm = realm or self.REALM
+        self.challenge = self.CHALLENGE.replace(self.REALM, self.realm)
 
     def __call__(self, req):
         url = req.full_url
-        if url.startswith("https://auth.example/token?"):
+        if url.startswith(f"{self.realm}?"):
             return json.dumps({"token": self.TOKEN}).encode()
         if auth(req) != f"Bearer {self.TOKEN}":
-            return http_error(url, 401, {"WWW-Authenticate": self.CHALLENGE})
+            return http_error(url, 401, {"WWW-Authenticate": self.challenge})
         if url == f"{self.base}/manifests/{self.version}":
             return json.dumps({
                 "config": {"mediaType": self.media_type, "digest": self.digest},

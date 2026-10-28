@@ -21,9 +21,11 @@ the client keeps when nothing answers in time.
 import contextlib
 import datetime
 import email.utils
+import functools
 import hashlib
 import http.client
 import io
+import itertools
 import json
 import os
 import pathlib
@@ -126,6 +128,18 @@ class RetryingOnlyWhatMayClear(unittest.TestCase):
         self.assertEqual(self.get(t), b"ok")
         base = registry.RETRY_BASE_SECONDS
         self.assertEqual(t.waits, [base, base * 2])
+
+    def test_the_backoff_doubles_to_the_longest_wait_by_the_last_retry(self):
+        """A registry that names no wait is waited on as long as one naming the
+        longest this client takes, which is the wait the deadline holds room for
+        before every retry. One stopping short spends every attempt while the
+        throttling it is waiting out still holds."""
+        t = Transport(*[http_error(self.URL, 429)] * registry.RETRY_ATTEMPTS)
+        with self.assertRaises(registry.RegistryError):
+            self.get(t)
+        base = registry.RETRY_BASE_SECONDS
+        self.assertEqual(t.waits, [base * 2 ** i for i in range(registry.RETRY_ATTEMPTS - 1)])
+        self.assertEqual(t.waits[-1], registry.RETRY_MAX_WAIT_SECONDS)
 
     def test_jitter_stretches_a_wait_and_never_shortens_one(self):
         """Jobs throttled together must not come back together, and a registry's
@@ -300,6 +314,140 @@ class RetryingOnlyWhatMayClear(unittest.TestCase):
                       str(caught.exception))
         self.assertEqual(answers, [])
         self.assertEqual(len(t.requests), registry.RETRY_ATTEMPTS)
+
+
+class SpacingRequestsToAHost(unittest.TestCase):
+    """A host that serves an anonymous client a request a second is sent no more.
+
+    ECR Public refuses a client over its quota with a 429 and no Retry-After. A
+    chart read is four requests to it, and sent back to back they draw that 429
+    on their own, which the retries then have to wait out. The transport answers
+    each request in LATENCY seconds, inside the spacing, so a client that did not
+    space its requests sends them closer together than the host allows.
+    """
+
+    HOST = "public.ecr.aws"
+    OTHER = "registry.example"
+    LATENCY = 0.2
+    META = {"name": "karpenter", "version": "1.2.3"}
+
+    def setUp(self):
+        self.spacing = registry.REQUEST_SPACING_SECONDS[self.HOST]
+
+    def transport(self, *steps) -> Transport:
+        t = Transport(*steps)
+        t.latency = self.LATENCY
+        return t
+
+    def assertSpaced(self, times: list[float]):
+        self.assertGreater(len(times), 1, "no two requests to compare")
+        for earlier, later in itertools.pairwise(times):
+            self.assertGreaterEqual(later - earlier, self.spacing)
+
+    def test_the_spacing_sits_above_the_quota_ecr_public_allows(self):
+        """One unauthenticated pull a second, a quota AWS does not adjust."""
+        self.assertGreater(registry.REQUEST_SPACING_SECONDS["public.ecr.aws"], 1.0)
+
+    def test_successive_reads_of_a_spaced_host_are_spaced(self):
+        t = self.transport(b"ok", b"ok", b"ok")
+        get = t.get()
+        for blob in ("a", "b", "c"):
+            get(f"https://{self.HOST}/v2/x/blobs/{blob}", {}, None)
+        self.assertSpaced(t.sent_at)
+        self.assertEqual(len(t.waits), 2)
+        for wait in t.waits:
+            self.assertAlmostEqual(wait, self.spacing - self.LATENCY)
+
+    def test_a_chart_read_spaces_its_challenge_token_and_repeat(self):
+        """ECR Public's token realm is on the registry's own host, so the token
+        request a challenge leads to is held to the same spacing."""
+        reg = Registry(self.HOST, "karpenter/karpenter", "1.2.3", self.META,
+                       realm=f"https://{self.HOST}/token/")
+        t = self.transport(*[reg] * 4)
+        registry.oci_chart_content(f"oci://{self.HOST}/karpenter/karpenter", "1.2.3", t.get())
+        self.assertEqual({urllib.parse.urlsplit(u).netloc for u in t.urls()}, {self.HOST})
+        self.assertEqual(len(t.requests), 4)
+        self.assertSpaced(t.sent_at)
+
+    def test_a_host_with_no_spacing_is_not_spaced(self):
+        t = self.transport(b"ok", b"ok", b"ok")
+        get = t.get()
+        for blob in ("a", "b", "c"):
+            get(f"https://{self.OTHER}/v2/x/blobs/{blob}", {}, None)
+        self.assertEqual(t.waits, [])
+
+    def test_each_host_is_spaced_from_its_own_last_request(self):
+        """A request to another host in between neither resets nor extends the spacing."""
+        t = self.transport(b"ok", b"ok", b"ok")
+        get = t.get()
+        get(f"https://{self.HOST}/v2/x/blobs/a", {}, None)
+        get(f"https://{self.OTHER}/v2/x/blobs/b", {}, None)
+        get(f"https://{self.HOST}/v2/x/blobs/c", {}, None)
+        self.assertEqual(len(t.waits), 1)
+        self.assertAlmostEqual(t.waits[0], self.spacing - 2 * self.LATENCY)
+
+    def test_calls_given_no_record_share_the_processes(self):
+        """Every gate's calls in one process read the one record, so a chart read
+        is spaced from the chart read before it."""
+        t = self.transport(b"ok", b"ok")
+        get = functools.partial(registry.http_get, urlopen=t.urlopen, sleep=t.sleep,
+                                clock=lambda: NOW, timer=lambda: t.elapsed)
+        with mock.patch.dict(registry._LAST_SENT, clear=True):
+            get(f"https://{self.HOST}/v2/x/blobs/a", {}, None)
+            get(f"https://{self.HOST}/v2/x/blobs/b", {}, None)
+            self.assertIn(self.HOST, registry._LAST_SENT)
+        self.assertSpaced(t.sent_at)
+
+    def test_a_retry_waits_its_backoff_and_no_spacing_on_top(self):
+        """The shortest backoff outlasts every spacing, so a retry is never spaced."""
+        url = f"https://{self.HOST}/v2/x/manifests/1.2.3"
+        t = self.transport(http_error(url, 429), b"ok")
+        with contextlib.redirect_stderr(io.StringIO()):
+            t.get()(url, {}, None)
+        self.assertEqual(t.waits, [registry.RETRY_BASE_SECONDS])
+        self.assertGreater(registry.RETRY_BASE_SECONDS,
+                           max(registry.REQUEST_SPACING_SECONDS.values()))
+
+    def test_a_spacing_wait_that_would_end_past_the_deadline_is_reported_not_slept(self):
+        t = self.transport(b"ok", b"ok")
+        get = t.get()
+        get(f"https://{self.HOST}/v2/x/blobs/a", {}, None)
+        with self.assertRaises(registry.RegistryError) as caught:
+            get(f"https://{self.HOST}/v2/x/blobs/b", {}, None, deadline=t.elapsed + 0.5)
+        self.assertEqual(t.waits, [])
+        self.assertEqual(len(t.requests), 1)
+        said = str(caught.exception)
+        self.assertIn("ran out before request 1", said)
+        self.assertIn(f"inside the {self.spacing:g}s kept between requests to it", said)
+
+    def test_a_spacing_wait_that_overran_the_deadline_sends_nothing(self):
+        """A sleep can end later than it was asked to, and the request after it is
+        then one the call has no time left for."""
+        t = self.transport(b"ok", b"ok")
+        get = t.get()
+        get(f"https://{self.HOST}/v2/x/blobs/a", {}, None)
+        t.on_sleep = lambda: setattr(t, "elapsed", t.elapsed + 5)
+        with self.assertRaisesRegex(registry.RegistryError, "ran out before request 1"):
+            get(f"https://{self.HOST}/v2/x/blobs/b", {}, None, deadline=t.elapsed + 2)
+        self.assertEqual(len(t.requests), 1)
+
+    def test_a_paced_call_throttled_at_every_retry_makes_every_attempt(self):
+        """The spacing has no room of its own in the deadline. It falls before a
+        call's first request, which still leaves every attempt inside it."""
+        url = f"https://{self.HOST}/v2/x/manifests/1.2.3"
+        longest = {"Retry-After": str(int(registry.RETRY_MAX_WAIT_SECONDS))}
+        t = Transport(b"ok", *[http_error(url, 429, longest)] * registry.RETRY_ATTEMPTS)
+        t.latency = self.LATENCY
+        get = t.get(jitter=1.0)
+        get(f"https://{self.HOST}/v2/x/blobs/a", {}, None)
+        t.latency = None
+        with contextlib.redirect_stderr(io.StringIO()), \
+                self.assertRaises(registry.RegistryError) as caught:
+            get(url, {}, None)
+        self.assertIn(f"HTTP 429 to the last of {registry.RETRY_ATTEMPTS}",
+                      str(caught.exception))
+        self.assertEqual(t.urls().count(url), registry.RETRY_ATTEMPTS)
+        self.assertLessEqual(t.elapsed - self.LATENCY, registry.CALL_DEADLINE_SECONDS)
 
 
 class ReadingABody(unittest.TestCase):
@@ -581,10 +729,15 @@ class ReadingAnOciChart(unittest.TestCase):
                 self.assertLessEqual(t.elapsed, registry.CALL_DEADLINE_SECONDS)
 
     def test_a_rate_limit_after_the_challenge_is_reported_at_the_bound(self):
-        """The challenge's repeat is one of the RETRY_ATTEMPTS, not extra."""
+        """The challenge's repeat is one of the RETRY_ATTEMPTS, not extra.
+
+        Each 429 names a short Retry-After, so the waits stay far inside the
+        call's deadline and the request bound is what ends the call: a client
+        allowing one request more makes it rather than running out first."""
         reg = Registry("r.example", "c", "1.0.0", self.META)
         manifest = f"{reg.base}/manifests/1.0.0"
-        t = Transport(reg, reg, *[http_error(manifest, 429)] * registry.RETRY_ATTEMPTS)
+        t = Transport(reg, reg, *[http_error(manifest, 429, {"Retry-After": "1"})]
+                      * registry.RETRY_ATTEMPTS)
         with contextlib.redirect_stderr(io.StringIO()), \
                 self.assertRaises(registry.RegistryError):
             registry.oci_chart_metadata("oci://r.example/c", "1.0.0", t.get())

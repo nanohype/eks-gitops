@@ -10,8 +10,10 @@ gate reports decisions that were already taken; too loose and
 `image-advisories.yaml` becomes a permanent waiver, which is the one outcome that
 would make a green run worse than no gate at all.
 
-Everything here is offline. The trivy invocation and the canary are exercised by
-running the gate, not from here.
+Everything here is offline. trivy is replaced by a stand-in that answers each
+invocation with a status and what trivy writes, so what the gate does with a
+registry refusing it for now, with any other failure, and with what trivy said
+about either is decided here; a real scan is exercised by running the gate.
 """
 
 from __future__ import annotations
@@ -19,7 +21,9 @@ from __future__ import annotations
 import contextlib
 import datetime
 import io
+import json
 import pathlib
+import subprocess
 import tempfile
 import types
 import unittest
@@ -332,6 +336,191 @@ class ReadingTheAdvisories(unittest.TestCase):
         rc, out = self.read("entries: []\n")
         self.assertEqual(rc, gate.gatelib.CANNOT_RUN)
         self.assertIn("declares no `advisories` key", out)
+
+
+# What trivy writes to stderr when the registry it reads refuses it. Each line is
+# the shape go-containerregistry gives the refusal, after the chain of contexts
+# trivy prefixes it with.
+def trivy_said(refusal: str) -> str:
+    return ("2026-10-28T17:24:40Z\tFATAL\tFatal error\trun error: image scan error: "
+            "scan error: unable to initialize a scan service: unable to find the "
+            "specified image \"public.ecr.aws/karpenter/controller:1.15.1\" in "
+            "[\"remote\"]: 1 error occurred:\n"
+            f"\t* remote error: GET https://public.ecr.aws/v2/karpenter/controller/"
+            f"manifests/1.15.1: {refusal}\n")
+
+
+THROTTLED = trivy_said("TOOMANYREQUESTS: Rate exceeded")
+
+REPORT = json.dumps({"Results": [{"Vulnerabilities": [{
+    "VulnerabilityID": "CVE-2026-1", "PkgName": "musl", "InstalledVersion": "1.1",
+    "FixedVersion": "1.2", "Severity": "CRITICAL"}]}]})
+
+
+class Trivy:
+    """A stand-in for subprocess.run that answers each trivy invocation in turn.
+
+    A step is a CompletedProcess's (returncode, stdout, stderr), or an exception
+    to raise. Every wait the scan takes is recorded rather than slept.
+    """
+
+    def __init__(self, *steps):
+        self.steps = list(steps)
+        self.calls: list[list[str]] = []
+        self.waits: list[float] = []
+
+    def run(self, cmd, **kwargs):
+        self.calls.append(cmd)
+        self.timeout = kwargs.get("timeout")
+        step = self.steps.pop(0)
+        if isinstance(step, BaseException):
+            raise step
+        rc, out, err = step
+        return subprocess.CompletedProcess(cmd, rc, out, err)
+
+    def scan(self, ref="public.ecr.aws/karpenter/controller:1.15.1", jitter=0.0):
+        with contextlib.redirect_stderr(io.StringIO()) as said:
+            try:
+                with mock.patch.object(gate.subprocess, "run", self.run):
+                    return gate.scan(ref, sleep=self.waits.append, jitter=lambda: jitter)
+            finally:
+                self.said = said.getvalue()
+
+
+class ScanningThroughARegistryThatRefusesForNow(unittest.TestCase):
+    """A 429 or a 5xx says nothing about the image, so the scan is run again.
+
+    ECR Public refuses an anonymous client over its quota, and the quota belongs
+    to the runner's address rather than to this job. Reported at once, an image
+    the registry refused for a second is an image the gate examined nothing of.
+    Retried without bound, it is a job that runs into its timeout naming no image.
+    """
+
+    def test_a_refused_scan_is_run_again_and_its_findings_are_the_result(self):
+        trivy = Trivy((1, "", THROTTLED), (0, REPORT, ""))
+        found = trivy.scan()
+        self.assertEqual([f.id for f in found], ["CVE-2026-1"])
+        self.assertEqual(len(trivy.calls), 2)
+        self.assertEqual(trivy.waits, [gate.SCAN_BACKOFF_SECONDS])
+        self.assertIn("attempt 1 of", trivy.said)
+        self.assertIn("refused with 'TOOMANYREQUESTS'", trivy.said)
+
+    def test_each_way_trivy_names_a_refusal_that_clears_is_retried(self):
+        """The distribution codes a body carries, and the status when it carries none."""
+        for refusal in ("TOOMANYREQUESTS: Rate exceeded",
+                        "UNAVAILABLE: service unavailable",
+                        "unexpected status code 429 Too Many Requests",
+                        "unexpected status code 500 Internal Server Error",
+                        "unexpected status code 502 Bad Gateway: <html>bad gateway</html>",
+                        "unexpected status code 503 Service Unavailable",
+                        "unexpected status code 504 Gateway Timeout"):
+            with self.subTest(refusal=refusal):
+                trivy = Trivy((1, "", trivy_said(refusal)), (0, REPORT, ""))
+                trivy.scan()
+                self.assertEqual(len(trivy.calls), 2)
+
+    def test_a_failure_a_wait_cannot_clear_is_reported_at_once(self):
+        """A missing image, a denied pull, a missing tool: asking again gets the
+        same answer, after a wait that delays the report and changes nothing."""
+        for refusal in ("DENIED: requested access to the resource is denied",
+                        "MANIFEST_UNKNOWN: manifest unknown",
+                        "unexpected status code 401 Unauthorized",
+                        "unexpected status code 404 Not Found"):
+            with self.subTest(refusal=refusal):
+                trivy = Trivy((1, "", trivy_said(refusal)), (0, REPORT, ""))
+                with self.assertRaises(gate.Unscannable) as caught:
+                    trivy.scan()
+                self.assertEqual(len(trivy.calls), 1)
+                self.assertEqual(trivy.waits, [])
+                self.assertIn(refusal, caught.exception.stderr)
+
+    def test_each_retry_waits_twice_the_last_and_the_attempts_are_bounded(self):
+        trivy = Trivy(*[(1, "", THROTTLED)] * gate.SCAN_ATTEMPTS)
+        with self.assertRaises(gate.Unscannable) as caught:
+            trivy.scan()
+        self.assertEqual(len(trivy.calls), gate.SCAN_ATTEMPTS)
+        base = gate.SCAN_BACKOFF_SECONDS
+        self.assertEqual(trivy.waits, [base * 2 ** i for i in range(gate.SCAN_ATTEMPTS - 1)])
+        self.assertIn(f"on each of {gate.SCAN_ATTEMPTS} attempts", str(caught.exception))
+        self.assertIn("TOOMANYREQUESTS: Rate exceeded", caught.exception.stderr)
+
+    def test_jitter_stretches_a_wait_and_never_shortens_one(self):
+        trivy = Trivy((1, "", THROTTLED), (0, REPORT, ""))
+        trivy.scan(jitter=1.0)
+        self.assertEqual(trivy.waits, [gate.SCAN_BACKOFF_SECONDS * (1 + gate.SCAN_JITTER)])
+
+    def test_a_scan_past_its_timeout_is_reported_with_what_trivy_had_said(self):
+        """subprocess hands back what the child wrote as bytes, whatever `text` asked."""
+        trivy = Trivy(subprocess.TimeoutExpired(["trivy"], gate.SCAN_TIMEOUT,
+                                                stderr=b"pulling layer 3 of 9\n"))
+        with self.assertRaises(gate.Unscannable) as caught:
+            trivy.scan()
+        self.assertIn(f"past the {gate.SCAN_TIMEOUT}s", str(caught.exception))
+        self.assertEqual(caught.exception.stderr, "pulling layer 3 of 9")
+        self.assertEqual(trivy.timeout, gate.SCAN_TIMEOUT)
+
+    def test_a_run_that_wrote_no_report_is_not_a_clean_one(self):
+        for out in ("", "not json", "[]"):
+            with self.subTest(stdout=out):
+                trivy = Trivy((0, out, "warning: something"))
+                with self.assertRaises(gate.Unscannable) as caught:
+                    trivy.scan()
+                self.assertIn("exited 0", str(caught.exception))
+
+
+class SayingWhyAnImageWasNotScanned(unittest.TestCase):
+    """An image named as unscannable with nothing else sends the reader to rerun
+    the scan by hand to learn whether the image is missing, private or throttled.
+    What trivy said is the answer, so the report carries it."""
+
+    IMAGES = {"public.ecr.aws/eks/aws-load-balancer-controller:v3.5.0":
+              {"aws-load-balancer-controller"},
+              "quay.io/argoproj/argocd:v3.1.0": {"argo-cd"}}
+
+    def run_gate(self, call, trivy: Trivy):
+        out = io.StringIO()
+        with mock.patch.object(gate.subprocess, "run", trivy.run), \
+                mock.patch.dict(gate.scan.__kwdefaults__, {"sleep": trivy.waits.append}), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            try:
+                result = call()
+            except SystemExit as exc:
+                return exc.code, out.getvalue()
+        return result, out.getvalue()
+
+    def test_each_image_that_did_not_scan_is_named_with_trivys_stderr(self):
+        denied = trivy_said("DENIED: requested access to the resource is denied")
+        trivy = Trivy((1, "", denied), (0, REPORT, ""))
+        rc, out = self.run_gate(lambda: gate.scan_all(self.IMAGES), trivy)
+        self.assertEqual(rc, gate.gatelib.CANNOT_RUN)
+        self.assertIn("public.ecr.aws/eks/aws-load-balancer-controller:v3.5.0  "
+                      "(via aws-load-balancer-controller)", out)
+        self.assertIn("trivy exited 1; trivy's stderr ends:", out)
+        self.assertIn("DENIED: requested access to the resource is denied", out)
+        self.assertNotIn("quay.io/argoproj/argocd", out)
+
+    def test_every_image_that_scanned_contributes_its_findings(self):
+        trivy = Trivy((0, REPORT, ""), (0, REPORT, ""))
+        found, _ = self.run_gate(lambda: gate.scan_all(self.IMAGES), trivy)
+        self.assertEqual(sorted(f.image for f in found), sorted(self.IMAGES))
+
+    def test_a_canary_that_did_not_scan_says_what_trivy_said(self):
+        trivy = Trivy(*[(1, "", THROTTLED)] * gate.SCAN_ATTEMPTS)
+        rc, out = self.run_gate(gate.run_canary, trivy)
+        self.assertEqual(rc, gate.gatelib.CANNOT_RUN)
+        self.assertIn("the canary image could not be scanned", out)
+        self.assertIn("TOOMANYREQUESTS: Rate exceeded", out)
+
+    def test_silence_on_stderr_is_said_rather_than_left_blank(self):
+        lines = gate.Unscannable("trivy exited 1", "").lines("  ")
+        self.assertEqual(lines, ["  trivy exited 1; trivy wrote nothing to stderr"])
+
+    def test_only_the_end_of_a_long_stderr_is_quoted(self):
+        """trivy writes the error that stopped it last."""
+        said = "\n".join(f"line {i}" for i in range(gate.STDERR_LINES + 5))
+        lines = gate.Unscannable("trivy exited 1", said).lines("")
+        self.assertEqual(len(lines), gate.STDERR_LINES + 1)
+        self.assertEqual(lines[-1], f"  line {gate.STDERR_LINES + 4}")
 
 
 if __name__ == "__main__":

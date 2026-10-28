@@ -105,6 +105,9 @@ EXPECTED = (
     # What a failed schema scan leaves in the log: kubeconform's own output, the
     # status it exited with, and the catalog commits the run read.
     "test_kubeconform_scan",
+    # The workflows as YAML: a timeout on every job, a bound on every download,
+    # and the conditions deciding which key the chart cache is kept under.
+    "test_workflows",
 )
 
 # A floor well under the real count. It catches "discovery found almost nothing",
