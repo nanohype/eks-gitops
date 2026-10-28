@@ -64,9 +64,9 @@ Flag any addon or policy with a sync wave outside its category's range.
 
 ### 8. Policy Enforcement Modes
 Verify Kyverno policy overlays use the correct enforcement modes:
-- development: `validationFailureAction: Audit`
-- staging: `validationFailureAction: Enforce`
-- production: `validationFailureAction: Enforce`
+- development: `validationFailureAction: Audit` (ClusterPolicy), `validationActions: [Audit]` (ImageValidatingPolicy)
+- staging: `validationFailureAction: Enforce` (ClusterPolicy), `validationActions: [Deny]` (ImageValidatingPolicy)
+- production: `validationFailureAction: Enforce` (ClusterPolicy), `validationActions: [Deny]` (ImageValidatingPolicy)
 
 ## Output Format
 

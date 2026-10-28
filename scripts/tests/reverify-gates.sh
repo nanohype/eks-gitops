@@ -155,17 +155,20 @@ echo "── Known-bad fed in: every gate must REJECT ──"
 
 
 
+# Both readiness-checker pins, at whatever version the chart pin sets them to:
+# the test hook's top-level block and the webhooksCleanup hook's image. Matched
+# by shape rather than by version, so a chart bump that moves the pins leaves
+# this mutation landing rather than searching for a version the file does not
+# carry.
 F=addons/security/kyverno/values.yaml; mut $F
 python3 - "$F" <<'PY'
-import pathlib,sys
+import pathlib,re,sys
 p=pathlib.Path(sys.argv[1]); s=p.read_text()
-m=s.replace("""test:
-  image:
-    tag: v1.18.2
-""","").replace("""  image:
-    tag: v1.18.2
-""","",1)
-assert m!=s and "tag: v1.18.2" not in m, "mutation did not land"
+pin=r"  image:\n    tag: v\d+\.\d+\.\d+\n"
+m=re.sub(r"\ntest:\n"+pin, "\n", s, count=1)
+m=re.sub(r"(\nwebhooksCleanup:\n(?:  [^\n]*\n)*?)"+pin, r"\1", m, count=1)
+left=re.findall(r"^(?:test|webhooksCleanup):\n(?:  [^\n]*\n)*", m, re.M)
+assert m!=s and s.count("tag: v")-m.count("tag: v")==2 and not any("tag:" in b for b in left), "mutation did not land"
 p.write_text(m)
 PY
 run nonzero "image-pins: unpinned readiness-checker" ./scripts/check-image-pins.py
@@ -691,21 +694,20 @@ PY
 run nonzero "kyverno test: mutated injected annotation" kyverno test policies/kyverno/tests
 res $F
 
-# The digest rewrite is the whole reason the enforcing tier enforces, and it was
-# a field value other files read rather than a behaviour anything ran. Turned
-# off in the overlay, every gate that reads rendered YAML still passes: the
-# field is gone, so nothing asserts it is true, and the pod is admitted with the
-# tag it arrived with. Only executing the policy sees it.
-F=policies/kyverno/supply-chain/overlays/production/kustomization.yaml; mut $F
+# The digest pin is written by Kyverno's mutating webhook, which the CLI never
+# runs for an ImageValidatingPolicy. Two structural gates assert the field; this
+# asserts the behaviour. Turned off in the base, admission returns the pod with
+# the tag it arrived with.
+F=policies/kyverno/supply-chain/base/verify-images.yaml; mut $F
 python3 - "$F" <<'PY'
-import pathlib,re,sys
+import pathlib,sys
 p=pathlib.Path(sys.argv[1]); s=p.read_text()
-m=re.sub(r'(path: /spec/rules/0/verifyImages/0/mutateDigest\n\s+value: )true', r'\1false', s, count=1)
+m=s.replace("    mutateDigest: true\n", "    mutateDigest: false\n", 1)
 assert m!=s, "mutation did not land"
 p.write_text(m)
-print("   production overlay: mutateDigest -> false")
+print("   base: mutateDigest -> false")
 PY
-run nonzero "digest-rewrite: the enforcing tier stops pinning" ./scripts/check-digest-rewrite.sh
+run nonzero "digest-rewrite: admission stops pinning" ./scripts/check-digest-rewrite.sh
 res $F
 
 echo

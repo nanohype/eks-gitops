@@ -152,12 +152,13 @@ NEEDS_NETWORK_PY = {
 NEEDS_NETWORK_SH = {
     "kubeconform-scan.sh": "kubeconform",
     "kyverno-test.sh": "kyverno",
-    # Reaches the registry for the image manifest and Rekor for the
+    # Brings up a kind cluster running the pinned Kyverno chart, whose admission
+    # webhooks reach the registry for the image manifest and Rekor for the
     # transparency-log entry, because that round trip IS what it executes: it
-    # admits a signed pod through the enforcing rendition and reads back what
-    # was admitted. A control for it offline would be a control for a
+    # admits a signed pod through each supply-chain rendition and reads back
+    # what was admitted. A control for it offline would be a control for a
     # verification that did not happen.
-    "check-digest-rewrite.sh": "kyverno",
+    "check-digest-rewrite.sh": "kind create cluster",
 }
 
 NEEDS_NETWORK = {**NEEDS_NETWORK_PY, **NEEDS_NETWORK_SH}
@@ -639,7 +640,7 @@ CONTROLS = {
     "no-placeholders.sh": ("an unfilled sentinel in deploy config", m_no_placeholders),
     "check-externalsecret-keys.py": ("a duplicated remote secret name", m_externalsecret_keys),
     "check-athena-panel-columns.py": ("a panel naming an undelivered CUR column", m_athena_columns),
-    "check-image-verification.py": ("Enforce without its paired digest mutation", m_image_verification),
+    "check-image-verification.py": ("a signing identity nobody signs with", m_image_verification),
     "check-catalog-revision.py": ("a catalog source pinning a revision", m_catalog_revision),
     "check-policy-validity.py": ("a structurally invalid ClusterPolicy", m_policy_validity),
     "check-serviceaccount-bindings.py": ("a pod naming an absent ServiceAccount", m_serviceaccount_bindings),

@@ -1,5 +1,5 @@
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+apiVersion: policies.kyverno.io/v1
+kind: ImageValidatingPolicy
 metadata:
   name: verify-images
   annotations:
@@ -8,76 +8,103 @@ metadata:
     policies.kyverno.io/severity: high
     policies.kyverno.io/subject: Pod
     policies.kyverno.io/description: >-
-      Factory-built images (ghcr.io/nanohype/*) must carry a valid keyless
-      Cosign signature produced by the org release workflow. The release
-      workflows sign with GitHub Actions OIDC (Fulcio + public Rekor), so the
-      attestor matches that workflow identity. An unsigned or foreign-signed
-      image — hand-pushed or tampered — fails verification. Images outside
-      ghcr.io/nanohype/* are not matched and pass unaffected.
+      Factory-built images (ghcr.io/nanohype/*) must carry a keyless Cosign
+      signature and an SPDX SBOM attestation, both produced by an org release
+      workflow on a tag push. The release workflows sign with GitHub Actions
+      OIDC (Fulcio + public Rekor), so the attestor matches that workflow
+      identity. An unsigned, foreign-signed or branch-signed image fails
+      verification. Images outside ghcr.io/nanohype/* are not matched and pass
+      unaffected.
 spec:
-  # Base is Audit: development keeps it (violations land in PolicyReports without
-  # blocking iteration); the staging and production overlays patch this to
-  # Enforce so unsigned images are rejected at admission (see overlays/).
-  validationFailureAction: Audit
-  # Image verification calls the registry + Rekor; the 10s default is tight.
-  webhookTimeoutSeconds: 30
-  background: false
-  rules:
-    - name: verify-ghcr-nanohype
-      match:
-        any:
-          - resources:
-              kinds:
-                - Pod
-      exclude:
-        any:
-          - resources:
-              namespaces:
-                - kube-system
-                - kube-public
-                - kube-node-lease
-                - kyverno
-      verifyImages:
-        - imageReferences:
-            - "ghcr.io/nanohype/*"
-          required: true
-          # Kyverno resolves the tag to the digest it just verified and rewrites
-          # the pod spec to that digest. Without this, verification and execution
-          # look at different things: the signature is checked against whatever
-          # the tag pointed to during admission, and the kubelet pulls whatever
-          # the tag points to when it starts the container. Anyone able to move a
-          # tag between those two moments runs an unverified image through a
-          # policy reporting success. Pinning at admission closes that window.
-          #
-          # FALSE HERE, AND THAT IS NOT THE SAFE DEFAULT IT LOOKS LIKE. Kyverno
-          # rejects the policy outright when mutateDigest is true and
-          # validationFailureAction is Audit:
-          #
-          #   spec.rules[0].verifyImages[0].mutateDigest: Invalid value: true:
-          #   mutateDigest must be set to false for 'Audit' failure action
-          #
-          # This base is Audit, so true here does not weaken the policy — it makes
-          # the whole ClusterPolicy invalid and the addon fails to sync wherever
-          # Audit applies, which is every development cluster. The staging and
-          # production overlays patch this to true alongside their Enforce patch,
-          # so the environments that block also pin. Move the two together or
-          # neither: an Enforce overlay with mutateDigest false silently reopens
-          # the tag-mutation window, and an Audit overlay with it true bricks the
-          # sync.
-          mutateDigest: false
-          # Still false: this would REQUIRE callers to write digest references
-          # themselves, rejecting every tag-based image in the catalog. mutateDigest
-          # above already gives the guarantee — Kyverno derives the digest rather
-          # than demanding the author supply one.
-          verifyDigest: false
-          attestors:
-            - count: 1
-              entries:
-                - keyless:
-                    # GitHub Actions OIDC identity of the org release workflows.
-                    # Operator signs from release.yaml, tenants from release.yml;
-                    # both run on tag pushes (refs/tags/...).
-                    issuer: "https://token.actions.githubusercontent.com"
-                    subjectRegExp: '^https://github\.com/nanohype/[^/]+/\.github/workflows/release\.ya?ml@refs/tags/.+$'
-                    rekor:
-                      url: "https://rekor.sigstore.dev"
+  # Base is Audit: development keeps it, so violations land in PolicyReports
+  # without blocking iteration. The staging and production overlays patch this
+  # to [Deny], so an image failing verification is rejected at admission.
+  validationActions: [Audit]
+  failurePolicy: Fail
+  # Verification calls the registry and Rekor; the 10s webhook default is tight.
+  webhookConfiguration:
+    timeoutSeconds: 30
+  # A background scan re-resolves every running image against the registry on
+  # each pass. Admission is the boundary this policy guards.
+  evaluation:
+    background:
+      enabled: false
+  matchConstraints:
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values:
+            - kube-system
+            - kube-public
+            - kube-node-lease
+            - kyverno
+    # An ephemeral container is added through the pods/ephemeralcontainers
+    # subresource (`kubectl debug`), never by a pod CREATE or UPDATE. Matching
+    # pods alone leaves images.ephemeralContainers empty in every request the
+    # validations see, and an ephemeral nanohype image runs unverified.
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods", "pods/ephemeralcontainers"]
+  # Pods only: no rule is generated for a Deployment, StatefulSet, DaemonSet,
+  # ReplicaSet, Job or CronJob. A generated rule pins the digest into the
+  # controller's pod template as well, and ArgoCD compares that template with
+  # git, so every nanohype workload it syncs would sit OutOfSync while selfHeal
+  # rewrote the tag and admission pinned it again. The pod a controller creates
+  # is matched, verified and pinned on its own, and nothing in git owns it.
+  # Under Deny, a controller whose template names an image that fails
+  # verification is admitted and its pods are refused, which surfaces as
+  # FailedCreate events on its ReplicaSet or Job.
+  autogen:
+    podControllers:
+      controllers: []
+  matchImageReferences:
+    - glob: "ghcr.io/nanohype/*"
+  validationConfigurations:
+    # The mutating webhook resolves each matched tag to a digest and rewrites
+    # the pod spec to it, at every tier: an ImageValidatingPolicy pins in Audit
+    # as well as Deny. Without the pin, verification checks whatever the tag
+    # named during admission and the kubelet pulls whatever it names at start,
+    # so anyone able to move a tag between those two moments runs an unverified
+    # image under a passing policy.
+    mutateDigest: true
+    # The validating webhook refuses an image that reaches it without a digest,
+    # so a pin that did not happen is a verification failure rather than a tag
+    # that verifies and is pulled again later. CLI evaluation runs the
+    # validating path only, so every matched fixture under policies/kyverno/tests
+    # is digest-pinned; the rewrite itself is asserted against a real API server
+    # by scripts/check-digest-rewrite.sh.
+    verifyDigest: true
+    required: true
+  attestors:
+    - name: release
+      cosign:
+        keyless:
+          identities:
+            # GitHub Actions OIDC identity of the org release workflows: the
+            # operator signs from release.yaml, tenants from release.yml, and
+            # both run on tag pushes (refs/tags/...).
+            - issuer: "https://token.actions.githubusercontent.com"
+              subjectRegExp: '^https://github\.com/nanohype/[^/]+/\.github/workflows/release\.ya?ml@refs/tags/.+$'
+        ctlog:
+          url: "https://rekor.sigstore.dev"
+  attestations:
+    # `cosign attest --type spdxjson` records this predicate type.
+    - name: sbom
+      intoto:
+        type: "https://spdx.dev/Document"
+  # `images` holds only what matchImageReferences selected, one list per
+  # container field, so a pod's third-party sidecars never reach these
+  # expressions. Each validation covers every field: a nanohype image is
+  # verified wherever in the pod spec it runs.
+  validations:
+    - expression: >-
+        (images.containers + images.initContainers + images.ephemeralContainers)
+        .map(image, verifyImageSignatures(image, [attestors.release])).all(e, e > 0)
+      message: image is not signed by a nanohype release workflow
+    - expression: >-
+        (images.containers + images.initContainers + images.ephemeralContainers)
+        .map(image, verifyAttestationSignatures(image, attestations.sbom, [attestors.release])).all(e, e > 0)
+      message: image carries no SPDX SBOM attestation signed by a nanohype release workflow

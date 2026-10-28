@@ -4,11 +4,13 @@ kind: Kustomization
 resources:
   - ../../base
 
-# Development: Audit mode (report unsigned images, don't block)
+# Development: Audit. A failed verification lands in a PolicyReport and the pod
+# is admitted; the digest pin still applies.
 patches:
   - patch: |-
       - op: replace
-        path: /spec/validationFailureAction
-        value: Audit
+        path: /spec/validationActions
+        value: [Audit]
     target:
-      kind: ClusterPolicy
+      kind: ImageValidatingPolicy
+      name: verify-images

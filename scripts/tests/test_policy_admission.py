@@ -11,9 +11,10 @@ runtime pod nothing matched, a namespace receiving workloads that no exclusion
 list covers. Each of those produces an empty result set, and an empty result set
 is what "no addon was denied" looks like from the outside.
 
-Everything here is offline. Rendering and the kyverno invocation are not
-exercised from here; the report they produce is supplied directly, in the shapes
-kyverno emits.
+Everything here is offline. helm, kustomize and kyverno are replaced by a stub
+that answers the way each one does, so the render walk, the policy build and the
+run that ties them together are exercised against the outputs those tools give,
+and the report kyverno produces is supplied directly, in the shapes it emits.
 """
 
 from __future__ import annotations
@@ -22,8 +23,10 @@ import contextlib
 import io
 import pathlib
 import subprocess
+import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import yaml
 from gateloader import load
@@ -288,6 +291,17 @@ class TheRunVerdict(unittest.TestCase):
         self.assertIn("no addon flagged", out)
         self.assertIn("runtime pod was denied", out)
 
+    def test_a_long_list_of_flagged_addons_is_cut_at_twenty_and_counted(self):
+        report = self.clean_report()
+        report["results"] += [result(namespace="monitoring", name=f"w{i}")
+                              for i in range(23)]
+        verdict, out = self.judge(report)
+        self.assertFalse(verdict)
+        self.assertIn("23 non-canary result(s)", out)
+        self.assertIn("monitoring/w19", out)
+        self.assertNotIn("monitoring/w20", out)
+        self.assertIn("… and 3 more", out)
+
     def test_a_clean_canary_cannot_carry_a_missing_runtime_pod(self):
         report = self.clean_report()
         report["results"] = [r for r in report["results"]
@@ -466,6 +480,288 @@ class TheExclusionCorpusIsReal(unittest.TestCase):
         self.assertTrue(ok)
         self.assertTrue(excluded)
         self.assertTrue(keys)
+
+
+def deployment(name="app", namespace="workloads", replicas=1):
+    return {"apiVersion": "apps/v1", "kind": "Deployment",
+            "metadata": {"name": name, "namespace": namespace},
+            "spec": {"replicas": replicas}}
+
+
+class WhatReachesKyverno(unittest.TestCase):
+    """The resource set the CLI loads into its in-memory API server.
+
+    That server refuses a whole run over one object it would not hold, so what
+    reaches it is decided here: only the kinds the policies evaluate, and one
+    object per identity — without losing an environment's own variant.
+    """
+
+    def test_only_workload_kinds_are_handed_over(self):
+        prepared = "\n---\n".join(yaml.safe_dump(d) for d in (
+            deployment(),
+            {"apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition",
+             "metadata": {"name": "things.example.io"}},
+            {"apiVersion": "v1", "kind": "List", "items": []},
+        ))
+        self.assertEqual([d["kind"] for d in gate.workloads(prepared)], ["Deployment"])
+
+    def test_an_exact_repeat_is_dropped(self):
+        out = gate.distinct_identities([deployment(), deployment()])
+        self.assertEqual(len(out), 1)
+
+    def test_a_differing_repeat_is_kept_under_its_own_name(self):
+        out = gate.distinct_identities([deployment(replicas=1), deployment(replicas=3)])
+        self.assertEqual([d["metadata"]["name"] for d in out], ["app", "app--2"])
+        self.assertEqual(out[1]["spec"]["replicas"], 3,
+                         "the environment's variant is the object kept, renamed")
+        self.assertEqual(out[1]["metadata"]["namespace"], "workloads",
+                         "the namespace decides the exclusion, so it never moves")
+
+    def test_the_same_name_in_another_namespace_is_not_a_repeat(self):
+        out = gate.distinct_identities([deployment(), deployment(namespace="other")])
+        self.assertEqual([d["metadata"]["name"] for d in out], ["app", "app"])
+
+
+class TheReportOnStdout(unittest.TestCase):
+    """`kyverno apply` prints deprecation lines on stdout ahead of the report."""
+
+    def test_the_report_after_warning_lines_is_read(self):
+        out = ("Warning: a.yaml: kyverno.io/v1 ClusterPolicy is deprecated\n"
+               '{"results": [], "summary": {"pass": 1}}\n')
+        self.assertEqual(gate.report_json(out), {"results": [], "summary": {"pass": 1}})
+
+    def test_no_object_is_no_report(self):
+        self.assertIsNone(gate.report_json("Warning: only a warning\n"))
+        self.assertIsNone(gate.report_json(""))
+
+    def test_an_object_that_does_not_decode_is_no_report(self):
+        self.assertIsNone(gate.report_json('{"results": [\n'))
+
+
+def unit(chart="loki", repo="https://grafana.github.io/helm-charts", path="addons/x/loki",
+         namespace="monitoring", params=()):
+    return gate.render_addons.Unit(appset="addons-x", chart=chart, version="1.0.0",
+                                   repo=repo, path=path, params=list(params),
+                                   namespace=namespace)
+
+
+DEPLOYMENT = yaml.safe_dump(deployment(name="w", namespace="monitoring"))
+
+
+class Tools:
+    """Stands in for `_run`: records each command and answers by its first word.
+
+    `answers` maps helm/kustomize/kyverno to a CompletedProcess, or to a function
+    of the command for a reply that depends on what was asked.
+    """
+
+    def __init__(self, **answers) -> None:
+        self.answers = answers
+        self.calls: list[list[str]] = []
+
+    def __call__(self, cmd, **_):
+        self.calls.append(cmd)
+        answer = self.answers.get(cmd[0], completed())
+        return answer(cmd) if callable(answer) else answer
+
+
+class RenderingTheFleet(unittest.TestCase):
+    """`render_fleet` turns the discovered units into the resource set kyverno sees.
+
+    Each early return is a render it could not complete, and returning a count
+    from one would hand the policies a fleet missing whatever came after it.
+    """
+
+    def setUp(self):
+        self.root = pathlib.Path(tempfile.mkdtemp())
+        self.out = self.root / "rendered"
+        self.out.mkdir()
+
+    def addon(self, path="addons/x/loki", envs=("staging", "production"), base=True):
+        d = self.root / path
+        d.mkdir(parents=True, exist_ok=True)
+        if base:
+            (d / "values.yaml").write_text("{}\n")
+        for env in envs:
+            (d / f"values-{env}.yaml").write_text("{}\n")
+
+    def render(self, units, tools, skip=(), kustomize=()):
+        self.fetched: list[tuple[str, str, str]] = []
+
+        def archive(source, chart, version):
+            self.fetched.append((source, chart, version))
+            return pathlib.Path("cache") / f"{chart}-{version}.tgz"
+
+        with mock.patch.object(gate, "REPO_ROOT", self.root), \
+             mock.patch.object(gate, "discover", return_value=units), \
+             mock.patch.object(gate.gatelib, "chart_archive_or_exit", archive), \
+             mock.patch.object(gate, "SKIP_CHARTS", dict.fromkeys(skip, "reason")), \
+             mock.patch.object(gate, "KUSTOMIZE_WORKLOADS", list(kustomize)), \
+             mock.patch.object(gate, "_run", tools):
+            return quietly(gate.render_fleet, self.out)
+
+    def test_each_env_with_a_values_file_renders_into_the_destination_namespace(self):
+        self.addon()
+        tools = Tools(helm=completed(stdout=DEPLOYMENT))
+        (count, landed), _ = self.render([unit(params=[("a.b", "1")])], tools)
+        self.assertEqual(count, 2)
+        self.assertEqual(landed, {"monitoring"})
+        helm = tools.calls[0]
+        self.assertEqual(helm[:3], ["helm", "template", "loki"])
+        self.assertEqual(helm[3], str(pathlib.Path("cache") / "loki-1.0.0.tgz"))
+        self.assertEqual(self.fetched[0], ("https://grafana.github.io/helm-charts", "loki", "1.0.0"))
+        self.assertEqual(helm[helm.index("-n") + 1], "monitoring")
+        self.assertIn("a.b=1", helm)
+        self.assertTrue(helm[-1].endswith("values-staging.yaml"))
+        self.assertTrue(helm[-3].endswith("values.yaml"))
+
+    def test_the_fleet_is_written_once_per_identity_beside_both_probes(self):
+        self.addon()
+        self.render([unit()], Tools(helm=completed(stdout=DEPLOYMENT)))
+        fleet = [d for d in yaml.safe_load_all((self.out / "fleet.yaml").read_text()) if d]
+        self.assertEqual(len(fleet), 1, "two envs rendering one object is one identity")
+        self.assertEqual((self.out / "zz-policy-gate-canary.yaml").read_text(),
+                         gate.CANARY_MANIFEST)
+        self.assertEqual((self.out / "zz-policy-gate-runtime-pod.yaml").read_text(),
+                         gate.RUNTIME_POD_MANIFEST)
+
+    def test_an_oci_chart_is_fetched_by_its_reference(self):
+        self.addon(envs=("production",), base=False)
+        tools = Tools(helm=completed(stdout=DEPLOYMENT))
+        u = unit(chart="operator", repo="oci://ghcr.io/example/charts")
+        (count, _), _ = self.render([u], tools)
+        self.assertEqual(count, 1)
+        self.assertEqual(self.fetched, [("oci://ghcr.io/example/charts/operator", "operator", "1.0.0")])
+        helm = tools.calls[0]
+        self.assertEqual(sum(1 for a in helm if a == "-f"), 1,
+                         "with no base values file, only the env file is passed")
+
+    def test_a_skipped_chart_and_a_unit_with_no_destination_render_nothing(self):
+        tools = Tools()
+        (count, landed), _ = self.render(
+            [unit(chart="skipped"), unit(chart="crds", namespace="")], tools, skip=["skipped"])
+        self.assertEqual((count, landed), (0, set()))
+        self.assertEqual(tools.calls, [])
+
+    def test_an_element_pointing_at_no_directory_stops_the_render(self):
+        (count, _), out = self.render([unit(path="addons/x/gone")], Tools())
+        self.assertEqual(count, -1)
+        self.assertIn("points at nothing", out)
+
+    def test_a_failed_helm_render_stops_the_render(self):
+        self.addon()
+        (count, _), out = self.render([unit()], Tools(helm=completed(1, stderr="no chart")))
+        self.assertEqual(count, -1)
+        self.assertIn("helm render FAILED loki@1.0.0 (staging)", out)
+        self.assertIn("no chart", out)
+
+    def test_kustomize_workloads_render_per_env_or_once(self):
+        tools = Tools(kustomize=completed(stdout=DEPLOYMENT))
+        (count, landed), _ = self.render(
+            [], tools, kustomize=[("dashboards/base", "grafana-operator", False),
+                                  ("tenants", "tenants", True)])
+        self.assertEqual(count, 1 + len(gate.ENFORCE_ENVS))
+        roots = [c[-1] for c in tools.calls]
+        self.assertTrue(roots[0].endswith("dashboards/base"))
+        self.assertTrue(roots[1].endswith("tenants/overlays/staging"))
+        self.assertTrue(roots[2].endswith("tenants/overlays/production"))
+        self.assertEqual(landed, {"monitoring"},
+                         "the namespace a workload names is where it lands")
+
+    def test_a_failed_kustomize_build_stops_the_render(self):
+        tools = Tools(kustomize=completed(1, stderr="bad root"))
+        (count, _), out = self.render([], tools,
+                                      kustomize=[("dashboards/base", "grafana-operator", False)])
+        self.assertEqual(count, -1)
+        self.assertIn("kustomize build FAILED dashboards/base", out)
+
+
+class BuildingAndApplyingThePolicies(unittest.TestCase):
+    def test_each_group_overlay_is_built_into_its_own_file(self):
+        out = pathlib.Path(tempfile.mkdtemp())
+        tools = Tools(kustomize=lambda cmd: completed(stdout=f"# {cmd[-1]}\n"))
+        with mock.patch.object(gate, "_run", tools):
+            files = gate.build_policies("production", out)
+        self.assertEqual([pathlib.Path(f).name for f in files],
+                         [f"{g}-production.yaml" for g in gate.POLICY_GROUPS])
+        self.assertTrue(pathlib.Path(files[0]).read_text().rstrip().endswith(
+            "best-practices/overlays/production"))
+
+    def test_an_overlay_that_does_not_build_cannot_be_evaluated(self):
+        tools = Tools(kustomize=completed(1, stderr="missing base"))
+        with mock.patch.object(gate, "_run", tools), self.assertRaises(SystemExit) as raised:
+            quietly(gate.build_policies, "production", pathlib.Path(tempfile.mkdtemp()))
+        self.assertEqual(raised.exception.code, 2)
+
+    def test_apply_asks_for_a_json_report_and_warns_only_in_audit(self):
+        report = '{"results": [], "summary": {}}'
+        for audit_warn in (False, True):
+            with self.subTest(audit_warn=audit_warn):
+                tools = Tools(kyverno=completed(stdout=report))
+                with mock.patch.object(gate, "_run", tools):
+                    parsed, proc = gate.kyverno_apply(["p.yaml"], pathlib.Path("r"), audit_warn)
+                self.assertEqual(parsed, {"results": [], "summary": {}})
+                self.assertEqual(proc.stdout, report)
+                cmd = tools.calls[0]
+                self.assertEqual(cmd[:3], ["kyverno", "apply", "p.yaml"])
+                self.assertIn("--policy-report", cmd)
+                self.assertEqual("--audit-warn" in cmd, audit_warn)
+
+    def test_a_child_process_runs_under_a_deadline(self):
+        proc = gate._run([sys.executable, "-c", "print('ran')"])
+        self.assertEqual((proc.returncode, proc.stdout), (0, "ran\n"))
+        with mock.patch.object(gate.subprocess, "run") as run:
+            gate._run(["true"])
+        self.assertEqual(run.call_args.kwargs["timeout"], gate.RENDER_TIMEOUT)
+
+
+class TheWholeRun(unittest.TestCase):
+    """`main` passes only when parity, coverage and both kyverno runs all hold."""
+
+    RULES = {"best-practices/require-probes"}
+
+    def run_main(self, count=gate.MIN_RENDERED, parity=True, coverage=True,
+                 verdicts=(True, True)):
+        judged = iter(verdicts)
+        with mock.patch.object(gate.gatelib, "require"), \
+             mock.patch.object(gate, "check_exclusion_parity",
+                               return_value=(parity, {"monitoring"}, self.RULES)), \
+             mock.patch.object(gate, "render_fleet", return_value=(count, {"monitoring"})), \
+             mock.patch.object(gate, "check_namespace_coverage", return_value=coverage), \
+             mock.patch.object(gate, "build_policies", return_value=["p.yaml"]), \
+             mock.patch.object(gate, "kyverno_apply",
+                               return_value=({"results": []}, completed())) as apply, \
+             mock.patch.object(gate, "judge", side_effect=lambda *a, **k: next(judged)):
+            code, out = quietly(gate.main)
+        return code, out, apply
+
+    def test_everything_holding_passes(self):
+        code, out, apply = self.run_main()
+        self.assertEqual(code, 0)
+        self.assertIn("Policy-admission gate PASSED", out)
+        self.assertEqual([c.kwargs["audit_warn"] for c in apply.call_args_list],
+                         [False, True], "Enforce first, then Audit with --audit-warn")
+
+    def test_any_one_failing_fails_the_run(self):
+        for case in ({"parity": False}, {"coverage": False},
+                     {"verdicts": (False, True)}, {"verdicts": (True, False)}):
+            with self.subTest(**{k: str(v) for k, v in case.items()}):
+                code, out, _ = self.run_main(**case)
+                self.assertEqual(code, 1)
+                self.assertIn("Policy-admission gate FAILED", out)
+
+    def test_a_render_failure_fails_before_kyverno_runs(self):
+        code, _, apply = self.run_main(count=-1)
+        self.assertEqual(code, 1)
+        apply.assert_not_called()
+
+    def test_a_fleet_under_the_floor_cannot_be_judged(self):
+        """The canary and runtime pod keep every rule assertion green over any
+        fleet, so a render of almost nothing would otherwise read as clean."""
+        code, out, apply = self.run_main(count=gate.MIN_RENDERED - 1)
+        self.assertEqual(code, gate.gatelib.CANNOT_RUN)
+        self.assertIn("below the floor", out)
+        apply.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -60,7 +60,7 @@ spec:
       destination:
         server: https://kubernetes.default.svc
         namespace: kyverno
-      # Kyverno defaults five fields onto its own ClusterPolicies at admission. None
+      # Kyverno defaults three fields onto its own ClusterPolicies at admission. None
       # are in git, so without these ignores the policy sits permanently OutOfSync
       # while Healthy. Re-derive the set by diffing `kustomize build
       # overlays/development` against the live object:
@@ -68,12 +68,11 @@ spec:
       #   .spec.admission                                                = true
       #   .spec.emitWarning                                              = false
       #   .spec.rules[].skipBackgroundRequests                           = true
-      #   .spec.rules[].verifyImages[].useCache                          = true
-      #   .spec.rules[].verifyImages[].attestors[].entries[]
-      #     .signatureAlgorithm                                          = "sha256"
       #
       # Each path is a Kyverno-owned default, so the ignores stay narrow: a genuine
-      # change to a rule's match/exclude/attestor identity in git is still drift.
+      # change to a rule's match/exclude in git is still drift. The supply-chain
+      # ImageValidatingPolicy is stored as written, so it needs no entry here and
+      # any difference in its attestor identity is drift.
       ignoreDifferences:
         - group: kyverno.io
           kind: ClusterPolicy
@@ -81,8 +80,6 @@ spec:
             - .spec.admission
             - .spec.emitWarning
             - .spec.rules[].skipBackgroundRequests
-            - .spec.rules[].verifyImages[].useCache
-            - .spec.rules[].verifyImages[].attestors[].entries[].signatureAlgorithm
       syncPolicy:
         automated:
           prune: true

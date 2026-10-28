@@ -384,6 +384,49 @@ def _prepare(rendered: str, namespace: str, landed: set[str]) -> str:
     return "\n---\n".join(yaml.safe_dump(d, sort_keys=False) for d in docs)
 
 
+def workloads(prepared: str) -> list[dict]:
+    """The objects of a prepared render that the admission policies evaluate.
+
+    Every rule under test matches a kind in WORKLOAD_KINDS, so nothing else
+    changes a verdict. `kyverno apply` also loads every resource into an
+    in-memory API server before evaluating, and that server refuses some objects
+    a cluster accepts, so handing it the rest of a chart risks the run for no
+    information.
+    """
+    return [d for d in yaml.safe_load_all(prepared)
+            if isinstance(d, dict) and d.get("kind") in WORKLOAD_KINDS]
+
+
+def distinct_identities(docs: list[dict]) -> list[dict]:
+    """One object per (apiVersion, kind, namespace, name), as an API server holds.
+
+    `kyverno apply` loads every resource it is given into an in-memory API server
+    and refuses the whole run on a second object with the same identity. The
+    fleet renders each addon once per Enforce environment, so every workload a
+    chart ships unchanged across them arrives twice.
+
+    An exact repeat carries nothing new and is dropped. A repeat that DIFFERS is
+    an environment's own variant of that object — a workload with other replicas
+    or other values — and dropping it would leave that variant unevaluated, so it
+    is kept under a name suffixed with its position. The policies here match on
+    kind, namespace and labels, never on name, so the suffix changes what is
+    reported and not what is decided.
+    """
+    kept: dict[tuple, list[dict]] = {}
+    out: list[dict] = []
+    for doc in docs:
+        meta = doc.get("metadata") or {}
+        key = (doc.get("apiVersion"), doc.get("kind"), meta.get("namespace"), meta.get("name"))
+        variants = kept.setdefault(key, [])
+        if any(v == doc for v in variants):
+            continue
+        if variants:
+            doc = {**doc, "metadata": {**meta, "name": f"{meta.get('name')}--{len(variants) + 1}"}}
+        variants.append(doc)
+        out.append(doc)
+    return out
+
+
 def render_fleet(dest: pathlib.Path) -> tuple[int, set[str]]:
     """Render every addon into its namespace under `dest`, plus the canary.
 
@@ -392,6 +435,7 @@ def render_fleet(dest: pathlib.Path) -> tuple[int, set[str]]:
     units = [u for u in discover() if u.chart not in SKIP_CHARTS]
     landed: set[str] = set()
     count = 0
+    fleet: list[dict] = []
 
     for u in units:
         if not u.namespace:
@@ -423,8 +467,7 @@ def render_fleet(dest: pathlib.Path) -> tuple[int, set[str]]:
                 print(f"  helm render FAILED {u.chart}@{u.version} ({env}):\n"
                       f"{proc.stderr.strip()}")
                 return -1, landed
-            (dest / f"{u.chart}-{env}.yaml").write_text(
-                _prepare(proc.stdout, u.namespace, landed))
+            fleet += workloads(_prepare(proc.stdout, u.namespace, landed))
             count += 1
 
     for path, namespace, per_env in KUSTOMIZE_WORKLOADS:
@@ -436,10 +479,12 @@ def render_fleet(dest: pathlib.Path) -> tuple[int, set[str]]:
             if proc.returncode != 0:
                 print(f"  kustomize build FAILED {root}:\n{proc.stderr.strip()}")
                 return -1, landed
-            tag = root.replace("/", "_")
-            (dest / f"{tag}.yaml").write_text(
-                _prepare(proc.stdout, namespace, landed))
+            fleet += workloads(_prepare(proc.stdout, namespace, landed))
             count += 1
+
+    (dest / "fleet.yaml").write_text(
+        "\n---\n".join(yaml.safe_dump(d, sort_keys=False)
+                        for d in distinct_identities(fleet)))
 
     # The canary rides in with the fleet so it meets exactly the policy build the
     # fleet meets. Deliberately NOT recorded in `landed`: its namespace is
@@ -484,10 +529,26 @@ def kyverno_apply(policies: list[str], resources: pathlib.Path,
     if audit_warn:
         cmd.append("--audit-warn")
     proc = _run(cmd)
-    try:
-        return json.loads(proc.stdout), proc
-    except json.JSONDecodeError:
-        return None, proc
+    return report_json(proc.stdout), proc
+
+
+def report_json(stdout: str) -> dict | None:
+    """The JSON report out of `kyverno apply` stdout, or None if there is none.
+
+    The CLI prints a deprecation line for each legacy-kind policy it loads to
+    stdout, ahead of the report, so the report starts at the first line that
+    opens a JSON object. Anything after the object is ignored; anything that
+    does not decode to an object is no report.
+    """
+    for i, line in enumerate(stdout.splitlines(keepends=True)):
+        if line.startswith("{"):
+            rest = "".join(stdout.splitlines(keepends=True)[i:])
+            try:
+                doc, _ = json.JSONDecoder().raw_decode(rest)
+            except json.JSONDecodeError:
+                return None
+            return doc if isinstance(doc, dict) else None
+    return None
 
 
 def _rule_key(result: dict) -> str:

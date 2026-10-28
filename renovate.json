@@ -228,6 +228,36 @@
         "dependencies",
         "ci"
       ]
+    },
+    {
+      "description": [
+        "kubectl and the kind node image are one Kubernetes minor. The digest-rewrite job installs KUBECTL_VERSION and creates its cluster from KIND_NODE_IMAGE, and the node image carries no `# renovate:` annotation, because the digest it is pinned by is read from the kind release notes for that minor rather than resolved from a registry.",
+        "So a kubectl patch moves on its own, and a kubectl minor or major waits on the Dependency Dashboard for approval, to land beside the node image of the same minor. kubectl and kind themselves are labelled like every other CI tool."
+      ],
+      "matchDatasources": [
+        "github-releases"
+      ],
+      "matchPackageNames": [
+        "kubernetes/kubernetes",
+        "kubernetes-sigs/kind"
+      ],
+      "labels": [
+        "dependencies",
+        "ci"
+      ]
+    },
+    {
+      "matchDatasources": [
+        "github-releases"
+      ],
+      "matchPackageNames": [
+        "kubernetes/kubernetes"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "major"
+      ],
+      "dependencyDashboardApproval": true
     }
   ]
 }

@@ -19,7 +19,7 @@ Plus:
 - **`applicationsets/`** — ApplicationSet generators that fan addons + tenant workloads out across clusters by label
 - **`catalog/`** — platform-specific tenant workloads (Druid)
 - **`dashboards/`** — `GrafanaDashboard` CRs that grafana-operator reconciles into the external Amazon Managed Grafana workspace
-- **`policies/`** — Kyverno policies (best-practices, pod-security-standards) enforced cluster-wide
+- **`policies/`** — Kyverno policies (best-practices, pod-security-standards, networking, and the supply-chain `verify-images` ImageValidatingPolicy) enforced cluster-wide
 
 ## Contract surface
 
@@ -64,7 +64,7 @@ The workload's source repo owns the ApplicationSet entry — typically `<app>/gi
 - Every addon has the three spoke env deltas (`values-development.yaml`, `values-staging.yaml`, `values-production.yaml`) — empty is fine, but the file must exist. `values-hub.yaml` is required exactly where the addon's ApplicationSet selector reaches the hub. Most appsets exclude it with `environment NotIn [hub]`; the bootstrap and otel-agent appsets do not, so their addons carry a hub delta. `scripts/check-env-coverage.py` compares each appset's selector reach against the values files present and fails when they disagree — `scripts/render-addons.py` cannot, because it reads a missing delta as "not deployed to this environment" and passes.
 - Cluster labels drive ApplicationSet matrix generators. The `environment` label (`development|staging|production|hub`) selects the per-env values; opt-in addon groups select on additional labels (both set by cluster-bootstrap) — `eks-agent-platform/enabled: "true"` gates the operator onto agent-platform clusters.
 - Sync waves matter — addons that everything depends on (cert-manager, external-secrets) run first (wave 0–10); apps run last (wave 100+).
-- Kyverno policies in `policies/` enforce cluster-wide invariants (no privileged pods, image registry allowlist, required labels).
+- Kyverno policies in `policies/` enforce cluster-wide invariants (no root pods, required labels, probes and limits, and a release-workflow signature plus SPDX SBOM attestation on every `ghcr.io/nanohype/*` image).
 
 ## Pointers
 

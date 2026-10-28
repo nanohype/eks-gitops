@@ -23,8 +23,18 @@ permissions:
 # surfaces on the currency PR that raises the pin, where re-recording is the fix.
 env:
   # renovate: datasource=github-releases depName=kyverno/kyverno
-  KYVERNO_VERSION: v1.18.2
-  KYVERNO_SHA256: cb2feb8356149fd2fe774c894ccf0969f4a60a83867dd913af724f74ffbbc18b
+  KYVERNO_VERSION: v1.19.2
+  KYVERNO_SHA256: 357eaf1df8bc24ddd5a73979fadeaae6a032e8710f11af264229756e4956bf4a
+  # renovate: datasource=github-releases depName=kubernetes-sigs/kind
+  KIND_VERSION: v0.33.0
+  KIND_SHA256: aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d
+  # A node image the KIND_VERSION release lists, by the digest its notes give,
+  # at the fleet's Kubernetes minor. A kind bump replaces it with that release's
+  # image for the same minor. scripts/check-digest-rewrite.sh reads it from here.
+  KIND_NODE_IMAGE: kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed
+  # renovate: datasource=github-releases depName=kubernetes/kubernetes
+  KUBECTL_VERSION: v1.36.4
+  KUBECTL_SHA256: 8b8f088da2dab964f853b38464033b1be15ede2839eca751482357c45abdd05a
   # renovate: datasource=github-releases depName=gitleaks/gitleaks
   GITLEAKS_VERSION: 8.30.1
   GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
@@ -587,28 +597,59 @@ jobs:
           ./scripts/check-lb-scheme-inputs.py
           ./scripts/check-lb-scheme-inputs.py --self-test
 
-      # The unit tests above load BASE policies and pin verify-images' match and
-      # exclude scoping only. This structural gate guards the signing-IDENTITY
-      # contract they are blind to — required signature, GitHub OIDC issuer,
-      # anchored org-scoped release-workflow subjectRegExp — so a widened
-      # subjectRegExp or a flipped `required` cannot ship silently. It reads the
-      # rendered policy; what the identity ADMITS is the step below.
+      # The unit tests above prove the release identity admits a release-signed
+      # image and refuses a branch-signed one. They cannot see an identity
+      # weakened in a way both fixtures still satisfy — a subjectRegExp other
+      # than the one release identity, a flipped `required`, the transparency
+      # log switched off, a namespace exclusion grown over a workload namespace.
+      # This structural gate refuses those: it holds the subjectRegExp to one
+      # expression, compared whole, and scripts/tests/test_image_verification.py
+      # applies each weakening and requires the refusal.
       - name: Verify-images signing-identity contract
         run: |
           pip install --require-hashes -r requirements.txt
           ./scripts/check-image-verification.py
 
-      # The digest rewrite is the whole reason the enforcing tier enforces, and
-      # in this repository it was a field value other files read rather than a
-      # behaviour anything ran: every suite loads a base policy, where the field
-      # is false because Kyverno rejects true under an Audit failure action.
-      #
-      # This renders the enforcing overlay and admits a signed pod through it,
-      # reaching the registry and the transparency log — the same round trip
-      # admission makes. A change that keeps the field and breaks the pinning is
-      # red here rather than a container that started from a tag with no signal
-      # anywhere.
-      - name: The enforcing tier rewrites a verified tag to its digest
+  # ── Digest rewrite under real admission ──────────────────────────────
+  # verify-images pins every ghcr.io/nanohype/* tag to the digest it verified,
+  # and that pin is written by Kyverno's mutating webhook, which the Kyverno CLI
+  # never runs for an ImageValidatingPolicy. So this brings up kind, installs the
+  # pinned Kyverno chart with the catalog's values, applies each rendered
+  # supply-chain overlay, and admits a tag-only signed pod and a branch-signed
+  # pod through the API server: the first must come back @sha256-pinned at every
+  # tier, the second must be denied wherever the overlay says Deny. Reaches the
+  # registry and Rekor from inside the cluster, the round trip admission makes.
+  digest-rewrite:
+    name: admission pins a verified tag to its digest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - name: Install Python dependencies
+        run: pip install --require-hashes -r requirements.txt
+      - name: Install kind
+        run: |
+          curl -fsSL -o /tmp/kind "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
+          echo "${KIND_SHA256}  /tmp/kind" | sha256sum -c -
+          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+          kind version
+      - name: Install kubectl
+        run: |
+          curl -fsSL -o /tmp/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          echo "${KUBECTL_SHA256}  /tmp/kubectl" | sha256sum -c -
+          sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+          kubectl version --client
+      - name: Install kustomize
+        uses: imranismail/setup-kustomize@53f941b41dca13ed61874bbc6b4b6e1562877530 # v3
+      - name: Install Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+      - name: Each supply-chain overlay pins a tag and decides a foreign identity
         run: ./scripts/check-digest-rewrite.sh
 
   # ── Fork-safety gate ─────────────────────────────────────────────────
@@ -1123,6 +1164,7 @@ jobs:
         lint,
         dashboards,
         kyverno,
+        digest-rewrite,
         fork-safety,
         helm-render,
         image-vulnerabilities,
@@ -1156,6 +1198,7 @@ jobs:
               'YAML Lint': '${{ needs.lint.result }}',
               'Dashboard gate (live grafana.com ids + AMG-saveable)': '${{ needs.dashboards.result }}',
               'Kyverno policy tests (+ verify-images contract)': '${{ needs.kyverno.result }}',
+              'Admission pins a verified tag to its digest (kind)': '${{ needs.digest-rewrite.result }}',
               'Fork-safety gate (no hardcoded org, blocking)': '${{ needs.fork-safety.result }}',
               'Helm-render (every addon × every env)': '${{ needs.helm-render.result }}',
               'Rendered images carry no unacknowledged CRITICAL': '${{ needs.image-vulnerabilities.result }}',
@@ -1213,6 +1256,7 @@ jobs:
         platform-crs,
         catalog-revision,
         kyverno,
+        digest-rewrite,
         fork-safety,
         helm-render,
         image-vulnerabilities,

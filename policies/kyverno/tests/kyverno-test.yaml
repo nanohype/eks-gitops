@@ -91,23 +91,28 @@ results:
     resources: [bad-pod-no-limits]
     result: fail
 
-  # verify-images — SCOPING ONLY. `kyverno test` cannot reach Fulcio/Rekor, so it
-  # never actually verifies a Cosign signature (a matched image reports Pass/Ok
-  # regardless of the attestor). These cases therefore pin the MATCH/EXCLUDE
-  # scoping, which IS deterministic offline: a non-nanohype image and a pod in an
-  # excluded namespace are skipped (Pass/Excluded, no verification attempted).
-  # Widening imageReferences to "*" flips vi-external-image to fail; dropping the
-  # namespace exclude flips vi-excluded-ns to fail — both verified against
-  # mutations. The signing-IDENTITY contract (required signature, issuer, anchored
-  # org-scoped subjectRegExp) is what kyverno test is blind to; it is guarded
-  # structurally by scripts/check-image-verification.py in CI.
+  # verify-images — an ImageValidatingPolicy, evaluated against the registry and
+  # Rekor, so this suite needs the network. Results carry the policy name as the
+  # rule. The CLI runs the validating path only, which is why every matched
+  # fixture is pinned by digest (see resources.yaml) and why the digest rewrite
+  # admission performs is asserted against a real API server by
+  # scripts/check-digest-rewrite.sh rather than here.
+  #
+  # The signed fixtures carry cosign's legacy .sig/.att format, so these rows
+  # prove the legacy verification path: a legacy release signature admitted, a
+  # legacy branch signature refused. They say nothing about a Sigstore bundle,
+  # which Kyverno verifies on a different path.
+  #
+  # A pod whose namespace the policy excludes produces no result at all, and the
+  # CLI reports an expectation with no result as a failure, so the namespace
+  # exclusion is asserted by scripts/check-image-verification.py instead.
   - policy: verify-images
-    rule: verify-ghcr-nanohype
+    isImageValidatingPolicy: true
     kind: Pod
-    resources: [vi-external-image]
+    resources: [vi-external-image, vi-signed, vi-signed-with-sidecar]
     result: pass
   - policy: verify-images
-    rule: verify-ghcr-nanohype
+    isImageValidatingPolicy: true
     kind: Pod
-    resources: [vi-excluded-ns]
-    result: pass
+    resources: [vi-tag-only, vi-branch-signed, vi-branch-signed-init]
+    result: fail

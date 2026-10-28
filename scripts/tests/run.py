@@ -13,8 +13,8 @@ Two assertions close that:
     fails rather than silently shrinking coverage
   * at least MIN_TESTS tests actually execute
 
-Both are floors, not exact counts: adding tests must never require editing this
-file, or the floor becomes something people lower to make a run go green.
+Both are floors, not exact counts: adding tests must never require editing
+either, or the floor becomes something people lower to make a run go green.
 """
 
 from __future__ import annotations
@@ -52,6 +52,14 @@ EXPECTED = (
     # the half that decides the verdict is the only thing that proves they say
     # anything.
     "test_policy_admission",
+    # The signing-identity contract. Its positive control proves it rejects one
+    # rewrite; these prove it rejects each weakening that both kyverno fixtures
+    # still satisfy, and hold the trusted subject expression to a corpus.
+    "test_image_verification",
+    # What the policy-validity gate reads out of `kyverno apply`, which exits 0
+    # over a policy it discarded, and the digest pin it holds every rendered
+    # ImageValidatingPolicy to.
+    "test_policy_validity",
     "test_platform_crs",
     "test_dashboards",
     "test_render_addons",
@@ -105,21 +113,19 @@ MIN_TESTS = 31
 # whose input arrives over the network — and for exactly those a unit test is the
 # only proof available.
 #
-# One of them, check-policy-admission.py, is an approval gate in the sense
-# testing-rubric's `security-critical-100` uses the term, and that rule
-# (severity: reject) asks for a per-file 100% override. PER_GATE_FLOORS below
-# sets it far under that, and the gap is the finding: a floor set where the
-# tests reach is a ratchet, not the rule. Read the number from the table rather
-# than from this sentence — a figure written twice drifts, and the reader who
-# trusts the prose edits the table down to match it and unratchets the gate.
-# The rule is UNMET and saying so is the point of naming it: a floor set where
-# the tests reach is a ratchet, and a rule cited without its requirement reads as
-# satisfied.
-#
 # `control_exempt_gates` below reads that exemption list out of controls.py
 # rather than repeating it, and check_coverage fails on any gate in both it and
 # the uncovered set. A gate added to the exemption must arrive with tests, and
 # cannot be excused by a percentage that moves a point.
+#
+# testing-rubric's `security-critical-100` (severity: reject) asks for a per-file
+# 100% override on every file on a security-critical path. Three gates sit on
+# one: check-policy-admission.py is an approval gate, deciding whether the fleet
+# is admissible at Enforce; check-image-verification.py holds the signature-
+# verification contract; and check-policy-validity.py holds every rendered
+# ImageValidatingPolicy to the digest pin that verification depends on. Each
+# carries 100 in PER_GATE_FLOORS, so a branch added to any of them without a
+# test fails this run rather than lowering a ratchet.
 #
 # The floors that follow are the weaker half. They stop a covered file
 # regressing; they cannot state what is covered, and a count loose enough to
@@ -162,27 +168,26 @@ MIN_TESTS = 31
 COMBINED_FLOOR = 45
 
 # A ceiling on gate scripts carrying NO unit coverage at all, complementing the
-# floors below. The floors stop a covered file regressing; nothing stopped a NEW
-# gate arriving with no tests.
+# floors below. The floors stop a covered file regressing; this stops a gate
+# arriving with no tests.
 #
-# Ratchets downward only. Adding a gate without tests fails here rather than
-# diluting the combined figure by a percentage point nobody notices.
+# Held equal to the count, not above it. check_coverage fails when more gates
+# than this read as uncovered, and fails when fewer do, naming the value to
+# lower it to, so the change whose tests cover a gate is the one that lowers it.
+# A ceiling above the count would be room for that many gates to arrive untested
+# and pass; held equal, a gate arriving without tests fails here rather than
+# diluting the combined figure by a percentage point nobody notices. A count
+# cannot see one change that adds an untested gate and covers another.
 #
-# Two of the files this counts as covered are covered by IMPORT, not by tests.
-# check-image-vulnerabilities.py loads check-image-pins.py by path so the two
-# cannot disagree about what the fleet is, and that loads render-addons.py in
-# turn; a test module importing the first executes the module bodies of all
-# three. Coverage cannot tell that from a test, so both read as non-zero while
-# carrying no assertions of their own. The ceiling is lowered anyway, because a
-# ratchet that declines to move is one nobody can regress against — but it is
-# the weaker half of this file's claim, and the per-gate floors and the controls
-# in scripts/tests/controls.py are where the real one lives.
-#
-# So this number moves by what a change actually covered, not by what the run
-# reports. A gate arriving with its own tests lowers it; a gate that starts
-# reading as covered because something new imports it does not, and an import
-# removed later would give that coverage back with nothing lost.
-MAX_UNCOVERED_GATES = 9
+# "Uncovered" is coverage's reading, and coverage cannot tell a test from an
+# import. A gate a test module only loads — to read a constant, or because a
+# gate under test loads it by path — executes its module body and reads as
+# covered while carrying no assertion of its own; if that load goes, the gate is
+# back in the count and the run fails until it has tests or the ceiling is
+# raised with the reason. That is the weaker half of this file's claim, and the
+# per-gate floors and the controls in scripts/tests/controls.py are where a
+# gate's behaviour is asserted.
+MAX_UNCOVERED_GATES = 7
 
 PER_GATE_FLOORS = {
     "scripts/check-named-things.py": 40,
@@ -196,9 +201,13 @@ PER_GATE_FLOORS = {
     # 100 rather than a ratchet: a branch no test reaches here is a check that
     # nothing proves still checks.
     "scripts/registry.py": 100,
+    # The security-critical gates, at the rubric's per-file override; see
+    # THE ASSERTION THAT IS NOT A NUMBER above.
+    "scripts/check-policy-admission.py": 100,
+    "scripts/check-image-verification.py": 100,
+    "scripts/check-policy-validity.py": 100,
     # The control-exempt gates. Their floors are what keeps the verdict half
     # covered after the module that covers it is edited.
-    "scripts/check-policy-admission.py": 63,
     "scripts/check-platform-crs.py": 51,
     "scripts/validate-dashboards.py": 50,
     "scripts/render-addons.py": 65,
@@ -352,6 +361,13 @@ def check_coverage() -> int:
             f"above the ceiling of {MAX_UNCOVERED_GATES}: "
             f"{', '.join(uncovered[:4])}{' …' if len(uncovered) > 4 else ''}"
         )
+    elif len(uncovered) < MAX_UNCOVERED_GATES:
+        failures.append(
+            f"{len(uncovered)} of {len(gates)} gate scripts carry no unit coverage, "
+            f"under the ceiling of {MAX_UNCOVERED_GATES}, which leaves room for "
+            f"{MAX_UNCOVERED_GATES - len(uncovered)} gate(s) to arrive without "
+            f"tests and pass. Lower MAX_UNCOVERED_GATES to {len(uncovered)}"
+        )
 
     exempt, exempt_problem = control_exempt_gates()
     if exempt_problem:
@@ -370,8 +386,9 @@ def check_coverage() -> int:
         print()
         for f in failures:
             print(f"FAIL  {f}")
-        print("\n  Coverage floors ratchet. Add the tests that restore the number, or "
-              "\n  lower the floor deliberately in scripts/tests/run.py with the reason.")
+        print("\n  Coverage floors and the uncovered-gate ceiling ratchet. Add the tests "
+              "\n  that restore the number, or move the bound deliberately in "
+              "\n  scripts/tests/run.py with the reason.")
         return 1
 
     print(f"coverage ratchet OK: {total:.1f}% combined statement+branch "

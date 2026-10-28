@@ -4,25 +4,16 @@ kind: Kustomization
 resources:
   - ../../base
 
-# Production: an unsigned or tampered ghcr.io/nanohype/* image is blocked at
-# admission. Every factory image is keyless-signed by its release workflow,
-# so a verification failure means hand-pushed or altered — exactly what must
-# not run here.
-# mutateDigest moves WITH the Enforce patch, never independently. Kyverno
-# rejects mutateDigest:true under an Audit failure action, so the base keeps it
-# false and only the enforcing environments turn it on. Enforce without it would
-# verify a signature and still let the kubelet re-resolve the tag.
+# Production: an unsigned, foreign-signed or branch-signed ghcr.io/nanohype/*
+# image is denied at admission. Every factory image is keyless-signed and
+# SBOM-attested by its release workflow on a tag, so a verification failure
+# means hand-pushed, built off a branch, or altered. The digest pin is set in
+# the base and applies at every tier.
 patches:
   - patch: |-
       - op: replace
-        path: /spec/validationFailureAction
-        value: Enforce
+        path: /spec/validationActions
+        value: [Deny]
     target:
-      kind: ClusterPolicy
-  - patch: |-
-      - op: replace
-        path: /spec/rules/0/verifyImages/0/mutateDigest
-        value: true
-    target:
-      kind: ClusterPolicy
+      kind: ImageValidatingPolicy
       name: verify-images

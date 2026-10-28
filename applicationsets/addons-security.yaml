@@ -27,7 +27,7 @@ spec:
                   namespace: kyverno
                   chartRepo: https://kyverno.github.io/kyverno
                   chart: kyverno
-                  chartVersion: 3.8.2
+                  chartVersion: 3.9.2
                   path: addons/security/kyverno
                   syncWave: "10"
                 - appName: trivy-operator
