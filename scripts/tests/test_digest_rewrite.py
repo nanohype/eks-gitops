@@ -13,7 +13,8 @@ and only the verifier's log names it, so a refusal is also decided on what the
 admission controller logged. Stubs named kubectl, date and sleep, first on PATH,
 stand in for the cluster and the clock: kubectl answers each call from files
 named for it and records the call, and the clock moves only when a request is
-sent or the script sleeps.
+sent or the script sleeps. Stubs named timeout, kind and helm record what runs
+under a bound and what the bound was.
 
 The same transport failures are classified by scripts/kyverno-test.sh, and both
 gates read them through the one pattern scripts/transport-failure.sh holds.
@@ -30,6 +31,7 @@ import tempfile
 import unittest
 
 import yaml
+from shellgate import ESC, identity_message, setting, verifier_line
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 SCRIPT = ROOT / "scripts" / "check-digest-rewrite.sh"
@@ -37,31 +39,30 @@ KYVERNO_TEST = ROOT / "scripts" / "kyverno-test.sh"
 SHARED = ROOT / "scripts" / "transport-failure.sh"
 CI = ROOT / ".github" / "workflows" / "ci.yml"
 
-IDENTITY = re.search(r'^IDENTITY_MESSAGE="([^"]+)"$', SCRIPT.read_text(), re.M)
+IDENTITY = identity_message()
 
+REQUEST_TIMEOUT = setting(SCRIPT, "REQUEST_TIMEOUT")
+READY_TIMEOUT = setting(SCRIPT, "READY_TIMEOUT")
+DELETE_TIMEOUT = setting(SCRIPT, "DELETE_TIMEOUT")
+CREATE_TIMEOUT = setting(SCRIPT, "CREATE_TIMEOUT")
+KIND_TIMEOUT = setting(SCRIPT, "KIND_TIMEOUT")
+HELM_TIMEOUT = setting(SCRIPT, "HELM_TIMEOUT")
+KILL_TIMEOUT = setting(SCRIPT, "KILL_TIMEOUT")
 
-def _setting(name: str) -> int:
-    """A numeric setting the script makes, read from the script."""
-    found = re.search(rf"^{name}=(\d+)$", SCRIPT.read_text(), re.M)
-    assert found, f"{SCRIPT.name} sets no {name}"
-    return int(found.group(1))
-
-
-REQUEST_TIMEOUT = _setting("REQUEST_TIMEOUT")
-DELETE_TIMEOUT = _setting("DELETE_TIMEOUT")
-CREATE_TIMEOUT = _setting("CREATE_TIMEOUT")
-
-# What the main body reads out of the fixtures, set by hand: a tag, and a
-# foreign image pinned by digest.
+# What the main body reads out of the fixtures, the appset and ci.yml, set by
+# hand: a tag, a foreign image pinned by digest, and the cluster and chart.
 TAGGED = "ghcr.io/nanohype/x:1.0.0"
 FOREIGN = f"ghcr.io/nanohype/x@sha256:{'0' * 64}"
 PINNED = f"{TAGGED}@sha256:{'a' * 64}"
+CHART_VERSION = "0.0.0"
 
 PRELUDE = f"""
 source "$1" || exit 99
 WORK="$2" rel=overlays/tier actions="$3" fail=0 rendered="$2/policy.yaml"
 TAGGED={TAGGED} FOREIGN={FOREIGN}
 POD=signed POD_NS=workloads DEPLOYMENT=signed-deployment DEPLOYMENT_NS=workloads
+TIMEOUT_CMD="$2/bin/timeout" CLUSTER=digest-rewrite-test NODE_IMAGE=kindest/node@sha256:{'b' * 64}
+CHART_REPO=https://kyverno.github.io/kyverno CHART_VERSION={CHART_VERSION} VALUES=("$2/values.yaml")
 """
 
 # The clock's reading when a run starts, and the seconds it moves across each
@@ -106,6 +107,27 @@ esac
 exit 0
 """
 
+# GNU timeout's shape, `timeout [OPTION]... DURATION COMMAND...`. What precedes
+# the command is recorded as the bounds it was given, with the command after
+# them. answers/timeout-<command>.rc stands for the bound ending that command:
+# the stub exits with it and runs nothing.
+TIMEOUT = r"""#!BASH
+work='WORK'
+bounds=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in kubectl|kind|helm) break ;; esac
+  bounds+=("$1"); shift
+done
+{ printf '%s\x1f' "${bounds[@]}" "$@"; printf '\n'; } >>"$work/bounded"
+[ -f "$work/answers/timeout-$1.rc" ] && exit "$(<"$work/answers/timeout-$1.rc")"
+exec "$@"
+"""
+
+# kind and helm, answering every call with success.
+TOOL = r"""#!BASH
+exit 0
+"""
+
 DATE = r"""#!BASH
 printf '%s\n' "$(<'WORK/now')"
 """
@@ -114,16 +136,27 @@ SLEEP = r"""#!BASH
 echo "$(( $(<'WORK/now') + $1 ))" >'WORK/now'
 """
 
-ESC = "\033"
-
 
 def log(error: str) -> str:
-    """A verifier ERR line as the admission controller writes it, coloured."""
-    return (f"2026-01-01T00:00:00Z {ESC}[31mERR{ESC}[0m github.com/kyverno/kyverno/pkg/image/"
-            f"verifiers/ivpol/cosign/verifier.go:281 > image verification failed "
-            f"{ESC}[36merror={ESC}[0m{ESC}[31m\"{error}\"{ESC}[0m attestor=release "
-            f"image=ghcr.io/nanohype/x@sha256:{'0' * 64}")
+    """A verifier line as the admission controller writes it, naming the image."""
+    return verifier_line(error, f"image=ghcr.io/nanohype/x@sha256:{'0' * 64}")
 
+
+def kubectl_said(message: str, reason: str = "Forbidden") -> str:
+    """What kubectl writes for an answer the API server sent, carrying `message`."""
+    return f"Error from server ({reason}): {message}"
+
+
+def replicaset_said(message: str) -> str:
+    """The FailedCreate event the ReplicaSet writes when the API server refuses its pod."""
+    return f"Error creating: {message}"
+
+
+# The API server's refusal under the policy's identity message, and as kubectl
+# reports it.
+IDENTITY_REFUSAL = (f'admission webhook "ivpol.validate.kyverno.svc-fail" denied the request: '
+                    f"Policy verify-images failed: {IDENTITY}")
+DENIED = kubectl_said(IDENTITY_REFUSAL)
 
 MISMATCH = log("failed to verify cosign signatures: no matching signatures: none of the "
                "expected identities matched what was in the certificate")
@@ -141,12 +174,36 @@ DROPPED = (f"2026-01-01T00:00:00Z {ESC}[31mERR{ESC}[0m github.com/kyverno/kyvern
            "log.go:184 > http: TLS handshake error from 10.244.0.1:53422: read tcp "
            "10.244.0.5:9443->10.244.0.1:53422: read: connection reset by peer logger=server")
 
+# Reading the image failed, so the API server's refusal carries the transport
+# error: the registry throttling, and the registry's host not resolving.
 REGISTRY_429 = ('admission webhook "ivpol.validate.kyverno.svc-fail" denied the request: '
                 "Policy verify-images error: failed to get imagedata: GET https://ghcr.io/v2/"
                 "nanohype/x/manifests/sha256:0: unexpected status code 429 Too Many Requests")
+REGISTRY_UNRESOLVED = ('admission webhook "ivpol.validate.kyverno.svc-fail" denied the request: '
+                       'Policy verify-images error: failed to get imagedata: Get '
+                       '"https://ghcr.io/v2/": dial tcp: lookup ghcr.io: i/o timeout')
 
+# kubectl's own request ending at its --request-timeout, before the API server
+# answered: no "Error from server", because no answer came.
+NO_ANSWER = ('error: error when creating "pod.yaml": Post "https://127.0.0.1:6443/api/v1/'
+             'namespaces/workloads/pods?fieldManager=kubectl-create&timeout=90s": context '
+             "deadline exceeded (Client.Timeout exceeded while awaiting headers)")
+
+# The API server getting no answer from Kyverno's admission webhook.
+WEBHOOK_UNANSWERED = kubectl_said(
+    'Internal error occurred: failed calling webhook "ivpol.validate.kyverno.svc-fail": '
+    'failed to call webhook: Post "https://kyverno-svc.kyverno.svc:443/validate/fail?'
+    'timeout=10s": context deadline exceeded', reason="InternalError")
+
+VERIFIER_OUTAGE = ("Cannot run: overlays/tier could not reach the registry, the Sigstore "
+                   "trusted root or Rekor")
 UNKNOWN_CAUSE = ("with the identity message, but the admission\ncontroller's log carries no "
                  "'image verification failed' line")
+
+
+def no_answer_for(what: str) -> str:
+    return (f"Cannot run: overlays/tier: kubectl's request for {what} ended with no answer from "
+            f"the API server:\nits {REQUEST_TIMEOUT}s bound passed or its connection failed.")
 
 
 def shared_pattern() -> str:
@@ -181,13 +238,21 @@ def own_phrases(text: str, phrases: list[str]) -> list[str]:
     return [phrase for phrase in phrases if phrase.lower() in code]
 
 
+def seconds(argv: list[str], flag: str) -> int | None:
+    """The seconds `flag=<n>s` gives in argv, or None where argv does not carry it."""
+    for arg in argv:
+        found = re.fullmatch(rf"{re.escape(flag)}=(\d+)s", arg)
+        if found:
+            return int(found.group(1))
+    return None
+
+
 class AGateRun(unittest.TestCase):
     def setUp(self):
         bash = shutil.which("bash")
         if bash is None:
             self.skipTest("bash is not on PATH")
         self.bash = bash
-        self.assertIsNotNone(IDENTITY, f"{SCRIPT.name} sets no IDENTITY_MESSAGE")
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.work = pathlib.Path(tmp.name)
@@ -195,7 +260,8 @@ class AGateRun(unittest.TestCase):
         self.bin.mkdir()
         (self.work / "answers").mkdir()
         (self.work / "now").write_text(f"{START}\n")
-        for name, body in (("kubectl", KUBECTL), ("date", DATE), ("sleep", SLEEP)):
+        for name, body in (("kubectl", KUBECTL), ("date", DATE), ("sleep", SLEEP),
+                           ("timeout", TIMEOUT), ("kind", TOOL), ("helm", TOOL)):
             stub = self.bin / name
             stub.write_text(body.replace("BASH", bash, 1).replace("WORK", str(self.work))
                             .replace("STEP", str(STEP)))
@@ -231,15 +297,22 @@ class AGateRun(unittest.TestCase):
     def calls_to(self, key: str) -> list[list[str]]:
         return [argv for _, k, argv in self.calls() if k == key]
 
-    def denied(self) -> str:
-        assert IDENTITY is not None
-        return (f'admission webhook "ivpol.validate.kyverno.svc-fail" denied the request: '
-                f"Policy verify-images failed: {IDENTITY.group(1)}")
+    def bounded(self) -> list[tuple[list[str], list[str]]]:
+        """Each command run under timeout: the bounds it was given, and the command."""
+        path = self.work / "bounded"
+        if not path.exists():
+            return []
+        out = []
+        for line in path.read_text().splitlines():
+            fields = line.split("\x1f")[:-1]
+            at = next(i for i, f in enumerate(fields) if f in ("kubectl", "kind", "helm"))
+            out.append((fields[:at], fields[at:]))
+        return out
 
-    def assert_cannot_run(self, rc: int, said: str, cause: str) -> None:
+    def assert_cannot_run(self, rc: int, said: str, cause: str,
+                          headline: str = VERIFIER_OUTAGE) -> None:
         self.assertEqual(rc, 2, said)
-        self.assertIn("Cannot run: overlays/tier could not reach the registry, the Sigstore "
-                      "trusted root or Rekor", said)
+        self.assertIn(headline, said)
         self.assertIn(cause, said)
         self.assertNotIn("ok    denied", said)
         self.assertNotIn("fail=", said)
@@ -254,8 +327,17 @@ class AGateRun(unittest.TestCase):
         """The signed pod and its ephemeral container admitted, the foreign one denied."""
         self.answer("create-pod", out=f"{init} {main}")
         self.answer("patch-pinned", out=PINNED)
-        self.answer("patch-foreign", err=self.denied(), rc=1)
+        self.answer("patch-foreign", err=DENIED, rc=1)
         self.answer("logs", out=MISMATCH)
+
+
+class TheIdentityMessage(unittest.TestCase):
+    def test_the_script_reads_the_policys_identity_message(self):
+        """The script decides a denial on the message; a copy that drifts decides none."""
+        found = re.search(r'^IDENTITY_MESSAGE="([^"]+)"$', SCRIPT.read_text(), re.M)
+        self.assertIsNotNone(found, f"{SCRIPT.name} sets no IDENTITY_MESSAGE")
+        assert found is not None
+        self.assertEqual(found.group(1), IDENTITY)
 
 
 class DecidingARefusal(AGateRun):
@@ -287,7 +369,7 @@ class DecidingAForeignIdentity(DecidingARefusal):
         self.assertIn("fail=0", said)
 
     def test_denied_for_its_identity_under_deny_passes(self):
-        rc, said = self.decide("Deny", "refused", self.denied(), MISMATCH)
+        rc, said = self.decide("Deny", "refused", DENIED, MISMATCH)
         self.assertEqual(rc, 0, said)
         self.assertIn("ok    denied the branch-signed image:", said)
         self.assertIn("fail=0", said)
@@ -299,18 +381,19 @@ class DecidingAForeignIdentity(DecidingARefusal):
         self.assertIn("fail=1", said)
 
     def test_denied_for_its_identity_under_audit_fails(self):
-        rc, said = self.decide("Audit", "refused", self.denied(), MISMATCH)
+        rc, said = self.decide("Audit", "refused", DENIED, MISMATCH)
         self.assertEqual(rc, 0, said)
         self.assertIn("FAIL  denied the branch-signed image under Audit, which reports", said)
         self.assertIn("fail=1", said)
 
     def test_refused_for_a_transport_failure_cannot_run(self):
-        rc, said = self.decide("Deny", "refused",
-                               "Get https://ghcr.io/v2/: dial tcp: i/o timeout")
+        rc, said = self.decide("Deny", "refused", kubectl_said(REGISTRY_UNRESOLVED))
         self.assert_cannot_run(rc, said, "i/o timeout")
 
     def test_refused_for_another_reason_fails_and_shows_it(self):
-        rc, said = self.decide("Deny", "refused", 'pods "vi-branch-signed" already exists',
+        rc, said = self.decide("Deny", "refused",
+                               kubectl_said('pods "vi-branch-signed" already exists',
+                                            reason="AlreadyExists"),
                                MISMATCH)
         self.assertEqual(rc, 0, said)
         self.assertIn("FAIL  the branch-signed image was refused for a reason other than its "
@@ -327,20 +410,20 @@ class AnOutageBehindTheIdentityMessage(DecidingARefusal):
     """
 
     def test_a_trusted_root_that_could_not_be_fetched_is_not_a_denial(self):
-        rc, said = self.decide("Deny", "refused", self.denied(), TUF)
+        rc, said = self.decide("Deny", "refused", DENIED, TUF)
         self.assert_cannot_run(rc, said, "tuf: failed to download 17.root.json")
         self.assertNotIn(ESC, said)
 
     def test_a_rekor_5xx_is_not_a_denial(self):
-        rc, said = self.decide("Deny", "refused", self.denied(), "\n".join([MISMATCH, REKOR_503]))
+        rc, said = self.decide("Deny", "refused", DENIED, "\n".join([MISMATCH, REKOR_503]))
         self.assert_cannot_run(rc, said, "[503]")
 
     def test_a_registry_429_refusal_cannot_run(self):
-        rc, said = self.decide("Deny", "refused", REGISTRY_429, MISMATCH)
+        rc, said = self.decide("Deny", "refused", kubectl_said(REGISTRY_429), MISMATCH)
         self.assert_cannot_run(rc, said, "unexpected status code 429")
 
     def test_a_log_that_cannot_be_read_decides_no_refusal(self):
-        rc, said = self.decide("Deny", "refused", self.denied(), MISMATCH, logs_rc=1,
+        rc, said = self.decide("Deny", "refused", DENIED, MISMATCH, logs_rc=1,
                                logs_err="error: the server could not find the requested resource")
         self.assertEqual(rc, 2, said)
         self.assertIn("Cannot run: overlays/tier: the admission controller's log could not be "
@@ -350,7 +433,7 @@ class AnOutageBehindTheIdentityMessage(DecidingARefusal):
 
     def test_a_log_read_that_times_out_decides_no_refusal(self):
         """A read the request timeout ended is a log that could not be read."""
-        rc, said = self.decide("Deny", "refused", self.denied(), MISMATCH, logs_rc=1,
+        rc, said = self.decide("Deny", "refused", DENIED, MISMATCH, logs_rc=1,
                                logs_err="Unable to connect to the server: net/http: request "
                                         "canceled (Client.Timeout exceeded while awaiting "
                                         "headers)")
@@ -362,23 +445,23 @@ class AnOutageBehindTheIdentityMessage(DecidingARefusal):
 
     def test_a_log_without_the_verifiers_line_decides_no_denial(self):
         """A selector matching no pod reads an empty log, and exits 0."""
-        rc, said = self.decide("Deny", "refused", self.denied(), "")
+        rc, said = self.decide("Deny", "refused", DENIED, "")
         self.assert_cause_unknown(rc, said, "the branch-signed image")
         self.assertNotIn("ok    denied", said)
 
     def test_a_log_without_the_verifiers_line_decides_no_audit_verdict(self):
-        rc, said = self.decide("Audit", "refused", self.denied(), "")
+        rc, said = self.decide("Audit", "refused", DENIED, "")
         self.assert_cause_unknown(rc, said, "the branch-signed image")
 
     def test_a_connection_the_webhook_server_dropped_is_not_the_verifiers(self):
         """The controller's own log lines share the stream and name no verification."""
-        rc, said = self.decide("Deny", "refused", self.denied(), "\n".join([DROPPED, MISMATCH]))
+        rc, said = self.decide("Deny", "refused", DENIED, "\n".join([DROPPED, MISMATCH]))
         self.assertEqual(rc, 0, said)
         self.assertIn("ok    denied the branch-signed image:", said)
         self.assertIn("fail=0", said)
 
     def test_the_log_is_read_whole_from_every_admission_controller_replica(self):
-        self.decide("Deny", "refused", self.denied(), MISMATCH)
+        self.decide("Deny", "refused", DENIED, MISMATCH)
         logs = self.calls_to("logs")
         self.assertEqual(len(logs), 1, self.calls())
         argv = logs[0]
@@ -391,6 +474,47 @@ class AnOutageBehindTheIdentityMessage(DecidingARefusal):
         self.assertEqual(len([a for a in argv if a.startswith("--since=")]), 1, argv)
 
 
+class WhereATransportFailureHappened(DecidingARefusal):
+    """A transport failure in the refusal is named by the link it broke.
+
+    kubectl's own request to the API server, the API server's call to Kyverno's
+    webhook, and the verifier's reads of the registry, the Sigstore trusted root
+    and Rekor each leave a run that cannot decide, for a different reason.
+    """
+
+    def test_a_request_kubectl_got_no_answer_for_is_not_the_registry(self):
+        rc, said = self.decide("Deny", "refused", NO_ANSWER, MISMATCH)
+        self.assert_cannot_run(rc, said, "Client.Timeout exceeded",
+                               headline=no_answer_for("the branch-signed image"))
+        self.assertNotIn("could not reach the registry", said)
+        self.assertEqual(self.calls_to("logs"), [], "no admission ran to log anything")
+
+    def test_a_webhook_the_api_server_got_no_answer_from_is_not_the_registry(self):
+        rc, said = self.decide("Deny", "refused", WEBHOOK_UNANSWERED, MISMATCH)
+        self.assert_cannot_run(rc, said, "failed calling webhook",
+                               headline="Cannot run: overlays/tier: the API server got no "
+                                        "answer from Kyverno's admission webhook for the "
+                                        "branch-signed image.")
+        self.assertNotIn("could not reach the registry", said)
+
+    def test_a_signed_pod_kubectl_got_no_answer_for_is_not_the_registry(self):
+        """The release-signed path names it by the same rule."""
+        self.answer("create-pod", err=NO_ANSWER, rc=1)
+        rc, said = self.run_gate("check_signed_pod")
+        self.assert_cannot_run(rc, said, "Client.Timeout exceeded",
+                               headline=no_answer_for("the signed pod"))
+        self.assertNotIn("FAIL", said)
+
+    def test_a_deployments_pod_the_registry_throttled_cannot_run(self):
+        """The ReplicaSet's event carries the API server's answer, as kubectl's error does."""
+        self.answer("create-deployment", out=TAGGED)
+        self.answer("get-events", out=replicaset_said(REGISTRY_429))
+        self.answer("logs", out=MISMATCH)
+        rc, said = self.run_gate(f"CREATE_TIMEOUT={SHORT_CREATE_TIMEOUT}\ncheck_deployment")
+        self.assert_cannot_run(rc, said, "unexpected status code 429")
+        self.assertIn("for the Deployment's pod.", said)
+
+
 class ARefusedReleaseSignedSubmission(AGateRun):
     """A release-signed submission refused is decided on the rule a foreign one is.
 
@@ -401,17 +525,17 @@ class ARefusedReleaseSignedSubmission(AGateRun):
     """
 
     def refuse_signed_pod(self, verifier_log: str) -> tuple[int, str]:
-        self.answer("create-pod", err=self.denied(), rc=1)
+        self.answer("create-pod", err=DENIED, rc=1)
         self.answer("logs", out=verifier_log)
         return self.run_gate("check_signed_pod")
 
     def refuse_signed_ephemeral(self, verifier_log: str) -> tuple[int, str]:
-        self.answer("patch-pinned", err=self.denied(), rc=1)
+        self.answer("patch-pinned", err=DENIED, rc=1)
         self.answer("logs", out=verifier_log)
         return self.run_gate("check_signed_ephemeral")
 
     def refuse_deployment(self, verifier_log: str) -> tuple[int, str]:
-        self.answer("create-deployment", err=self.denied(), rc=1)
+        self.answer("create-deployment", err=DENIED, rc=1)
         self.answer("logs", out=verifier_log)
         return self.run_gate("check_deployment")
 
@@ -420,7 +544,7 @@ class ARefusedReleaseSignedSubmission(AGateRun):
                                ) -> tuple[int, str]:
         """The Deployment stored; its ReplicaSet refused, as its FailedCreate events say."""
         self.answer("create-deployment", out=TAGGED)
-        self.answer("get-events", out=f"Error creating: {self.denied()}")
+        self.answer("get-events", out=replicaset_said(IDENTITY_REFUSAL))
         self.answer("logs", out=verifier_log)
         shorten = "" if create_timeout is None else f"CREATE_TIMEOUT={create_timeout}\n"
         return self.run_gate(f"{shorten}check_deployment")
@@ -466,8 +590,7 @@ class ARefusedReleaseSignedSubmission(AGateRun):
         self.assertEqual(rc, 0, said)
         self.assertIn(f"FAIL  the Deployment's ReplicaSet created no pod within "
                       f"{SHORT_CREATE_TIMEOUT}s:", said)
-        assert IDENTITY is not None
-        self.assertIn(IDENTITY.group(1), said)
+        self.assertIn(IDENTITY, said)
         self.assertIn("fail=1", said)
         self.assertEqual(len(self.calls_to("delete-deployment")), 1, self.calls())
 
@@ -496,46 +619,46 @@ class TheLogWindow(AGateRun):
         clock, argv = reads[0]
         since = [a for a in argv if a.startswith("--since=")]
         self.assertEqual(len(since), 1, argv)
-        seconds = re.fullmatch(r"--since=(\d+)s", since[0])
-        self.assertIsNotNone(seconds, since[0])
-        assert seconds is not None
-        self.assertLess(clock - int(seconds.group(1)), sent[0],
-                        f"the log was read from {clock - int(seconds.group(1))}, and the "
+        window = re.fullmatch(r"--since=(\d+)s", since[0])
+        self.assertIsNotNone(window, since[0])
+        assert window is not None
+        self.assertLess(clock - int(window.group(1)), sent[0],
+                        f"the log was read from {clock - int(window.group(1))}, and the "
                         f"request was sent at {sent[0]}")
 
     def test_the_signed_pods_window_opens_before_its_create(self):
-        self.answer("create-pod", err=self.denied(), rc=1)
+        self.answer("create-pod", err=DENIED, rc=1)
         self.answer("logs", out=MISMATCH)
         self.run_gate("check_signed_pod")
         self.assert_window_opens_before("create-pod")
 
     def test_the_signed_ephemeral_containers_window_opens_before_its_patch(self):
-        self.answer("patch-pinned", err=self.denied(), rc=1)
+        self.answer("patch-pinned", err=DENIED, rc=1)
         self.answer("logs", out=MISMATCH)
         self.run_gate("check_signed_ephemeral")
         self.assert_window_opens_before("patch-pinned")
 
     def test_the_branch_signed_ephemeral_containers_window_opens_before_its_patch(self):
-        self.answer("patch-foreign", err=self.denied(), rc=1)
+        self.answer("patch-foreign", err=DENIED, rc=1)
         self.answer("logs", out=MISMATCH)
         self.run_gate("check_foreign_ephemeral")
         self.assert_window_opens_before("patch-foreign")
 
     def test_the_deployments_window_opens_before_its_create(self):
-        self.answer("create-deployment", err=self.denied(), rc=1)
+        self.answer("create-deployment", err=DENIED, rc=1)
         self.answer("logs", out=MISMATCH)
         self.run_gate("check_deployment")
         self.assert_window_opens_before("create-deployment")
 
     def test_the_deployments_pods_window_opens_before_the_deployment_was_created(self):
         self.answer("create-deployment", out=TAGGED)
-        self.answer("get-events", out=f"Error creating: {self.denied()}")
+        self.answer("get-events", out=replicaset_said(IDENTITY_REFUSAL))
         self.answer("logs", out=MISMATCH)
         self.run_gate(f"CREATE_TIMEOUT={SHORT_CREATE_TIMEOUT}\ncheck_deployment")
         self.assert_window_opens_before("create-deployment")
 
     def test_the_branch_signed_pods_window_opens_before_its_create(self):
-        self.answer("create-branch-signed", err=self.denied(), rc=1)
+        self.answer("create-branch-signed", err=DENIED, rc=1)
         self.answer("logs", out=MISMATCH)
         self.run_gate("check_foreign_pod")
         self.assert_window_opens_before("create-branch-signed")
@@ -591,31 +714,143 @@ class DeletingWhatTheNextStepWouldMeet(AGateRun):
                       f"{DELETE_TIMEOUT}s", said)
 
 
-class EveryStepIsBounded(unittest.TestCase):
-    """The job's timeout sits above every bound the script puts on a step.
+class EachWaitRunsToItsOwnTimeout(AGateRun):
+    """A wait's own --timeout ends it, and nothing below that ends it first.
 
-    A step that stalls then ends on the script's diagnostic rather than on the
-    runner cancelling the job.
+    kubectl's --request-timeout ends every connection a wait opens, its watch
+    included, so one below the wait's own --timeout would cut the watch before
+    the wait's bound. A wait is bounded from outside instead: GNU timeout,
+    REQUEST_TIMEOUT above its own bound.
+    """
+
+    def run_every_wait(self) -> list[list[str]]:
+        """One overlay's steps, every wait among them; the waits' argv."""
+        self.admit_signed_pod()
+        self.answer("create-deployment", out=TAGGED)
+        self.answer("get-pod", out=PINNED)
+        self.answer("create-branch-signed", err=DENIED, rc=1)
+        rc, said = self.run_gate("install_policy\ncheck_signed_pod\ncheck_deployment\n"
+                                 "check_foreign_pod\nretire_policy")
+        self.assertEqual(rc, 0, said)
+        self.assertIn("fail=0", said)
+        waits = [(key, argv) for _, key, argv in self.calls()
+                 if "wait" in argv or "--wait=true" in argv]
+        self.assertEqual(sorted(key for key, _ in waits),
+                         ["delete-deployment", "delete-pod", "delete-policy", "wait", "wait"],
+                         self.calls())
+        return [argv for _, argv in waits]
+
+    def test_no_wait_is_given_a_request_timeout_below_its_own(self):
+        for argv in self.run_every_wait():
+            with self.subTest(argv=argv):
+                own = seconds(argv, "--timeout")
+                self.assertIsNotNone(own, f"the wait carries no --timeout of its own: {argv}")
+                assert own is not None
+                request = seconds(argv, "--request-timeout")
+                if request is not None:
+                    self.assertGreaterEqual(request, own,
+                                            f"--request-timeout={request}s would end the "
+                                            f"wait's watch before its own {own}s")
+
+    def test_each_wait_runs_under_gnu_timeout_above_its_own(self):
+        waits = self.run_every_wait()
+        bounded = {tuple(command): bounds for bounds, command in self.bounded()}
+        for argv in waits:
+            with self.subTest(argv=argv):
+                own = seconds(argv, "--timeout")
+                expected = (READY_TIMEOUT if "imagevalidatingpolicy/verify-images" in argv
+                            else DELETE_TIMEOUT)
+                self.assertEqual(own, expected)
+                self.assertEqual(bounded.get(("kubectl", *argv)),
+                                 ["-k", str(KILL_TIMEOUT), str(expected + REQUEST_TIMEOUT)])
+
+    def test_a_wait_the_bound_ended_says_so(self):
+        self.answer("timeout-kubectl", rc=124)
+        rc, said = self.run_gate("retire_policy")
+        self.assertEqual(rc, 2, said)
+        self.assertIn(f"Cannot run: overlays/tier: its policy was not deleted within "
+                      f"{DELETE_TIMEOUT}s — kubectl did not finish within "
+                      f"{DELETE_TIMEOUT + REQUEST_TIMEOUT}s, so GNU timeout ended it.", said)
+
+
+class KindAndHelmRunUnderTheirBounds(AGateRun):
+    """kind's --wait and helm's --timeout leave the image pull and chart fetch unbounded."""
+
+    def test_kind_creates_the_cluster_under_its_bound(self):
+        rc, said = self.run_gate("create_cluster")
+        self.assertEqual(rc, 0, said)
+        [(bounds, command)] = self.bounded()
+        self.assertEqual(bounds, ["-k", str(KILL_TIMEOUT), str(KIND_TIMEOUT)])
+        self.assertEqual(command[:3], ["kind", "create", "cluster"])
+        self.assertEqual(command[command.index("--wait") + 1], f"{READY_TIMEOUT}s")
+
+    def test_helm_installs_kyverno_under_its_bound(self):
+        rc, said = self.run_gate("install_kyverno")
+        self.assertEqual(rc, 0, said)
+        [(bounds, command)] = self.bounded()
+        self.assertEqual(bounds, ["-k", str(KILL_TIMEOUT), str(HELM_TIMEOUT)])
+        self.assertEqual(command[:4], ["helm", "install", "kyverno", "kyverno"])
+        self.assertEqual(command[command.index("--timeout") + 1], f"{HELM_TIMEOUT}s")
+
+    def test_a_cluster_the_bound_ended_says_so(self):
+        self.answer("timeout-kind", rc=124)
+        rc, said = self.run_gate("create_cluster")
+        self.assertEqual(rc, 2, said)
+        self.assertIn(f"kind did not finish within {KIND_TIMEOUT}s, so GNU timeout ended it.",
+                      said)
+        self.assertIn("Cannot run: kind could not create the cluster.", said)
+
+    def test_an_install_the_bound_killed_says_so(self):
+        self.answer("timeout-helm", rc=137)
+        rc, said = self.run_gate("install_kyverno")
+        self.assertEqual(rc, 2, said)
+        self.assertIn("helm was killed before it finished.", said)
+        self.assertIn(f"Cannot run: Kyverno {CHART_VERSION} did not install.", said)
+
+
+class EveryStepIsBounded(unittest.TestCase):
+    """The job's timeout sits above the bound the script puts on each step.
+
+    Each step is held to it on its own, so one step that stalls ends on the
+    script's diagnostic rather than on the runner cancelling the job. The
+    bounds are not summed: a run in which several steps each stall to their
+    bound can outlast the job.
     """
 
     TEXT = SCRIPT.read_text()
 
-    def test_every_kubectl_call_goes_through_the_bounded_wrapper(self):
+    def test_every_kubectl_call_goes_through_a_bounded_wrapper(self):
+        """Every line naming kubectl, other than as a possessive in a message."""
         calls = [line.strip() for line in executable_lines(self.TEXT)
-                 if re.search(r"(?<![\w-])kubectl(?![\w-])", line)
+                 if re.search(r"(?<![\w-])kubectl(?![\w'-])", line)
                  and not line.lstrip().startswith("for tool in ")]
-        self.assertEqual(calls, ['kubectl --request-timeout="${REQUEST_TIMEOUT}s" "$@"'])
+        self.assertEqual(calls, [
+            'kubectl --request-timeout="${REQUEST_TIMEOUT}s" "$@"',
+            'bounded "$(( seconds + REQUEST_TIMEOUT ))" kubectl "$@" --timeout="${seconds}s"',
+        ])
 
-    def test_every_bound_is_named_and_under_the_jobs_timeout(self):
+    def test_every_wait_goes_through_the_wait_wrapper(self):
+        """A wait sent through kube would run under --request-timeout."""
+        for line in executable_lines(self.TEXT):
+            with self.subTest(line=line.strip()):
+                self.assertNotRegex(line, r"(?<![\w-])kube\s+(wait|delete)\b")
+
+    def test_each_steps_bound_is_under_the_jobs_timeout(self):
         bounds = {name: int(value) for name, value
                   in re.findall(r"^([A-Z_]+_TIMEOUT)=(\d+)$", self.TEXT, re.M)}
         self.assertIn("REQUEST_TIMEOUT", bounds)
+        self.assertIn("KILL_TIMEOUT", bounds)
+        request, kill = bounds.pop("REQUEST_TIMEOUT"), bounds.pop("KILL_TIMEOUT")
         job = yaml.safe_load(CI.read_text())["jobs"]["digest-rewrite"]
         self.assertIn("./scripts/check-digest-rewrite.sh",
                       [step.get("run") for step in job["steps"]])
-        for name, seconds in bounds.items():
+        # The longest any one step under a bound runs: a wait, REQUEST_TIMEOUT
+        # above its own bound and a kill's grace after that; kind or helm, the
+        # bound and the grace; the wait for the Deployment's pod, the bound and
+        # the request under way when it passes.
+        for name, value in bounds.items():
             with self.subTest(bound=name):
-                self.assertLess(seconds, job["timeout-minutes"] * 60)
+                self.assertLess(value + request + kill, job["timeout-minutes"] * 60)
         for line in executable_lines(self.TEXT):
             with self.subTest(line=line.strip()):
                 self.assertNotRegex(line, r'--(request-)?timeout[= ]"?\d|--wait "?\d')

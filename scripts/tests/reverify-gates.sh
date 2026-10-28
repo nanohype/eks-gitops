@@ -7,7 +7,7 @@
 # 1-indexed. Those readings measured nothing.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-cd "$ROOT" || exit 2
+cd "$ROOT" || { echo "Cannot run: $ROOT cannot be entered."; exit 2; }
 SP="$(mktemp -d)"
 
 # Backups live OUTSIDE $SP, and that placement is the whole fix. This harness

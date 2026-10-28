@@ -14,7 +14,7 @@
 # has demonstrated detection without demonstrating coverage.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-cd "$ROOT" || exit 2
+cd "$ROOT" || { echo "Cannot run: $ROOT cannot be entered."; exit 2; }
 SP="$(mktemp -d)"
 
 # Backups live outside $SP, for the reason reverify-gates.sh records: between
@@ -1516,10 +1516,10 @@ rejects "attempts: report the first transport failure as final" test_kyverno_tes
   test_one_that_clears_is_run_again
 res $F
 
-# Each run is bounded, and one still going after the bound is killed: a read
-# that stops answering holds the CLI, and the job's timeout would otherwise end
-# the run with no diagnostic at all. A run the bound ended or killed is a
-# transport failure.
+# Each run is bounded: GNU timeout sends it TERM at RUN_TIMEOUT, and KILL
+# KILL_TIMEOUT seconds later if it is still going. A read that stops answering
+# holds the CLI, and the job's timeout would otherwise end the run with no
+# diagnostic at all. A run either signal ended is a transport failure.
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
@@ -1528,7 +1528,7 @@ assert m != s, "mutation did not land"
 p.write_text(m)
 PY
 rejects "bound: run the suite unbounded" test_kyverno_test \
-  test_each_run_is_bounded_and_killed_if_it_outlasts_the_bound \
+  test_each_run_is_sent_term_at_the_bound_and_killed_after_the_grace \
   test_gtimeout_bounds_the_run_where_timeout_is_absent
 res $F
 
@@ -1540,7 +1540,7 @@ assert m != s, "mutation did not land"
 p.write_text(m)
 PY
 rejects "bound: never kill a run that ignores the bound" test_kyverno_test \
-  test_each_run_is_bounded_and_killed_if_it_outlasts_the_bound \
+  test_each_run_is_sent_term_at_the_bound_and_killed_after_the_grace \
   test_gtimeout_bounds_the_run_where_timeout_is_absent
 res $F
 
@@ -1763,6 +1763,55 @@ rejects "log: decide over a log that could not be read" test_digest_rewrite \
   test_a_log_read_that_times_out_decides_no_refusal
 res $F
 
+# A transport failure in the refusal is named by the link it broke: kubectl's
+# own request to the API server, the API server's call to Kyverno's webhook, or
+# the verifier's reads of the registry, the trusted root and Rekor.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('''    if ! grep -qE '^Error (from server|creating:)' "$WORK/err"; then\n''', '    if false; then\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "cause: blame the registry for a request kubectl got no answer for" test_digest_rewrite \
+  test_a_request_kubectl_got_no_answer_for_is_not_the_registry \
+  test_a_signed_pod_kubectl_got_no_answer_for_is_not_the_registry
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('''    elif grep -qF 'failed calling webhook' "$WORK/err"; then\n''', '    elif false; then\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "cause: blame the registry for a webhook that did not answer" test_digest_rewrite \
+  test_a_webhook_the_api_server_got_no_answer_from_is_not_the_registry
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("""'^Error (from server|creating:)'""", """'^Error from server'""", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "cause: read the ReplicaSet's refusal as kubectl's own" test_digest_rewrite \
+  test_a_deployments_pod_the_registry_throttled_cannot_run
+res $F
+
+# The message a denial is decided on is the one the policy writes.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('\nIDENTITY_MESSAGE="image is not signed by a nanohype release workflow"\n', '\nIDENTITY_MESSAGE="image is not signed by a nanohype workflow"\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "identity: decide a denial on a message the policy does not write" test_digest_rewrite \
+  test_the_script_reads_the_policys_identity_message
+res $F
+
 # Each request is marked before it is sent, and the log is read from before
 # the mark, so the window holds the line the verifier logged as it refused.
 edit $F <<'PY'
@@ -1843,8 +1892,8 @@ rejects "window: open it at the second the request was marked" test_digest_rewri
   test_the_branch_signed_pods_window_opens_before_its_create
 res $F
 
-# Every step is bounded under the job's timeout, so a step that stops answering
-# ends on the gate's diagnostic.
+# Every step is bounded on its own under the job's timeout, so a step that
+# stops answering ends on the gate's diagnostic.
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
@@ -1854,7 +1903,7 @@ p.write_text(m)
 PY
 rejects "bound: send each request with no timeout" test_digest_rewrite \
   test_the_log_is_read_whole_from_every_admission_controller_replica \
-  test_every_kubectl_call_goes_through_the_bounded_wrapper
+  test_every_kubectl_call_goes_through_a_bounded_wrapper
 res $F
 
 edit $F <<'PY'
@@ -1866,7 +1915,7 @@ p.write_text(m)
 PY
 rejects "bound: read the verifier's log past the wrapper" test_digest_rewrite \
   test_the_log_is_read_whole_from_every_admission_controller_replica \
-  test_every_kubectl_call_goes_through_the_bounded_wrapper
+  test_every_kubectl_call_goes_through_a_bounded_wrapper
 res $F
 
 edit $F <<'PY'
@@ -1877,18 +1926,18 @@ assert m != s, "mutation did not land"
 p.write_text(m)
 PY
 rejects "bound: let a step outlast the job" test_digest_rewrite \
-  test_every_bound_is_named_and_under_the_jobs_timeout
+  test_each_steps_bound_is_under_the_jobs_timeout
 res $F
 
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('--timeout="${READY_TIMEOUT}s"', '--timeout=180s', 1)
+m = s.replace('--wait "${READY_TIMEOUT}s"', '--wait 180s', 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
 rejects "bound: bound a step by a literal" test_digest_rewrite \
-  test_every_bound_is_named_and_under_the_jobs_timeout
+  test_each_steps_bound_is_under_the_jobs_timeout
 res $F
 
 edit $F <<'PY'
@@ -1900,6 +1949,133 @@ p.write_text(m)
 PY
 rejects "bound: wait for the Deployment's pod past its bound" test_digest_rewrite \
   test_a_deployments_pod_is_waited_for_until_the_bound_and_no_longer
+res $F
+
+# A step GNU timeout ended says so, since the step itself wrote nothing that
+# does, and the kill after the grace stops one that ignores TERM.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    124) echo "$1 did not finish within ${seconds}s, so GNU timeout ended it." >&2 ;;\n', '', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "bound: leave a step the bound ended unnamed" test_digest_rewrite \
+  test_a_wait_the_bound_ended_says_so \
+  test_a_cluster_the_bound_ended_says_so
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    137) echo "$1 was killed before it finished." >&2 ;;\n', '', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "bound: leave a step the bound killed unnamed" test_digest_rewrite \
+  test_an_install_the_bound_killed_says_so
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('  "$TIMEOUT_CMD" -k "$KILL_TIMEOUT" "$seconds" "$@"\n', '  "$TIMEOUT_CMD" "$seconds" "$@"\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "bound: never kill a step that ignores the bound" test_digest_rewrite \
+  test_kind_creates_the_cluster_under_its_bound \
+  test_helm_installs_kyverno_under_its_bound \
+  test_each_wait_runs_under_gnu_timeout_above_its_own
+res $F
+
+# kind's --wait and helm's --timeout bound their own waits and not the node
+# image pull or the chart fetch before them, so each runs under GNU timeout.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('  bounded "$KIND_TIMEOUT" kind create cluster ', '  kind create cluster ', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "bound: create the cluster unbounded" test_digest_rewrite \
+  test_kind_creates_the_cluster_under_its_bound \
+  test_a_cluster_the_bound_ended_says_so
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('  bounded "$HELM_TIMEOUT" helm install ', '  helm install ', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "bound: install Kyverno unbounded" test_digest_rewrite \
+  test_helm_installs_kyverno_under_its_bound \
+  test_an_install_the_bound_killed_says_so
+res $F
+
+# A wait runs to its own --timeout. --request-timeout ends every connection the
+# wait opens, its watch included, so a wait runs without it, under GNU timeout
+# REQUEST_TIMEOUT above its own bound.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('  bounded "$(( seconds + REQUEST_TIMEOUT ))" kubectl "$@" ', '  bounded "$(( seconds + REQUEST_TIMEOUT ))" kubectl --request-timeout="${REQUEST_TIMEOUT}s" "$@" ', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "wait: send every wait under the request bound" test_digest_rewrite \
+  test_no_wait_is_given_a_request_timeout_below_its_own \
+  test_every_kubectl_call_goes_through_a_bounded_wrapper
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('  kube_wait "$DELETE_TIMEOUT" delete "$@" --wait=true ', '  kube delete "$@" --wait=true --timeout="${DELETE_TIMEOUT}s" ', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "wait: delete under the request bound" test_digest_rewrite \
+  test_no_wait_is_given_a_request_timeout_below_its_own \
+  test_every_wait_goes_through_the_wait_wrapper
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('  if ! kube_wait "$READY_TIMEOUT" wait --for=', '  if ! kube wait --timeout="${READY_TIMEOUT}s" --for=', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "wait: wait for the policy under the request bound" test_digest_rewrite \
+  test_no_wait_is_given_a_request_timeout_below_its_own \
+  test_every_wait_goes_through_the_wait_wrapper
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('  kube_wait "$DELETE_TIMEOUT" wait --for=delete ', '  kube wait --timeout="${DELETE_TIMEOUT}s" --for=delete ', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "wait: wait out an earlier overlay's pods under the request bound" test_digest_rewrite \
+  test_no_wait_is_given_a_request_timeout_below_its_own \
+  test_every_wait_goes_through_the_wait_wrapper
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('  bounded "$(( seconds + REQUEST_TIMEOUT ))" kubectl ', '  bounded "$seconds" kubectl ', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "wait: end a wait from outside at its own bound" test_digest_rewrite \
+  test_each_wait_runs_under_gnu_timeout_above_its_own \
+  test_a_wait_the_bound_ended_says_so
 res $F
 
 # An object still present after the delete's bound ends the run: the next
@@ -1995,7 +2171,7 @@ echo "RESULT pass=$pass fail=$fail"
 # The floor this harness owes for the same reason the gates owe theirs: with
 # every `rejects` line deleted it would report pass=0 fail=0 and exit 0, which is
 # a green run over nothing planted.
-MIN_PROBES=126
+MIN_PROBES=139
 total=$((pass + fail))
 if [ "$total" -lt "$MIN_PROBES" ]; then
   echo "FAIL  ran $total probe(s), under the floor of $MIN_PROBES — this harness"

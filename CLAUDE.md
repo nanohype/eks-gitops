@@ -165,9 +165,9 @@ aggregate, so a clean `task validate` is necessary but not sufficient:
   cases verify real signatures, so the suite needs the network, and a run that
   meets a transport failure on every attempt exits 2 rather than 1. Each run is
   bounded with GNU `timeout` (`gtimeout` from Homebrew's coreutils on macOS),
-  killed if it outlasts the bound by a grace period, and a run the bound ends
-  or kills counts as a transport failure. The contract gate renders each
-  supply-chain overlay, so it needs kustomize.
+  which sends it TERM at the bound and KILL a grace period later if it is still
+  going, and a run either signal ends counts as a transport failure. The
+  contract gate renders each supply-chain overlay, so it needs kustomize.
 - **Digest pin under real admission** — `scripts/check-digest-rewrite.sh`
   (CI job `digest-rewrite`; locally `task validate:digest-rewrite`, outside the
   aggregate because it brings up kind and needs Docker, GNU `timeout` and the
@@ -177,11 +177,16 @@ aggregate, so a clean `task validate` is necessary but not sufficient:
   every refusal, of a release-signed submission or a branch-signed one, is
   decided on the API server's message and the admission controller's log
   together. Three causes exit 2 rather than 1: a transport failure named in
-  either; an admission controller log that cannot be read; and a refusal
-  carrying the identity message with no `image verification failed` line in
-  that log, which a failed verification always writes. Every kubectl request is
-  bounded, and kind and helm run under GNU `timeout`. Both gates read transport
-  failures through the one pattern in `scripts/transport-failure.sh`.
+  either, reported as the link it broke (kubectl's request to the API server,
+  the API server's call to Kyverno's webhook, or the verifier's reads of the
+  registry, the Sigstore trusted root and Rekor); an admission controller log
+  that cannot be read; and a refusal carrying the identity message with no
+  `image verification failed` line in that log, which a failed verification
+  always writes. A kubectl request that returns an answer runs under
+  `--request-timeout`. A wait runs to its own `--timeout` under GNU `timeout`
+  set above it, because `--request-timeout` ends a watch connection whether or
+  not it is answering. kind and helm run under GNU `timeout`. Both gates read
+  transport failures through the one pattern in `scripts/transport-failure.sh`.
 - **Secret scan** — gitleaks over the working tree (CI job `secrets`)
 - **Pods name ServiceAccounts that exist** — `scripts/check-serviceaccount-bindings.py`
   (CI job `serviceaccount-bindings`)

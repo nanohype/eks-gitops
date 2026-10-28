@@ -43,14 +43,16 @@
 # for the manifest, the Sigstore TUF mirror for the trusted root and Rekor for
 # the transparency-log entry, which is the round trip production admission
 # makes. A refusal whose cause the run cannot establish exits 2: a transport
-# failure on that path, an admission controller log that cannot be read, or the
-# identity message with no verifier line behind it. Each is a verification
-# whose outcome is unknown, not a rewrite that stopped and not an identity
-# decided.
+# failure on that path, on the API server's call to the admission webhook or on
+# kubectl's request to the API server, each named as the one it was; an
+# admission controller log that cannot be read; or the identity message with no
+# verifier line behind it. Each is a verification whose outcome is unknown, not
+# a rewrite that stopped and not an identity decided.
 #
-# Every step is bounded: each API request by REQUEST_TIMEOUT, each wait by its
-# own *_TIMEOUT, and kind and helm by GNU timeout, so a step that stops
-# answering ends on this script's diagnostic.
+# Every step is bounded, each on its own: a request that returns an answer by
+# REQUEST_TIMEOUT, a wait by its own *_TIMEOUT under a GNU timeout above it, and
+# kind and helm by GNU timeout. A step that stops answering ends on this
+# script's diagnostic.
 #
 # Exit 0: every overlay pinned the tag and decided the identity as its action
 # says. Exit 1: one did not. Exit 2: the run could not establish either.
@@ -63,12 +65,19 @@ CI="$ROOT/.github/workflows/ci.yml"
 POLICY=verify-images
 IDENTITY_MESSAGE="image is not signed by a nanohype release workflow"
 
-# Seconds one API request may take. A create reaching verify-images' mutating
-# and validating webhooks can take a minute, since the API server gives a
-# webhook at most 30s, and the API server answers any non-streaming request
-# inside its own one-minute deadline. This sits above both: it ends only a
-# request whose connection stopped answering, and every other request returns
-# the server's own answer.
+# Seconds one kubectl request that returns an answer may take: a create, get,
+# patch or apply, or a read of the verifier's log. A create reaching
+# verify-images' mutating and validating webhooks can take a minute, since the
+# API server gives each webhook at most 30s, and the API server answers every
+# such request but the log read inside its own one-minute deadline; the log
+# read is minutes of one controller's log at most. This sits above both, so a
+# request the server is still working on gets the server's answer, and one
+# whose connection stopped answering ends here.
+#
+# kubectl's --request-timeout is client-go's http.Client.Timeout, which covers
+# the whole exchange, a watch's stream included: it ends a watch connection at
+# that many seconds whether or not the connection is answering. A wait
+# therefore never runs under it; kube_wait bounds it instead.
 REQUEST_TIMEOUT=90
 # Seconds kind's control plane, and Kyverno's report that the policy is ready,
 # may take.
@@ -110,10 +119,40 @@ show_err() {
   sed -e "s#$ROOT/##g" -e 's/^/        /' "$WORK/err" | cut -c1-240
 }
 
-# kubectl, every request bounded by REQUEST_TIMEOUT. Each call in this script
-# goes through here.
+# The remaining arguments, run under GNU timeout: TERM after $1 seconds, and a
+# kill KILL_TIMEOUT seconds after that to a command still going. A command the
+# bound ended has written nothing that says so, so this writes the line that
+# does to standard error, where the caller's diagnostic reads it.
+bounded() {
+  local seconds="$1" rc
+  shift
+  "$TIMEOUT_CMD" -k "$KILL_TIMEOUT" "$seconds" "$@"
+  rc=$?
+  case "$rc" in
+    124) echo "$1 did not finish within ${seconds}s, so GNU timeout ended it." >&2 ;;
+    137) echo "$1 was killed before it finished." >&2 ;;
+  esac
+  return "$rc"
+}
+
+# kubectl for a request that returns an answer, bounded by REQUEST_TIMEOUT.
+# Every kubectl call in this script goes through here or through kube_wait.
 kube() {
   kubectl --request-timeout="${REQUEST_TIMEOUT}s" "$@"
+}
+
+# kubectl for a command that waits, `wait` or `delete --wait`. $1 is the wait's
+# own bound in seconds, handed to it as --timeout, which cancels the watch the
+# wait reads. Under --request-timeout each watch connection would also end at
+# REQUEST_TIMEOUT, answering or not, and the wait would run its course only by
+# kubectl reopening its watch. So it runs without one, and GNU timeout bounds
+# the command as a whole REQUEST_TIMEOUT above its own bound: room for the
+# requests it sends before its wait begins, so the wait's own diagnostic comes
+# first, and a connection that stops answering still ends.
+kube_wait() {
+  local seconds="$1"
+  shift
+  bounded "$(( seconds + REQUEST_TIMEOUT ))" kubectl "$@" --timeout="${seconds}s"
 }
 
 # The moment a request goes to the API server, taken before it is sent.
@@ -166,17 +205,33 @@ refusal was the policy deciding or an outage on the verification path is unknown
 # one verifier line. A failed verification always logs one, so with none the
 # log read is not the verifier's, and its silence says nothing about whether
 # the identity or an outage refused the request.
+#
+# A transport failure in the refusal itself is named by where it happened.
+# kubectl writes an answer from the API server as "Error from server", and the
+# ReplicaSet writes each refusal of its pod as a FailedCreate event beginning
+# "Error creating:", so a refusal carrying neither is kubectl's own request
+# ending with no answer: its REQUEST_TIMEOUT passed, or its connection failed.
+# The API server writes "failed calling webhook" for an admission webhook it
+# got no answer from. Any other is the verifier's.
 require_known_cause() {
-  local cause
+  local cause site
+  site="$rel could not reach the registry, the Sigstore trusted root or Rekor for $1."
   cause="$(transport_failures <"$WORK/err")"
-  if [ -z "$cause" ]; then
+  if [ -n "$cause" ]; then
+    if ! grep -qE '^Error (from server|creating:)' "$WORK/err"; then
+      site="$rel: kubectl's request for $1 ended with no answer from the API server:
+its ${REQUEST_TIMEOUT}s bound passed or its connection failed."
+    elif grep -qF 'failed calling webhook' "$WORK/err"; then
+      site="$rel: the API server got no answer from Kyverno's admission webhook for $1."
+    fi
+  else
     read_verifier_log
     cause="$(transport_failures <"$WORK/log")"
   fi
   if [ -n "$cause" ]; then
     show_err
     printf '%s\n' "$cause" | sed 's/^/        /'
-    cannot_run "$rel could not reach the registry, the Sigstore trusted root or Rekor for $1."
+    cannot_run "$site"
   fi
   if grep -qF "$IDENTITY_MESSAGE" "$WORK/err" && [ ! -s "$WORK/log" ]; then
     show_err
@@ -233,7 +288,7 @@ decide_foreign() {
 delete_within() {
   local what="$1"
   shift
-  kube delete "$@" --wait=true --timeout="${DELETE_TIMEOUT}s" >/dev/null 2>"$WORK/err" \
+  kube_wait "$DELETE_TIMEOUT" delete "$@" --wait=true >/dev/null 2>"$WORK/err" \
     || cannot_run "$rel: $what was not deleted within ${DELETE_TIMEOUT}s — $(head -1 "$WORK/err")"
 }
 
@@ -249,8 +304,8 @@ pinned() {
 install_policy() {
   kube apply --server-side -f "$rendered" >/dev/null 2>"$WORK/err" \
     || cannot_run "the API server refused $rel — $(head -1 "$WORK/err")"
-  if ! kube wait --for=jsonpath='{.status.conditionStatus.ready}'=true \
-        "imagevalidatingpolicy/$POLICY" --timeout="${READY_TIMEOUT}s" >/dev/null 2>"$WORK/err"; then
+  if ! kube_wait "$READY_TIMEOUT" wait --for=jsonpath='{.status.conditionStatus.ready}'=true \
+        "imagevalidatingpolicy/$POLICY" >/dev/null 2>"$WORK/err"; then
     kube get "imagevalidatingpolicy/$POLICY" -o jsonpath='{.status}' 2>/dev/null; echo
     cannot_run "$rel: Kyverno never reported $POLICY ready, so its webhooks may not be
 registered and an admitted pod would prove nothing."
@@ -331,8 +386,8 @@ check_foreign_ephemeral() {
 # selector matching nothing is not a failure to delete.
 check_deployment() {
   local left stored created deadline
-  kube wait --for=delete pod -n "$DEPLOYMENT_NS" -l "app.kubernetes.io/name=$DEPLOYMENT" \
-    --timeout="${DELETE_TIMEOUT}s" >/dev/null 2>&1
+  kube_wait "$DELETE_TIMEOUT" wait --for=delete pod -n "$DEPLOYMENT_NS" \
+    -l "app.kubernetes.io/name=$DEPLOYMENT" >/dev/null 2>&1
   left="$(kube get pod -n "$DEPLOYMENT_NS" -l "app.kubernetes.io/name=$DEPLOYMENT" \
     -o name 2>"$WORK/err")" \
     || cannot_run "$rel: the Deployment's pods could not be listed — $(head -1 "$WORK/err")"
@@ -387,6 +442,27 @@ check_foreign_pod() {
   else
     decide_foreign "the branch-signed image" refused
   fi
+}
+
+# The cluster, on the pinned node image. kind's --wait bounds the control
+# plane's readiness and not the node image pull before it, so GNU timeout
+# bounds the command as a whole.
+create_cluster() {
+  bounded "$KIND_TIMEOUT" kind create cluster --name "$CLUSTER" --image "$NODE_IMAGE" \
+      --wait "${READY_TIMEOUT}s" >"$WORK/kind.log" 2>&1 \
+    || { tail -20 "$WORK/kind.log"; cannot_run "kind could not create the cluster."; }
+}
+
+# Kyverno, from the chart and values the catalog installs. helm's --timeout
+# bounds its wait for the release and not the chart fetch before it, so GNU
+# timeout bounds the command as a whole.
+install_kyverno() {
+  local helm_args=() v
+  for v in "${VALUES[@]}"; do helm_args+=(-f "$v"); done
+  bounded "$HELM_TIMEOUT" helm install kyverno kyverno --repo "$CHART_REPO" \
+      --version "$CHART_VERSION" --namespace kyverno --create-namespace "${helm_args[@]}" \
+      --wait --timeout "${HELM_TIMEOUT}s" >"$WORK/helm.log" 2>&1 \
+    || { tail -20 "$WORK/helm.log"; cannot_run "Kyverno $CHART_VERSION did not install."; }
 }
 
 # Sourced, this file defines the functions above and runs nothing, so
@@ -454,13 +530,13 @@ for tool in kind kubectl helm kustomize docker python3; do
     || cannot_run "$tool is not on PATH. No pod was admitted — that is different
 from the rewrite having happened."
 done
-# GNU coreutils' timeout bounds kind and helm, whose own flags bound their waits
-# but not the image pull or the chart fetch before them. macOS ships it under
-# neither name: Homebrew's coreutils installs it as gtimeout.
+# GNU coreutils' timeout, which bounded runs kind, helm and every kubectl wait
+# under. macOS ships it under neither name: Homebrew's coreutils installs it as
+# gtimeout.
 TIMEOUT_CMD="$(command -v timeout || command -v gtimeout)"
 [ -n "$TIMEOUT_CMD" ] \
-  || cannot_run "neither timeout nor gtimeout is on PATH, so kind and helm would run
-unbounded. On macOS, \`brew install coreutils\` installs gtimeout."
+  || cannot_run "neither timeout nor gtimeout is on PATH, so kind, helm and the waits
+would run unbounded. On macOS, \`brew install coreutils\` installs gtimeout."
 
 # The chart coordinates the catalog installs, read from the appset element.
 read -r CHART_REPO CHART_VERSION ADDON_PATH < <(python3 - "$APPSET" <<'PY'
@@ -498,25 +574,15 @@ WORK="$(mktemp -d)"
 CLUSTER="digest-rewrite-$$"
 export KUBECONFIG="$WORK/kubeconfig"
 cleanup() {
-  "$TIMEOUT_CMD" -k "$KILL_TIMEOUT" "$KIND_TIMEOUT" \
-    kind delete cluster --name "$CLUSTER" --kubeconfig "$KUBECONFIG" >/dev/null 2>&1
+  bounded "$KIND_TIMEOUT" kind delete cluster --name "$CLUSTER" --kubeconfig "$KUBECONFIG" \
+    >/dev/null 2>&1
   rm -rf "$WORK"
 }
 trap cleanup EXIT INT TERM
 
 echo "── kind $NODE_IMAGE, kyverno chart $CHART_VERSION"
-"$TIMEOUT_CMD" -k "$KILL_TIMEOUT" "$KIND_TIMEOUT" \
-    kind create cluster --name "$CLUSTER" --image "$NODE_IMAGE" --wait "${READY_TIMEOUT}s" \
-    >"$WORK/kind.log" 2>&1 \
-  || { tail -20 "$WORK/kind.log"; cannot_run "kind could not create the cluster."; }
-
-helm_args=()
-for v in "${VALUES[@]}"; do helm_args+=(-f "$v"); done
-"$TIMEOUT_CMD" -k "$KILL_TIMEOUT" "$HELM_TIMEOUT" \
-    helm install kyverno kyverno --repo "$CHART_REPO" --version "$CHART_VERSION" \
-    --namespace kyverno --create-namespace "${helm_args[@]}" \
-    --wait --timeout "${HELM_TIMEOUT}s" >"$WORK/helm.log" 2>&1 \
-  || { tail -20 "$WORK/helm.log"; cannot_run "Kyverno $CHART_VERSION did not install."; }
+create_cluster
+install_kyverno
 
 # The namespaces the fixtures name.
 for f in "$SUITE"/*.yaml; do

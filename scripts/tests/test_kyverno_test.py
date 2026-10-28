@@ -29,6 +29,7 @@ import tempfile
 import unittest
 
 import yaml
+from shellgate import ESC, identity_message, setting, verifier_line
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 SCRIPT = ROOT / "scripts" / "kyverno-test.sh"
@@ -42,17 +43,10 @@ ENDPOINTS = ["https://ghcr.io/v2/", "https://tuf-repo-cdn.sigstore.dev/timestamp
              "https://rekor.sigstore.dev/api/v1/log"]
 
 
-def _setting(name: str) -> int:
-    """A numeric setting the script makes, read from the script."""
-    found = re.search(rf"^{name}=(\d+)$", SCRIPT.read_text(), re.M)
-    assert found, f"{SCRIPT.name} sets no {name}"
-    return int(found.group(1))
-
-
-ATTEMPTS = _setting("ATTEMPTS")
-PAUSE = _setting("PAUSE")
-RUN_TIMEOUT = _setting("RUN_TIMEOUT")
-KILL_TIMEOUT = _setting("KILL_TIMEOUT")
+ATTEMPTS = setting(SCRIPT, "ATTEMPTS")
+PAUSE = setting(SCRIPT, "PAUSE")
+RUN_TIMEOUT = setting(SCRIPT, "RUN_TIMEOUT")
+KILL_TIMEOUT = setting(SCRIPT, "KILL_TIMEOUT")
 
 # Bash builtins only: the PATH the script runs under holds nothing else.
 KYVERNO = """#!{bash}
@@ -81,24 +75,14 @@ printf '%s\\n' "${{bounds[*]}}" >> '{bin}/bounds'
 exec "$@"
 """
 
-ESC = "\033"
-
-
 def row(n: int, resource: str, result: str, reason: str, message: str) -> str:
     return (f"│ {n:<3}│ verify-images │ verify-images │ v1/Pod/workloads/{resource:<24}│ "
             f"{result:<6}│ {reason:<22}│ {message} │")
 
 
-def log(error: str) -> str:
-    """A verifier ERR line at -v 1, coloured the way the CLI writes it."""
-    return (f"2026-01-01T00:00:00Z {ESC}[31mERR{ESC}[0m github.com/kyverno/kyverno/pkg/image/"
-            f"verifiers/ivpol/cosign/verifier.go:281 > image verification failed "
-            f"{ESC}[36merror={ESC}[0m{ESC}[31m\"{error}\"{ESC}[0m attestor=release")
-
-
-IDENTITY = "image is not signed by a nanohype release workflow"
-MISMATCH = log("failed to verify cosign signatures: no matching signatures: none of the "
-               "expected identities matched what was in the certificate")
+IDENTITY = identity_message()
+MISMATCH = verifier_line("failed to verify cosign signatures: no matching signatures: none of "
+                         "the expected identities matched what was in the certificate")
 SUMMARY_OK = "Test Summary: 33 tests passed and 0 tests failed"
 SUMMARY_FAILED = "Test Summary: 31 tests passed and 2 tests failed"
 
@@ -124,22 +108,23 @@ GOT_ERROR = ("\n".join([row(15, "vi-signed", "Fail", "Want pass, got error",
 # The trusted root could not be fetched, which verification counts as a
 # signature that did not verify: the row carries the policy's own message.
 SWALLOWED = ("\n".join([row(15, "vi-signed", "Fail", "Want pass, got fail", IDENTITY),
-                        log('failed to build cosign verification opts: tuf: failed to download '
-                            '17.root.json: Get \\"https://tuf-repo-cdn.sigstore.dev/17.root.json'
-                            '\\": net/http: TLS handshake timeout'),
+                        verifier_line('failed to build cosign verification opts: tuf: failed '
+                                      'to download 17.root.json: Get \\"https://tuf-repo-cdn.'
+                                      'sigstore.dev/17.root.json\\": net/http: TLS handshake '
+                                      'timeout'),
                         SUMMARY_FAILED, "Error: 2 tests failed"]), 1)
 
 # The same failure under a row expecting a fail: it passes, for the wrong reason.
 FALSE_PASS = ("\n".join([row(18, "vi-branch-signed", "Pass", "Ok", IDENTITY),
-                         log("failed to verify cosign signatures: [POST /api/v1/log/entries/"
-                             "retrieve][503] searchLogQueryDefault"),
+                         verifier_line("failed to verify cosign signatures: [POST /api/v1/log/"
+                                       "entries/retrieve][503] searchLogQueryDefault"),
                          SUMMARY_OK]), 0)
 
 # The registry throttling the signature's manifest read, behind the policy's message.
 THROTTLED = ("\n".join([row(15, "vi-signed", "Fail", "Want pass, got fail", IDENTITY),
-                        log("failed to verify cosign signatures: GET https://ghcr.io/v2/nanohype/"
-                            "x/manifests/sha256-0.sig: unexpected status code 429 Too Many "
-                            "Requests"),
+                        verifier_line("failed to verify cosign signatures: GET https://ghcr.io/"
+                                      "v2/nanohype/x/manifests/sha256-0.sig: unexpected status "
+                                      "code 429 Too Many Requests"),
                         SUMMARY_FAILED, "Error: 2 tests failed"]), 1)
 
 # A run timeout ended partway through its table.
@@ -282,7 +267,7 @@ class ARunThatMetATransportFailure(KyvernoTestScript):
 class ARunThatDoesNotFinish(KyvernoTestScript):
     """A read that stops answering holds the CLI; the bound ends it as a transport failure."""
 
-    def test_each_run_is_bounded_and_killed_if_it_outlasts_the_bound(self):
+    def test_each_run_is_sent_term_at_the_bound_and_killed_after_the_grace(self):
         self.run_script(GOT_ERROR, CLEAN)
         self.assertEqual(self.bounds(), [BOUNDS] * 2)
 

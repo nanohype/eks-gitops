@@ -18,14 +18,15 @@ MIN_TESTS=24
 ATTEMPTS=3
 PAUSE=5
 
-# The seconds one run of the suite may take, and the seconds a run still going
-# after that is given to stop before it is killed. A read the registry, the TUF
-# mirror or Rekor stops answering partway through can hold the CLI for as long
-# as the connection stays open, so a run that does not finish inside
-# RUN_TIMEOUT counts as a transport failure like any other. Every attempt at
-# both, with the probes and pauses around them, fits inside the kyverno job's
-# timeout-minutes, so the job ends on this script's diagnostic rather than on
-# the runner's; scripts/tests/test_kyverno_test.py holds the two together.
+# The seconds one run of the suite may take before GNU timeout sends it TERM,
+# and the seconds after that TERM a run still going is given before timeout
+# sends it KILL. A read the registry, the TUF mirror or Rekor stops answering
+# partway through can hold the CLI for as long as the connection stays open, so
+# a run that does not finish inside RUN_TIMEOUT counts as a transport failure
+# like any other, whichever signal ended it. Every attempt at both, with the
+# probes and pauses around them, fits inside the kyverno job's timeout-minutes,
+# so the job ends on this script's diagnostic rather than on the runner's;
+# scripts/tests/test_kyverno_test.py holds the two together.
 RUN_TIMEOUT=240
 KILL_TIMEOUT=10
 
