@@ -467,7 +467,8 @@ jobs:
       # the pinned one is installed ahead of it on PATH and its version printed.
       - name: Install ShellCheck
         run: |
-          curl -fsSL --connect-timeout 20 --max-time 120 --retry 3 -o /tmp/shellcheck.tar.gz "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.gz"
+          curl -fsSL --connect-timeout 20 --max-time 120 --retry 3 \
+            -o /tmp/shellcheck.tar.gz "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.gz"
           echo "${SHELLCHECK_SHA256}  /tmp/shellcheck.tar.gz" | sha256sum -c -
           tar -xz -C /tmp -f /tmp/shellcheck.tar.gz "shellcheck-${SHELLCHECK_VERSION}/shellcheck"
           sudo install -m 0755 "/tmp/shellcheck-${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
