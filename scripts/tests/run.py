@@ -74,6 +74,10 @@ EXPECTED = (
     # The walk that derives which inputs decide a load balancer's scheme, and the
     # two verdicts that make an input nobody thought about visible.
     "test_lb_scheme_inputs",
+    # The registry read behind the scheduled provenance check: which statuses it
+    # retries, how long it waits, and when it stops, none of which a run against
+    # a registry that is not rate-limiting at the time exercises.
+    "test_chart_deprecation",
 )
 
 # A floor well under the real count. It catches "discovery found almost nothing",
@@ -171,7 +175,7 @@ COMBINED_FLOOR = 45
 # reports. A gate arriving with its own tests lowers it; a gate that starts
 # reading as covered because something new imports it does not, and an import
 # removed later would give that coverage back with nothing lost.
-MAX_UNCOVERED_GATES = 10
+MAX_UNCOVERED_GATES = 9
 
 PER_GATE_FLOORS = {
     "scripts/check-named-things.py": 35,
@@ -196,6 +200,9 @@ PER_GATE_FLOORS = {
     # The Go reading and the offline verdict. `--sync`, `--live` and the chart
     # render reach the network and are covered by stubbing what they return.
     "scripts/check-lb-scheme-inputs.py": 65,
+    # The registry read and both verdicts. `--sync` and `--self-test` walk the
+    # real catalog, and helm's half of fetch() reaches an HTTPS repository.
+    "scripts/check-chart-deprecation.py": 70,
 }
 
 

@@ -1032,7 +1032,7 @@ class AVersionFileRuntimeNobodyWroteAReaderFor(unittest.TestCase):
 
 
 class TheNonChartPinFamilies(unittest.TestCase):
-    """The git-pinned CRDs, the CI tool binaries and the Go module.
+    """The git-pinned CRDs, the CI tool binaries, the Go module and the schema catalogs.
 
     Each was watched by a manager nothing asserted, so deleting one left the gate
     printing the same success over a smaller repository.
@@ -1049,6 +1049,10 @@ class TheNonChartPinFamilies(unittest.TestCase):
 
     GOMOD = "module x\n\ngo 1.26.3\n\nrequire (\n\tgithub.com/x/y v1.2.3\n)\n"
 
+    SCAN = ("# renovate: datasource=git-refs depName=example/catalog "
+            "packageName=https://github.com/example/catalog branch=main\n"
+            "CATALOG_REF=\"0123456789abcdef0123456789abcdef01234567\"\n")
+
     def workspace(self, cfg, ci=None, crds=None, gomod=None, no_pins=True):
         root = pathlib.Path(tempfile.mkdtemp())
         (root / "renovate.json").write_text(json.dumps(cfg))
@@ -1056,7 +1060,8 @@ class TheNonChartPinFamilies(unittest.TestCase):
                           ("applicationsets/gateway-api-crds.yaml",
                            crds if crds is not None else self.CRDS),
                           ("applicationsets/rendertest/go.mod",
-                           gomod if gomod is not None else self.GOMOD)):
+                           gomod if gomod is not None else self.GOMOD),
+                          ("scripts/kubeconform-scan.sh", self.SCAN)):
             path = root / rel
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(body)
@@ -1087,10 +1092,11 @@ class TheNonChartPinFamilies(unittest.TestCase):
         cfg.update(over)
         return cfg
 
-    def test_the_three_families_are_each_counted(self):
+    def test_each_family_is_counted(self):
+        """The workspace carries one pin per family, so each family adds one."""
         seen, failures = self.verdict(self.workspace(self.config()))
         self.assertEqual(failures, [])
-        self.assertEqual(seen, 3)
+        self.assertEqual(seen, len(cov.OTHER_FAMILIES))
 
     def test_a_family_whose_file_is_gone_is_reported(self):
         root = self.workspace(self.config())
@@ -1214,6 +1220,69 @@ class EveryCiToolPinCarriesItsOwnAnnotation(unittest.TestCase):
         _, failures = self.verdict(self.ANNOTATED, managers=repointed)
         self.assertEqual(len(failures), 1)
         self.assertIn("reaches that file", failures[0])
+
+
+class SchemaCatalogRefs(unittest.TestCase):
+    """The commits kubeconform-scan.sh reads its schemas at are watched pins.
+
+    A ref is a commit, so its identity is the commit and the repository named on
+    the `# renovate:` line above it. The family regex keys on the commit so a ref
+    with no annotation is found and reported rather than skipped.
+    """
+
+    SHA = "0123456789abcdef0123456789abcdef01234567"
+    ANNOTATED = (
+        "# renovate: datasource=git-refs depName=example/catalog "
+        "packageName=https://github.com/example/catalog branch=main\n"
+        f'CATALOG_REF="{SHA}"\n'
+    )
+
+    def setUp(self):
+        cov.failures.clear()
+        self.addCleanup(cov.failures.clear)
+        for tally in (cov.reach_configured, cov.reach_recorded):
+            tally.clear()
+            self.addCleanup(tally.clear)
+        self.managers = cov.load_custom_managers()
+        self.rx = next(rx for label, _rel, rx in cov.OTHER_FAMILIES
+                       if label == "schema catalog ref")
+
+    def check(self, text):
+        hits = list(self.rx.finditer(text))
+        return cov.check_schema_catalog_refs(
+            text, "scripts/kubeconform-scan.sh", hits, self.managers)
+
+    def test_an_annotated_ref_is_claimed_by_the_git_refs_manager(self):
+        cm = cov.covered_by_custom(self.ANNOTATED, "example/catalog", self.SHA,
+                                   self.managers)
+        self.assertIsNotNone(cm)
+        self.assertEqual(self.check(self.ANNOTATED), 1)
+        self.assertEqual(cov.failures, [])
+
+    def test_the_branch_is_not_mistaken_for_the_pin(self):
+        """currentValue is the tracked branch; matching on it would certify a
+        ref whatever commit it named."""
+        self.assertIsNone(cov.covered_by_custom(
+            self.ANNOTATED.replace(self.SHA, "f" * 40), "example/catalog", self.SHA,
+            self.managers))
+
+    def test_a_ref_with_no_annotation_is_reported(self):
+        self.assertEqual(self.check(f'CATALOG_REF="{self.SHA}"\n'), 1)
+        self.assertEqual(len(cov.failures), 1)
+        self.assertIn("no `# renovate:` annotation", cov.failures[0])
+
+    def test_an_annotation_no_manager_reads_is_reported(self):
+        text = self.ANNOTATED.replace("datasource=git-refs", "datasource=git-tags")
+        self.check(text)
+        self.assertEqual(len(cov.failures), 1)
+        self.assertIn("matched by no customManager", cov.failures[0])
+
+    def test_the_shipped_scan_pins_both_catalogs(self):
+        text = (ROOT / "scripts/kubeconform-scan.sh").read_text()
+        refs = {m.group("var") for m in self.rx.finditer(text)}
+        self.assertEqual(refs, {"K8S_SCHEMA_REF", "CRD_CATALOG_REF"})
+        self.assertEqual(self.check(text), 2)
+        self.assertEqual(cov.failures, [])
 
 
 if __name__ == "__main__":

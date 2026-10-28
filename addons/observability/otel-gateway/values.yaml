@@ -80,6 +80,10 @@ config:
       check_interval: 5s
       limit_percentage: 80
       spike_limit_percentage: 25
+  # Component names are the ones the collector registers: otlp_http and
+  # otlp_grpc for the two OTLP exporters. The chart rewrites the older otlphttp
+  # and otlp spellings only while rewriteDeprecatedComponentNames is on, and that
+  # rewrite is deprecated, so these values do not lean on it.
   exporters:
     prometheus_remote_write:
       endpoint: ${env:AMP_REMOTE_WRITE_URL}
@@ -94,9 +98,9 @@ config:
     # stops at /otlp. (The classic loki exporter was removed from contrib in
     # v0.131.0; OTLP is the supported path. Log labels normalize to OTel attribute
     # names — k8s_namespace_name / k8s_pod_name / k8s_container_name.)
-    otlphttp/loki:
+    otlp_http/loki:
       endpoint: http://loki-gateway.monitoring.svc.cluster.local/otlp
-    otlp/tempo:
+    otlp_grpc/tempo:
       endpoint: tempo.monitoring.svc.cluster.local:4317
       tls:
         insecure: true
@@ -117,13 +121,13 @@ config:
       logs:
         receivers: [otlp]
         processors: [memory_limiter, k8s_attributes, batch]
-        exporters: [otlphttp/loki]
+        exporters: [otlp_http/loki]
       # Traces pass through at 100% — parity with the previous collector. Tail
       # sampling is a deliberate follow-on, not part of the swap.
       traces:
         receivers: [otlp]
         processors: [memory_limiter, k8s_attributes, batch]
-        exporters: [otlp/tempo]
+        exporters: [otlp_grpc/tempo]
 
 # Stable tenant-facing OTLP endpoint, decoupled from the release name. Selects the
 # gateway pods; this is the `telemetry.monitoring.svc` contract tenant charts wire

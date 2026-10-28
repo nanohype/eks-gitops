@@ -57,6 +57,21 @@ Entries name images WITHOUT a tag, because the acknowledgement is about the
 image and a chart bump moves the tag. A bump that FIXES the finding therefore
 fails the third or fourth rule rather than leaving a stale excuse behind.
 
+AN ENTRY CAN CARRY A DATE IT IS RE-READ BY
+
+The four rules retire an entry when the scan stops carrying its finding. They
+cannot retire one whose finding upstream never fixes: the entry matches on every
+run and reads as a decision long after anyone last examined it. An entry whose
+case rests on exposure rather than on a pending upstream release — "this code
+path is not reached here" — is the one that ages that way, because the catalog
+can change underneath the argument while the scan stays the same.
+
+`review_by: YYYY-MM-DD` bounds that. From the day after the date the entry is a
+problem like any other, and it clears by moving the pin or by recording the
+decision again with a later date. The comparison is against the UTC date, so a
+runner's timezone does not decide which day an entry falls due. The key is
+optional; an entry without one is retired by the four rules alone.
+
 THE CANARY, WHICH IS WHAT MAKES A CLEAN RESULT MEAN ANYTHING
 
 A vulnerability scanner that has lost its database, or been handed a flag it
@@ -100,6 +115,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import datetime
 import importlib.util
 import json
 import pathlib
@@ -224,7 +240,28 @@ def read_advisories() -> list[dict]:
     return list(entries)
 
 
-def verdict(findings: list[Finding], advisories: list[dict]) -> list[str]:
+def review_date(value: object) -> datetime.date | None:
+    """A `review_by` value as a date, or None when it is not one.
+
+    YAML reads an unquoted 2027-01-31 as a date and a quoted one as a string, and
+    both spell the same decision. A timestamp carrying a time of day is refused:
+    the key names a day, and a time would make the due moment depend on a
+    timezone nothing here states.
+    """
+    if isinstance(value, datetime.datetime):
+        return None
+    if isinstance(value, datetime.date):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.date.fromisoformat(value.strip())
+        except ValueError:
+            return None
+    return None
+
+
+def verdict(findings: list[Finding], advisories: list[dict],
+            today: datetime.date | None = None) -> list[str]:
     """Everything wrong, over a scan and an acknowledgement list.
 
     Four directions, and only the first is the question the gate is named for.
@@ -237,6 +274,8 @@ def verdict(findings: list[Finding], advisories: list[dict]) -> list[str]:
     """
     problems: list[str] = []
     blocking = [f for f in findings if f.severity == BLOCKING_SEVERITY]
+    if today is None:
+        today = datetime.datetime.now(datetime.UTC).date()
 
     by_key: dict[tuple[str, str], dict] = {}
     for entry in advisories:
@@ -255,6 +294,18 @@ def verdict(findings: list[Finding], advisories: list[dict]) -> list[str]:
             problems.append(
                 f"image-advisories.yaml: {key[0]} in {key[1]} is acknowledged with no "
                 f"reason recorded, so nothing states what would let it be removed.")
+        if "review_by" in entry:
+            due = review_date(entry["review_by"])
+            if due is None:
+                problems.append(
+                    f"image-advisories.yaml: {key[0]} in {key[1]} has review_by "
+                    f"{entry['review_by']!r}, which is not a YYYY-MM-DD date, so the "
+                    f"entry never falls due.")
+            elif due < today:
+                problems.append(
+                    f"image-advisories.yaml: {key[0]} in {key[1]} was due for review on "
+                    f"{due.isoformat()}. Re-read the finding against the catalog: move "
+                    f"the chart pin, or record the decision again with a later review_by.")
         by_key[key] = entry
 
     # 1. A blocking finding nothing acknowledges — the gate's own question.

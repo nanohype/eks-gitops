@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Unified kubeconform gate — the SINGLE source of truth for the strict schema
 # scan and its skip list, shared by `task scan` (local) and CI so a clean tree
-# never passes one and fails the other. Native kinds resolve from the default
-# kubernetes-json-schema location; CRD kinds resolve from the datreeio
-# CRDs-catalog. There is deliberately no -ignore-missing-schemas: a kind neither
-# source knows fails the build until it gets a schema or an explicit skip below.
+# never passes one and fails the other. Native kinds resolve from
+# yannh/kubernetes-json-schema and CRD kinds from the datreeio CRDs-catalog, each
+# read at the commit pinned below. There is deliberately no
+# -ignore-missing-schemas: a kind neither source knows fails the build until it
+# gets a schema or an explicit skip below.
 #
 # Usage: kubeconform-scan.sh <path> [<path> ...]
 #   KUBECONFORM_SKIP  override the skip list (the appset scan passes "" — the
@@ -32,7 +33,21 @@ set -euo pipefail
 DEFAULT_SKIP="Grafana,Platform,Tenant,ModelGateway,BudgetPolicy,AgentFleet,EvalSuite"
 SKIP="${KUBECONFORM_SKIP-$DEFAULT_SKIP}"
 
-DATREE='https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+# Both schema catalogs are read at a pinned commit, never at a branch head. Each
+# is a repository that moves on its own schedule, so read at a branch the verdict
+# is a function of the day the scan ran: a schema that stops compiling upstream
+# fails every environment with no change here, and the fix arrives the same way.
+# Pinned, a catalog moves as a Renovate pull request that bumps the ref and runs
+# this scan against it. Each `# renovate:` line is read by the git-refs
+# customManager in renovate.json, which owns the ref on the line below it.
+# renovate: datasource=git-refs depName=yannh/kubernetes-json-schema packageName=https://github.com/yannh/kubernetes-json-schema branch=master
+K8S_SCHEMA_REF="89a35a5e9a1412a692a2603d79c3786f602238a4"
+# renovate: datasource=git-refs depName=datreeio/CRDs-catalog packageName=https://github.com/datreeio/CRDs-catalog branch=main
+CRD_CATALOG_REF="3eb90d47aba8d61919d4419dd38301536e32a94b"
+
+# kubeconform's `default` schema location, with the branch replaced by the pin.
+K8S_SCHEMAS="https://raw.githubusercontent.com/yannh/kubernetes-json-schema/${K8S_SCHEMA_REF}/{{ .NormalizedKubernetesVersion }}-standalone{{ .StrictSuffix }}/{{ .ResourceKind }}{{ .KindSuffix }}.json"
+CRD_SCHEMAS="https://raw.githubusercontent.com/datreeio/CRDs-catalog/${CRD_CATALOG_REF}/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"
 
 # kubeconform decides whether anything was validated at all, so its absence is
 # a refusal and not a finding. Without this, `exec` fails with 127 and a raw
@@ -45,19 +60,31 @@ if ! command -v kubeconform >/dev/null 2>&1; then
   exit 2
 fi
 
-args=(-strict -summary -schema-location default -schema-location "$DATREE")
+args=(-strict -summary -schema-location "$K8S_SCHEMAS" -schema-location "$CRD_SCHEMAS")
 [ -n "${KUBECONFORM_CACHE:-}" ] && args+=(-cache "$KUBECONFORM_CACHE")
 [ -n "$SKIP" ] && args+=(-skip "$SKIP")
+
+# kubeconform's output is captured so the summary can be read below, and it is
+# printed before its status is acted on. Under `set -e` an assignment from a
+# failing command substitution exits on the spot, so the status is collected with
+# `||` instead: a rejected manifest has to reach the log with the line naming it,
+# or the job fails with nothing to read. On failure the refs are printed too,
+# because a schema that changed between catalog pins fails an unchanged manifest
+# and the two read the same.
+rc=0
+out="$(kubeconform "${args[@]}" "$@" 2>&1)" || rc=$?
+printf '%s\n' "$out"
+if [ "$rc" -ne 0 ]; then
+  echo "FAIL  kubeconform exited $rc. Schemas were read from"
+  echo "      yannh/kubernetes-json-schema@${K8S_SCHEMA_REF} and"
+  echo "      datreeio/CRDs-catalog@${CRD_CATALOG_REF}."
+  exit "$rc"
+fi
 
 # A floor on what was VALIDATED. kubeconform exits 0 over an empty target and
 # prints "0 resource found in 0 file", which is the same status a clean tree
 # gets — so a renamed directory, a wrong argument or a rendered/ that was never
-# written all report success. `exec` gave the caller kubeconform's status and
-# nothing else; the summary is what says whether anything was read.
-out="$(kubeconform "${args[@]}" "$@" 2>&1)"
-rc=$?
-printf '%s\n' "$out"
-[ "$rc" -ne 0 ] && exit "$rc"
+# written all report success. The summary is what says whether anything was read.
 
 found="$(printf '%s' "$out" | sed -n 's/.*Summary: \([0-9][0-9]*\) resource.*/\1/p' | head -1)"
 if [ -z "$found" ]; then

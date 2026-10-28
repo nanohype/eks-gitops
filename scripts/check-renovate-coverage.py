@@ -555,7 +555,10 @@ def covered_by_custom(text: str, chart: str, ver: str,
         for pat in cm.matchers:
             for m in pat.finditer(text):
                 gd = m.groupdict()
-                if gd.get("currentValue") != ver:
+                # A digest-pinned dependency is identified by its commit: the
+                # manager's currentValue is the branch it tracks, and the pin in
+                # the file is currentDigest.
+                if gd.get("currentValue") != ver and gd.get("currentDigest") != ver:
                     continue
 
                 # https matrix + CLI-tool managers capture the chart as depName.
@@ -873,6 +876,14 @@ OTHER_FAMILIES = [
         "applicationsets/rendertest/go.mod",
         re.compile(r"^\t(?P<repo>[a-z0-9./-]+\S*)\s+(?P<ver>v[0-9]\S*)", re.M),
     ),
+    (
+        "schema catalog ref",
+        "scripts/kubeconform-scan.sh",
+        # Anchored on the commit, not on the annotation, for the reason the CI
+        # tool family gives: the ref nothing watches is the one with no
+        # `# renovate:` line, and keying on the line would skip exactly that one.
+        re.compile(r"^(?P<var>[A-Z][A-Z0-9_]*_REF)=\"?(?P<ver>[0-9a-f]{40})\"?\s*$", re.M),
+    ),
 ]
 
 # Files that must carry NO version pin. Asserted rather than described: a
@@ -906,6 +917,9 @@ def check_other_families(managers: list[CustomManager]) -> int:
             continue
         if label == "CI tool binary":
             seen += check_ci_tool_pins(text, rel, hits, managers)
+            continue
+        if label == "schema catalog ref":
+            seen += check_schema_catalog_refs(text, rel, hits, managers)
             continue
 
         for m in hits:
@@ -978,6 +992,36 @@ def check_ci_tool_pins(text: str, rel: str, hits,
             assert_reach(f"custom.regex {cm.where}",
                          FilePatterns(cm.file_patterns, "renovate.json"), rel,
                          f"CI tool pin {var} ({dep} {ver})")
+    return len(hits)
+
+
+# The annotation over one schema catalog ref. A commit carries no name, so the
+# repository it belongs to is read from this line rather than from the pin.
+ANNOTATED_REF = re.compile(
+    r"#\s*renovate:\s*datasource=(?P<ds>[a-z-]+)\s+depName=(?P<dep>\S+)[^\n]*\n"
+    r"(?P<var>[A-Z][A-Z0-9_]*_REF)=")
+
+
+def check_schema_catalog_refs(text: str, rel: str, hits,
+                              managers: list[CustomManager]) -> int:
+    """Every *_REF commit carries its own annotation and a manager that reads it."""
+    annotated = {m.group("var"): m.group("dep") for m in ANNOTATED_REF.finditer(text)}
+    for m in hits:
+        var, ver = m.group("var"), m.group("ver")
+        if var not in annotated:
+            fail(f"{rel}: {var} pins commit {ver} with no `# renovate:` annotation on "
+                 f"the line above it. The customManager keys on that annotation, so "
+                 f"this ref is watched by nothing and the schemas it selects never move.")
+            continue
+        dep = annotated[var]
+        cm = covered_by_custom(text, dep, ver, managers)
+        if cm is None:
+            fail(f"{rel}: {var} ({dep} @ {ver}) is annotated but matched by no "
+                 f"customManager — nothing opens a pull request when {dep} moves.")
+        else:
+            assert_reach(f"custom.regex {cm.where}",
+                         FilePatterns(cm.file_patterns, "renovate.json"), rel,
+                         f"schema catalog ref {var} ({dep} @ {ver})")
     return len(hits)
 
 
@@ -1097,7 +1141,8 @@ def main() -> int:
     bearing = len({p.appset for p in pins})
     print(f"renovate coverage OK: {total} chart pin(s) across {bearing} of "
           f"{len(appset_files())} ApplicationSets, plus {others} pin(s) "
-          f"in the git-pinned CRDs, the CI tool binaries and the Go module — "
+          f"in the git-pinned CRDs, the CI tool binaries, the Go module and the "
+          f"schema catalogs kubeconform reads — "
           f"every one watched by a manager that resolves. {oci} of the chart pins "
           f"are OCI and also assert repoURL repeats their chart name; "
           f"{len(NO_PINS)} file(s) are asserted to pin nothing")

@@ -51,7 +51,7 @@ spec:
                   namespace: keda
                   chartRepo: https://kedacore.github.io/charts
                   chart: keda
-                  chartVersion: "2.20.2"
+                  chartVersion: "2.21.0"
                   path: addons/operations/keda
                   syncWave: "44"
   template:

@@ -16,6 +16,7 @@ running the gate, not from here.
 
 from __future__ import annotations
 
+import datetime
 import pathlib
 import unittest
 
@@ -147,6 +148,53 @@ class AnAcknowledgementThatStoppedDescribingTheScan(unittest.TestCase):
         self.assertIn("outlived its reason", problems[0])
 
 
+class AnAcknowledgementWithAReviewDate(unittest.TestCase):
+    """A finding upstream never fixes would otherwise keep its entry alive unread."""
+
+    DUE = datetime.date(2027, 1, 31)
+
+    def dated(self, review_by):
+        return [{**advisory(), "review_by": review_by}]
+
+    def test_an_entry_before_its_date_passes(self):
+        self.assertEqual(
+            gate.verdict([finding()], self.dated(self.DUE),
+                         today=self.DUE - datetime.timedelta(days=1)), [])
+
+    def test_an_entry_on_its_date_passes(self):
+        self.assertEqual(gate.verdict([finding()], self.dated(self.DUE), today=self.DUE),
+                         [])
+
+    def test_an_entry_past_its_date_blocks(self):
+        problems = gate.verdict([finding()], self.dated(self.DUE),
+                                today=self.DUE + datetime.timedelta(days=1))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("was due for review on 2027-01-31", problems[0])
+
+    def test_a_quoted_date_reads_the_same_as_an_unquoted_one(self):
+        later = self.DUE + datetime.timedelta(days=1)
+        self.assertEqual(gate.verdict([finding()], self.dated("2027-01-31"), today=later),
+                         gate.verdict([finding()], self.dated(self.DUE), today=later))
+
+    def test_a_value_that_is_not_a_day_blocks(self):
+        for value in ("soon", "", None, 20270131,
+                      datetime.datetime(2027, 1, 31, 12, 0)):
+            with self.subTest(value=value):
+                problems = gate.verdict([finding()], self.dated(value), today=self.DUE)
+                self.assertEqual(len(problems), 1)
+                self.assertIn("not a YYYY-MM-DD date", problems[0])
+
+    def test_an_entry_without_a_date_never_falls_due(self):
+        self.assertEqual(gate.verdict([finding()], [advisory()],
+                                      today=datetime.date(9999, 12, 31)), [])
+
+    def test_a_due_entry_still_acknowledges_its_finding(self):
+        """The due date is its own problem; the finding is not reported twice."""
+        problems = gate.verdict([finding()], self.dated(self.DUE),
+                                today=self.DUE + datetime.timedelta(days=1))
+        self.assertFalse(any("no entry in image-advisories.yaml" in p for p in problems))
+
+
 class TheShippedAdvisoryFile(unittest.TestCase):
     """It is read on every run, so its shape is part of the gate."""
 
@@ -172,6 +220,13 @@ class TheShippedAdvisoryFile(unittest.TestCase):
             for image in entry["images"]:
                 with self.subTest(image=image):
                     self.assertEqual(gate.bare(image), image)
+
+    def test_every_review_date_is_a_day(self):
+        """Read as the gate reads it, so a typo fails here before it fails a run."""
+        for entry in self.entries:
+            if "review_by" in entry:
+                with self.subTest(entry=entry["id"], package=entry["package"]):
+                    self.assertIsNotNone(gate.review_date(entry["review_by"]))
 
     def test_no_two_entries_share_an_id_and_package(self):
         """The verdict keys on that pair, so a duplicate silently shadows one."""

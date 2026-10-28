@@ -229,8 +229,13 @@ config:
       check_interval: 5s
       limit_percentage: 80
       spike_limit_percentage: 25
+  # Component names are the ones the collector registers: otlp_grpc for the
+  # OTLP/gRPC exporter and file_log for the receiver the logsCollection preset
+  # adds. The chart rewrites the older otlp and filelog spellings only while
+  # rewriteDeprecatedComponentNames is on, and that rewrite is deprecated, so
+  # these values do not lean on it. The otlp RECEIVER keeps its name.
   exporters:
-    otlp:
+    otlp_grpc:
       endpoint: otel-gateway.monitoring.svc.cluster.local:4317
       tls:
         insecure: true
@@ -244,13 +249,13 @@ config:
       metrics:
         receivers: [prometheus]
         processors: [memory_limiter, k8s_attributes, batch]
-        exporters: [otlp]
-      # filelog needs k8s_attributes here — it enriches from the log path's pod
+        exporters: [otlp_grpc]
+      # file_log needs k8s_attributes here — it enriches from the log path's pod
       # context, which is lost once forwarded to the gateway.
       logs:
-        receivers: [filelog]
+        receivers: [file_log]
         processors: [memory_limiter, k8s_attributes, batch]
-        exporters: [otlp]
+        exporters: [otlp_grpc]
       # The chart's default OTLP receiver stays bound inside the pod (its ports
       # are unexposed above). Route anything it receives to the gateway rather
       # than the default debug exporter. k8s_attributes is listed explicitly — the
@@ -258,4 +263,4 @@ config:
       traces:
         receivers: [otlp]
         processors: [memory_limiter, k8s_attributes, batch]
-        exporters: [otlp]
+        exporters: [otlp_grpc]

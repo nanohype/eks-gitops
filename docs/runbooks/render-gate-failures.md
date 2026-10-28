@@ -24,10 +24,11 @@ Then map the failing step to what it actually checks:
 
 **Render failure** — `kustomize build --enable-helm` or `helm template` errored. Usual causes: overlay missing its `kustomization.yaml`, a `values-{env}.yaml` absent for one of the four environments, or (druid) a template change that breaks under the synthetic `--set` values in the workflow. Note the matrix renders *every* environment — a change that renders fine in development can still fail the hub leg.
 
-**Schema gate (kubeconform)** — strict mode, native kinds from the default kubernetes-json-schema location, CRD kinds from the datreeio CRDs-catalog, deliberately **no** `-ignore-missing-schemas`. Two failure shapes:
+**Schema gate (kubeconform)** — strict mode through `scripts/kubeconform-scan.sh`: native kinds from yannh/kubernetes-json-schema and CRD kinds from the datreeio CRDs-catalog, each read at the commit the script pins in `K8S_SCHEMA_REF` and `CRD_CATALOG_REF`, deliberately **no** `-ignore-missing-schemas`. Every rejected resource is printed with the file that carries it, and a failing run ends with the two refs the schemas were read at. Three failure shapes:
 
-- *"could not find schema for <Kind>"* — the kind is new to the repo and neither source knows it. Options, in order of preference: the CRD exists in the datreeio catalog under a different group/version (fix the manifest's apiVersion); contribute the schema upstream to the CRDs-catalog; or add an explicit `-skip <Kind>` in the workflow with a comment justifying it (the existing `-skip Grafana` shows the shape — skips are per-kind, commented, and rare).
+- *"could not find schema for <Kind>"* — the kind is new to the repo and neither source knows it at the pinned ref. Options, in order of preference: the CRD exists in the datreeio catalog under a different group/version (fix the manifest's apiVersion); contribute the schema upstream to the CRDs-catalog and take the ref that carries it; or add the kind to `DEFAULT_SKIP` in `scripts/kubeconform-scan.sh` with a comment justifying it (the Grafana entry shows the shape — skips are per-kind, commented, and rare).
 - *field/type errors* — a genuinely invalid manifest, or the catalog schema is stricter than the CRD actually deployed (the Grafana skip exists for exactly that mismatch). Verify against the real CRD before assuming the manifest is wrong.
+- *an unchanged manifest failing on a ref bump* — the Renovate pull request that moves `K8S_SCHEMA_REF` or `CRD_CATALOG_REF` changes nothing else, so the schema moved and the manifest did not. Compare the two refs upstream (`https://github.com/datreeio/CRDs-catalog/compare/<old>...<new>`). A schema that was removed or broken upstream is fixed upstream, and the pull request waits for a ref that carries the fix; a schema that became stricter and matches the CRD actually deployed means the manifest was wrong all along.
 
 **Misconfiguration gate (trivy config)** — runs over `rendered/`, so every finding reflects post-templating truth with values applied. MEDIUM and above fails the build. The finding ID (`KSV-*`/`AVD-*`) plus the rendered file name tell you which addon and which check.
 
@@ -50,7 +51,7 @@ Then map the failing step to what it actually checks:
 - `statement` that survives a cold review: what the finding flags, why it's intentional, compensating control (e.g. registry findings point at the Kyverno verify-images policy)
 - If you can't write that statement convincingly, it's a fix, not an ignore
 
-**kubeconform skips** follow the same discipline in the workflow file: per-kind, commented with the concrete schema/CRD mismatch, nothing broader.
+**kubeconform skips** follow the same discipline in `DEFAULT_SKIP` in `scripts/kubeconform-scan.sh`: per-kind, commented with the concrete schema/CRD mismatch, nothing broader.
 
 ## Verification
 

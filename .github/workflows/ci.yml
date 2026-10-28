@@ -955,11 +955,12 @@ jobs:
       # kubeconform in strict mode over everything just rendered, via the shared
       # scripts/kubeconform-scan.sh — the SINGLE source of truth for the strict
       # invocation and its skip list, so `task scan` (local) and this job never
-      # disagree. Native kinds resolve from the default kubernetes-json-schema
-      # location; CRD kinds resolve from the datreeio CRDs-catalog; there is
-      # deliberately no -ignore-missing-schemas. The skip list (the external
-      # Grafana CR and the first-party platform CRDs, validated out-of-band
-      # against the real webhook) and its full rationale live in that script.
+      # disagree. Native kinds resolve from yannh/kubernetes-json-schema and CRD
+      # kinds from the datreeio CRDs-catalog, each at a commit the script pins
+      # and Renovate moves; there is deliberately no -ignore-missing-schemas. The
+      # skip list (the external Grafana CR and the first-party platform CRDs,
+      # validated out-of-band against the real webhook) and its full rationale
+      # live in that script.
       #
       # The binary and downloaded schemas are cached; restore-keys lets each run
       # reuse the newest cache while still persisting newly fetched schemas.
