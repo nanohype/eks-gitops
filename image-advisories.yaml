@@ -40,8 +40,8 @@
 # clears or does not.
 #
 # The exception is ghcr.io/nanohype/eks-agent-platform/eval-runner, which is
-# built in this organisation. Its entry is a request to that repo's build, not to
-# a chart pin here.
+# built in this organisation. Its entries are requests to that repo's build, not
+# to a chart pin here.
 
 advisories:
   - id: CVE-2025-68121
@@ -91,6 +91,7 @@ advisories:
       in pgx 5.9.0. This catalog does not enable that event source, but the
       package is in the shipped binary either way, so the finding is real and the
       remedy is the same — the argo-events chart pin.
+    review_by: 2027-01-31
     images:
       - quay.io/argoproj/argo-events
 
@@ -98,7 +99,8 @@ advisories:
     package: github.com/jackc/pgx/v5
     reason: >-
       The second advisory against the same driver version in the same binary,
-      with the same fixed version and the same remedy as CVE-2026-33815.
+      with the same fixed version, reach and remedy as CVE-2026-33815.
+    review_by: 2027-01-31
     images:
       - quay.io/argoproj/argo-events
 
@@ -189,8 +191,14 @@ advisories:
   - id: CVE-2026-13221
     package: perl-base
     reason: >-
-      perl in eval-runner's Debian 12 base layer, at 5.36.0-7+deb12u3 and fixed
-      in 5.36.0-7+deb12u4. The same first-party image as CVE-2026-59873, with
+      perl in eval-runner's Debian 12 base layer (node:24-bookworm-slim), at
+      5.36.0-7+deb12u3 and fixed in 5.36.0-7+deb12u4. perl-base is an Essential
+      Debian package, so the slim base cannot drop it; the package tooling that
+      calls it runs while the image is built. At runtime nothing starts perl:
+      the image's CLI is the evaluate and score shims, each an exec of node
+      /app/cli.js, and every step of the eval-runner WorkflowTemplate the
+      operator chart ships is a /bin/sh script invoking those shims, aws, jq,
+      kubectl and coreutils. The same first-party image as CVE-2026-59873, with
       the same remedy: a rebuild in nanohype/eks-agent-platform on a refreshed
       base and an operator chart version here that pins it.
     review_by: 2027-01-31
@@ -201,7 +209,9 @@ advisories:
     package: perl-base
     reason: >-
       The second perl advisory in the same base layer, against its Archive::Tar
-      module, fixed in the same package version. Same remedy as CVE-2026-13221.
+      module, fixed in the same package version. Archive::Tar runs only inside
+      a perl process, so it has the reach of CVE-2026-13221, and the same
+      remedy.
     review_by: 2027-01-31
     images:
       - ghcr.io/nanohype/eks-agent-platform/eval-runner
@@ -210,7 +220,7 @@ advisories:
     package: perl-base
     reason: >-
       The third perl advisory in the same base layer, fixed in the same package
-      version. Same remedy as CVE-2026-13221.
+      version, with the same reach and remedy as CVE-2026-13221.
     review_by: 2027-01-31
     images:
       - ghcr.io/nanohype/eks-agent-platform/eval-runner

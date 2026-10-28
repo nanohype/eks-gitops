@@ -221,7 +221,10 @@ aggregate, so a clean `task validate` is necessary but not sufficient:
   `task validate:image-vulnerabilities`, kept out of the aggregate because it
   pulls every image the pinned charts render. Blocking on a CRITICAL
   with a published fix that `image-advisories.yaml` does not acknowledge; HIGH is
-  counted and printed. Every run scans a digest-pinned end-of-life image first
+  counted and printed. An entry may carry `review_by: YYYY-MM-DD`, and the gate
+  fails it from the day after that date (UTC), so an acknowledgement resting on
+  an exposure argument is re-read rather than kept. Every run scans a
+  digest-pinned end-of-life image first
   and requires its known CRITICALs back, so a clean result is a result rather
   than a scanner with no database
 - **Render → render-assert → kubeconform → `trivy config`** (CI job `validate`);

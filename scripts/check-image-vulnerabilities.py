@@ -43,7 +43,7 @@ tag on a patched base removes the finding underneath a standing entry.
 Neither direction is silent and neither is permanent, and both are decisions with
 an author. That is the whole of what the advisory file buys.
 
-THE ADVISORY FILE IS ASSERTED IN FOUR DIRECTIONS
+THE ADVISORY FILE IS ASSERTED IN FOUR DIRECTIONS, AND AGAINST THE CALENDAR
 
 An acknowledgement list nobody re-checks only ever widens, so every entry is
 checked against the scan rather than trusted:
@@ -52,6 +52,14 @@ checked against the scan rather than trusted:
   * a finding on an image its entry does not list       -> the entry does not cover it
   * an entry whose (id, package) no image carries       -> the entry outlived its reason
   * an entry listing an image with no such finding      -> the same, per image
+
+and against the date it names for being re-read:
+
+  * an entry whose review_by date has passed            -> the decision is due again
+
+An entry that reads as a decision while leaving part of one out is reported as
+well: one that is not a mapping, one with no reason, one listing no images, and
+one whose review_by is not a YYYY-MM-DD date.
 
 Entries name images WITHOUT a tag, because the acknowledgement is about the
 image and a chart bump moves the tag. A bump that FIXES the finding therefore
@@ -262,11 +270,16 @@ def review_date(value: object) -> datetime.date | None:
 
 def verdict(findings: list[Finding], advisories: list[dict],
             today: datetime.date | None = None) -> list[str]:
-    """Everything wrong, over a scan and an acknowledgement list.
+    """Everything wrong, over a scan, an acknowledgement list and a date.
 
-    Four directions, and only the first is the question the gate is named for.
-    The other three are what stop the acknowledgement list from becoming a
-    permanent waiver nobody re-reads.
+    Four directions against the scan, and only the first is the question the
+    gate is named for. The other three, with each entry's review_by compared
+    against `today`, are what stop the acknowledgement list from becoming a
+    permanent waiver nobody re-reads. `today` defaults to the UTC date, so the
+    runner's timezone does not decide which day an entry falls due. An entry
+    that is not a mapping, states no reason, lists no images, or carries a
+    review_by that is not a date is reported too: each reads as a decision
+    while leaving part of one out.
 
     Deduplicated in order. One image can carry the same advisory in several
     scanned artifacts — a Go binary and the layer it sits in — and printing the

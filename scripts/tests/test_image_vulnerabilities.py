@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import datetime
 import pathlib
+import types
 import unittest
 
 import yaml
@@ -193,6 +194,44 @@ class AnAcknowledgementWithAReviewDate(unittest.TestCase):
         problems = gate.verdict([finding()], self.dated(self.DUE),
                                 today=self.DUE + datetime.timedelta(days=1))
         self.assertFalse(any("no entry in image-advisories.yaml" in p for p in problems))
+
+
+# 00:30 UTC on 1 February 2027, which is still 31 January west of Greenwich.
+UTC_NOW = datetime.datetime(2027, 2, 1, 0, 30, tzinfo=datetime.UTC)
+LOCAL_NOW = datetime.datetime(2027, 1, 31, 18, 30)
+
+
+class _FrozenDatetime(datetime.datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return UTC_NOW.astimezone(tz) if tz is not None else LOCAL_NOW
+
+
+class _FrozenDate(datetime.date):
+    @classmethod
+    def today(cls):
+        return LOCAL_NOW.date()
+
+
+class TheDefaultDayIsTheUtcDay(unittest.TestCase):
+    """With no `today` passed, an entry falls due on the UTC calendar.
+
+    The clock is frozen at a moment where the UTC date and a runner's local date
+    differ, so a default read from the local clock reaches the other answer.
+    """
+
+    def setUp(self):
+        frozen = types.SimpleNamespace(datetime=_FrozenDatetime, date=_FrozenDate,
+                                       UTC=datetime.UTC, timezone=datetime.timezone)
+        real, gate.datetime = gate.datetime, frozen
+        self.addCleanup(setattr, gate, "datetime", real)
+
+    def test_an_entry_dated_the_local_day_is_due_on_the_utc_day(self):
+        # A string, because review_date's isinstance checks read the frozen
+        # classes and refuse a real date object.
+        problems = gate.verdict([finding()], [{**advisory(), "review_by": "2027-01-31"}])
+        self.assertEqual(len(problems), 1)
+        self.assertIn("was due for review on 2027-01-31", problems[0])
 
 
 class TheShippedAdvisoryFile(unittest.TestCase):
