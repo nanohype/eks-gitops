@@ -35,15 +35,16 @@ SOURCE OF TRUTH
 FETCHING
     Each chart is fetched through registry.py's client into the chart
     cache and rendered from that local archive, so helm never reaches a
-    registry here. A registry that answers that the pinned version is not there
-    exits 1 — a pin that does not resolve is a finding about this repo. Any
-    other fetch failure, a rate limit that outlasts the client's retries included,
-    exits 2: it says nothing about the catalogue.
+    registry here. A registry that answers that the pinned version is not there,
+    or lists it with no digest to check its archive against, exits 1 — a pin
+    that does not resolve to a verifiable archive is a finding about this repo.
+    Any other fetch failure, a rate limit that outlasts the client's retries
+    included, exits 2: it says nothing about the catalogue.
 
 Run ``render-addons.py`` to render every env, or ``--env staging`` for one.
 ``--list`` prints the discovered units without rendering. ``--fetch`` fills
-the chart cache with every pinned chart, renders nothing, and drops the cached
-archives no pin names.
+the chart cache with every pinned chart, renders nothing, and removes every
+cached file no pin names.
 """
 
 from __future__ import annotations
@@ -315,7 +316,7 @@ MIN_COMBINATIONS = 60
 
 
 def fetch_all(units: list[Unit]) -> int:
-    """Fetch every pinned chart into the chart cache; drop the archives no pin names.
+    """Fetch every pinned chart into the chart cache; drop every file no pin names.
 
     CI runs this in one job that every rendering job waits on, so a registry is
     read once per pin set rather than once per job, and the cache that job
@@ -329,7 +330,7 @@ def fetch_all(units: list[Unit]) -> int:
         return gatelib.CANNOT_RUN
     dropped = registry.prune_archives(kept)
     print(f"Fetched {len(kept)} pinned chart archive(s) into {registry.CHART_CACHE}; "
-          f"dropped {dropped} archive(s) no pin names.")
+          f"removed {dropped} cached file(s) no pin names.")
     return 0
 
 
@@ -339,7 +340,7 @@ def main() -> int:
     ap.add_argument("--list", action="store_true", help="print discovered units and exit")
     ap.add_argument("--fetch", action="store_true",
                     help="fetch every pinned chart into the chart cache, render nothing, "
-                         "and drop cached archives no pin names")
+                         "and remove every cached file no pin names")
     args = ap.parse_args()
 
     units = discover()

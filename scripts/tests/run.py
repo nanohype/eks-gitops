@@ -82,6 +82,9 @@ EXPECTED = (
     # retries, how long it waits, and when it stops, none of which a run against
     # a registry that is not rate-limiting at the time exercises.
     "test_chart_deprecation",
+    # What a failed schema scan leaves in the log: kubeconform's own output, the
+    # status it exited with, and the catalog commits the run read.
+    "test_kubeconform_scan",
 )
 
 # A floor well under the real count. It catches "discovery found almost nothing",

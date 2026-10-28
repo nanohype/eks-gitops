@@ -70,7 +70,8 @@ pass=0; fail=0
 ALL_MODULES="test_policy_admission test_platform_crs test_dashboards \
   test_render_addons test_image_pins test_log_volume_budget test_controls \
   test_corpus_floors test_registry test_chart_deprecation test_falco_rule_floor \
-  test_image_vulnerabilities test_renovate_coverage test_lb_scheme_inputs"
+  test_image_vulnerabilities test_renovate_coverage test_lb_scheme_inputs \
+  test_kubeconform_scan"
 
 # Bytecode caching keys on (mtime, size). A restore and the next mutation inside
 # the same second can hand the run the PREVIOUS mutant's module, and the suite
@@ -405,6 +406,44 @@ p.write_text(m)
 PY
 rejects "addon path: take it from any values file" test_render_addons \
   test_a_per_environment_file_alone_does_not_supply_the_path
+res $F
+
+# stale_skips is the only thing that re-reads a skip's stated reason. Read
+# wrong one way, every skip is reported expired; the other, none ever is.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        except registry.ChartUnavailable:\n            continue\n'
+              '        stale.append(',
+              '        except registry.ChartUnavailable:\n            pass\n'
+              '        stale.append(', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "stale skips: call an unreachable chart fetchable" test_render_addons \
+  test_a_skipped_chart_that_still_cannot_be_fetched_stays
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        stale.append((u.chart, SKIP_CHARTS[u.chart]))', '        pass', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "stale skips: never report one" test_render_addons \
+  test_a_skipped_chart_that_fetches_is_stale
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    dropped = registry.prune_archives(kept)', '    dropped = 0', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "fetch: carry the files no pin names" test_render_addons \
+  test_the_pinned_archives_and_their_records_are_what_the_cache_holds
 res $F
 
 F=scripts/check-policy-admission.py
@@ -780,6 +819,38 @@ p.write_text(m)
 PY
 rejects "archive: read every unreadable chart as a finding" test_lb_scheme_inputs \
   test_an_archive_that_could_not_be_read_cannot_run
+res $F
+
+
+# What a failed scan leaves in the log is the script's doing: it captures
+# kubeconform's output to read the summary, and an EXIT trap names the two
+# catalog commits. Under `set -e` an assignment from a failing substitution
+# exits before the capture is printed.
+F=scripts/kubeconform-scan.sh
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('out="$(kubeconform "${args[@]}" "$@" 2>&1)" || rc=$?',
+              'out="$(kubeconform "${args[@]}" "$@" 2>&1)"', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "scan: let set -e exit before the output is printed" test_kubeconform_scan \
+  test_a_rejected_manifest_reaches_the_log_with_the_refs \
+  test_a_status_other_than_1_is_passed_through
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+start = s.index("trap '[ \"$?\" -eq 0 ]")
+end = s.index("' EXIT\n", start) + len("' EXIT\n")
+p.write_text(s[:start] + s[end:])
+PY
+rejects "scan: fail without naming the catalog commits" test_kubeconform_scan \
+  test_a_rejected_manifest_reaches_the_log_with_the_refs \
+  test_a_scan_that_validated_nothing_names_the_refs_too
 res $F
 
 

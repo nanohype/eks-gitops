@@ -652,6 +652,28 @@ jobs:
 YAML
 run nonzero "zizmor: unpinned action" ./scripts/check-workflows.sh $SP/wbad/.github/workflows
 
+# A rejection is only as useful as what reaches the log: the line naming the
+# manifest, and the two catalog commits the scan read its schemas at. The status
+# alone says neither, so the captured output is read as well.
+mkdir -p $SP/kbad
+cat > $SP/kbad/rv-bad.yaml <<'YAML'
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: rv-bad}
+data: {a: 1}
+YAML
+run 1 "kubeconform-scan: a manifest the schema rejects" ./scripts/kubeconform-scan.sh $SP/kbad
+for want in "rv-bad.yaml" "FAIL  kubeconform exited 1." \
+    "yannh/kubernetes-json-schema@$(sed -n 's/^K8S_SCHEMA_REF="\(.*\)"$/\1/p' scripts/kubeconform-scan.sh)" \
+    "datreeio/CRDs-catalog@$(sed -n 's/^CRD_CATALOG_REF="\(.*\)"$/\1/p' scripts/kubeconform-scan.sh)"; do
+  if grep -qF -- "$want" "$OUT"; then
+    printf "  ok    %-52s\n" "kubeconform-scan: the log names ${want%%@*}"; pass=$((pass+1))
+  else
+    printf "  FAIL  %-52s not in the output\n" "kubeconform-scan: the log names ${want%%@*}"
+    sed 's/^/          /' "$OUT"; fail=$((fail+1))
+  fi
+done
+
 # renovate-config-validator is deliberately absent from this harness: it runs
 # through `npx --package renovate`, which fetches the whole Renovate package and
 # takes minutes. It is a CI-only gate, and this harness is meant to be runnable.

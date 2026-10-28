@@ -15,12 +15,14 @@ chart means is registry.py's, and is held in test_registry.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import pathlib
 import tempfile
 import unittest
 from unittest import mock
 
+import fakeregistry as fake
 import yaml
 from gateloader import load
 
@@ -237,7 +239,7 @@ class FetchingTheChartCache(unittest.TestCase):
         ])
         self.assertEqual(pruned, [{pathlib.Path("/cache/operator-1.0.0.tgz"),
                                    pathlib.Path("/cache/kyverno-1.0.0.tgz")}])
-        self.assertIn("dropped 3 archive(s) no pin names", out)
+        self.assertIn("removed 3 cached file(s) no pin names", out)
 
     def test_a_skipped_chart_is_neither_fetched_nor_kept(self):
         rc, fetched, pruned, _ = self.fetch(
@@ -253,6 +255,153 @@ class FetchingTheChartCache(unittest.TestCase):
         self.assertEqual(rc, gate.gatelib.CANNOT_RUN)
         self.assertEqual((fetched, pruned), ([], []))
         self.assertIn("Cannot run", out)
+
+
+class FetchingOverTheRegistryClient(unittest.TestCase):
+    """--fetch over registry.py itself, with only the transport and the cache scripted.
+
+    FetchingTheChartCache holds what fetch_all asks for. This holds what lands
+    on disk when the real client answers it: each pinned archive and its digest
+    record under archive_path's naming, nothing a pin does not name, and a
+    second run that reads every archive back from the cache.
+    """
+
+    REPO = "https://charts.example/stable"
+    OCI = ("ghcr.example", "org/charts/operator")
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.cache = pathlib.Path(tmp.name)
+        self.archive = b"kyverno-archive"
+        self.oci = fake.OciRegistry(*self.OCI, "1.0.0",
+                                    {"name": "operator", "version": "1.0.0"},
+                                    content=b"operator-archive")
+        self.urls: list[str] = []
+        for patch in (mock.patch.object(gate.registry, "CHART_CACHE", self.cache),
+                      mock.patch.dict(gate.registry._INDEXES, clear=True),
+                      mock.patch.dict(gate.registry.http_get.__kwdefaults__,
+                                      {"urlopen": self.urlopen, "sleep": self.fail_on_wait}),
+                      mock.patch.dict(gate.SKIP_CHARTS, clear=True)):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def fail_on_wait(self, seconds):
+        self.fail(f"the client waited {seconds}s on a registry that never rate-limits")
+
+    def index(self) -> bytes:
+        return yaml.safe_dump({"apiVersion": "v1", "entries": {"kyverno": [{
+            "version": "1.0.0", "urls": ["kyverno-1.0.0.tgz"],
+            "digest": hashlib.sha256(self.archive).hexdigest()}]}}).encode()
+
+    def urlopen(self, req, timeout=None):
+        url = req.full_url
+        self.urls.append(url)
+        if url == f"{self.REPO}/index.yaml":
+            answer = self.index()
+        elif url == f"{self.REPO}/kyverno-1.0.0.tgz":
+            answer = self.archive
+        else:
+            answer = self.oci(req)
+        if isinstance(answer, BaseException):
+            raise answer
+        return io.BytesIO(answer)
+
+    def units(self):
+        return [gate.Unit(appset="a.yaml", chart="kyverno", version="1.0.0",
+                          repo=self.REPO, path="addons/x/kyverno"),
+                gate.Unit(appset="b.yaml", chart="operator", version="1.0.0",
+                          repo=f"oci://{self.OCI[0]}/org/charts", path="addons/x/operator")]
+
+    def fetch(self):
+        """One --fetch run. Each is its own process, so no index outlives it."""
+        gate.registry._INDEXES.clear()
+        self.urls.clear()
+        with contextlib.redirect_stdout(io.StringIO()) as out, \
+                contextlib.redirect_stderr(io.StringIO()):
+            rc = gate.fetch_all(self.units())
+        return rc, out.getvalue()
+
+    def on_disk(self):
+        return sorted(str(p.relative_to(self.cache)) for p in self.cache.rglob("*")
+                      if p.is_file())
+
+    def test_the_pinned_archives_and_their_records_are_what_the_cache_holds(self):
+        stale = gate.registry.archive_path(self.REPO, "kyverno", "0.9.0")
+        stale.parent.mkdir(parents=True)
+        stale.write_bytes(b"old")
+        gate.registry.digest_path(stale).write_text(hashlib.sha256(b"old").hexdigest())
+        (stale.parent / ".kyverno-1.0.0.tgz.4242").write_bytes(b"cut off")
+
+        rc, out = self.fetch()
+
+        self.assertEqual(rc, 0, out)
+        kept = [gate.registry.archive_path(u.source, u.chart, u.version)
+                for u in self.units()]
+        self.assertEqual(self.on_disk(), sorted(
+            str(p.relative_to(self.cache)) for k in kept
+            for p in (k, gate.registry.digest_path(k))))
+        self.assertEqual(kept[0].read_bytes(), self.archive)
+        self.assertEqual(kept[1].read_bytes(), b"operator-archive")
+        for k in kept:
+            self.assertEqual(gate.registry.digest_path(k).read_text(),
+                             hashlib.sha256(k.read_bytes()).hexdigest())
+        self.assertIn("Fetched 2 pinned chart archive(s)", out)
+        self.assertIn("removed 3 cached file(s) no pin names", out)
+
+    def test_a_second_run_reads_every_archive_from_the_cache(self):
+        self.assertEqual(self.fetch()[0], 0)
+        rc, out = self.fetch()
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.urls, [])
+        self.assertIn("removed 0 cached file(s)", out)
+
+    def test_an_archive_changed_in_the_cache_is_fetched_again(self):
+        self.assertEqual(self.fetch()[0], 0)
+        kyverno = gate.registry.archive_path(self.REPO, "kyverno", "1.0.0")
+        kyverno.write_bytes(b"truncated")
+        rc, out = self.fetch()
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.urls, [f"{self.REPO}/index.yaml",
+                                     f"{self.REPO}/kyverno-1.0.0.tgz"])
+        self.assertEqual(kyverno.read_bytes(), self.archive)
+
+
+class ExpiredSkips(unittest.TestCase):
+    """A skip whose chart an anonymous fetch reaches is reported; one it cannot reach stays."""
+
+    def unit(self, chart):
+        return gate.Unit(appset="a.yaml", chart=chart, version="1.0.0",
+                         repo="https://charts.example", path=f"addons/x/{chart}")
+
+    def stale(self, units, skip, unreachable=()):
+        asked = []
+
+        def archive(source, chart, version):
+            asked.append(chart)
+            if chart in unreachable:
+                raise gate.registry.ChartUnavailable("HTTP 401", answered=False)
+            return pathlib.Path(f"/cache/{chart}-{version}.tgz")
+
+        with mock.patch.object(gate.registry, "chart_archive", archive), \
+                mock.patch.dict(gate.SKIP_CHARTS, skip, clear=True):
+            return gate.stale_skips(units), asked
+
+    def test_a_skipped_chart_that_fetches_is_stale(self):
+        stale, asked = self.stale([self.unit("private")], {"private": "needs credentials"})
+        self.assertEqual(stale, [("private", "needs credentials")])
+        self.assertEqual(asked, ["private"])
+
+    def test_a_skipped_chart_that_still_cannot_be_fetched_stays(self):
+        stale, _ = self.stale([self.unit("private")], {"private": "needs credentials"},
+                              unreachable={"private"})
+        self.assertEqual(stale, [])
+
+    def test_a_chart_nothing_skips_is_not_asked_about(self):
+        stale, asked = self.stale([self.unit("kyverno"), self.unit("private")],
+                                  {"private": "needs credentials"},
+                                  unreachable={"private"})
+        self.assertEqual((stale, asked), ([], ["private"]))
 
 
 class TheDiscoveredCorpus(unittest.TestCase):
