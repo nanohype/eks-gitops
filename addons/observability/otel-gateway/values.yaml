@@ -19,10 +19,9 @@ image:
   # `.Values.image.tag | default .Chart.AppVersion`, so leaving it unset makes the
   # image follow the chart pin instead of being maintained beside it. A hand-set
   # tag here has to be moved by a second act nothing performs or checks — Renovate
-  # sees the chart (argocd manager) and not this file — which is how the two spent
-  # a stretch a release apart. The contrib distro publishes the same version
-  # numbers as the core collector the appVersion tracks, verified against the
-  # registry for the version this pin resolves to.
+  # sees the chart (argocd manager) and not this file. The contrib distro
+  # publishes the same version numbers as the core collector the appVersion
+  # tracks.
 
 # Stable object names — the Service the agents forward to (otel-gateway) and the
 # SA the AMP Pod Identity association binds must not shift on an ArgoCD rename.
@@ -34,6 +33,15 @@ fullnameOverride: otel-gateway
 presets:
   kubernetesAttributes:
     enabled: true
+
+# The preset above emits k8s_attributes only while this is on. Off, it emits
+# k8sattributes, and the pipelines in config.service name a processor the
+# generated config does not define. On is the chart's default; it is set here
+# so a chart version that flips the default cannot change the emitted name
+# underneath these pipelines, and so one that drops the key fails the render at
+# the bump, where this comment is read: the chart's values schema admits no key
+# it does not declare.
+rewriteDeprecatedComponentNames: true
 
 # The EKS Pod Identity association granting aps:RemoteWrite binds this SA — no
 # IRSA annotation; the credential chain is satisfied by the Pod Identity agent.
@@ -69,8 +77,9 @@ ports:
 
 config:
   extensions:
-    # SigV4-signs each AMP remote-write. service must be "aps"; region is set
-    # explicitly for parity though sigv4auth can also infer it from the endpoint.
+    # SigV4-signs each AMP remote-write. service must be "aps"; region comes
+    # from the cluster's AWS_REGION rather than being parsed out of the
+    # endpoint URL.
     sigv4auth:
       service: "aps"
       region: ${env:AWS_REGION}
@@ -81,9 +90,8 @@ config:
       limit_percentage: 80
       spike_limit_percentage: 25
   # Component names are the ones the collector registers: otlp_http and
-  # otlp_grpc for the two OTLP exporters. The chart rewrites the older otlphttp
-  # and otlp spellings only while rewriteDeprecatedComponentNames is on, and that
-  # rewrite is deprecated, so these values do not lean on it.
+  # otlp_grpc for the two OTLP exporters, their names from collector v0.144.0
+  # (chart 0.171.0 renames otlphttp and otlp to them).
   exporters:
     prometheus_remote_write:
       endpoint: ${env:AMP_REMOTE_WRITE_URL}
@@ -91,7 +99,8 @@ config:
         authenticator: sigv4auth
       external_labels:
         cluster: ${env:CLUSTER_NAME}
-      # Parity: the previous collector emitted no target_info series.
+      # No target_info series: it would carry every resource attribute as a
+      # label, one series per resource, and no dashboard or rule here reads it.
       target_info:
         enabled: false
     # Loki's native OTLP endpoint. The exporter appends /v1/logs, so the endpoint
@@ -122,8 +131,9 @@ config:
         receivers: [otlp]
         processors: [memory_limiter, k8s_attributes, batch]
         exporters: [otlp_http/loki]
-      # Traces pass through at 100% — parity with the previous collector. Tail
-      # sampling is a deliberate follow-on, not part of the swap.
+      # Traces pass through unsampled. Sampling is left to each workload's SDK;
+      # a sampler here would override every tenant's own decision with one
+      # cluster-wide policy.
       traces:
         receivers: [otlp]
         processors: [memory_limiter, k8s_attributes, batch]
