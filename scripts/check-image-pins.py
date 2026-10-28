@@ -149,6 +149,10 @@ def inventory(env: str, seen: set[str] | None = None
     `seen`, if given, collects every image-shaped reference the render carried —
     including the ones excluded from the population — so a declaration can be
     checked against what the render contains rather than against what survived.
+
+    A chart the registry answered for and ruled out is a finding about its pin,
+    and exits 1 the way registry.chart_archive_or_exit does; one that could not
+    be read is a chart that did not render.
     """
     gatelib.require('helm')
     units = render_addons.discover()
@@ -173,6 +177,8 @@ def inventory(env: str, seen: set[str] | None = None
         try:
             archive = registry.chart_archive(u.source, u.chart, u.version)
         except registry.ChartUnavailable as exc:
+            if exc.answered:
+                registry.refuse_chart(u.chart, u.version, u.source, exc)
             unrendered.append((u.path, f"{u.chart} {u.version} could not be fetched "
                                        f"— {exc}"[:200]))
             continue

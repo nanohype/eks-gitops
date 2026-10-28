@@ -50,9 +50,7 @@ network outage as a defect in the catalogue.
 
 from __future__ import annotations
 
-import importlib.util
 import io
-import json
 import pathlib
 import subprocess
 import sys
@@ -61,22 +59,9 @@ import urllib.error
 from collections.abc import Callable
 from typing import NoReturn
 
+import gatelib
+import registry
 import yaml
-
-_gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
-_gs = importlib.util.spec_from_file_location("gatelib", _gl)
-assert _gs and _gs.loader, f"{_gl} is not loadable as a module"
-gatelib = importlib.util.module_from_spec(_gs)
-sys.modules["gatelib"] = gatelib
-_gs.loader.exec_module(gatelib)
-
-# The registry client, loaded by path the same way.
-_rl = pathlib.Path(__file__).resolve().parent / "registry.py"
-_rs = importlib.util.spec_from_file_location("registry", _rl)
-assert _rs and _rs.loader, f"{_rl} is not loadable as a module"
-registry = importlib.util.module_from_spec(_rs)
-sys.modules["registry"] = registry
-_rs.loader.exec_module(registry)
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 APPSET = ROOT / "applicationsets" / "addons-security.yaml"
@@ -200,6 +185,30 @@ def _unreachable(exc: BaseException) -> NoReturn:
                "not about the rule sets this repo pins.")
 
 
+def rulesfile_layer(manifest: dict, where: str) -> str | None:
+    """The digest of the layer a rulesfile manifest installs, or None for a plugin.
+
+    The manifest is upstream's, so its shape is checked rather than indexed
+    into. A config or a layer list that is not what the OCI image spec
+    describes is a fact about the registry's answer, not about a ref in this
+    repo, so the gate cannot run on it; indexed into unchecked, it escapes as a
+    traceback with exit status 1, the status this gate gives a finding.
+    """
+    config = manifest.get("config")
+    if config is not None and not isinstance(config, dict):
+        cannot_run(f"Cannot run: {where} answered a manifest whose config is not an "
+                   f"object, so whether it is a rule set could not be read.")
+    if (config or {}).get("mediaType") != RULESFILE_CONFIG:
+        return None  # a plugin, or a multi-arch index — installs no rules
+    layers = manifest.get("layers")
+    first = layers[0] if isinstance(layers, list) and layers else None
+    digest = first.get("digest") if isinstance(first, dict) else None
+    if not isinstance(digest, str) or not digest:
+        cannot_run(f"Cannot run: {where} answered a rule-set manifest with no layer "
+                   f"digest to read its rules from.")
+    return digest
+
+
 def rulesfile(ref: str,
               get: Callable[..., bytes] = registry.http_get) -> dict[str, str] | None:
     """Filenames and contents a rulesfile ref installs, or None for a plugin.
@@ -207,15 +216,16 @@ def rulesfile(ref: str,
     Read through registry.py's client, so a 429 waits as long as the
     registry asks. The registry answering 404 for the ref is a finding about a
     ref in this repo; every other status, a rate limit that outlasts the
-    retries, and every failure in registry.READ_FAILURES is not this gate's to
-    interpret.
+    retries, every failure in registry.READ_FAILURES, and a manifest or layer
+    that is not what the OCI image spec and the rulesfile format describe are
+    not this gate's to interpret.
     """
     name, tag = ref.rsplit(":", 1)
     repo = name if "/" in name else f"{INDEX_PREFIX}/{name}"
     repo = repo[len(f"{REGISTRY}/"):] if repo.startswith(f"{REGISTRY}/") else repo
     oci = registry.OciRepository(f"{REGISTRY}/{repo}", get)
     try:
-        manifest = json.loads(oci.read(f"manifests/{tag}", RULESFILE_ACCEPT))
+        manifest = oci.manifest(tag, RULESFILE_ACCEPT)
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             fail(f"ref {ref!r} does not resolve: {REGISTRY}/{repo} answered 404 for "
@@ -225,24 +235,29 @@ def rulesfile(ref: str,
         cannot_run(f"Cannot run: {REGISTRY} answered {exc.code} for {repo}:{tag}.")
     except registry.READ_FAILURES as exc:
         _unreachable(exc)
-    if (manifest.get("config") or {}).get("mediaType") != RULESFILE_CONFIG:
-        return None  # a plugin, or a multi-arch index — installs no rules
+    digest = rulesfile_layer(manifest, f"{REGISTRY}/{repo}:{tag}")
+    if digest is None:
+        return None
     try:
-        blob = oci.blob(str(manifest["layers"][0]["digest"]))
+        blob = oci.blob(digest)
     except urllib.error.HTTPError as exc:
         cannot_run(f"Cannot run: {REGISTRY} answered {exc.code} for a layer of "
                    f"{repo}:{tag}.")
     except registry.READ_FAILURES as exc:
         _unreachable(exc)
     out: dict[str, str] = {}
-    with tarfile.open(fileobj=io.BytesIO(blob)) as tf:
-        for member in tf.getmembers():
-            if not member.isfile():
-                continue
-            handle = tf.extractfile(member)
-            if handle is None:
-                continue
-            out[pathlib.PurePosixPath(member.name).name] = handle.read().decode()
+    try:
+        with tarfile.open(fileobj=io.BytesIO(blob)) as tf:
+            for member in tf.getmembers():
+                if not member.isfile():
+                    continue
+                handle = tf.extractfile(member)
+                if handle is None:
+                    continue
+                out[pathlib.PurePosixPath(member.name).name] = handle.read().decode()
+    except (tarfile.TarError, UnicodeDecodeError) as exc:
+        cannot_run(f"Cannot run: the layer of {REGISTRY}/{repo}:{tag} matches its digest "
+                   f"and is not a rule-set archive — {type(exc).__name__}: {exc}.")
     return out
 
 

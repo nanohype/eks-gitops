@@ -32,7 +32,8 @@ def http_error(url: str, code: int):
 
 
 class FetchReportsWhyNot(unittest.TestCase):
-    """fetch() returns an `_error` the live check prints, never an exception."""
+    """fetch() returns an `_error` the live check prints, never an exception, and
+    says in `_answered` whether upstream answered or could not be read."""
 
     def fetch_failing_with(self, exc):
         with mock.patch.object(ccd.registry, "oci_chart_metadata", side_effect=exc):
@@ -41,15 +42,18 @@ class FetchReportsWhyNot(unittest.TestCase):
     def test_an_http_status_names_the_status_and_the_url(self):
         meta = self.fetch_failing_with(http_error("https://r.example/v2/c/manifests/1.0.0",
                                                   404))
-        self.assertEqual(meta, {"_error": "HTTP 404 from https://r.example/v2/c/manifests/1.0.0"})
+        self.assertEqual(meta, {"_error": "HTTP 404 from https://r.example/v2/c/manifests/1.0.0",
+                                "_answered": True})
 
     def test_an_exhausted_rate_limit_is_reported_in_its_own_words(self):
         meta = self.fetch_failing_with(ccd.registry.RegistryError("r.example answered HTTP 429"))
-        self.assertEqual(meta, {"_error": "RegistryError: r.example answered HTTP 429"})
+        self.assertEqual(meta, {"_error": "RegistryError: r.example answered HTTP 429",
+                                "_answered": False})
 
     def test_a_network_error_is_reported(self):
         meta = self.fetch_failing_with(urllib.error.URLError("no route"))
         self.assertIn("URLError", meta["_error"])
+        self.assertFalse(meta["_answered"])
 
     def test_a_dropped_or_truncated_response_is_reported(self):
         for exc in (ConnectionResetError("reset by peer"),
@@ -57,6 +61,7 @@ class FetchReportsWhyNot(unittest.TestCase):
             with self.subTest(exc=type(exc).__name__):
                 meta = self.fetch_failing_with(exc)
                 self.assertIn(type(exc).__name__, meta["_error"])
+                self.assertFalse(meta["_answered"])
 
     def test_an_https_pin_is_read_from_its_repository_index(self):
         with mock.patch.object(ccd.registry, "repo_index_entry",
@@ -71,11 +76,11 @@ class TheLiveVerdict(unittest.TestCase):
     RECORDS = {"c": {"repo": "oci://r.example/c", "description": "a chart",
                      "deprecated": False}}
 
-    def live(self, meta):
+    def live(self, *metas, pins=None):
         out = io.StringIO()
-        with mock.patch.object(ccd, "pins", return_value=self.PINS), \
+        with mock.patch.object(ccd, "pins", return_value=pins or self.PINS), \
                 mock.patch.object(ccd, "load_records", return_value=self.RECORDS), \
-                mock.patch.object(ccd, "fetch", return_value=meta), \
+                mock.patch.object(ccd, "fetch", side_effect=metas), \
                 contextlib.redirect_stdout(out):
             return ccd.check_live(), out.getvalue()
 
@@ -83,10 +88,28 @@ class TheLiveVerdict(unittest.TestCase):
         rc, _ = self.live({"description": "a chart"})
         self.assertEqual(rc, 0)
 
-    def test_an_unreadable_chart_fails_with_the_reason(self):
-        rc, out = self.live({"_error": "RegistryError: r.example answered HTTP 429"})
-        self.assertEqual(rc, 1)
+    def test_an_unreadable_chart_cannot_run(self):
+        rc, out = self.live({"_error": "RegistryError: r.example answered HTTP 429",
+                             "_answered": False})
+        self.assertEqual(rc, ccd.gatelib.CANNOT_RUN)
+        self.assertIn("Cannot run: 1 of 1", out)
         self.assertIn("answered HTTP 429", out)
+
+    def test_a_pin_upstream_ruled_out_fails(self):
+        rc, out = self.live({"_error": "HTTP 404 from https://r.example/v2/c/manifests/1.0.0",
+                             "_answered": True})
+        self.assertEqual(rc, 1)
+        self.assertIn("rules the pin out", out)
+        self.assertNotIn("Cannot run", out)
+
+    def test_a_finding_outweighs_a_chart_that_could_not_be_read(self):
+        pins = {**self.PINS, "d": {"repo": "oci://r.example/d", "version": "2.0.0",
+                                   "source": "x.yaml"}}
+        rc, out = self.live({"description": "a chart", "deprecated": True},
+                            {"_error": "URLError: no route", "_answered": False}, pins=pins)
+        self.assertEqual(rc, 1)
+        self.assertIn("marked deprecated", out)
+        self.assertIn("Cannot run: 1 of 2", out)
 
     def test_a_redescribed_chart_fails(self):
         rc, out = self.live({"description": "an enterprise product"})

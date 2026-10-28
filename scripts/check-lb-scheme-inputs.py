@@ -93,7 +93,12 @@ LOOKUP_FILES = (
 )
 
 STATUSES = ("read", "unread", "plumbing")
+# Seconds one read of a controller source file may take. The chart itself is
+# read through registry.py, whose calls run to their own deadline.
 NETWORK_TIMEOUT = 120
+# Seconds the helm render of the cached chart archive may run. It reads only
+# local files, so a render that outlasts this has stalled rather than waited.
+RENDER_TIMEOUT = 120
 
 
 def die(msg: str) -> NoReturn:
@@ -158,7 +163,7 @@ def rendered_flags(pin: dict) -> dict:
     proc = subprocess.run(
         ["helm", "template", ADDON_NAME, str(archive), "-n", "kube-system",
          *sum((["-f", v] for v in values), []), "--set", "clusterName=fixture"],
-        capture_output=True, text=True, timeout=NETWORK_TIMEOUT)
+        capture_output=True, text=True, timeout=RENDER_TIMEOUT)
     if proc.returncode != 0:
         last = ((proc.stderr or "") + (proc.stdout or "")).strip().splitlines()
         die(f"the controller chart would not render with this catalog's values — "

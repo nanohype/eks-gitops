@@ -793,7 +793,7 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('    if (manifest.get("config") or {}).get("mediaType") != RULESFILE_CONFIG:',
+m = s.replace('    if (config or {}).get("mediaType") != RULESFILE_CONFIG:',
               '    if False:', 1)
 assert m != s, "mutation did not land"
 p.write_text(m)

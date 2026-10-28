@@ -47,6 +47,7 @@ import json
 import pathlib
 import sys
 
+import gatelib
 import registry
 import yaml
 
@@ -115,11 +116,15 @@ def load_records() -> dict:
 
 
 def fetch(chart: str, repo: str, version: str) -> dict:
-    """Chart.yaml as upstream publishes it, or {"_error": why not}."""
+    """Chart.yaml as upstream publishes it, or {"_error": why not, "_answered": ...}.
+
+    `_answered` is the client's ChartUnavailable.answered: True when upstream
+    answered and ruled the pin out, False when it could not be read.
+    """
     try:
         return registry.chart_metadata(repo, chart, version)
     except registry.ChartUnavailable as err:
-        return {"_error": str(err)[:200]}
+        return {"_error": str(err)[:200], "_answered": err.answered}
 
 
 # ---------------------------------------------------------------- offline gate
@@ -163,14 +168,20 @@ def check_offline(live: dict, recorded: dict) -> int:
 # ------------------------------------------------------------------ live check
 
 def check_live() -> int:
+    """1 for a chart upstream redescribed, deprecated or ruled out; CANNOT_RUN when
+    the only failures are charts upstream could not be read for."""
     live = pins()
     recorded = load_records()
-    problems, ok = [], 0
+    problems, unread = [], []
 
     for chart, pin in sorted(live.items()):
         meta = fetch(chart, pin["repo"], pin["version"])
         if "_error" in meta:
-            problems.append(f"{chart}: could not read upstream metadata — {meta['_error']}")
+            if meta.get("_answered"):
+                problems.append(f"{chart}: upstream answered, and its answer rules the pin "
+                                f"out — {meta['_error']}")
+            else:
+                unread.append(f"{chart}: could not read upstream metadata — {meta['_error']}")
             continue
         rec = recorded.get(chart, {})
         if meta.get("deprecated") is True:
@@ -187,14 +198,22 @@ def check_live() -> int:
                 f"          A chart that redescribes itself may have changed product or maintainer. "
                 f"Read the upstream notes, then --sync if it is still the chart you want."
             )
-        if not problems or problems[-1].split()[0] != chart:
-            ok += 1
 
     if problems:
         print(f"FAIL  {len(problems)} problem(s) across {len(live)} pinned chart(s):")
         for p in problems:
             print(f"        {p}")
+    if unread:
+        print(f"Cannot run: {len(unread)} of {len(live)} pinned chart(s) could not be "
+              f"read from upstream, so they were compared against nothing:")
+        for u in unread:
+            print(f"        {u}")
+        print("An unreachable or rate-limiting registry is a fact about the network, not "
+              "about the catalogue.")
+    if problems:
         return 1
+    if unread:
+        return gatelib.CANNOT_RUN
     print(f"OK    all {len(live)} pinned chart(s) match their record and none is deprecated.")
     return 0
 

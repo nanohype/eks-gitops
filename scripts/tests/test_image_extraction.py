@@ -684,6 +684,16 @@ class WhatTheInventoryRenders(unittest.TestCase):
         self.assertIn("could not be fetched", unrendered[0][1])
         self.assertIn("HTTP 429", unrendered[0][1])
 
+    def test_a_pin_the_registry_ruled_out_is_a_finding(self):
+        """Exit 1, as every gate reading a chart through the client gives it."""
+        with contextlib.redirect_stdout(io.StringIO()) as out, \
+                self.assertRaises(SystemExit) as caught:
+            self.inventory_with(fetched=gate.registry.ChartUnavailable(
+                "HTTP 404 from r", answered=True))
+        self.assertEqual(caught.exception.code, 1)
+        self.assertEqual(self.commands, [])
+        self.assertIn("rules the pin out", out.getvalue())
+
     def test_a_render_that_fails_is_unrendered_with_helms_reason(self):
         (images, unrendered, _), _, _ = self.inventory_with(
             returncode=1, stdout="", stderr="Error: values don't meet the schema")

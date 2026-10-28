@@ -255,6 +255,39 @@ class ReadingARuleSetThroughTheSharedClient(unittest.TestCase):
         self.digest = "sha256:" + hashlib.sha256(good).hexdigest()
         self.cannot_run()
 
+    def test_a_manifest_of_the_wrong_shape_cannot_run(self):
+        """Upstream's manifest is checked, not indexed into: a KeyError, IndexError
+        or AttributeError would exit 1 through a traceback, the status of a finding."""
+        rulesfile = {"mediaType": gate.RULESFILE_CONFIG}
+        shapes = {
+            "not an object": [],
+            "a config that is not an object": {"config": "rulesfile"},
+            "a rule set with no layers": {"config": rulesfile},
+            "a rule set with an empty layer list": {"config": rulesfile, "layers": []},
+            "a layer that is not an object": {"config": rulesfile, "layers": ["sha256:x"]},
+            "a layer with no digest": {"config": rulesfile, "layers": [{"size": 1}]},
+        }
+        for label, manifest in shapes.items():
+            with self.subTest(label):
+                gate.failures.clear()
+                self.cannot_run(self.registry, self.registry,
+                                self.authorised(json.dumps(manifest).encode()))
+
+    def test_a_layer_that_is_not_a_rule_set_archive_cannot_run(self):
+        """It matches its digest, so it is what upstream published; it is still
+        not something this gate can count rules in."""
+        self.layer = b"not a tar archive"
+        self.digest = "sha256:" + hashlib.sha256(self.layer).hexdigest()
+        self.cannot_run()
+
+    def test_a_404_from_the_token_realm_cannot_run(self):
+        """The realm issues tokens; its 404 says nothing about whether the ref resolves."""
+        def realm_404(req):
+            if req.full_url.startswith("https://ghcr.io/token?"):
+                return fake.http_error(req.full_url, 404)
+            return self.registry(req)
+        self.cannot_run(realm_404, realm_404)
+
     def test_an_artifact_that_is_not_a_rulesfile_installs_no_rules(self):
         """A plugin's config names another media type, and no layer of it is read."""
         self.config = "application/vnd.cncf.falco.plugin.config.v1+json"
