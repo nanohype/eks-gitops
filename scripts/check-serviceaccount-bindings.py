@@ -25,23 +25,12 @@ now names the other's file, and this check makes the in-chart set unambiguous, s
 there is one list to compare rather than a rendering to reconstruct.
 """
 
-import importlib.util
-import pathlib
 import subprocess
 import sys
 from pathlib import Path
 
+import gatelib
 import yaml
-
-# Shared precondition helper, loaded by path: these are hyphenated executables
-# run from varying working directories.
-_gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
-_gs = importlib.util.spec_from_file_location("gatelib", _gl)
-assert _gs and _gs.loader, f"{_gl} is not loadable as a module"
-gatelib = importlib.util.module_from_spec(_gs)
-sys.modules["gatelib"] = gatelib
-_gs.loader.exec_module(gatelib)
-
 
 # Seconds a child process may run before the gate gives up on it. A subprocess
 # with no deadline turns an unreachable registry into a job that hangs until the

@@ -21,10 +21,9 @@ image:
   # `.Values.image.tag | default .Chart.AppVersion`, so leaving it unset makes the
   # image follow the chart pin instead of being maintained beside it. A hand-set
   # tag here has to be moved by a second act nothing performs or checks — Renovate
-  # sees the chart (argocd manager) and not this file — which is how the two spent
-  # a stretch a release apart. The contrib distro publishes the same version
-  # numbers as the core collector the appVersion tracks, verified against the
-  # registry for the version this pin resolves to.
+  # sees the chart (argocd manager) and not this file. The contrib distro
+  # publishes the same version numbers as the core collector the appVersion
+  # tracks.
 
 # Identical object names to the full tier, deliberately: the node agent forwards
 # to otel-gateway.monitoring.svc.cluster.local:4317 and the telemetry alias
@@ -37,6 +36,15 @@ fullnameOverride: otel-gateway
 presets:
   kubernetesAttributes:
     enabled: true
+
+# The preset above emits k8s_attributes only while this is on. Off, it emits
+# k8sattributes, and the pipelines in config.service name a processor the
+# generated config does not define. On is the chart's default; it is set here
+# so a chart version that flips the default cannot change the emitted name
+# underneath these pipelines, and so one that drops the key fails the render at
+# the bump, where this comment is read: the chart's values schema admits no key
+# it does not declare.
+rewriteDeprecatedComponentNames: true
 
 # Distinct from the full tier's `otel-gateway` SA. EKS permits one Pod Identity
 # association per (namespace, service account), and landing-zone's
@@ -133,7 +141,7 @@ config:
       # per selector instead of accepting whatever a datapoint carries.
       dimension_rollup_option: NoDimensionRollup
       resource_to_telemetry_conversion:
-        enabled: false
+        included: []
     awscloudwatchlogs:
       region: ${env:AWS_REGION}
       log_group_name: /aws/otel/${env:CLUSTER_NAME}/logs

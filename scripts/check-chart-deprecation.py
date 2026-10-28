@@ -29,27 +29,33 @@ ever set on it. The pin resolved, the chart installed, CI stayed green, and
 Renovate kept offering patches — a currency signal reporting "current" for a
 chart that had changed product underneath it. The description was the only
 field that moved.
+
+HOW A PIN IS READ
+
+Through the registry client in registry.py, never through helm, and never from
+the chart cache: the question is what upstream publishes now. An OCI pin is read
+over the OCI distribution API — the manifest, then the config blob `helm push`
+writes, which is the chart's Chart.yaml metadata as JSON. An HTTPS pin is read
+from the repository's index.yaml, whose entry for a version carries the same
+fields. Which statuses the client retries, which it answers and which it reports
+is stated once, in registry.py's docstring.
+
+A read that fails raises registry.ChartUnavailable, whose `answered` says what
+the failure is: upstream ruling the pin out is a finding about the pin, and any
+other failure says nothing about this catalog. --sync records nothing unless it
+read every pin, and exits with the status gatelib.refuse_chart gives the first
+pin it could not read.
 """
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import pathlib
-import subprocess
 import sys
 
+import gatelib
+import registry
 import yaml
-
-# Shared precondition helper, loaded by path: these are hyphenated executables
-# run from varying working directories.
-_gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
-_gs = importlib.util.spec_from_file_location("gatelib", _gl)
-assert _gs and _gs.loader, f"{_gl} is not loadable as a module"
-gatelib = importlib.util.module_from_spec(_gs)
-sys.modules["gatelib"] = gatelib
-_gs.loader.exec_module(gatelib)
-
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 APPSETS = ROOT / "applicationsets"
@@ -115,18 +121,6 @@ def load_records() -> dict:
     return json.loads(RECORDS.read_text()).get("charts", {})
 
 
-def fetch(chart: str, repo: str, version: str) -> dict:
-    """Chart.yaml as upstream currently publishes it."""
-    if repo.startswith("oci://"):
-        cmd = ["helm", "show", "chart", repo, "--version", version]
-    else:
-        cmd = ["helm", "show", "chart", "--repo", repo, chart, "--version", version]
-    out = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-    if out.returncode != 0:
-        return {"_error": (out.stderr or out.stdout).strip().splitlines()[-1][:200]}
-    return yaml.safe_load(out.stdout) or {}
-
-
 # ---------------------------------------------------------------- offline gate
 
 def check_offline(live: dict, recorded: dict) -> int:
@@ -168,14 +162,21 @@ def check_offline(live: dict, recorded: dict) -> int:
 # ------------------------------------------------------------------ live check
 
 def check_live() -> int:
+    """1 for a chart upstream redescribed, deprecated or ruled out; CANNOT_RUN when
+    the only failures are charts upstream could not be read for."""
     live = pins()
     recorded = load_records()
-    problems, ok = [], 0
+    problems, unread = [], []
 
     for chart, pin in sorted(live.items()):
-        meta = fetch(chart, pin["repo"], pin["version"])
-        if "_error" in meta:
-            problems.append(f"{chart}: could not read upstream metadata — {meta['_error']}")
+        try:
+            meta = registry.chart_metadata(pin["repo"], chart, pin["version"])
+        except registry.ChartUnavailable as exc:
+            if exc.answered:
+                problems.append(f"{chart}: upstream answered, and its answer rules the pin "
+                                f"out — {exc}")
+            else:
+                unread.append(f"{chart} {pin['version']} from {pin['repo']} — {exc}")
             continue
         rec = recorded.get(chart, {})
         if meta.get("deprecated") is True:
@@ -192,14 +193,17 @@ def check_live() -> int:
                 f"          A chart that redescribes itself may have changed product or maintainer. "
                 f"Read the upstream notes, then --sync if it is still the chart you want."
             )
-        if not problems or problems[-1].split()[0] != chart:
-            ok += 1
 
     if problems:
         print(f"FAIL  {len(problems)} problem(s) across {len(live)} pinned chart(s):")
         for p in problems:
             print(f"        {p}")
+    if unread:
+        gatelib.cannot_read(f"{len(unread)} of {len(live)} pinned chart(s)", unread)
+    if problems:
         return 1
+    if unread:
+        return gatelib.CANNOT_RUN
     print(f"OK    all {len(live)} pinned chart(s) match their record and none is deprecated.")
     return 0
 
@@ -210,9 +214,10 @@ def sync() -> int:
     live = pins()
     charts = {}
     for chart, pin in sorted(live.items()):
-        meta = fetch(chart, pin["repo"], pin["version"])
-        if "_error" in meta:
-            die(f"{chart}: {meta['_error']}")
+        try:
+            meta = registry.chart_metadata(pin["repo"], chart, pin["version"])
+        except registry.ChartUnavailable as exc:
+            gatelib.refuse_chart(chart, pin["version"], pin["repo"], exc)
         charts[chart] = {
             "repo": pin["repo"],
             "description": (meta.get("description") or "").strip(),
@@ -302,10 +307,8 @@ def main() -> int:
     if "--self-test" in sys.argv:
         return self_test()
     if "--sync" in sys.argv:
-        gatelib.require("helm")     # --sync resolves every chart upstream
         return sync()
     if "--live" in sys.argv:
-        gatelib.require("helm")     # --live fetches each pinned chart
         return check_live()
     return check_offline(pins(), load_records())
 

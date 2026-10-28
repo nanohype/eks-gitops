@@ -43,7 +43,7 @@ tag on a patched base removes the finding underneath a standing entry.
 Neither direction is silent and neither is permanent, and both are decisions with
 an author. That is the whole of what the advisory file buys.
 
-THE ADVISORY FILE IS ASSERTED IN FOUR DIRECTIONS
+THE ADVISORY FILE IS ASSERTED IN FOUR DIRECTIONS, AND AGAINST THE CALENDAR
 
 An acknowledgement list nobody re-checks only ever widens, so every entry is
 checked against the scan rather than trusted:
@@ -53,9 +53,32 @@ checked against the scan rather than trusted:
   * an entry whose (id, package) no image carries       -> the entry outlived its reason
   * an entry listing an image with no such finding      -> the same, per image
 
+and against the date it names for being re-read:
+
+  * an entry whose review_by date has passed            -> the decision is due again
+
+An entry that reads as a decision while leaving part of one out is reported as
+well: one that is not a mapping, one with no reason, one listing no images, and
+one whose review_by is not a YYYY-MM-DD date.
+
 Entries name images WITHOUT a tag, because the acknowledgement is about the
 image and a chart bump moves the tag. A bump that FIXES the finding therefore
 fails the third or fourth rule rather than leaving a stale excuse behind.
+
+AN ENTRY CAN CARRY A DATE IT IS RE-READ BY
+
+The four rules retire an entry when the scan stops carrying its finding. They
+cannot retire one whose finding upstream never fixes: the entry matches on every
+run and reads as a decision long after anyone last examined it. An entry whose
+case rests on exposure rather than on a pending upstream release — "this code
+path is not reached here" — is the one that ages that way, because the catalog
+can change underneath the argument while the scan stays the same.
+
+`review_by: YYYY-MM-DD` bounds that. From the day after the date the entry is a
+problem like any other, and it clears by moving the pin or by recording the
+decision again with a later date. The comparison is against the UTC date, so a
+runner's timezone does not decide which day an entry falls due. The key is
+optional; an entry without one is retired by the four rules alone.
 
 THE CANARY, WHICH IS WHAT MAKES A CLEAN RESULT MEAN ANYTHING
 
@@ -100,6 +123,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import datetime
 import importlib.util
 import json
 import pathlib
@@ -107,14 +131,7 @@ import subprocess
 import sys
 from typing import NoReturn
 
-# Shared precondition helper, loaded by path: these are hyphenated executables
-# run from varying working directories.
-_gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
-_gs = importlib.util.spec_from_file_location("gatelib", _gl)
-assert _gs and _gs.loader, f"{_gl} is not loadable as a module"
-gatelib = importlib.util.module_from_spec(_gs)
-sys.modules["gatelib"] = gatelib
-_gs.loader.exec_module(gatelib)
+import gatelib
 
 # The image inventory, from the gate that already derives it. Re-deriving the
 # population here would let the two disagree about what the fleet is, and the
@@ -224,12 +241,38 @@ def read_advisories() -> list[dict]:
     return list(entries)
 
 
-def verdict(findings: list[Finding], advisories: list[dict]) -> list[str]:
-    """Everything wrong, over a scan and an acknowledgement list.
+def review_date(value: object) -> datetime.date | None:
+    """A `review_by` value as a date, or None when it is not one.
 
-    Four directions, and only the first is the question the gate is named for.
-    The other three are what stop the acknowledgement list from becoming a
-    permanent waiver nobody re-reads.
+    YAML reads an unquoted 2027-01-31 as a date and a quoted one as a string, and
+    both spell the same decision. A timestamp carrying a time of day is refused:
+    the key names a day, and a time would make the due moment depend on a
+    timezone nothing here states.
+    """
+    if isinstance(value, datetime.datetime):
+        return None
+    if isinstance(value, datetime.date):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.date.fromisoformat(value.strip())
+        except ValueError:
+            return None
+    return None
+
+
+def verdict(findings: list[Finding], advisories: list[dict],
+            today: datetime.date | None = None) -> list[str]:
+    """Everything wrong, over a scan, an acknowledgement list and a date.
+
+    Four directions against the scan, and only the first is the question the
+    gate is named for. The other three, with each entry's review_by compared
+    against `today`, are what stop the acknowledgement list from becoming a
+    permanent waiver nobody re-reads. `today` defaults to the UTC date, so the
+    runner's timezone does not decide which day an entry falls due. An entry
+    that is not a mapping, states no reason, lists no images, or carries a
+    review_by that is not a date is reported too: each reads as a decision
+    while leaving part of one out.
 
     Deduplicated in order. One image can carry the same advisory in several
     scanned artifacts — a Go binary and the layer it sits in — and printing the
@@ -237,6 +280,8 @@ def verdict(findings: list[Finding], advisories: list[dict]) -> list[str]:
     """
     problems: list[str] = []
     blocking = [f for f in findings if f.severity == BLOCKING_SEVERITY]
+    if today is None:
+        today = datetime.datetime.now(datetime.UTC).date()
 
     by_key: dict[tuple[str, str], dict] = {}
     for entry in advisories:
@@ -255,6 +300,18 @@ def verdict(findings: list[Finding], advisories: list[dict]) -> list[str]:
             problems.append(
                 f"image-advisories.yaml: {key[0]} in {key[1]} is acknowledged with no "
                 f"reason recorded, so nothing states what would let it be removed.")
+        if "review_by" in entry:
+            due = review_date(entry["review_by"])
+            if due is None:
+                problems.append(
+                    f"image-advisories.yaml: {key[0]} in {key[1]} has review_by "
+                    f"{entry['review_by']!r}, which is not a YYYY-MM-DD date, so the "
+                    f"entry never falls due.")
+            elif due < today:
+                problems.append(
+                    f"image-advisories.yaml: {key[0]} in {key[1]} was due for review on "
+                    f"{due.isoformat()}. Re-read the finding against the catalog: move "
+                    f"the chart pin, or record the decision again with a later review_by.")
         by_key[key] = entry
 
     # 1. A blocking finding nothing acknowledges — the gate's own question.

@@ -32,40 +32,40 @@ SOURCE OF TRUTH
     reproduced with synthetic values so the render matches what ArgoCD does at
     sync (e.g. aws-load-balancer-controller refuses to render without clusterName).
 
+FETCHING
+    Each chart is fetched through registry.py's client into the chart
+    cache and rendered from that local archive, so helm never reaches a
+    registry here. A registry that answers that the pinned version is not there,
+    or lists it with no digest to check its archive against, exits 1 — a pin
+    that does not resolve to a verifiable archive is a finding about this repo.
+    Any other fetch failure, a rate limit that outlasts the client's retries
+    included, exits 2: it says nothing about the catalogue.
+
 Run ``render-addons.py`` to render every env, or ``--env staging`` for one.
-``--list`` prints the discovered units without rendering.
+``--list`` prints the discovered units without rendering. ``--fetch`` fills
+the chart cache with every pinned chart, renders nothing, and removes every
+cached file no pin names.
 """
 
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import pathlib
 import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
 
+import gatelib
+import registry
 import yaml
-
-# Shared precondition helper, loaded by path: these are hyphenated executables
-# run from varying working directories.
-_gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
-_gs = importlib.util.spec_from_file_location("gatelib", _gl)
-assert _gs and _gs.loader, f"{_gl} is not loadable as a module"
-gatelib = importlib.util.module_from_spec(_gs)
-sys.modules["gatelib"] = gatelib
-_gs.loader.exec_module(gatelib)
-
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
-# Seconds a child process may run before the gate gives up on it. A subprocess
-# with no deadline turns an unreachable registry into a job that hangs until the
-# CI runner's own ceiling, with no diagnostic naming the command that stalled.
-# NETWORK_TIMEOUT covers commands that resolve a remote chart or registry;
-# LOCAL_TIMEOUT covers commands that only read the working tree.
-NETWORK_TIMEOUT = 300
+# Seconds one helm render may run before the gate gives up on it. A subprocess
+# with no deadline turns a stalled render into a job that hangs until the CI
+# runner's own ceiling, with no diagnostic naming the command that stalled.
+RENDER_TIMEOUT = 300
 APPSET_DIR = REPO_ROOT / "applicationsets"
 ENVIRONMENTS = ["development", "staging", "production", "hub"]
 
@@ -108,6 +108,11 @@ class Unit:
     @property
     def is_oci(self) -> bool:
         return self.repo.startswith("oci://")
+
+    @property
+    def source(self) -> str:
+        """Where the registry client fetches the chart from: its OCI reference, or the repo."""
+        return self.oci_ref() if self.is_oci else self.repo
 
     def oci_ref(self) -> str:
         # ArgoCD appends the chart name to the OCI repoURL unless the repoURL
@@ -213,78 +218,7 @@ def discover() -> list[Unit]:
     return units
 
 
-CANNOT_RUN = gatelib.CANNOT_RUN
-
-
-# A chart step that fails has told you nothing about the chart's CONTENT. It
-# either could not REACH the registry, or it reached it and the pinned version
-# is not there — and those are different worlds for the operator. The first is
-# transient and says nothing about this repo; the second is a finding about a
-# pin somebody wrote. Collapsing them into one non-zero exit, with helm's
-# explanation captured and discarded, made an unreachable registry read as a
-# verdict on the catalogue.
-#
-# Matched on helm's own words rather than on its exit status, which is 1 for
-# both. The default when the text matches neither is CANNOT_RUN: an
-# unrecognised failure is not evidence of a defect in this repo.
-_UNREACHABLE = (
-    "dial tcp", "no such host", "connection refused", "i/o timeout",
-    "timeout exceeded", "network is unreachable", "tls handshake",
-    "temporary failure in name resolution", "proxyconnect",
-    "connect: ", "eof",
-)
-_NOT_FOUND = (
-    "not found", "no chart version found", "404", "chart not found",
-    "could not find",
-)
-
-
-def registry_answered(err: str) -> bool:
-    """Whether helm's complaint says the registry replied and refused the pin.
-
-    Separate from the exit path so the two worlds can be told apart without
-    running helm. A message naming both a missing chart and a broken connection
-    is the second: an unreachable registry cannot testify about what it holds.
-    """
-    low = err.lower()
-    return (any(t in low for t in _NOT_FOUND)
-            and not any(t in low for t in _UNREACHABLE))
-
-
-def helm_or_exit(cmd: list[str], what: str) -> subprocess.CompletedProcess:
-    """Run a helm command; on failure exit with the RIGHT kind of complaint."""
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=NETWORK_TIMEOUT)
-    if proc.returncode == 0:
-        return proc
-    err = ((proc.stderr or "") + (proc.stdout or "")).strip()
-    if registry_answered(err):
-        print(f"{what}: the registry answered and the pinned chart is not there.")
-        print(err)
-        print("This is a pin that does not resolve — a finding about this repo.")
-        sys.exit(1)
-    print(f"Cannot run: {what} could not reach its chart registry.")
-    print(err)
-    print("Nothing was rendered, which is not the same as nothing being wrong.")
-    print("An unreachable registry is a fact about the network, not about the catalogue.")
-    sys.exit(CANNOT_RUN)
-
-
-def add_repos(units: list[Unit]) -> dict[str, str]:
-    """``helm repo add`` every unique https chart repo; return url -> alias."""
-    aliases: dict[str, str] = {}
-    for u in units:
-        if u.is_oci or u.repo in aliases:
-            continue
-        alias = "r-" + re.sub(r"[^a-z0-9]+", "-", u.repo.lower()).strip("-")
-        aliases[u.repo] = alias
-        helm_or_exit(["helm", "repo", "add", alias, u.repo],
-                     f"adding chart repo {u.repo}")
-    if aliases:
-        helm_or_exit(["helm", "repo", "update"], "refreshing the chart repo index")
-    return aliases
-
-
-def render(unit: Unit, env: str | None, aliases: dict[str, str]) -> tuple[bool, str]:
+def render(unit: Unit, env: str | None) -> tuple[bool, str]:
     # The directory is the discriminator, and it has to be checked first.
     #
     # "this addon has no delta for this environment" and "the ApplicationSet
@@ -309,8 +243,7 @@ def render(unit: Unit, env: str | None, aliases: dict[str, str]) -> tuple[bool, 
             return (True, "no env delta")  # addon not deployed to this env
         value_files.append(env_file)
 
-    chart_ref = ([unit.oci_ref()] if unit.is_oci
-                 else [f"{aliases[unit.repo]}/{unit.chart}"])
+    archive = gatelib.chart_archive_or_exit(unit.source, unit.chart, unit.version)
 
     # Render into the namespace ArgoCD will actually sync into. `helm template`
     # otherwise reports `.Release.Namespace` as "default", so anything keyed on
@@ -318,7 +251,7 @@ def render(unit: Unit, env: str | None, aliases: dict[str, str]) -> tuple[bool, 
     # refuses to install into `default` at all — renders differently here than
     # at sync, which is the one thing this gate exists to rule out. The appset's
     # destination namespace was already being collected and then dropped.
-    cmd = ["helm", "template", unit.chart, *chart_ref, "--version", unit.version]
+    cmd = ["helm", "template", unit.chart, str(archive)]
     if unit.namespace:
         cmd += ["--namespace", unit.namespace]
     for name, value in unit.params:
@@ -326,13 +259,13 @@ def render(unit: Unit, env: str | None, aliases: dict[str, str]) -> tuple[bool, 
     for vf in value_files:
         cmd += ["-f", str(vf)]
 
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=NETWORK_TIMEOUT)
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=RENDER_TIMEOUT)
     if proc.returncode != 0:
         return (False, proc.stderr.strip() or proc.stdout.strip())
     return (True, "rendered")
 
 
-def stale_skips(units: list[Unit], aliases: dict[str, str]) -> list[tuple[str, str]]:
+def stale_skips(units: list[Unit]) -> list[tuple[str, str]]:
     """Skips whose stated reason no longer holds.
 
     Every entry in SKIP_CHARTS claims a chart cannot be fetched without
@@ -342,20 +275,18 @@ def stale_skips(units: list[Unit], aliases: dict[str, str]) -> list[tuple[str, s
     true — which is worse than never having declared it, because the entry reads
     as a considered decision.
 
-    So ask the registry. If an anonymous `helm show chart` succeeds, the chart is
-    fetchable here and the skip must go.
+    So ask the registry. If an anonymous fetch succeeds, the chart is fetchable
+    here and the skip must go.
     """
     stale = []
     for u in units:
         if u.chart not in SKIP_CHARTS:
             continue
-        ref = u.oci_ref() if u.is_oci else f"{aliases.get(u.repo, u.repo)}/{u.chart}"
-        proc = subprocess.run(
-            ["helm", "show", "chart", ref, "--version", u.version],
-            capture_output=True, text=True, timeout=NETWORK_TIMEOUT,
-        )
-        if proc.returncode == 0:
-            stale.append((u.chart, SKIP_CHARTS[u.chart]))
+        try:
+            registry.chart_archive(u.source, u.chart, u.version)
+        except registry.ChartUnavailable:
+            continue
+        stale.append((u.chart, SKIP_CHARTS[u.chart]))
     return stale
 
 
@@ -367,11 +298,32 @@ def stale_skips(units: list[Unit], aliases: dict[str, str]) -> list[tuple[str, s
 MIN_COMBINATIONS = 60
 
 
+def fetch_all(units: list[Unit]) -> int:
+    """Fetch every pinned chart into the chart cache; drop every file no pin names.
+
+    CI runs this in one job that every rendering job waits on, so a registry is
+    read once per pin set rather than once per job, and the cache that job
+    carries to the next pin set holds that set and nothing older.
+    """
+    kept = {gatelib.chart_archive_or_exit(u.source, u.chart, u.version)
+            for u in units if u.chart not in SKIP_CHARTS}
+    if not kept:
+        print("Cannot run: discovery found no chart to fetch, so an empty cache would "
+              "read as a complete one.")
+        return gatelib.CANNOT_RUN
+    dropped = registry.prune_archives(kept)
+    print(f"Fetched {len(kept)} pinned chart archive(s) into {registry.CHART_CACHE}; "
+          f"removed {dropped} cached file(s) no pin names.")
+    return 0
+
+
 def main() -> int:
-    gatelib.require('helm')
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--env", choices=ENVIRONMENTS, help="render one environment (default: all)")
     ap.add_argument("--list", action="store_true", help="print discovered units and exit")
+    ap.add_argument("--fetch", action="store_true",
+                    help="fetch every pinned chart into the chart cache, render nothing, "
+                         "and remove every cached file no pin names")
     args = ap.parse_args()
 
     units = discover()
@@ -380,17 +332,20 @@ def main() -> int:
             tag = "  [SKIP]" if u.chart in SKIP_CHARTS else ""
             print(f"{u.appset:32} {u.chart:32} {u.version:12} {u.path}{tag}")
         return 0
+    if args.fetch:
+        return fetch_all(units)
+
+    gatelib.require('helm')
 
     rendered = [u for u in units if u.chart not in SKIP_CHARTS]
     skipped = [u for u in units if u.chart in SKIP_CHARTS]
-    aliases = add_repos(rendered)
     envs = [args.env] if args.env else ENVIRONMENTS
 
     failures: list[str] = []
     count = 0
     for u in rendered:
         for env in envs:
-            ok, msg = render(u, env, aliases)
+            ok, msg = render(u, env)
             if msg == "no env delta":
                 continue
             count += 1
@@ -405,7 +360,7 @@ def main() -> int:
     for u in skipped:
         print(f"  skip  {u.chart}@{u.version} — {SKIP_CHARTS[u.chart]}")
 
-    stale = stale_skips(skipped, aliases)
+    stale = stale_skips(skipped)
     print(f"\nRendered {count} addon×env combinations, {len(failures)} failed.")
     if count < MIN_COMBINATIONS:
         print(f"FAIL  rendered {count} combination(s), under the floor of "
@@ -419,7 +374,7 @@ def main() -> int:
         for chart, reason in stale:
             print(f"\n  {chart}")
             print(f"    declared: {reason}")
-            print("    an anonymous `helm show chart` just succeeded")
+            print("    an anonymous fetch just succeeded")
         print("\nRemove the entry from SKIP_CHARTS so the addon is rendered. A skip whose")
         print("reason has expired reads as a considered decision and covers nothing.")
         return 1

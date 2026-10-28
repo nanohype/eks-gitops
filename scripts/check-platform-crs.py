@@ -40,7 +40,8 @@ question is not "is this manifest valid against the newest CRDs" but "is it
 valid against the CRDs this catalog installs", and those are different whenever
 a chart bump is in flight.
 
-It needs the network (one `helm pull` from ghcr.io, anonymous). With
+It needs the network: the operator chart is fetched anonymously from ghcr.io
+through registry.py's client, which keeps it in the chart cache. With
 --offline it skips instead of failing, so a local run without a registry is
 honest about having checked nothing.
 
@@ -52,37 +53,21 @@ honest about having checked nothing.
 from __future__ import annotations
 
 import argparse
-import importlib.util
-import pathlib
 import re
-import subprocess
 import sys
+import tarfile
 import tempfile
 from pathlib import Path
-
-# Shared precondition helper, loaded by path: these are hyphenated executables
-# run from varying working directories.
-_gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
-_gs = importlib.util.spec_from_file_location("gatelib", _gl)
-assert _gs and _gs.loader, f"{_gl} is not loadable as a module"
-gatelib = importlib.util.module_from_spec(_gs)
-sys.modules["gatelib"] = gatelib
-_gs.loader.exec_module(gatelib)
-
 
 try:
     import yaml
 except ImportError:  # pragma: no cover
     sys.exit("PyYAML required: pip install pyyaml")
 
+import gatelib
+
 ROOT = Path(__file__).resolve().parent.parent
 
-# Seconds a child process may run before the gate gives up on it. A subprocess
-# with no deadline turns an unreachable registry into a job that hangs until the
-# CI runner's own ceiling, with no diagnostic naming the command that stalled.
-# NETWORK_TIMEOUT covers commands that resolve a remote chart or registry;
-# LOCAL_TIMEOUT covers commands that only read the working tree.
-NETWORK_TIMEOUT = 300
 OPERATOR_APPSET = ROOT / "applicationsets" / "addons-agent-operator.yaml"
 CHART = "oci://ghcr.io/nanohype/eks-agent-platform/charts/operator"
 # The API-group suffix the operator chart's CRDs share. Used to count candidate
@@ -142,35 +127,15 @@ def pinned_chart_version() -> str:
 
 
 def crd_schemas(version: str, workdir: Path) -> dict[str, dict]:
-    """kind -> spec schema, from the operator chart's shipped CRDs."""
-    # An unreachable registry used to raise CalledProcessError here: exit 1 with
-    # a traceback, which is the SAME status this gate uses for "a catalog CR is
-    # inadmissible". The operator could not tell whether their manifests were
-    # rejected or whether the chart never arrived — and helm's explanation was
-    # captured and thrown away. Those are different worlds and the discrimination
-    # is the fix.
-    pull = subprocess.run(
-        ["helm", "pull", CHART, "--version", version, "--untar", "--untardir", str(workdir)],
-        capture_output=True,
-        text=True,
-        timeout=NETWORK_TIMEOUT,
-    )
-    if pull.returncode != 0:
-        err = ((pull.stderr or "") + (pull.stdout or "")).strip()
-        low = err.lower()
-        unreachable = ("dial tcp", "no such host", "connection refused", "i/o timeout",
-                       "timeout exceeded", "network is unreachable", "tls handshake",
-                       "proxyconnect", "connect: ", "eof")
-        if any(tok in low for tok in unreachable) or "not found" not in low:
-            print(f"Cannot run: could not pull operator chart {version} from {CHART}.")
-            print(err)
-            print("No CR was checked. An unreachable registry is not a statement about")
-            print("the catalog's admissibility.")
-            sys.exit(gatelib.CANNOT_RUN)
-        print(f"operator chart {version} does not exist at {CHART}:")
-        print(err)
-        print("The pin names a chart the registry does not have — a finding about this repo.")
-        sys.exit(1)
+    """kind -> spec schema, from the operator chart's shipped CRDs.
+
+    Fetched through the registry client, which tells a registry that answered
+    "no such version" (exit 1, a finding about the pin) from one that could not
+    be read (exit 2, which says nothing about the catalog's admissibility).
+    """
+    archive = gatelib.chart_archive_or_exit(CHART, "operator", version)
+    with tarfile.open(archive) as tf:
+        tf.extractall(workdir, filter="data")
     crd_dir = workdir / "operator" / "crds"
     if not crd_dir.is_dir():
         sys.exit(f"operator chart {version} ships no crds/ directory")
@@ -601,7 +566,6 @@ def self_test() -> int:
 
 
 def main() -> int:
-    gatelib.require('helm')
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--list", action="store_true", help="print what was resolved and walked")
     ap.add_argument("--offline", action="store_true", help="skip rather than fail with no registry")

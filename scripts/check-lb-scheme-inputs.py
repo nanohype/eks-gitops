@@ -54,24 +54,16 @@ THE SPLIT
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import pathlib
 import re
 import subprocess
 import sys
 import urllib.error
-import urllib.request
 from typing import NoReturn
 
-# Shared precondition helper, loaded by path: these are hyphenated executables
-# run from varying working directories.
-_gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
-_gs = importlib.util.spec_from_file_location("gatelib", _gl)
-assert _gs and _gs.loader, f"{_gl} is not loadable as a module"
-gatelib = importlib.util.module_from_spec(_gs)
-sys.modules["gatelib"] = gatelib
-_gs.loader.exec_module(gatelib)
+import gatelib
+import registry
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 APPSET = ROOT / "applicationsets" / "addons-networking.yaml"
@@ -100,7 +92,9 @@ LOOKUP_FILES = (
 )
 
 STATUSES = ("read", "unread", "plumbing")
-NETWORK_TIMEOUT = 120
+# Seconds the helm render of the cached chart archive may run. It reads only
+# local files, so a render that outlasts this has stalled rather than waited.
+RENDER_TIMEOUT = 120
 
 
 def die(msg: str) -> NoReturn:
@@ -132,18 +126,15 @@ def chart_pin() -> dict:
 
 
 def app_version(pin: dict) -> str:
-    """What the pinned chart says it installs — the tag the source is read at."""
-    gatelib.require("helm")
-    proc = subprocess.run(
-        ["helm", "show", "chart", "--repo", pin["chartRepo"], pin["chart"],
-         "--version", pin["chartVersion"]],
-        capture_output=True, text=True, timeout=NETWORK_TIMEOUT)
-    if proc.returncode != 0:
-        last = ((proc.stderr or "") + (proc.stdout or "")).strip().splitlines()
-        die(f"{pin['chart']} {pin['chartVersion']} would not resolve — "
-            f"{last[-1][:200] if last else 'no output'}")
-    import yaml
-    meta = yaml.safe_load(proc.stdout) or {}
+    """What the pinned chart says it installs — the tag the source is read at.
+
+    A chart that cannot be read exits with the status gatelib.refuse_chart
+    decides from the registry's answer.
+    """
+    try:
+        meta = registry.chart_metadata(pin["chartRepo"], pin["chart"], pin["chartVersion"])
+    except registry.ChartUnavailable as exc:
+        gatelib.refuse_chart(pin["chart"], pin["chartVersion"], pin["chartRepo"], exc)
     version = str(meta.get("appVersion") or "").strip()
     if not version:
         die(f"{pin['chart']} {pin['chartVersion']} publishes no appVersion, so which "
@@ -154,12 +145,12 @@ def app_version(pin: dict) -> str:
 def rendered_flags(pin: dict) -> dict:
     """The controller's effective configuration, as this catalog installs it."""
     gatelib.require("helm")
+    archive = gatelib.chart_archive_or_exit(pin["chartRepo"], pin["chart"], pin["chartVersion"])
     values = [str(ADDON / "values.yaml")]
     proc = subprocess.run(
-        ["helm", "template", ADDON_NAME, pin["chart"], "--repo", pin["chartRepo"],
-         "--version", pin["chartVersion"], "-n", "kube-system",
+        ["helm", "template", ADDON_NAME, str(archive), "-n", "kube-system",
          *sum((["-f", v] for v in values), []), "--set", "clusterName=fixture"],
-        capture_output=True, text=True, timeout=NETWORK_TIMEOUT)
+        capture_output=True, text=True, timeout=RENDER_TIMEOUT)
     if proc.returncode != 0:
         last = ((proc.stderr or "") + (proc.stdout or "")).strip().splitlines()
         die(f"the controller chart would not render with this catalog's values — "
@@ -187,14 +178,26 @@ def rendered_flags(pin: dict) -> dict:
 # ---------------------------------------------------------- reading the source
 
 
-def fetch(ref: str, path: str) -> str:
+def fetch(ref: str, path: str, get: registry.Getter = registry.http_get) -> str:
+    """`path` in the controller source at `ref`, read as one registry.http_get call.
+
+    The read is retried and held to a deadline as a chart read is; registry.py's
+    docstring states which answers are retried and the bound one call ends
+    within, its body included. A 404 says the controller's repository holds no
+    such file at `ref`, so the ref or a path in ENTRY_POINTS or LOOKUP_FILES
+    names something this gate cannot derive from: a finding, exit 1. Every
+    other failure says nothing about this catalog, and exits CANNOT_RUN.
+    """
     url = f"{SOURCE}/{ref}/{path}"
     try:
-        with urllib.request.urlopen(url, timeout=NETWORK_TIMEOUT) as resp:   # noqa: S310
-            return resp.read().decode("utf-8")
-    except (urllib.error.URLError, OSError) as exc:
-        die(f"could not read {path} at {ref} — {exc}. The controller source is what "
-            f"this gate derives from; without it nothing was checked.")
+        return get(url, {}, None).decode("utf-8")
+    except registry.READ_FAILURES as exc:
+        if isinstance(exc, urllib.error.HTTPError) and exc.code == 404:
+            die(f"{path} is not in the controller source at {ref}: {url} answered HTTP "
+                f"404. The controller's repository has no such ref, or the file has "
+                f"moved, and a derivation without it must not report that everything "
+                f"is accounted for.")
+        sys.exit(gatelib.cannot_read(url, [f"{type(exc).__name__}: {exc}"]))
 
 
 def function_body(src: str, name: str) -> str | None:

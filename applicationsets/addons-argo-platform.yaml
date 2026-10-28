@@ -34,7 +34,7 @@ spec:
                   namespace: argo-events
                   chartRepo: https://argoproj.github.io/argo-helm
                   chart: argo-events
-                  chartVersion: "2.4.24"
+                  chartVersion: "2.4.27"
                   path: addons/argo-platform/argo-events
                   syncWave: "51"
   template:

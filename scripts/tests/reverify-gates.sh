@@ -132,28 +132,6 @@ run 0 "controls floor" ./scripts/tests/controls.py
 run 0 "check-workflows.sh (zizmor)" ./scripts/check-workflows.sh
 run 0 "check-image-pins.py" ./scripts/check-image-pins.py
 
-# The same tree under the other helm stream shape. Some helm builds write the
-# OCI pull report to stdout, where it lands in the manifest stream the gate
-# parses and every OCI-sourced chart puts its own coordinates there; some write
-# it to stderr, where nothing sees it. A gate reading one only is green on the
-# machine that renders and red in the job that installs the other build, with
-# nothing in the tree different — which is not a verdict about the tree.
-#
-# Reproduced rather than described: a shim runs the real helm and folds stderr
-# into stdout, with a cold OCI cache, because helm reports nothing on a hit.
-mkdir -p "$SP/oldhelm"
-REAL_HELM="$(command -v helm)"
-cat > "$SP/oldhelm/helm" <<SHIM
-#!/usr/bin/env bash
-exec "$REAL_HELM" "\$@" 2>&1
-SHIM
-chmod +x "$SP/oldhelm/helm"
-run 0 "image-pins: a helm reporting OCI pulls on stdout" \
-  env "PATH=$SP/oldhelm:$PATH" \
-      "HELM_CACHE_HOME=$SP/oldhelm/cache" \
-      "HELM_CONFIG_HOME=$SP/oldhelm/config" \
-      "HELM_DATA_HOME=$SP/oldhelm/data" \
-  ./scripts/check-image-pins.py
 run 0 "check-renovate-coverage.py" ./scripts/check-renovate-coverage.py
 run 0 "check-ai-config.py" ./scripts/check-ai-config.py
 run 0 "check-alert-severity-routes.py" ./scripts/check-alert-severity-routes.py
@@ -673,6 +651,28 @@ jobs:
       - uses: actions/checkout@main
 YAML
 run nonzero "zizmor: unpinned action" ./scripts/check-workflows.sh $SP/wbad/.github/workflows
+
+# A rejection is only as useful as what reaches the log: the line naming the
+# manifest, and the two catalog commits the scan read its schemas at. The status
+# alone says neither, so the captured output is read as well.
+mkdir -p $SP/kbad
+cat > $SP/kbad/rv-bad.yaml <<'YAML'
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: rv-bad}
+data: {a: 1}
+YAML
+run 1 "kubeconform-scan: a manifest the schema rejects" ./scripts/kubeconform-scan.sh $SP/kbad
+for want in "rv-bad.yaml" "FAIL  kubeconform exited 1." \
+    "yannh/kubernetes-json-schema@$(sed -n 's/^K8S_SCHEMA_REF="\(.*\)"$/\1/p' scripts/kubeconform-scan.sh)" \
+    "datreeio/CRDs-catalog@$(sed -n 's/^CRD_CATALOG_REF="\(.*\)"$/\1/p' scripts/kubeconform-scan.sh)"; do
+  if grep -qF -- "$want" "$OUT"; then
+    printf "  ok    %-52s\n" "kubeconform-scan: the log names ${want%%@*}"; pass=$((pass+1))
+  else
+    printf "  FAIL  %-52s not in the output\n" "kubeconform-scan: the log names ${want%%@*}"
+    sed 's/^/          /' "$OUT"; fail=$((fail+1))
+  fi
+done
 
 # renovate-config-validator is deliberately absent from this harness: it runs
 # through `npx --package renovate`, which fetches the whole Renovate package and
