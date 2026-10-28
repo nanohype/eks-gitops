@@ -895,15 +895,15 @@ F=scripts/check-chart-deprecation.py
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('    except registry.ChartUnavailable as err:',
-              '    except KeyError as err:', 1)
+m = s.replace('        except registry.ChartUnavailable as exc:\n            if exc.answered:\n',
+              '        except KeyError as exc:\n            if exc.answered:\n', 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
-rejects "fetch: let an unreadable chart raise" test_chart_deprecation \
-  test_an_http_status_names_the_status_and_the_url \
-  test_an_exhausted_rate_limit_is_reported_in_its_own_words \
-  test_a_network_error_is_reported
+rejects "live: let an unreadable chart raise" test_chart_deprecation \
+  test_a_404_names_the_status_and_the_url_as_a_finding \
+  test_an_exhausted_rate_limit_cannot_run_in_its_own_words \
+  test_a_network_error_cannot_run
 res $F
 
 # A chart upstream could not be read for says nothing about the pin. Filing it
@@ -911,25 +911,29 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('            if meta.get("_answered"):\n', '            if True:\n', 1)
+m = s.replace('            if exc.answered:\n                problems.append(',
+              '            if True:\n                problems.append(', 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
 rejects "live: read every unreadable chart as a finding" test_chart_deprecation \
   test_an_unreadable_chart_cannot_run \
-  test_a_finding_outweighs_a_chart_that_could_not_be_read
+  test_a_finding_outweighs_a_chart_that_could_not_be_read \
+  test_an_exhausted_rate_limit_cannot_run_in_its_own_words
 res $F
 
+# The same holds for --sync: a pin it could not read stops it with the status
+# for a read that was not made, and an exit of 1 there reads as a finding.
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('"_answered": err.answered}', '}', 1)
+m = s.replace('            gatelib.refuse_chart(chart, pin["version"], pin["repo"], exc)\n',
+              '            die(f"{chart}: {exc}")\n', 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
-rejects "fetch: drop whether upstream answered" test_chart_deprecation \
-  test_an_http_status_names_the_status_and_the_url \
-  test_an_exhausted_rate_limit_is_reported_in_its_own_words
+rejects "sync: read every unreadable chart as a finding" test_chart_deprecation \
+  test_an_unreadable_chart_stops_the_sync_and_cannot_run
 res $F
 
 
@@ -1034,12 +1038,56 @@ F=scripts/check-lb-scheme-inputs.py
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('        if exc.answered:\n            die(', '        if True:\n            die(', 1)
+m = s.replace(
+    '        gatelib.refuse_chart(pin["chart"], pin["chartVersion"], pin["chartRepo"], exc)\n',
+    '        die(f"{pin[\'chart\']} {pin[\'chartVersion\']} does not resolve — {exc}")\n', 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
 rejects "metadata: read every unreadable chart as a finding" test_lb_scheme_inputs \
   test_metadata_that_could_not_be_read_cannot_run
+res $F
+
+# urlopen's timeout bounds each wait on the socket, not a whole response. A
+# source file read with urlopen alone keeps reading a server that trickles its
+# body inside every timeout, and the scheduled job is cancelled saying nothing.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        return get(url, {}, None).decode("utf-8")\n',
+              '        with urllib.request.urlopen(url, timeout=120) as resp:\n'
+              '            return resp.read().decode("utf-8")\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "source: read a controller file with urlopen alone" test_lb_scheme_inputs \
+  test_a_body_that_trickles_past_the_deadline_cannot_run \
+  test_a_rate_limit_is_waited_out_as_the_host_asks
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        if isinstance(exc, urllib.error.HTTPError) and exc.code == 404:\n',
+              '        if isinstance(exc, urllib.error.HTTPError) and exc.code == 0:\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "source: read a 404 as the network's fault" test_lb_scheme_inputs \
+  test_a_file_the_ref_does_not_hold_is_a_finding
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        sys.exit(gatelib.cannot_read(url, [f"{type(exc).__name__}: {exc}"]))\n',
+              '        die(f"could not read {path} at {ref} — {exc}")\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "source: read every unreadable file as a finding" test_lb_scheme_inputs \
+  test_a_source_that_could_not_be_read_cannot_run \
+  test_a_body_that_trickles_past_the_deadline_cannot_run
 res $F
 
 edit $F <<'PY'
@@ -1340,7 +1388,7 @@ echo "RESULT pass=$pass fail=$fail"
 # The floor this harness owes for the same reason the gates owe theirs: with
 # every `rejects` line deleted it would report pass=0 fail=0 and exit 0, which is
 # a green run over nothing planted.
-MIN_PROBES=88
+MIN_PROBES=91
 total=$((pass + fail))
 if [ "$total" -lt "$MIN_PROBES" ]; then
   echo "FAIL  ran $total probe(s), under the floor of $MIN_PROBES — this harness"

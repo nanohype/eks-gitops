@@ -39,6 +39,12 @@ writes, which is the chart's Chart.yaml metadata as JSON. An HTTPS pin is read
 from the repository's index.yaml, whose entry for a version carries the same
 fields. Which statuses the client retries, which it answers and which it reports
 is stated once, in registry.py's docstring.
+
+A read that fails raises registry.ChartUnavailable, whose `answered` says what
+the failure is: upstream ruling the pin out is a finding about the pin, and any
+other failure says nothing about this catalog. --sync records nothing unless it
+read every pin, and exits with the status gatelib.refuse_chart gives the first
+pin it could not read.
 """
 
 from __future__ import annotations
@@ -115,18 +121,6 @@ def load_records() -> dict:
     return json.loads(RECORDS.read_text()).get("charts", {})
 
 
-def fetch(chart: str, repo: str, version: str) -> dict:
-    """Chart.yaml as upstream publishes it, or {"_error": why not, "_answered": ...}.
-
-    `_answered` is the client's ChartUnavailable.answered: True when upstream
-    answered and ruled the pin out, False when it could not be read.
-    """
-    try:
-        return registry.chart_metadata(repo, chart, version)
-    except registry.ChartUnavailable as err:
-        return {"_error": str(err)[:200], "_answered": err.answered}
-
-
 # ---------------------------------------------------------------- offline gate
 
 def check_offline(live: dict, recorded: dict) -> int:
@@ -175,14 +169,14 @@ def check_live() -> int:
     problems, unread = [], []
 
     for chart, pin in sorted(live.items()):
-        meta = fetch(chart, pin["repo"], pin["version"])
-        if "_error" in meta:
-            if meta.get("_answered"):
+        try:
+            meta = registry.chart_metadata(pin["repo"], chart, pin["version"])
+        except registry.ChartUnavailable as exc:
+            if exc.answered:
                 problems.append(f"{chart}: upstream answered, and its answer rules the pin "
-                                f"out — {meta['_error']}")
+                                f"out — {exc}")
             else:
-                unread.append(f"{chart} {pin['version']} from {pin['repo']} — "
-                              f"{meta['_error']}")
+                unread.append(f"{chart} {pin['version']} from {pin['repo']} — {exc}")
             continue
         rec = recorded.get(chart, {})
         if meta.get("deprecated") is True:
@@ -220,9 +214,10 @@ def sync() -> int:
     live = pins()
     charts = {}
     for chart, pin in sorted(live.items()):
-        meta = fetch(chart, pin["repo"], pin["version"])
-        if "_error" in meta:
-            die(f"{chart}: {meta['_error']}")
+        try:
+            meta = registry.chart_metadata(pin["repo"], chart, pin["version"])
+        except registry.ChartUnavailable as exc:
+            gatelib.refuse_chart(chart, pin["version"], pin["repo"], exc)
         charts[chart] = {
             "repo": pin["repo"],
             "description": (meta.get("description") or "").strip(),

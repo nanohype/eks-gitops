@@ -21,7 +21,11 @@ import json
 import pathlib
 import tempfile
 import unittest
+import urllib.error
+import urllib.request
+from unittest import mock
 
+import fakeregistry as fake
 from gateloader import load
 
 gate = load("check-lb-scheme-inputs")
@@ -550,7 +554,8 @@ class ReadingThePinnedChart(unittest.TestCase):
     def test_metadata_ruled_out_by_the_repository_is_a_finding(self):
         code, said = self.exit_status("chart_metadata", True, gate.app_version)
         self.assertEqual(code, 1)
-        self.assertIn("does not resolve", said)
+        self.assertIn(f"{PIN['chart']} {PIN['chartVersion']}: {PIN['chartRepo']} answered, "
+                      f"and its answer rules the pin out", said)
 
     def test_metadata_that_could_not_be_read_cannot_run(self):
         code, said = self.exit_status("chart_metadata", False, gate.app_version)
@@ -573,6 +578,85 @@ class ReadingThePinnedChart(unittest.TestCase):
             self.assertEqual(gate.app_version(PIN), "v2.8.1")
         finally:
             gate.registry.chart_metadata = real
+
+
+class ReadingTheControllerSource(unittest.TestCase):
+    """A source file is one registry client call, so its read ends at that call's bound.
+
+    urlopen's timeout bounds each wait on the socket, not a whole response, so
+    read with urlopen alone a server that keeps sending inside every timeout
+    keeps the read going for as long as it likes, and the scheduled job is
+    cancelled with nothing said about which host held it. The server here is
+    scripted at urlopen, and urlopen itself answers from it as well as the
+    client does, so what is held is the read this gate makes, however it makes
+    it.
+    """
+
+    REF = "v2.8.1"
+    PATH = "pkg/annotations/constants.go"
+    URL = f"{gate.SOURCE}/{REF}/{PATH}"
+    SOURCE = b"package annotations\n" * 2048
+
+    def read(self, t: fake.Transport):
+        """(what fetch returned, its exit status or None, everything it printed)."""
+        out = io.StringIO()
+        with mock.patch.object(urllib.request, "urlopen", t.urlopen), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            try:
+                return gate.fetch(self.REF, self.PATH, t.bind(gate.registry.http_get)), \
+                    None, out.getvalue()
+            except SystemExit as exc:
+                return None, exc.code, out.getvalue()
+
+    def test_a_source_file_is_read_through_the_client(self):
+        t = fake.Transport(self.SOURCE)
+        text, code, _ = self.read(t)
+        self.assertIsNone(code)
+        self.assertEqual(text, self.SOURCE.decode())
+        self.assertEqual(t.urls(), [self.URL])
+        self.assertEqual(t.requests[0].get_header("User-agent"), gate.registry.USER_AGENT)
+
+    def test_a_body_that_trickles_past_the_deadline_cannot_run(self):
+        """Each read of the socket is charged just under HTTP_TIMEOUT, so no wait
+        times out. The read is reported once the call's deadline has passed, with
+        the rest of the body unread, and within CALL_BOUND_SECONDS."""
+        t = fake.Transport()
+        t.steps.append(t.trickle(self.SOURCE, piece=256,
+                                 seconds=gate.registry.HTTP_TIMEOUT - 1))
+        text, code, said = self.read(t)
+        self.assertIsNone(text, "a body trickled past the deadline was read whole")
+        self.assertEqual(code, gate.gatelib.CANNOT_RUN)
+        self.assertIn(f"Cannot run: {self.URL} could not be read:", said)
+        self.assertIn(f"ran out while the body of {self.URL} was arriving", said)
+        self.assertGreater(t.responses[0].wire.unsent(), 0)
+        self.assertLessEqual(t.elapsed, gate.registry.CALL_BOUND_SECONDS)
+
+    def test_a_rate_limit_is_waited_out_as_the_host_asks(self):
+        t = fake.Transport(fake.http_error(self.URL, 429, {"Retry-After": "7"}), self.SOURCE)
+        text, code, _ = self.read(t)
+        self.assertIsNone(code)
+        self.assertEqual(text, self.SOURCE.decode())
+        self.assertEqual(t.waits, [7.0])
+
+    def test_a_file_the_ref_does_not_hold_is_a_finding(self):
+        text, code, said = self.read(fake.Transport(fake.http_error(self.URL, 404)))
+        self.assertIsNone(text)
+        self.assertEqual(code, 1)
+        self.assertIn(f"{self.PATH} is not in the controller source at {self.REF}", said)
+
+    def test_a_source_that_could_not_be_read_cannot_run(self):
+        """Only a 404 says the file is not there. A server fault, a network error or
+        a rate limit that outlasts the retries says nothing about this catalog."""
+        for name, steps in (
+                ("server fault", [fake.http_error(self.URL, 500)]),
+                ("network error", [urllib.error.URLError("no route")]),
+                ("rate limit", [fake.http_error(self.URL, 429)]
+                 * gate.registry.RETRY_ATTEMPTS)):
+            with self.subTest(name):
+                text, code, said = self.read(fake.Transport(*steps))
+                self.assertIsNone(text)
+                self.assertEqual(code, gate.gatelib.CANNOT_RUN)
+                self.assertIn(f"Cannot run: {self.URL} could not be read:", said)
 
 
 class FindingThePin(unittest.TestCase):
