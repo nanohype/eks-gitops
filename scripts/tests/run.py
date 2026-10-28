@@ -39,6 +39,10 @@ EXPECTED = (
     "test_falco_rule_floor",
     "test_alert_severity_routes",
     "test_gatelib",
+    # The registry client every chart and OCI artifact is read through: which
+    # statuses it retries, answers or reports, and the digest each archive is
+    # checked against when it is fetched and again when the cache hands it out.
+    "test_registry",
     # The harness layer. controls.py excuses the harnesses from carrying a
     # positive control because each asserts its own outcome when it runs, and
     # the reader deciding whether anything runs them is covered nowhere else.
@@ -82,6 +86,13 @@ EXPECTED = (
     # The walk that derives which inputs decide a load balancer's scheme, and the
     # two verdicts that make an input nobody thought about visible.
     "test_lb_scheme_inputs",
+    # The scheduled provenance check: the sentence a failed chart read becomes in
+    # the live verdict, the offline verdict, and what --sync records from
+    # upstream. The read itself is registry.py's, held in test_registry.
+    "test_chart_deprecation",
+    # What a failed schema scan leaves in the log: kubeconform's own output, the
+    # status it exited with, and the catalog commits the run read.
+    "test_kubeconform_scan",
 )
 
 # A floor well under the real count. It catches "discovery found almost nothing",
@@ -180,11 +191,17 @@ COMBINED_FLOOR = 45
 MAX_UNCOVERED_GATES = 9
 
 PER_GATE_FLOORS = {
-    "scripts/check-named-things.py": 35,
-    "scripts/check-renovate-coverage.py": 88,
-    "scripts/check-label-values.py": 33,
+    "scripts/check-named-things.py": 40,
+    "scripts/check-renovate-coverage.py": 90,
+    "scripts/check-label-values.py": 40,
     "scripts/check-sync-waves.py": 10,
-    "scripts/gatelib.py": 55,
+    "scripts/gatelib.py": 70,
+    # The registry client checks every chart archive against a digest and
+    # handles a pull token. That is signature verification's path in the sense
+    # testing-rubric's `security-critical-100` uses, so its floor is that rule's
+    # 100 rather than a ratchet: a branch no test reaches here is a check that
+    # nothing proves still checks.
+    "scripts/registry.py": 100,
     # The security-critical gates, at the rubric's per-file override; see
     # THE ASSERTION THAT IS NOT A NUMBER above.
     "scripts/check-policy-admission.py": 100,
@@ -193,19 +210,21 @@ PER_GATE_FLOORS = {
     # The control-exempt gates. Their floors are what keeps the verdict half
     # covered after the module that covers it is edited.
     "scripts/check-platform-crs.py": 51,
-    "scripts/validate-dashboards.py": 49,
-    "scripts/render-addons.py": 40,
-    "scripts/check-log-volume-budget.py": 58,
-    "scripts/check-falco-rule-floor.py": 28,
+    "scripts/validate-dashboards.py": 50,
+    "scripts/render-addons.py": 65,
+    "scripts/check-log-volume-budget.py": 60,
+    "scripts/check-falco-rule-floor.py": 50,
     "scripts/check-alert-severity-routes.py": 95,
-    "scripts/check-image-vulnerabilities.py": 41,
-    "scripts/check-image-pins.py": 88,
+    "scripts/check-image-vulnerabilities.py": 50,
+    "scripts/check-image-pins.py": 90,
     # The half of the directory-size gate that decides the verdict. The rest is
     # `--sync`, `--live` and `--self-test`, which run against a clone.
     "scripts/check-directory-manifest-size.py": 70,
     # The Go reading and the offline verdict. `--sync`, `--live` and the chart
     # render reach the network and are covered by stubbing what they return.
-    "scripts/check-lb-scheme-inputs.py": 65,
+    "scripts/check-lb-scheme-inputs.py": 70,
+    # Both verdicts over stubbed reads, --sync and --self-test.
+    "scripts/check-chart-deprecation.py": 85,
 }
 
 

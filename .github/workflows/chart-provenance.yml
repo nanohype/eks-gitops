@@ -28,18 +28,23 @@ on:
 permissions:
   contents: read
 
+# The jobs that read through scripts/registry.py's client set a timeout above
+# registry.CALL_BOUND_SECONDS, one client call's deadline plus the socket read a
+# body still arriving then can have under way, for the reason ci.yml's charts
+# job records: a call the registry throttles to its deadline, or trickles a body
+# past it, reports which host it was reading before the job is cancelled, and a
+# registry that throttles call after call ends the job at its timeout rather
+# than at the runner's ceiling. test_registry holds them to it.
 jobs:
   live:
     name: pinned charts still are what they were
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-
-      - name: Install Helm
-        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -86,6 +91,7 @@ jobs:
   scheme-inputs:
     name: the controller still decides schemes the way the policy reads them
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

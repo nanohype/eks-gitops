@@ -50,25 +50,17 @@ network outage as a defect in the catalogue.
 
 from __future__ import annotations
 
-import importlib.util
 import io
-import json
 import pathlib
 import subprocess
 import sys
 import tarfile
 import urllib.error
-import urllib.request
 from typing import NoReturn
 
+import gatelib
+import registry
 import yaml
-
-_gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
-_gs = importlib.util.spec_from_file_location("gatelib", _gl)
-assert _gs and _gs.loader, f"{_gl} is not loadable as a module"
-gatelib = importlib.util.module_from_spec(_gs)
-sys.modules["gatelib"] = gatelib
-_gs.loader.exec_module(gatelib)
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 APPSET = ROOT / "applicationsets" / "addons-security.yaml"
@@ -111,7 +103,7 @@ REGISTRY = "ghcr.io"
 # every rulesfile to this repository prefix.
 INDEX_PREFIX = "falcosecurity/rules"
 
-NETWORK_TIMEOUT = 120
+RENDER_TIMEOUT = 120
 
 failures: list[str] = []
 
@@ -153,13 +145,12 @@ def environments() -> list[str]:
                   for p in ADDON.glob("values-*.yaml"))
 
 
-def render(repo: str, chart: str, version: str, env: str) -> tuple[dict, dict]:
+def render(archive: pathlib.Path, env: str) -> tuple[dict, dict]:
     """The falco and falcoctl configs as the chart produces them for one env."""
-    cmd = ["helm", "template", "falco", chart, "--repo", repo, "--version", version,
-           "-n", "falco",
+    cmd = ["helm", "template", "falco", str(archive), "-n", "falco",
            "-f", str(ADDON / "values.yaml"),
            "-f", str(ADDON / f"values-{env}.yaml")]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=NETWORK_TIMEOUT)
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=RENDER_TIMEOUT)
     if proc.returncode != 0:
         cannot_run(f"Cannot run: helm could not render falco for {env}.",
                    ((proc.stderr or "") + (proc.stdout or "")).strip())
@@ -180,68 +171,87 @@ def render(repo: str, chart: str, version: str, env: str) -> tuple[dict, dict]:
     return found["falco"], found["falcoctl"]
 
 
-def ghcr(repo: str, path: str, accept: str | None = None) -> bytes:
-    """One anonymous ghcr.io read, classifying its own failure."""
-    try:
-        token_url = (f"https://{REGISTRY}/token?scope=repository:{repo}:pull"
-                     f"&service={REGISTRY}")
-        with urllib.request.urlopen(token_url, timeout=NETWORK_TIMEOUT) as resp:
-            token = json.load(resp)["token"]
-        req = urllib.request.Request(f"https://{REGISTRY}/v2/{repo}/{path}",
-                                     headers={"Authorization": f"Bearer {token}"})
-        if accept:
-            req.add_header("Accept", accept)
-        with urllib.request.urlopen(req, timeout=NETWORK_TIMEOUT) as resp:
-            return resp.read()
-    except urllib.error.HTTPError as exc:
-        # The registry answered. 404 on a pinned major is a finding about a ref
-        # in this repo; anything else is not this gate's to interpret.
-        raise _RegistrySaidNo(exc.code) from exc
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        cannot_run(f"Cannot run: {REGISTRY} could not be reached — {exc}.",
-                   "An unreachable registry is a fact about the network, not about "
-                   "the rule sets this repo pins.")
+# What a rulesfile ref's manifest is read as. An index is accepted so a plugin
+# published multi-arch resolves to something rather than a 404, and is then
+# skipped below like any other artifact that installs no rules.
+RULESFILE_ACCEPT = ("application/vnd.oci.image.manifest.v1+json,"
+                    "application/vnd.oci.image.index.v1+json")
 
 
-class _RegistrySaidNo(Exception):
-    def __init__(self, code: int):
-        super().__init__(str(code))
-        self.code = code
+def _unreachable(where: str, exc: BaseException) -> NoReturn:
+    sys.exit(gatelib.cannot_read(where, [f"{type(exc).__name__}: {exc}"]))
 
 
-def rulesfile(ref: str) -> dict[str, str] | None:
-    """Filenames and contents a rulesfile ref installs, or None for a plugin."""
+def rulesfile_layer(manifest: dict, where: str) -> str | None:
+    """The digest of the layer a rulesfile manifest installs, or None for a plugin.
+
+    The manifest is upstream's, so its shape is checked rather than indexed
+    into. A config or a layer list that is not what the OCI image spec
+    describes is a fact about the registry's answer, not about a ref in this
+    repo, so the gate cannot run on it; indexed into unchecked, it escapes as a
+    traceback with exit status 1, the status this gate gives a finding.
+    """
+    config = manifest.get("config")
+    if config is not None and not isinstance(config, dict):
+        cannot_run(f"Cannot run: {where} answered a manifest whose config is not an "
+                   f"object, so whether it is a rule set could not be read.")
+    if (config or {}).get("mediaType") != RULESFILE_CONFIG:
+        return None  # a plugin, or a multi-arch index — installs no rules
+    layers = manifest.get("layers")
+    first = layers[0] if isinstance(layers, list) and layers else None
+    digest = first.get("digest") if isinstance(first, dict) else None
+    if not isinstance(digest, str) or not digest:
+        cannot_run(f"Cannot run: {where} answered a rule-set manifest with no layer "
+                   f"digest to read its rules from.")
+    return digest
+
+
+def rulesfile(ref: str,
+              get: registry.Getter = registry.http_get) -> dict[str, str] | None:
+    """Filenames and contents a rulesfile ref installs, or None for a plugin.
+
+    Read through registry.py's client, so a 429 waits as long as the
+    registry asks. The registry answering 404 for the ref is a finding about a
+    ref in this repo; every other status, a rate limit that outlasts the
+    retries, every failure in registry.READ_FAILURES, and a manifest or layer
+    that is not what the OCI image spec and the rulesfile format describe are
+    not this gate's to interpret.
+    """
     name, tag = ref.rsplit(":", 1)
     repo = name if "/" in name else f"{INDEX_PREFIX}/{name}"
     repo = repo[len(f"{REGISTRY}/"):] if repo.startswith(f"{REGISTRY}/") else repo
+    oci = registry.OciRepository(f"{REGISTRY}/{repo}", get)
     try:
-        manifest = json.loads(ghcr(
-            repo, f"manifests/{tag}",
-            "application/vnd.oci.image.manifest.v1+json,"
-            "application/vnd.oci.image.index.v1+json"))
-    except _RegistrySaidNo as exc:
+        manifest = oci.manifest(tag, RULESFILE_ACCEPT)
+    except urllib.error.HTTPError as exc:
         if exc.code == 404:
             fail(f"ref {ref!r} does not resolve: {REGISTRY}/{repo} answered 404 for "
                  f"tag {tag!r}. falcoctl installs nothing for it, so every rule that "
                  f"set carries is absent from every node.")
             return None
-        cannot_run(f"Cannot run: {REGISTRY} answered {exc.code} for {repo}:{tag}.")
-    if manifest.get("config", {}).get("mediaType") != RULESFILE_CONFIG:
-        return None  # a plugin, or a multi-arch index — installs no rules
+        _unreachable(f"{REGISTRY}/{repo}:{tag}", exc)
+    except registry.READ_FAILURES as exc:
+        _unreachable(f"{REGISTRY}/{repo}:{tag}", exc)
+    digest = rulesfile_layer(manifest, f"{REGISTRY}/{repo}:{tag}")
+    if digest is None:
+        return None
     try:
-        blob = ghcr(repo, f"blobs/{manifest['layers'][0]['digest']}")
-    except _RegistrySaidNo as exc:
-        cannot_run(f"Cannot run: {REGISTRY} answered {exc.code} for a layer of "
-                   f"{repo}:{tag}.")
+        blob = oci.blob(digest)
+    except registry.READ_FAILURES as exc:
+        _unreachable(f"a layer of {REGISTRY}/{repo}:{tag}", exc)
     out: dict[str, str] = {}
-    with tarfile.open(fileobj=io.BytesIO(blob)) as tf:
-        for member in tf.getmembers():
-            if not member.isfile():
-                continue
-            handle = tf.extractfile(member)
-            if handle is None:
-                continue
-            out[pathlib.PurePosixPath(member.name).name] = handle.read().decode()
+    try:
+        with tarfile.open(fileobj=io.BytesIO(blob)) as tf:
+            for member in tf.getmembers():
+                if not member.isfile():
+                    continue
+                handle = tf.extractfile(member)
+                if handle is None:
+                    continue
+                out[pathlib.PurePosixPath(member.name).name] = handle.read().decode()
+    except (tarfile.TarError, UnicodeDecodeError) as exc:
+        cannot_run(f"Cannot run: the layer of {REGISTRY}/{repo}:{tag} matches its digest "
+                   f"and is not a rule-set archive — {type(exc).__name__}: {exc}.")
     return out
 
 
@@ -269,6 +279,7 @@ def read_paths(falco: dict, env: str) -> tuple[set[str], set[str]]:
 def main() -> int:
     gatelib.require("helm")
     repo, chart, version = chart_pin()
+    archive = gatelib.chart_archive_or_exit(repo, chart, version)
     envs = environments()
     if not envs:
         fail(f"{ADDON.relative_to(ROOT)} carries no values-<env>.yaml, so this gate "
@@ -276,7 +287,7 @@ def main() -> int:
 
     summary: list[tuple[str, int, int]] = []
     for env in envs:
-        falco, falcoctl = render(repo, chart, version, env)
+        falco, falcoctl = render(archive, env)
         rel = f"addons/security/falco/values-{env}.yaml"
 
         floor = falco.get("priority")

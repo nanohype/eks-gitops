@@ -21,7 +21,11 @@ import json
 import pathlib
 import tempfile
 import unittest
+import urllib.error
+import urllib.request
+from unittest import mock
 
+import fakeregistry as fake
 from gateloader import load
 
 gate = load("check-lb-scheme-inputs")
@@ -516,6 +520,180 @@ class WritingTheRecord(unittest.TestCase):
         self.assertEqual(written["controllerConfig"]["args"]["default-load-balancer-scheme"],
                          "internet-facing")
         self.assertTrue(written["controllerConfig"]["serviceMutatorWebhook"])
+
+
+class ReadingThePinnedChart(unittest.TestCase):
+    """Exit 1 only when the chart repository answered and ruled the pin out.
+
+    The metadata read and the archive read fail the same ways, and each maps
+    to the status registry.ChartUnavailable carries: a pin the repository says
+    is not there is a finding about this catalog, and a repository that could
+    not be read says nothing about it.
+    """
+
+    def unavailable(self, answered):
+        def read(*args, **kwargs):
+            raise gate.registry.ChartUnavailable("scripted", answered=answered)
+        return read
+
+    def exit_status(self, attr, answered, call):
+        real = getattr(gate.registry, attr)
+        setattr(gate.registry, attr, self.unavailable(answered))
+        real_require = gate.gatelib.require
+        gate.gatelib.require = lambda tool: None
+        try:
+            with self.assertRaises(SystemExit) as caught, \
+                    contextlib.redirect_stdout(io.StringIO()) as out, \
+                    contextlib.redirect_stderr(io.StringIO()) as err:
+                call(PIN)
+        finally:
+            setattr(gate.registry, attr, real)
+            gate.gatelib.require = real_require
+        return caught.exception.code, out.getvalue() + err.getvalue()
+
+    def test_metadata_ruled_out_by_the_repository_is_a_finding(self):
+        code, said = self.exit_status("chart_metadata", True, gate.app_version)
+        self.assertEqual(code, 1)
+        self.assertIn(f"{PIN['chart']} {PIN['chartVersion']}: {PIN['chartRepo']} answered, "
+                      f"and its answer rules the pin out", said)
+
+    def test_metadata_that_could_not_be_read_cannot_run(self):
+        code, said = self.exit_status("chart_metadata", False, gate.app_version)
+        self.assertEqual(code, gate.gatelib.CANNOT_RUN)
+        self.assertIn(f"Cannot run: {PIN['chart']} {PIN['chartVersion']} from "
+                      f"{PIN['chartRepo']} could not be read:", said)
+
+    def test_an_archive_ruled_out_by_the_repository_is_a_finding(self):
+        code, _ = self.exit_status("chart_archive", True, gate.rendered_flags)
+        self.assertEqual(code, 1)
+
+    def test_an_archive_that_could_not_be_read_cannot_run(self):
+        code, _ = self.exit_status("chart_archive", False, gate.rendered_flags)
+        self.assertEqual(code, gate.gatelib.CANNOT_RUN)
+
+    def test_the_app_version_is_what_the_chart_says_it_installs(self):
+        real = gate.registry.chart_metadata
+        gate.registry.chart_metadata = lambda *a, **k: {"appVersion": " v2.8.1 "}
+        try:
+            self.assertEqual(gate.app_version(PIN), "v2.8.1")
+        finally:
+            gate.registry.chart_metadata = real
+
+
+class ReadingTheControllerSource(unittest.TestCase):
+    """A source file is one registry client call, so its read ends at that call's bound.
+
+    urlopen's timeout bounds each wait on the socket, not a whole response, so
+    read with urlopen alone a server that keeps sending inside every timeout
+    keeps the read going for as long as it likes, and the scheduled job is
+    cancelled with nothing said about which host held it. The server here is
+    scripted at urlopen, and urlopen itself answers from it as well as the
+    client does, so what is held is the read this gate makes, however it makes
+    it.
+    """
+
+    REF = "v2.8.1"
+    PATH = "pkg/annotations/constants.go"
+    URL = f"{gate.SOURCE}/{REF}/{PATH}"
+    SOURCE = b"package annotations\n" * 2048
+
+    def read(self, t: fake.Transport):
+        """(what fetch returned, its exit status or None, everything it printed)."""
+        out = io.StringIO()
+        with mock.patch.object(urllib.request, "urlopen", t.urlopen), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            try:
+                return gate.fetch(self.REF, self.PATH, t.bind(gate.registry.http_get)), \
+                    None, out.getvalue()
+            except SystemExit as exc:
+                return None, exc.code, out.getvalue()
+
+    def test_a_source_file_is_read_through_the_client(self):
+        t = fake.Transport(self.SOURCE)
+        text, code, _ = self.read(t)
+        self.assertIsNone(code)
+        self.assertEqual(text, self.SOURCE.decode())
+        self.assertEqual(t.urls(), [self.URL])
+        self.assertEqual(t.requests[0].get_header("User-agent"), gate.registry.USER_AGENT)
+
+    def test_a_body_that_trickles_past_the_deadline_cannot_run(self):
+        """Each read of the socket is charged just under HTTP_TIMEOUT, so no wait
+        times out. The read is reported once the call's deadline has passed, with
+        the rest of the body unread, and within CALL_BOUND_SECONDS."""
+        t = fake.Transport()
+        t.steps.append(t.trickle(self.SOURCE, piece=256,
+                                 seconds=gate.registry.HTTP_TIMEOUT - 1))
+        text, code, said = self.read(t)
+        self.assertIsNone(text, "a body trickled past the deadline was read whole")
+        self.assertEqual(code, gate.gatelib.CANNOT_RUN)
+        self.assertIn(f"Cannot run: {self.URL} could not be read:", said)
+        self.assertIn(f"ran out while the body of {self.URL} was arriving", said)
+        self.assertGreater(t.responses[0].wire.unsent(), 0)
+        self.assertLessEqual(t.elapsed, gate.registry.CALL_BOUND_SECONDS)
+
+    def test_a_rate_limit_is_waited_out_as_the_host_asks(self):
+        t = fake.Transport(fake.http_error(self.URL, 429, {"Retry-After": "7"}), self.SOURCE)
+        text, code, _ = self.read(t)
+        self.assertIsNone(code)
+        self.assertEqual(text, self.SOURCE.decode())
+        self.assertEqual(t.waits, [7.0])
+
+    def test_a_file_the_ref_does_not_hold_is_a_finding(self):
+        text, code, said = self.read(fake.Transport(fake.http_error(self.URL, 404)))
+        self.assertIsNone(text)
+        self.assertEqual(code, 1)
+        self.assertIn(f"{self.PATH} is not in the controller source at {self.REF}", said)
+
+    def test_a_source_that_could_not_be_read_cannot_run(self):
+        """Only a 404 says the file is not there. A server fault, a network error or
+        a rate limit that outlasts the retries says nothing about this catalog."""
+        for name, steps in (
+                ("server fault", [fake.http_error(self.URL, 500)]),
+                ("network error", [urllib.error.URLError("no route")]),
+                ("rate limit", [fake.http_error(self.URL, 429)]
+                 * gate.registry.RETRY_ATTEMPTS)):
+            with self.subTest(name):
+                text, code, said = self.read(fake.Transport(*steps))
+                self.assertIsNone(text)
+                self.assertEqual(code, gate.gatelib.CANNOT_RUN)
+                self.assertIn(f"Cannot run: {self.URL} could not be read:", said)
+
+
+class FindingThePin(unittest.TestCase):
+    """The controller's chart coordinates come from its ApplicationSet element.
+
+    An element missing one of them, or no element at all, leaves this gate no
+    version to read the controller at: a defect in the tree, exit 1, said in a
+    sentence naming the ApplicationSet rather than a KeyError's traceback.
+    """
+
+    def pin_from(self, *docs):
+        real = gate.gatelib.read_yaml_all
+        gate.gatelib.read_yaml_all = lambda _path: list(docs)
+        try:
+            with self.assertRaises(SystemExit) as caught, \
+                    contextlib.redirect_stderr(io.StringIO()) as err:
+                gate.chart_pin()
+        finally:
+            gate.gatelib.read_yaml_all = real
+        return caught.exception.code, err.getvalue()
+
+    @staticmethod
+    def appset(*elements):
+        return {"kind": "ApplicationSet",
+                "spec": {"generators": [{"list": {"elements": list(elements)}}]}}
+
+    def test_an_element_missing_its_version_is_a_finding(self):
+        element = {"appName": gate.ADDON_NAME, "chartRepo": PIN["chartRepo"],
+                   "chart": PIN["chart"]}
+        code, said = self.pin_from({"kind": "ConfigMap"}, self.appset(element))
+        self.assertEqual(code, 1)
+        self.assertIn(f"names {gate.ADDON_NAME} without chartVersion", said)
+
+    def test_an_appset_with_no_controller_element_is_a_finding(self):
+        code, said = self.pin_from(self.appset({"appName": "something-else"}))
+        self.assertEqual(code, 1)
+        self.assertIn(f"carries no {gate.ADDON_NAME} element", said)
 
 
 class TheShippedCatalog(unittest.TestCase):

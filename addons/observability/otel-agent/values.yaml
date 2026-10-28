@@ -30,7 +30,7 @@ image:
 # release name, so the gateway address and RBAC bindings don't shift on a rename.
 fullnameOverride: otel-agent
 
-# logsCollection injects the filelog receiver that tails /var/log/pods and the
+# logsCollection injects the file_log receiver that tails /var/log/pods and the
 # container parser; kubernetesAttributes injects the k8s_attributes processor
 # (plus its ClusterRole and the node-scoped informer keyed on K8S_NODE_NAME) so
 # log records carry k8s.* resource attributes. Both feed the explicit pipelines
@@ -41,6 +41,15 @@ presets:
     includeCollectorLogs: false
   kubernetesAttributes:
     enabled: true
+
+# The presets above emit file_log and k8s_attributes only while this is on. Off,
+# they emit filelog and k8sattributes, and the pipelines in config.service name
+# components the generated config does not define. On is the chart's default;
+# it is set here so a chart version that flips the default cannot change the
+# emitted names underneath these pipelines, and so one that drops the key fails
+# the render at the bump, where this comment is read: the chart's values schema
+# admits no key it does not declare.
+rewriteDeprecatedComponentNames: true
 
 serviceAccount:
   create: true
@@ -99,8 +108,9 @@ config:
     prometheus:
       config:
         scrape_configs:
-          # Annotation-gated pod scrape, this node only. Honors
-          # prometheus.io/scrape|path|port exactly as the previous collector did.
+          # Annotation-gated pod scrape, this node only. Honors the
+          # prometheus.io/scrape, prometheus.io/path and prometheus.io/port
+          # annotations.
           - job_name: kubernetes-pods
             kubernetes_sd_configs:
               - role: pod
@@ -229,8 +239,12 @@ config:
       check_interval: 5s
       limit_percentage: 80
       spike_limit_percentage: 25
+  # Component names are the ones the collector registers: otlp_grpc for the
+  # OTLP/gRPC exporter, its name from collector v0.144.0 (chart 0.171.0 renames
+  # otlp to it), and file_log for the receiver the logsCollection preset adds,
+  # its name from contrib v0.149.0. The otlp RECEIVER keeps its name.
   exporters:
-    otlp:
+    otlp_grpc:
       endpoint: otel-gateway.monitoring.svc.cluster.local:4317
       tls:
         insecure: true
@@ -244,13 +258,13 @@ config:
       metrics:
         receivers: [prometheus]
         processors: [memory_limiter, k8s_attributes, batch]
-        exporters: [otlp]
-      # filelog needs k8s_attributes here — it enriches from the log path's pod
+        exporters: [otlp_grpc]
+      # file_log needs k8s_attributes here — it enriches from the log path's pod
       # context, which is lost once forwarded to the gateway.
       logs:
-        receivers: [filelog]
+        receivers: [file_log]
         processors: [memory_limiter, k8s_attributes, batch]
-        exporters: [otlp]
+        exporters: [otlp_grpc]
       # The chart's default OTLP receiver stays bound inside the pod (its ports
       # are unexposed above). Route anything it receives to the gateway rather
       # than the default debug exporter. k8s_attributes is listed explicitly — the
@@ -258,4 +272,4 @@ config:
       traces:
         receivers: [otlp]
         processors: [memory_limiter, k8s_attributes, batch]
-        exporters: [otlp]
+        exporters: [otlp_grpc]

@@ -116,11 +116,11 @@ class NormalisingARender(unittest.TestCase):
         self.assertEqual(landed, {"monitoring"})
 
     def test_a_kindless_document_is_dropped(self):
-        """helm v4 prints OCI pull progress ahead of the manifests on a fresh pull.
+        """A kind-less mapping is not a Kubernetes object.
 
-        Those parse as kind-less mappings. Written back, kyverno rejects the whole
-        resource file with "Object 'Kind' is missing" and the run evaluates
-        nothing — which reports as no addon being denied.
+        Written back, kyverno rejects the whole resource file with "Object
+        'Kind' is missing" and the run evaluates nothing — which reports as no
+        addon being denied.
         """
         docs, _ = self.prepare([{"Pulled": "ghcr.io/x/y:1.0"},
                                 {"apiVersion": "v1", "kind": "Pod",

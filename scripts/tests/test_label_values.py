@@ -64,6 +64,37 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class WhichLabelsAreChecked(unittest.TestCase):
+    """Labels applied to a resource are checked wherever its metadata sits; the
+    labels in a Kyverno pattern are matchers over other resources, where `?*` is
+    correct, and only the policy's own are checked."""
+
+    def test_every_metadata_labels_map_is_found_with_its_path(self):
+        doc = {"metadata": {"labels": {"a": "1"}},
+               "spec": {"template": {"metadata": {"labels": {"b": "2"}}}}}
+        self.assertEqual(lv.blocks_for(doc),
+                         [(".metadata.labels", {"a": "1"}),
+                          (".spec.template.metadata.labels", {"b": "2"})])
+
+    def test_a_list_item_carries_its_index(self):
+        doc = {"items": [{"metadata": {"name": "x"}}, {"metadata": {"labels": {"a": "1"}}}]}
+        self.assertEqual(lv.blocks_for(doc), [(".items[1].metadata.labels", {"a": "1"})])
+
+    def test_a_labels_key_outside_metadata_is_not_a_label_map(self):
+        doc = {"spec": {"selector": {"labels": {"a": "?*"}}}}
+        self.assertEqual(lv.blocks_for(doc), [])
+
+    def test_a_kyverno_pattern_is_a_matcher(self):
+        pattern = {"validate": {"pattern": {"metadata": {"labels": {"env": "?*"}}}}}
+        for kind in sorted(lv.KYVERNO_KINDS):
+            with self.subTest(kind=kind):
+                doc = {"kind": kind, "metadata": {"labels": {"team": "platform"}},
+                       "spec": {"rules": [pattern]}}
+                self.assertEqual(lv.blocks_for(doc), [(".metadata.labels", {"team": "platform"})])
+                doc["metadata"] = {"name": "x"}
+                self.assertEqual(lv.blocks_for(doc), [])
+
+
 class UnconditionalFloor(unittest.TestCase):
     """The half that is a law about any tree, not about this one.
 

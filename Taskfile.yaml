@@ -252,13 +252,16 @@ tasks:
       - validate:gate-controls
       - validate:alert-severity-routes
       - validate:empty-corpus
-      - validate:reverify-tests
       - validate:named-things
       - validate:ai-config
       - validate:workflows
       - validate:image-pins
       - validate:env-coverage
     cmds:
+      # After the deps, never beside them: the harness plants each defect in the
+      # tracked gate file itself, and any gate, test or control reading that file
+      # while the plant is in place reports the plant instead of the tree.
+      - task: validate:reverify-tests
       - echo "All validations passed."
 
   scan:

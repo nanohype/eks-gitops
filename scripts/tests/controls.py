@@ -135,13 +135,14 @@ MARKER = "zzcontrolzz"
 # so theirs is a command word checked against the comments-blanked view — a
 # weaker check, and named as weaker below.
 NEEDS_NETWORK_PY = {
-    "check-platform-crs.py": "subprocess.run",
+    "check-platform-crs.py": "gatelib.chart_archive_or_exit",
     "validate-dashboards.py": "urllib.request.urlopen",
-    "render-addons.py": "subprocess.run",
-    "check-policy-admission.py": "subprocess.run",
-    "check-image-pins.py": "subprocess.run",
-    "check-log-volume-budget.py": "subprocess.run",
-    "check-falco-rule-floor.py": "subprocess.run",
+    "render-addons.py": "gatelib.chart_archive_or_exit",
+    "check-policy-admission.py": "gatelib.chart_archive_or_exit",
+    "check-image-pins.py": "registry.chart_archive",
+    "check-log-volume-budget.py": "gatelib.chart_archive_or_exit",
+    "check-falco-rule-floor.py": "gatelib.chart_archive_or_exit",
+    # trivy pulls every image it scans.
     "check-image-vulnerabilities.py": "subprocess.run",
 }
 

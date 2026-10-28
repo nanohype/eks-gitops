@@ -5,7 +5,7 @@
   ],
   "description": [
     "Currency management for the catalog, layered on the org preset at nanohype/.github.",
-    "What stays local is the manager scoping and the custom managers. Renovate watches every Helm chart version pinned in applicationsets/ (and the git-pinned Gateway API CRDs), the Go module behind the appset-render gate, the CLI tools the CI workflow downloads, and the GitHub Actions in .github/workflows/ \u2014 the helm-render, schema and policy CI gates then validate each bump before merge.",
+    "What stays local is the manager scoping and the custom managers. Renovate watches every Helm chart version pinned in applicationsets/ (and the git-pinned Gateway API CRDs), the Go module behind the appset-render gate, the CLI tools the CI workflow downloads, the schema catalogs the kubeconform gate reads, and the GitHub Actions in .github/workflows/ \u2014 the helm-render, schema and policy CI gates then validate each bump before merge.",
     "enabledManagers is an allowlist rather than a default because this repo is a manifest catalog: without it Renovate would try to read every values.yaml as a Helm chart it owns.",
     "An allowlist has a failure mode a default does not: a manager stays on the list after the thing it read is gone, and a manager whose file patterns match nothing looks identical to one with nothing to do. scripts/check-renovate-coverage.py asserts both directions — every pin the workflows resolve is claimed by a manager on this list, and every manager on this list is claimed by a pin."
   ],
@@ -84,6 +84,17 @@
         "repoURL:\\s*oci://(?<packageName>[^\\s]+)\\s*\\n\\s*chart:[^\\n]*\\n\\s*targetRevision:\\s*\"?(?<currentValue>[^\"\\s]+)\"?"
       ],
       "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "The JSON-schema catalogs scripts/kubeconform-scan.sh validates every rendered manifest against: yannh/kubernetes-json-schema for native kinds and the datreeio CRDs-catalog for CRDs. Neither publishes tags, so each is pinned to a commit and watched against the branch its `# renovate:` line names. The branch is currentValue and the commit is currentDigest, so a move of that branch opens a digest update that replaces the commit, and the schema gate runs against the new schemas before they reach any other pull request.",
+      "managerFilePatterns": [
+        "/^scripts/kubeconform-scan\\.sh$/"
+      ],
+      "matchStrings": [
+        "#\\s*renovate:\\s*datasource=git-refs\\s+depName=(?<depName>[^\\s]+)\\s+packageName=(?<packageName>[^\\s]+)\\s+branch=(?<currentValue>[^\\s]+)\\s*\\n[A-Z0-9_]+_REF=\"(?<currentDigest>[0-9a-f]{40})\""
+      ],
+      "datasourceTemplate": "git-refs"
     }
   ],
   "packageRules": [
@@ -128,6 +139,25 @@
         "yannh/kubeconform",
         "aquasecurity/trivy"
       ],
+      "labels": [
+        "dependencies",
+        "ci"
+      ]
+    },
+    {
+      "description": [
+        "The two schema catalogs the kubeconform gate reads, moved together because they are the inputs to one gate and a bump of either is reviewed by reading what that gate says about the tree.",
+        "minimumReleaseAge is lifted for them. The git-refs datasource returns a commit for a branch and no release timestamp, and while an age floor applies Renovate's default minimumReleaseAgeBehaviour holds an update with no timestamp as pending indefinitely, so under the org preset's floor these pins would never move. The floor guards against consuming a compromised publish; what these refs deliver is JSON Schema that CI validates manifests against, which nothing executes and no cluster receives."
+      ],
+      "matchDatasources": [
+        "git-refs"
+      ],
+      "matchPackageNames": [
+        "https://github.com/yannh/kubernetes-json-schema",
+        "https://github.com/datreeio/CRDs-catalog"
+      ],
+      "groupName": "kubeconform schema catalogs",
+      "minimumReleaseAge": null,
       "labels": [
         "dependencies",
         "ci"

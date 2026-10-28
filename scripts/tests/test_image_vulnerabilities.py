@@ -16,8 +16,14 @@ running the gate, not from here.
 
 from __future__ import annotations
 
+import contextlib
+import datetime
+import io
 import pathlib
+import tempfile
+import types
 import unittest
+from unittest import mock
 
 import yaml
 from gateloader import load
@@ -147,6 +153,91 @@ class AnAcknowledgementThatStoppedDescribingTheScan(unittest.TestCase):
         self.assertIn("outlived its reason", problems[0])
 
 
+class AnAcknowledgementWithAReviewDate(unittest.TestCase):
+    """A finding upstream never fixes would otherwise keep its entry alive unread."""
+
+    DUE = datetime.date(2027, 1, 31)
+
+    def dated(self, review_by):
+        return [{**advisory(), "review_by": review_by}]
+
+    def test_an_entry_before_its_date_passes(self):
+        self.assertEqual(
+            gate.verdict([finding()], self.dated(self.DUE),
+                         today=self.DUE - datetime.timedelta(days=1)), [])
+
+    def test_an_entry_on_its_date_passes(self):
+        self.assertEqual(gate.verdict([finding()], self.dated(self.DUE), today=self.DUE),
+                         [])
+
+    def test_an_entry_past_its_date_blocks(self):
+        problems = gate.verdict([finding()], self.dated(self.DUE),
+                                today=self.DUE + datetime.timedelta(days=1))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("was due for review on 2027-01-31", problems[0])
+
+    def test_a_quoted_date_reads_the_same_as_an_unquoted_one(self):
+        later = self.DUE + datetime.timedelta(days=1)
+        self.assertEqual(gate.verdict([finding()], self.dated("2027-01-31"), today=later),
+                         gate.verdict([finding()], self.dated(self.DUE), today=later))
+
+    def test_a_value_that_is_not_a_day_blocks(self):
+        for value in ("soon", "", None, 20270131,
+                      datetime.datetime(2027, 1, 31, 12, 0)):
+            with self.subTest(value=value):
+                problems = gate.verdict([finding()], self.dated(value), today=self.DUE)
+                self.assertEqual(len(problems), 1)
+                self.assertIn("not a YYYY-MM-DD date", problems[0])
+
+    def test_an_entry_without_a_date_never_falls_due(self):
+        self.assertEqual(gate.verdict([finding()], [advisory()],
+                                      today=datetime.date(9999, 12, 31)), [])
+
+    def test_a_due_entry_still_acknowledges_its_finding(self):
+        """The due date is its own problem; the finding is not reported twice."""
+        problems = gate.verdict([finding()], self.dated(self.DUE),
+                                today=self.DUE + datetime.timedelta(days=1))
+        self.assertFalse(any("no entry in image-advisories.yaml" in p for p in problems))
+
+
+# 00:30 UTC on 1 February 2027, which is still 31 January west of Greenwich.
+UTC_NOW = datetime.datetime(2027, 2, 1, 0, 30, tzinfo=datetime.UTC)
+LOCAL_NOW = datetime.datetime(2027, 1, 31, 18, 30)
+
+
+class _FrozenDatetime(datetime.datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return UTC_NOW.astimezone(tz) if tz is not None else LOCAL_NOW
+
+
+class _FrozenDate(datetime.date):
+    @classmethod
+    def today(cls):
+        return LOCAL_NOW.date()
+
+
+class TheDefaultDayIsTheUtcDay(unittest.TestCase):
+    """With no `today` passed, an entry falls due on the UTC calendar.
+
+    The clock is frozen at a moment where the UTC date and a runner's local date
+    differ, so a default read from the local clock reaches the other answer.
+    """
+
+    def setUp(self):
+        frozen = types.SimpleNamespace(datetime=_FrozenDatetime, date=_FrozenDate,
+                                       UTC=datetime.UTC, timezone=datetime.timezone)
+        real, gate.datetime = gate.datetime, frozen
+        self.addCleanup(setattr, gate, "datetime", real)
+
+    def test_an_entry_dated_the_local_day_is_due_on_the_utc_day(self):
+        # A string, because review_date's isinstance checks read the frozen
+        # classes and refuse a real date object.
+        problems = gate.verdict([finding()], [{**advisory(), "review_by": "2027-01-31"}])
+        self.assertEqual(len(problems), 1)
+        self.assertIn("was due for review on 2027-01-31", problems[0])
+
+
 class TheShippedAdvisoryFile(unittest.TestCase):
     """It is read on every run, so its shape is part of the gate."""
 
@@ -172,6 +263,13 @@ class TheShippedAdvisoryFile(unittest.TestCase):
             for image in entry["images"]:
                 with self.subTest(image=image):
                     self.assertEqual(gate.bare(image), image)
+
+    def test_every_review_date_is_a_day(self):
+        """Read as the gate reads it, so a typo fails here before it fails a run."""
+        for entry in self.entries:
+            if "review_by" in entry:
+                with self.subTest(entry=entry["id"], package=entry["package"]):
+                    self.assertIsNotNone(gate.review_date(entry["review_by"]))
 
     def test_no_two_entries_share_an_id_and_package(self):
         """The verdict keys on that pair, so a duplicate silently shadows one."""
@@ -199,6 +297,41 @@ class TheFloorsThatStopAVacuousPass(unittest.TestCase):
 
     def test_the_blocking_severity_is_among_the_ones_scanned_for(self):
         self.assertIn(gate.BLOCKING_SEVERITY, gate.REPORTED_SEVERITIES)
+
+
+class ReadingTheAdvisories(unittest.TestCase):
+    """With no advisories to read, every finding would be reported as
+    unacknowledged, so an absent or keyless file is a gate that cannot run."""
+
+    def read(self, text):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "image-advisories.yaml"
+            if text is not None:
+                path.write_text(text)
+            out = io.StringIO()
+            with mock.patch.object(gate, "ADVISORIES", path), contextlib.redirect_stdout(out):
+                try:
+                    return gate.read_advisories(), out.getvalue()
+                except SystemExit as exc:
+                    return exc.code, out.getvalue()
+
+    def test_the_entries_are_returned(self):
+        entries, _ = self.read("advisories:\n  - id: CVE-1\n    image: x\n")
+        self.assertEqual(entries, [{"id": "CVE-1", "image": "x"}])
+
+    def test_an_empty_list_is_no_advisories(self):
+        self.assertEqual(self.read("advisories: []\n")[0], [])
+
+    def test_an_absent_file_cannot_run(self):
+        rc, out = self.read(None)
+        self.assertEqual(rc, gate.gatelib.CANNOT_RUN)
+        self.assertIn("image-advisories.yaml does not exist", out)
+        self.assertIn("examined nothing", out)
+
+    def test_a_file_with_no_advisories_key_cannot_run(self):
+        rc, out = self.read("entries: []\n")
+        self.assertEqual(rc, gate.gatelib.CANNOT_RUN)
+        self.assertIn("declares no `advisories` key", out)
 
 
 if __name__ == "__main__":

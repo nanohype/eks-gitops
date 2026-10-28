@@ -72,23 +72,16 @@ import re
 import subprocess
 import sys
 
+import gatelib
+import registry
 import yaml
 
-# Shared precondition helper, loaded by path: these are hyphenated executables
-# run from varying working directories.
-_gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
-_gs = importlib.util.spec_from_file_location("gatelib", _gl)
-assert _gs and _gs.loader, f"{_gl} is not loadable as a module"
-gatelib = importlib.util.module_from_spec(_gs)
-sys.modules["gatelib"] = gatelib
-_gs.loader.exec_module(gatelib)
-
-
-# Reuse render-addons' discovery, repo setup and render path rather than
-# re-deriving which chart a path belongs to. Three earlier attempts at a local
-# resolver each got a different subset of the fleet: the matrix shape only, then
-# the matrix plus single-source shapes, then a parameter scan loose enough to
-# apply one appset's `--set` values to another chart — which is the failure the
+# Reuse render-addons' discovery rather than re-deriving which chart a path
+# belongs to: each Unit it yields carries the chart, its source and version, the
+# appset's `--set` parameters and the destination namespace, as the
+# ApplicationSets give them. A resolver kept here reads a different subset of
+# the appset shapes than the render gate does, or scans parameters loosely
+# enough to apply one appset's `--set` values to another chart — the failure the
 # karpenter appset's own comment warns about, a stray settings.clusterName
 # failing a chart whose schema rejects unknown keys.
 #
@@ -112,7 +105,7 @@ yaml.SafeLoader.add_constructor(
 )
 
 ROOT = render_addons.REPO_ROOT
-NETWORK_TIMEOUT = 300
+RENDER_TIMEOUT = 300
 
 # Tags whose meaning changes under you. `latest` is the one a chart lands on by
 # leaving a tag unset, which is why an untagged reference is treated the same.
@@ -157,10 +150,13 @@ def inventory(env: str, seen: set[str] | None = None
     `seen`, if given, collects every image-shaped reference the render carried —
     including the ones excluded from the population — so a declaration can be
     checked against what the render contains rather than against what survived.
+
+    A chart the registry answered for and ruled out is a finding about its pin,
+    and exits 1 the way gatelib.chart_archive_or_exit does; one that could not
+    be read is a chart that did not render.
     """
     gatelib.require('helm')
     units = render_addons.discover()
-    aliases = render_addons.add_repos(units)
     images: dict[str, set[str]] = {}
     unrendered: list[tuple[str, str]] = []
     unclassified: list[tuple[str, str]] = []
@@ -179,54 +175,28 @@ def inventory(env: str, seen: set[str] | None = None
             vf += ["-f", str(d / "values.yaml")]
         if (d / f"values-{env}.yaml").exists():
             vf += ["-f", str(d / f"values-{env}.yaml")]
-        ref = [u.oci_ref()] if u.is_oci else [f"{aliases[u.repo]}/{u.chart}"]
-        cmd = ["helm", "template", u.chart, *ref, "--version", u.version]
+        try:
+            archive = registry.chart_archive(u.source, u.chart, u.version)
+        except registry.ChartUnavailable as exc:
+            if exc.answered:
+                gatelib.refuse_chart(u.chart, u.version, u.source, exc)
+            unrendered.append((u.path, f"{u.chart} {u.version} could not be fetched "
+                                       f"— {exc}"[:200]))
+            continue
+        cmd = ["helm", "template", u.chart, str(archive)]
         if u.namespace:
             cmd += ["--namespace", u.namespace]
         for name, value in u.params:
             cmd += ["--set", f"{name}={value}"]
         cmd += vf
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=NETWORK_TIMEOUT)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=RENDER_TIMEOUT)
         if proc.returncode != 0:
             unrendered.append((u.path, (proc.stderr.strip() or proc.stdout.strip())[:200]))
             continue
-        # BOTH streams, because which one carries the pull report is a property
-        # of the helm build rather than of this repository: some versions write
-        # it to stdout, where it lands in the manifest stream this parses, and
-        # some to stderr, where nothing sees it. Read from either, so what the
-        # gate knows about a run does not depend on which helm ran it.
-        pulled = chart_artifacts(proc.stdout + "\n" + proc.stderr)
         for ref_str in extract_images(proc.stdout, u.chart, unrendered, unclassified,
-                                      seen, pulled):
+                                      seen):
             images.setdefault(ref_str, set()).add(u.chart)
     return images, unrendered, unclassified
-
-
-# helm's own report of an OCI artifact it fetched, which it prints as two lines
-# before the manifests:
-#
-#     Pulled: public.ecr.aws/karpenter/karpenter:1.14.0
-#     Digest: sha256:<hex>
-#
-# This is the answer to a question a list cannot answer. An OCI registry serves
-# charts and container images through one API and one reference grammar, so
-# `public.ecr.aws/karpenter/karpenter:1.14.0` is indistinguishable from an image
-# by shape — and it is the chart, while the container beside it is
-# `public.ecr.aws/karpenter/controller`. helm pulled the first AS A CHART and
-# says so, which is an observation about this run rather than a name somebody
-# wrote down.
-#
-# Being an observation is what makes it usable here. A declaration naming these
-# would have to be re-checked against the render by declaration_rot, which
-# deletes an entry the render does not support — and the render only carries
-# them under the helm builds that print to stdout. One rule would demand the
-# entry and the other remove it. Nothing is declared, so nothing rots.
-HELM_PULLED = re.compile(r"^Pulled:\s*(?P<ref>\S+)\s*$", re.M)
-
-
-def chart_artifacts(output: str) -> set[str]:
-    """Every OCI artifact helm reports pulling as a chart, from either stream."""
-    return {m.group("ref") for m in HELM_PULLED.finditer(output)}
 
 
 # An image reference as a controller is handed one: in a flag, a ConfigMap value,
@@ -495,8 +465,7 @@ def keyed_images(node) -> set[str]:
 def extract_images(rendered: str, chart: str,
                    unrendered: list[tuple[str, str]],
                    unclassified: list[tuple[str, str]],
-                   seen: set[str] | None = None,
-                   pulled: set[str] | None = None) -> set[str]:
+                   seen: set[str] | None = None) -> set[str]:
     """Every image one chart's render deploys, and an assertion that it is every one.
 
     Structural first, because a pattern is a claim about spelling. IMAGE is
@@ -535,19 +504,10 @@ def extract_images(rendered: str, chart: str,
     # `repo:tag` in an annotation or a config value. Those are one image, and
     # reporting the second as unreachable would be reporting the first.
     structural_bare = {bare_name(r) for r in structural}
-    # Compared whole, not on the bare name. A registry can serve a chart and a
-    # container image from one repository path, and passing over every reference
-    # sharing a pulled chart's name would take the image with it — which is the
-    # one direction this gate must never fail in.
-    artifacts = set(pulled or ())
     controller: set[str] = set()
     for ref_str in sorted((textual | candidates) - structural):
         bare = bare_name(ref_str)
         if bare in structural_bare or bare in NOT_A_CONTAINER:
-            continue
-        if ref_str in artifacts or ref_str.split("@", 1)[0] in artifacts:
-            # helm reported fetching this exact reference as a chart. Pulling a
-            # chart starts no container, so there is nothing here to scan.
             continue
         if bare in CONTROLLER_IMAGES:
             controller.add(ref_str)

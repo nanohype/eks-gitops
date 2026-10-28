@@ -104,17 +104,8 @@ import subprocess
 import sys
 import tempfile
 
+import gatelib
 import yaml
-
-# Shared precondition helper, loaded by path: these are hyphenated executables
-# run from varying working directories.
-_gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
-_gs = importlib.util.spec_from_file_location("gatelib", _gl)
-assert _gs and _gs.loader, f"{_gl} is not loadable as a module"
-gatelib = importlib.util.module_from_spec(_gs)
-sys.modules["gatelib"] = gatelib
-_gs.loader.exec_module(gatelib)
-
 
 # Helm charts occasionally emit the YAML `=` default-value sentinel (e.g. `- =`
 # inside a ConfigMap payload). PyYAML's SafeLoader has no constructor for it and
@@ -127,8 +118,8 @@ yaml.SafeLoader.add_constructor(
     lambda loader, node: loader.construct_scalar(node),  # type: ignore[arg-type]
 )
 
-# Reuse render-addons' discovery + repo setup — the ApplicationSets are the one
-# source of truth for what the fleet is and where each addon lands. The module
+# Reuse render-addons' discovery and its SKIP_CHARTS — the ApplicationSets are the
+# one source of truth for what the fleet is and where each addon lands. The module
 # file is hyphenated (render-addons.py), so it is loaded by path rather than
 # imported by name.
 _ra_path = pathlib.Path(__file__).resolve().parent / "render-addons.py"
@@ -139,14 +130,13 @@ sys.modules["render_addons"] = render_addons  # dataclass resolves annotations h
 _spec.loader.exec_module(render_addons)
 REPO_ROOT = render_addons.REPO_ROOT
 
-# Seconds a child process may run before the gate gives up on it. A subprocess
-# with no deadline turns an unreachable registry into a job that hangs until the
-# CI runner's own ceiling, with no diagnostic naming the command that stalled.
-# NETWORK_TIMEOUT covers commands that resolve a remote chart or registry;
-# LOCAL_TIMEOUT covers commands that only read the working tree.
-NETWORK_TIMEOUT = 300
+# Seconds one helm render, kustomize build or kyverno apply may run before the
+# gate gives up on it. A subprocess with no deadline turns a stalled command into
+# a job that hangs until the CI runner's own ceiling, with no diagnostic naming
+# the command. Chart archives are read through registry.py, which bounds its own
+# reads, so helm here renders an archive already on disk.
+RENDER_TIMEOUT = 300
 SKIP_CHARTS = render_addons.SKIP_CHARTS
-add_repos = render_addons.add_repos
 discover = render_addons.discover
 
 POLICY_DIR = REPO_ROOT / "policies" / "kyverno"
@@ -311,7 +301,7 @@ spec:
 
 
 def _run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
-    kw.setdefault("timeout", NETWORK_TIMEOUT)
+    kw.setdefault("timeout", RENDER_TIMEOUT)
     return subprocess.run(cmd, capture_output=True, text=True, **kw)
 
 
@@ -378,10 +368,10 @@ def _prepare(rendered: str, namespace: str, landed: set[str]) -> str:
     """
     docs = []
     for doc in yaml.safe_load_all(rendered):
-        # Skip anything that is not a Kubernetes object. helm v4 prints OCI pull
-        # progress (`Pulled: …`, `Digest: …`) to stdout ahead of the manifests on
-        # a fresh pull; those parse as kind-less mappings and would otherwise be
-        # written back and rejected by kyverno ("Object 'Kind' is missing").
+        # Skip anything that is not a Kubernetes object. A kind-less mapping
+        # written back makes kyverno reject the whole resource file ("Object
+        # 'Kind' is missing"), and a run that evaluates nothing reports no addon
+        # as denied.
         if not isinstance(doc, dict) or not doc.get("kind"):
             continue
         anns = (doc.get("metadata") or {}).get("annotations") or {}
@@ -443,7 +433,6 @@ def render_fleet(dest: pathlib.Path) -> tuple[int, set[str]]:
     Returns (unit count, namespaces a workload kind landed in); count is -1 on a
     render failure."""
     units = [u for u in discover() if u.chart not in SKIP_CHARTS]
-    aliases = add_repos(units)
     landed: set[str] = set()
     count = 0
     fleet: list[dict] = []
@@ -451,7 +440,6 @@ def render_fleet(dest: pathlib.Path) -> tuple[int, set[str]]:
     for u in units:
         if not u.namespace:
             continue  # CRDs-only / no destination — nothing for the gate to check
-        chart_ref = u.oci_ref() if u.is_oci else f"{aliases[u.repo]}/{u.chart}"
         # Same discriminator as render-addons.py, and the same reason. A missing
         # directory meant "not deployed to this env" here too, so an appset
         # element pointing at nothing dropped silently out of the admission gate
@@ -467,8 +455,8 @@ def render_fleet(dest: pathlib.Path) -> tuple[int, set[str]]:
             env_file = unit_dir / f"values-{env}.yaml"
             if not env_file.exists():
                 continue  # addon not deployed to this env
-            cmd = ["helm", "template", u.chart, chart_ref, "--version", u.version,
-                   "-n", u.namespace]
+            archive = gatelib.chart_archive_or_exit(u.source, u.chart, u.version)
+            cmd = ["helm", "template", u.chart, str(archive), "-n", u.namespace]
             for name, value in u.params:
                 cmd += ["--set", f"{name}={value}"]
             if base.exists():

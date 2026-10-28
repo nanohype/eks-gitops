@@ -6,12 +6,20 @@ while a tier sits unread on disk — because that failure is silent in exactly t
 way the gate exists to prevent. These concentrate on the decisions that produce
 it: which paths count as read, and which priorities count as loading a rule.
 
-Everything here is offline. The gate's registry and helm calls are exercised by
-the controls sweep against a mutated tree, not from here.
+Everything here is offline. The rule-set reader is exercised against a scripted
+registry (scripts/tests/fakeregistry.py) through registry.py's client, the same
+path a run against ghcr.io takes.
 """
 
+import contextlib
+import hashlib
+import http.client
+import io
+import json
+import tarfile
 import unittest
 
+import fakeregistry as fake
 from gateloader import load
 
 gate = load("check-falco-rule-floor")
@@ -122,6 +130,170 @@ class DerivedFromTheTree(unittest.TestCase):
         envs = gate.environments()
         self.assertIn("production", envs)
         self.assertTrue(envs, "no environment discovered — the gate would check none")
+
+
+
+def _rules_layer(files: dict[str, str]) -> bytes:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for name, text in files.items():
+            data = text.encode()
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+class ReadingARuleSetThroughTheSharedClient(unittest.TestCase):
+    """rulesfile() reads ghcr.io through the shared registry client, not a reader of its own.
+
+    So the anonymous token comes from the challenge, a 429 waits as long as the
+    registry asks, the layer is checked against its digest, and a read that
+    fails is classified the way every other registry read is — each of which a
+    second reader would have to get right separately.
+    """
+
+    REPO = "falcosecurity/rules/falco-rules"
+    BASE = f"https://ghcr.io/v2/{REPO}"
+    MANIFEST = f"{BASE}/manifests/4"
+    CHALLENGE = (f'Bearer realm="https://ghcr.io/token",service="ghcr.io",'
+                 f'scope="repository:{REPO}:pull"')
+
+    def setUp(self):
+        gate.failures.clear()
+        self.addCleanup(gate.failures.clear)
+        self.layer = _rules_layer({"falco_rules.yaml": "- rule: one\n  priority: INFO\n"})
+        self.digest = "sha256:" + hashlib.sha256(self.layer).hexdigest()
+        self.config = gate.RULESFILE_CONFIG
+
+    def registry(self, req):
+        url = req.full_url
+        if url.startswith("https://ghcr.io/token?"):
+            return json.dumps({"token": "t"}).encode()
+        if fake.auth(req) != "Bearer t":
+            return fake.http_error(url, 401, {"WWW-Authenticate": self.CHALLENGE})
+        if url == self.MANIFEST:
+            return json.dumps({"config": {"mediaType": self.config},
+                               "layers": [{"digest": self.digest}]}).encode()
+        if url == f"{self.BASE}/blobs/{self.digest}":
+            return self.layer
+        return fake.http_error(url, 404)
+
+    def authorised(self, answer):
+        """A step answering `answer` to a request that carries the token, as ghcr.io would."""
+        def step(req):
+            if fake.auth(req) != "Bearer t":
+                return self.registry(req)
+            return answer
+        return step
+
+    def read(self, *steps, ref="falco-rules:4"):
+        self.transport = fake.Transport(*steps, *([self.registry] * 20))
+        with contextlib.redirect_stderr(io.StringIO()), \
+                contextlib.redirect_stdout(io.StringIO()):
+            return gate.rulesfile(ref, self.transport.bind(gate.registry.http_get))
+
+    def cannot_run(self, *steps):
+        with self.assertRaises(SystemExit) as caught:
+            self.read(*steps)
+        self.assertEqual(caught.exception.code, gate.gatelib.CANNOT_RUN)
+        self.assertEqual(gate.failures, [], "a read that failed was reported as a finding")
+
+    def test_a_rule_set_is_read_with_a_token_the_challenge_named(self):
+        files = self.read()
+        self.assertEqual(files, {"falco_rules.yaml": "- rule: one\n  priority: INFO\n"})
+        urls = self.transport.urls()
+        token = [u for u in urls if u.startswith("https://ghcr.io/token?")]
+        self.assertEqual(len(token), 1)
+        self.assertIn(f"scope=repository%3A{self.REPO.replace('/', '%2F')}%3Apull",
+                      token[0])
+        self.assertEqual(urls.count(self.MANIFEST), 2)
+        self.assertEqual(gate.failures, [])
+
+    def test_a_rate_limit_waits_as_long_as_the_registry_asks(self):
+        files = self.read(self.registry, self.registry,
+                          fake.http_error(self.MANIFEST, 429, {"Retry-After": "7"}))
+        self.assertIn("falco_rules.yaml", files)
+        self.assertEqual(self.transport.waits, [7.0])
+
+    def test_a_rate_limit_that_never_relents_cannot_run(self):
+        self.cannot_run(self.registry, self.registry,
+                        *[fake.http_error(self.MANIFEST, 429)] * 3)
+
+    def test_a_ref_the_registry_does_not_have_is_a_finding(self):
+        files = self.read(ref="falco-rules:99")
+        self.assertIsNone(files)
+        self.assertEqual(len(gate.failures), 1)
+        self.assertIn("does not resolve", gate.failures[0])
+
+    def test_a_manifest_status_other_than_404_cannot_run(self):
+        """Only a 404 says the ref is not there. A 403 or a 500 says nothing about it."""
+        for code in (403, 500):
+            with self.subTest(code=code):
+                self.cannot_run(self.registry, self.registry,
+                                self.authorised(fake.http_error(self.MANIFEST, code)))
+
+    def test_a_manifest_cut_off_mid_body_cannot_run(self):
+        """http.client.IncompleteRead is no OSError; READ_FAILURES is what catches it."""
+        self.cannot_run(self.registry, self.registry,
+                        self.authorised(http.client.IncompleteRead(b"{")))
+
+    def test_a_manifest_that_is_not_json_cannot_run(self):
+        self.cannot_run(self.registry, self.registry, self.authorised(b"<html>"))
+
+    def test_a_layer_the_registry_refuses_cannot_run(self):
+        blob = f"{self.BASE}/blobs/{self.digest}"
+        self.cannot_run(self.registry, self.registry, self.registry,
+                        self.authorised(fake.http_error(blob, 403)))
+
+    def test_a_layer_cut_off_mid_body_cannot_run(self):
+        self.cannot_run(self.registry, self.registry, self.registry,
+                        self.authorised(http.client.IncompleteRead(b"")))
+
+    def test_a_layer_that_does_not_match_its_digest_cannot_run(self):
+        self.layer, good = b"tampered", self.layer
+        self.digest = "sha256:" + hashlib.sha256(good).hexdigest()
+        self.cannot_run()
+
+    def test_a_manifest_of_the_wrong_shape_cannot_run(self):
+        """Upstream's manifest is checked, not indexed into: a KeyError, IndexError
+        or AttributeError would exit 1 through a traceback, the status of a finding."""
+        rulesfile = {"mediaType": gate.RULESFILE_CONFIG}
+        shapes = {
+            "not an object": [],
+            "a config that is not an object": {"config": "rulesfile"},
+            "a rule set with no layers": {"config": rulesfile},
+            "a rule set with an empty layer list": {"config": rulesfile, "layers": []},
+            "a layer that is not an object": {"config": rulesfile, "layers": ["sha256:x"]},
+            "a layer with no digest": {"config": rulesfile, "layers": [{"size": 1}]},
+        }
+        for label, manifest in shapes.items():
+            with self.subTest(label):
+                gate.failures.clear()
+                self.cannot_run(self.registry, self.registry,
+                                self.authorised(json.dumps(manifest).encode()))
+
+    def test_a_layer_that_is_not_a_rule_set_archive_cannot_run(self):
+        """It matches its digest, so it is what upstream published; it is still
+        not something this gate can count rules in."""
+        self.layer = b"not a tar archive"
+        self.digest = "sha256:" + hashlib.sha256(self.layer).hexdigest()
+        self.cannot_run()
+
+    def test_a_404_from_the_token_realm_cannot_run(self):
+        """The realm issues tokens; its 404 says nothing about whether the ref resolves."""
+        def realm_404(req):
+            if req.full_url.startswith("https://ghcr.io/token?"):
+                return fake.http_error(req.full_url, 404)
+            return self.registry(req)
+        self.cannot_run(realm_404, realm_404)
+
+    def test_an_artifact_that_is_not_a_rulesfile_installs_no_rules(self):
+        """A plugin's config names another media type, and no layer of it is read."""
+        self.config = "application/vnd.cncf.falco.plugin.config.v1+json"
+        self.assertIsNone(self.read())
+        self.assertEqual(gate.failures, [])
+        self.assertNotIn(f"{self.BASE}/blobs/{self.digest}", self.transport.urls())
 
 
 if __name__ == "__main__":

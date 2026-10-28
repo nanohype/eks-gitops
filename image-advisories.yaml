@@ -22,6 +22,14 @@
 # the tag moves with every chart bump, and a file that had to be edited on every
 # bump would be edited without being read.
 #
+# `review_by: YYYY-MM-DD` is optional, and the gate fails an entry from the day
+# after it. The four rules retire an entry when the scan stops carrying its
+# finding, which a finding upstream never fixes does not do; an entry resting on
+# an argument about exposure rather than on a pending upstream release carries a
+# date, because the catalog can change underneath that argument while the scan
+# reads the same. It clears by moving the pin, or by re-reading the case and
+# recording it again with a later date.
+#
 # ── What this catalog can and cannot do about these ──
 #
 # Every image below except one is built by the upstream project whose chart this
@@ -32,61 +40,10 @@
 # clears or does not.
 #
 # The exception is ghcr.io/nanohype/eks-agent-platform/eval-runner, which is
-# built in this organisation. Its entry is a request to that repo's build, not to
-# a chart pin here.
+# built in this organisation. Its entries are requests to that repo's build, not
+# to a chart pin here.
 
 advisories:
-  - id: CVE-2026-56854
-    package: golang.org/x/crypto
-    reason: >-
-      Present in every Go-built image the fleet renders, because it is in the
-      module graph of almost every controller upstream ships. Fixed in
-      golang.org/x/crypto 0.55.0, which each project picks up on its own release
-      cadence; this catalog carries no build for any of them. Clears image by
-      image as chart pins move to versions built against 0.55.0 or later.
-    images:
-      - docker.io/envoyproxy/ai-gateway-controller
-      - docker.io/envoyproxy/ai-gateway-extproc
-      - docker.io/envoyproxy/gateway
-      - docker.io/falcosecurity/falcoctl
-      - docker.io/grafana/loki
-      - docker.io/grafana/loki-canary
-      - docker.io/grafana/tempo
-      - docker.io/velero/velero
-      - ghcr.io/external-secrets/external-secrets
-      - ghcr.io/grafana/grafana-operator
-      - ghcr.io/kedacore/keda
-      - ghcr.io/kedacore/keda-admission-webhooks
-      - ghcr.io/kedacore/keda-metrics-apiserver
-      - ghcr.io/opencost/opencost
-      - mirror.gcr.io/aquasec/trivy-operator
-      - nats
-      - nats-streaming
-      - natsio/prometheus-nats-exporter
-      - otel/opentelemetry-collector-contrib
-      - prom/memcached-exporter
-      - quay.io/argoproj/argo-events
-      - quay.io/argoproj/argo-rollouts
-      - quay.io/argoproj/argocli
-      - quay.io/argoproj/argoexec
-      - quay.io/argoproj/kubectl-argo-rollouts
-      - quay.io/argoproj/workflow-controller
-      - quay.io/cilium/cilium
-      - quay.io/jetstack/cert-manager-cainjector
-      - quay.io/jetstack/cert-manager-controller
-      - quay.io/jetstack/cert-manager-startupapicheck
-      - quay.io/jetstack/cert-manager-webhook
-      - reg.kyverno.io/kyverno/background-controller
-      - reg.kyverno.io/kyverno/cleanup-controller
-      - reg.kyverno.io/kyverno/kyverno
-      - reg.kyverno.io/kyverno/kyverno-cli
-      - reg.kyverno.io/kyverno/kyvernopre
-      - reg.kyverno.io/kyverno/reports-controller
-      - registry.k8s.io/descheduler/descheduler
-      - registry.k8s.io/external-dns/external-dns
-      - registry.k8s.io/kube-state-metrics/kube-state-metrics
-      - registry.k8s.io/metrics-server/metrics-server
-
   - id: CVE-2025-68121
     package: stdlib
     reason: >-
@@ -134,6 +91,7 @@ advisories:
       in pgx 5.9.0. This catalog does not enable that event source, but the
       package is in the shipped binary either way, so the finding is real and the
       remedy is the same — the argo-events chart pin.
+    review_by: 2027-01-31
     images:
       - quay.io/argoproj/argo-events
 
@@ -141,9 +99,66 @@ advisories:
     package: github.com/jackc/pgx/v5
     reason: >-
       The second advisory against the same driver version in the same binary,
-      with the same fixed version and the same remedy as CVE-2026-33815.
+      with the same fixed version, reach and remedy as CVE-2026-33815.
+    review_by: 2027-01-31
     images:
       - quay.io/argoproj/argo-events
+
+  - id: CVE-2026-77405
+    package: github.com/rabbitmq/amqp091-go
+    reason: >-
+      The AMQP client argo-events links for its AMQP event source: v1.11.0 in
+      argo-events v1.9.11, the image chart 2.4.27 pins, fixed in 1.13.0. The
+      client runs only in an EventSource pod declared with an `amqp` source,
+      dialling the broker URL that EventSource names; the controller and the
+      sensor and eventbus code paths never open an AMQP connection. This catalog
+      declares no EventSource, so the code ships and is not reached until a
+      tenant declares one. This advisory is the TLS configuration built from an
+      amqps:// URI, which sets no minimum version and falls back on the Go
+      toolchain's TLS 1.2 floor. Clears when an argo-events release links 1.13.0
+      or later and the chart pins it.
+    review_by: 2027-01-31
+    images:
+      - quay.io/argoproj/argo-events
+
+  - id: CVE-2026-77408
+    package: github.com/rabbitmq/amqp091-go
+    reason: >-
+      The same client, version and reach as CVE-2026-77405. This advisory is a
+      short-string length cast to eight bits when the client encodes an outgoing
+      property, so a value over 255 bytes is truncated on the wire without an
+      error. Same remedy.
+    review_by: 2027-01-31
+    images:
+      - quay.io/argoproj/argo-events
+
+  - id: CVE-2026-77411
+    package: github.com/rabbitmq/amqp091-go
+    reason: >-
+      The same client, version and reach as CVE-2026-77405. This advisory is the
+      frame parser accepting a long-string length over 2^31-1 from the broker
+      without consuming it, which desynchronises every frame after it, so the
+      party that can trigger it is the broker an AMQP EventSource dials — chosen
+      by whoever declares that EventSource. Same remedy.
+    review_by: 2027-01-31
+    images:
+      - quay.io/argoproj/argo-events
+
+  - id: GHSA-6q48-6c7w-9gw2
+    package: certifi
+    reason: >-
+      The CA bundle in the k8s-sidecar image the loki chart runs in the loki
+      StatefulSet to load rule ConfigMaps (container loki-sc-rules), fixed in
+      certifi 2026.10.18: it still trusts the emSign ECC root whose revoked
+      intermediates had compromised keys. The loki chart pins
+      kiwigrid/k8s-sidecar 2.10.1. The sidecar's one TLS peer in this render is
+      the Kubernetes API, which the Kubernetes Python client verifies against
+      the service account's ca.crt rather than certifi's bundle; the chart sets
+      no REQ_URL, so the sidecar calls nothing else. Clears when a loki chart
+      pins a k8s-sidecar built on certifi 2026.10.18 or later.
+    review_by: 2027-01-31
+    images:
+      - docker.io/kiwigrid/k8s-sidecar
 
   - id: CVE-2026-31789
     package: libcrypto3
@@ -173,24 +188,49 @@ advisories:
     images:
       - ghcr.io/nanohype/eks-agent-platform/eval-runner
 
+  - id: CVE-2026-13221
+    package: perl-base
+    reason: >-
+      perl in eval-runner's Debian 12 base layer (node:24-bookworm-slim), at
+      5.36.0-7+deb12u3 and fixed in 5.36.0-7+deb12u4. perl-base is an Essential
+      Debian package, so the slim base cannot drop it; the package tooling that
+      calls it runs while the image is built. At runtime nothing starts perl:
+      the image's CLI is the evaluate and score shims, each an exec of node
+      /app/cli.js, and every step of the eval-runner WorkflowTemplate the
+      operator chart ships is a /bin/sh script invoking those shims, aws, jq,
+      kubectl and coreutils. The same first-party image as CVE-2026-59873, with
+      the same remedy: a rebuild in nanohype/eks-agent-platform on a refreshed
+      base and an operator chart version here that pins it.
+    review_by: 2027-01-31
+    images:
+      - ghcr.io/nanohype/eks-agent-platform/eval-runner
+
+  - id: CVE-2026-42496
+    package: perl-base
+    reason: >-
+      The second perl advisory in the same base layer, against its Archive::Tar
+      module, fixed in the same package version. Archive::Tar runs only inside
+      a perl process, so it has the reach of CVE-2026-13221, and the same
+      remedy.
+    review_by: 2027-01-31
+    images:
+      - ghcr.io/nanohype/eks-agent-platform/eval-runner
+
+  - id: CVE-2026-8376
+    package: perl-base
+    reason: >-
+      The third perl advisory in the same base layer, fixed in the same package
+      version, with the same reach and remedy as CVE-2026-13221.
+    review_by: 2027-01-31
+    images:
+      - ghcr.io/nanohype/eks-agent-platform/eval-runner
+
   # ── Images a controller starts ────────────────────────────────────────
   #
   # Every entry below was invisible until the population took in the images a
   # controller is handed rather than only the containers a pod template declares.
   # None of them appears in any pod spec this catalog renders; each is a
   # reference an operator reads and then creates a pod from.
-
-  - id: CVE-2026-22039
-    package: github.com/kyverno/kyverno
-    reason: >-
-      A CRITICAL in the policy engine itself, on the CLI image the kyverno chart
-      carries in a ConfigMap — the same reference ALLOWED_MUTABLE records as
-      untagged. Fixed in 1.15.3 and 1.16.3; the catalog pins chart 3.8.2, whose
-      appVersion is 1.18.2, so the ConfigMap's `:latest` is what carries the
-      finding rather than the running controllers. Clears on a chart that pins
-      that reference.
-    images:
-      - ghcr.io/kyverno/kyverno
 
   - id: CVE-2025-30215
     package: github.com/nats-io/nats-server/v2

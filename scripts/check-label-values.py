@@ -36,21 +36,12 @@ unconstrained, which is where a genuine `org/name` belongs.
 
 from __future__ import annotations
 
-import importlib.util
 import re
 import sys
 from pathlib import Path
 
+import gatelib
 import yaml
-
-# Shared helpers, loaded by path: these are hyphenated executables run from
-# varying working directories.
-_gl = Path(__file__).resolve().parent / "gatelib.py"
-_gs = importlib.util.spec_from_file_location("gatelib", _gl)
-assert _gs and _gs.loader, f"{_gl} is not loadable as a module"
-gatelib = importlib.util.module_from_spec(_gs)
-sys.modules["gatelib"] = gatelib
-_gs.loader.exec_module(gatelib)
 
 REPO = Path(__file__).resolve().parent.parent
 

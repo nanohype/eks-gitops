@@ -56,19 +56,12 @@ would be applied:
 
 from __future__ import annotations
 
-import importlib.util
 import pathlib
 import subprocess
 import sys
 
+import gatelib
 import yaml
-
-_gl = pathlib.Path(__file__).resolve().parent / "gatelib.py"
-_gs = importlib.util.spec_from_file_location("gatelib", _gl)
-assert _gs and _gs.loader, f"{_gl} is not loadable as a module"
-gatelib = importlib.util.module_from_spec(_gs)
-sys.modules["gatelib"] = gatelib
-_gs.loader.exec_module(gatelib)
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 APPSET = ROOT / "applicationsets" / "addons-loki.yaml"
@@ -86,7 +79,7 @@ GAUGE = "loki_ingester_wal_disk_usage_percent"
 # the throttled state, so a cluster throttled for a week increments it once.
 EDGE_COUNTER = "loki_ingester_wal_disk_full_failures_total"
 
-NETWORK_TIMEOUT = 300
+RENDER_TIMEOUT = 300
 
 failures: list[str] = []
 
@@ -117,13 +110,12 @@ def environments() -> list[str]:
                   for p in ADDON.glob("values-*.yaml"))
 
 
-def render(repo: str, version: str, env: str) -> dict:
+def render(archive: pathlib.Path, env: str) -> dict:
     """The Loki config as the chart produces it for one environment."""
-    cmd = ["helm", "template", "loki", "loki", "--repo", repo, "--version", version,
-           "-n", "monitoring",
+    cmd = ["helm", "template", "loki", str(archive), "-n", "monitoring",
            "-f", str(ADDON / "values.yaml"),
            "-f", str(ADDON / f"values-{env}.yaml")]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=NETWORK_TIMEOUT)
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=RENDER_TIMEOUT)
     if proc.returncode != 0:
         err = ((proc.stderr or "") + (proc.stdout or "")).strip()
         print(f"Cannot run: helm could not render loki for {env}.")
@@ -221,6 +213,7 @@ def environment_verdict(cfg: dict, warn: float | None,
 
 def main() -> int:
     repo, version = chart_pin()
+    archive = gatelib.chart_archive_or_exit(repo, "loki", version)
     warn = alert_threshold()
     envs = environments()
     if not envs:
@@ -229,7 +222,7 @@ def main() -> int:
 
     checked = 0
     for env in envs:
-        cfg = render(repo, version, env)
+        cfg = render(archive, env)
         rel = f"addons/observability/loki/values-{env}.yaml"
         problems, leads = environment_verdict(cfg, warn, rel)
         for problem in problems:

@@ -16,9 +16,12 @@ and the ones that matter are the shapes it does not have.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import pathlib
 import tempfile
 import unittest
+from unittest import mock
 
 import yaml
 from gateloader import load
@@ -186,6 +189,40 @@ class RetentionMustActuallyDelete(unittest.TestCase):
         problems, _ = gate.environment_verdict(
             config(cutoff=None, retention=None, retention_enabled=False), 0.75, REL)
         self.assertEqual(len(problems), 3)
+
+
+class TheChartPin(unittest.TestCase):
+    """The chart rendered is the one the ApplicationSet installs, read from it."""
+
+    def pin(self, sources):
+        doc = {"kind": "ApplicationSet",
+               "spec": {"template": {"spec": {"sources": sources}}}}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            appset = root / "applicationsets" / "addons-observability.yaml"
+            appset.parent.mkdir()
+            appset.write_text(yaml.safe_dump(doc))
+            out = io.StringIO()
+            with mock.patch.object(gate, "ROOT", root), \
+                    mock.patch.object(gate, "APPSET", appset), \
+                    contextlib.redirect_stdout(out):
+                try:
+                    return gate.chart_pin(), out.getvalue()
+                except SystemExit as exc:
+                    return exc.code, out.getvalue()
+
+    def test_the_chart_source_is_the_pin(self):
+        pin, _ = self.pin([{"repoURL": "https://github.com/example/eks-gitops", "ref": "values"},
+                           {"repoURL": "https://grafana.github.io/helm-charts",
+                            "chart": "loki", "targetRevision": "6.29.0"}])
+        self.assertEqual(pin, ("https://grafana.github.io/helm-charts", "6.29.0"))
+
+    def test_an_appset_with_no_chart_source_cannot_run(self):
+        rc, out = self.pin([{"repoURL": "https://github.com/example/eks-gitops",
+                             "path": "addons/observability/loki"}])
+        self.assertEqual(rc, gate.gatelib.CANNOT_RUN)
+        self.assertIn("applicationsets/addons-observability.yaml declares no chart source",
+                      out)
 
 
 class TheEnvironmentCorpus(unittest.TestCase):
