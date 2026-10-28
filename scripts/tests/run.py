@@ -68,11 +68,14 @@ EXPECTED = (
     "test_image_pins",
     "test_log_volume_budget",
     # How the Kyverno suite's runner reads a run: a transport failure on the
-    # image-verification path, in a row's message or the verifier's log, is a
-    # run repeated and then one that could not verify, never a verdict.
+    # image-verification path, in a row's message or the verifier's log, or a
+    # run its time bound ended or killed, is a run repeated and then one that
+    # could not verify, never a verdict.
     "test_kyverno_test",
-    # The verdict the digest-rewrite gate reaches on a foreign identity under
-    # each validation action, decided without the cluster it runs on in CI.
+    # The verdicts the digest-rewrite gate reaches at each step: every refusal,
+    # of a release-signed submission or a foreign identity, decided on one rule
+    # over the window the verifier's log is read from, and a bound on every step,
+    # decided without the cluster it runs on in CI.
     "test_digest_rewrite",
     # The image population both image gates read, and the acknowledgement file
     # the vulnerability verdict is decided against. One walk answers every

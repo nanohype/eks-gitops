@@ -18,14 +18,34 @@ MIN_TESTS=24
 ATTEMPTS=3
 PAUSE=5
 
-# A transport failure as the image-verification path words one: Go's HTTP
-# client, go-containerregistry reading the registry, the Sigstore TUF client
-# fetching the trusted root, and the Rekor client. Matched case-insensitively.
-TRANSPORT_FAILURE='dial tcp|no such host|i/o timeout|connection refused|connection reset|broken pipe|TLS handshake timeout|context deadline exceeded|Client\.Timeout exceeded|unexpected EOF|tuf: failed to download|unexpected status code (429|5[0-9][0-9])|toomanyrequests|\]\[(429|5[0-9][0-9])\]'
+# The seconds one run of the suite may take before GNU timeout sends it TERM,
+# and the seconds after that TERM a run still going is given before timeout
+# sends it KILL. A read the registry, the TUF mirror or Rekor stops answering
+# partway through can hold the CLI for as long as the connection stays open, so
+# a run that does not finish inside RUN_TIMEOUT counts as a transport failure
+# like any other, whichever signal ended it. Every attempt at both, with the
+# probes and pauses around them, fits inside the kyverno job's timeout-minutes,
+# so the job ends on this script's diagnostic rather than on the runner's;
+# scripts/tests/test_kyverno_test.py holds the two together.
+RUN_TIMEOUT=240
+KILL_TIMEOUT=10
+
+# shellcheck source=transport-failure.sh
+. "$ROOT/scripts/transport-failure.sh"
 
 if ! command -v kyverno >/dev/null 2>&1; then
   echo "Cannot run: kyverno is not on PATH. No policy was tested — that is"
   echo "different from every policy passing."
+  exit 2
+fi
+
+# GNU coreutils' timeout, which macOS ships under neither name: Homebrew's
+# coreutils installs it as gtimeout.
+TIMEOUT_CMD="$(command -v timeout || command -v gtimeout)"
+if [ -z "$TIMEOUT_CMD" ]; then
+  echo "Cannot run: neither timeout nor gtimeout is on PATH, so a run stalled on a"
+  echo "read could hold this job until the runner ends it. On macOS,"
+  echo "\`brew install coreutils\` installs gtimeout."
   exit 2
 fi
 
@@ -43,7 +63,7 @@ require_count() {
   esac
 }
 
-cd "$ROOT"
+cd "$ROOT" || { echo "Cannot run: $ROOT cannot be entered."; exit 2; }
 
 # An ImageValidatingPolicy row matching a ghcr.io/nanohype image verifies a
 # real signature: Kyverno reads the image, its signature and attestation from
@@ -57,10 +77,11 @@ cd "$ROOT"
 # with --detailed-results (the message column) and -v 1 (the log).
 #
 # So the three are reached first, and a run whose output carries a transport
-# failure anywhere has not decided its image-verification rows either way. It
-# is run again, up to ATTEMPTS times, and a transport failure in every attempt
-# exits 2: a run that could not verify, not a regression and not a pass. A run
-# carrying none is decided on what the policies did: a failing row exits 1.
+# failure anywhere, or that does not finish within RUN_TIMEOUT, has not decided
+# its image-verification rows either way. It is run again, up to ATTEMPTS
+# times, and a transport failure in every attempt exits 2: a run that could not
+# verify, not a regression and not a pass. A run carrying none is decided on
+# what the policies did: a failing row exits 1.
 if grep -rqs --include='kyverno-test.yaml' 'isImageValidatingPolicy: true' "$TESTS"; then
   command -v curl >/dev/null 2>&1 \
     || { echo "Cannot run: curl is not on PATH, so the registry and Sigstore cannot be reached first."; exit 2; }
@@ -78,12 +99,17 @@ fi
 
 attempt=1
 while :; do
-  out="$(kyverno test "$TESTS" --detailed-results -v 1 2>&1)"
+  out="$("$TIMEOUT_CMD" -k "$KILL_TIMEOUT" "$RUN_TIMEOUT" kyverno test "$TESTS" --detailed-results -v 1 2>&1)"
   rc=$?
-  # Each failing line from shortly before its first transport phrase, with the
-  # colour codes and the log prefix cut away, and each distinct one once.
-  transport="$(printf '%s\n' "$out" | sed "s/$(printf '\033')\[[0-9;]*m//g" \
-    | grep -oiE ".{0,60}($TRANSPORT_FAILURE).*" | cut -c1-240 | awk '!seen[$0]++' | head -3)"
+  # timeout exits 124 when its TERM ended the run, and 137 when the run was
+  # still going KILL_TIMEOUT seconds later and was killed. A run killed for any
+  # other reason exits 137 too. None of them finished, so none decided a row,
+  # whatever it had printed.
+  case "$rc" in
+    124) transport="kyverno test did not finish within ${RUN_TIMEOUT}s" ;;
+    137) transport="kyverno test was killed before it finished" ;;
+    *) transport="$(printf '%s\n' "$out" | transport_failures)" ;;
+  esac
   [ -z "$transport" ] && break
   if [ "$attempt" -ge "$ATTEMPTS" ]; then
     printf '%s\n' "$out"

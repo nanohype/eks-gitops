@@ -26,6 +26,13 @@ tasks:
     cmds:
       - yamllint -c .yamllint.yaml .
 
+  lint:shell:
+    desc: "Shell lint — shellcheck over the shell gates and harnesses under scripts/, configured by scripts/.shellcheckrc"
+    cmds:
+      # Identical to the python-lint job's step. A glob matching nothing is
+      # handed to shellcheck as a path, which it refuses.
+      - shellcheck scripts/*.sh scripts/tests/*.sh
+
   kustomize:build:
     desc: Build all Kustomize overlays (all environments) + env-agnostic roots
     cmds:
@@ -230,6 +237,7 @@ tasks:
     deps:
       - lint:yaml
       - lint:python
+      - lint:shell
       - kustomize:build
       - validate:helm-render
       - validate:appset-schema

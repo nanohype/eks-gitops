@@ -41,6 +41,9 @@ env:
   # renovate: datasource=github-releases depName=yannh/kubeconform
   KUBECONFORM_VERSION: v0.8.0
   KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
+  # renovate: datasource=github-releases depName=koalaman/shellcheck
+  SHELLCHECK_VERSION: v0.11.0
+  SHELLCHECK_SHA256: b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6
   # renovate: datasource=github-releases depName=aquasecurity/trivy
   TRIVY_VERSION: v0.72.0
   # renovate: datasource=npm depName=renovate
@@ -435,8 +438,11 @@ jobs:
         run: ./scripts/check-policy-validity.py
 
   python-lint:
-    name: the gate scripts lint and typecheck, tests included
+    name: the gate scripts and their tests pass lint, typecheck and shellcheck
     runs-on: ubuntu-latest
+    # pip and the ShellCheck download read the network, each bounded per
+    # attempt; this bounds the job as a whole.
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -456,6 +462,20 @@ jobs:
         run: ruff check .
       - name: Typecheck
         run: mypy
+      # The shell gates and the harnesses that drive them, under
+      # scripts/.shellcheckrc. The runner image ships a shellcheck of its own, so
+      # the pinned one is installed ahead of it on PATH and its version printed.
+      - name: Install ShellCheck
+        run: |
+          curl -fsSL --connect-timeout 20 --max-time 120 --retry 3 \
+            -o /tmp/shellcheck.tar.gz "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.gz"
+          echo "${SHELLCHECK_SHA256}  /tmp/shellcheck.tar.gz" | sha256sum -c -
+          tar -xz -C /tmp -f /tmp/shellcheck.tar.gz "shellcheck-${SHELLCHECK_VERSION}/shellcheck"
+          sudo install -m 0755 "/tmp/shellcheck-${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
+          shellcheck --version
+      # Identical to `task lint:shell`.
+      - name: Shell lint
+        run: shellcheck scripts/*.sh scripts/tests/*.sh
 
   falco-rule-floor:
     name: every Falco rule set installed is one Falco loads
@@ -565,8 +585,12 @@ jobs:
     name: Kyverno policy tests
     runs-on: ubuntu-latest
     # The verify-images rows reach the registry, the Sigstore TUF mirror and
-    # Rekor, and kyverno-test.sh repeats a run that met a transport failure.
-    # This bounds the job if one of them stops answering partway through a read.
+    # Rekor. kyverno-test.sh runs the suite under GNU timeout, which sends a run
+    # TERM at its bound and KILL a grace period later if it is still going;
+    # either counts as a transport failure, and the run is repeated. This sits
+    # above every attempt at the bound and the grace, so a read that stops
+    # answering ends on the script's own diagnostic.
+    # scripts/tests/test_kyverno_test.py holds the two together.
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -633,8 +657,12 @@ jobs:
   digest-rewrite:
     name: admission pins a verified tag to its digest
     runs-on: ubuntu-latest
-    # A bound on the job as a whole, above the waits the script bounds each step
-    # with, so a stalled step reports through the script's own diagnostic first.
+    # A bound on the job as a whole, above the bound the script puts on each step
+    # taken alone: each kubectl request, each wait under GNU timeout, and kind
+    # and helm under GNU timeout. One step that stalls ends on the script's own
+    # diagnostic rather than on the runner's. The steps' bounds are not summed,
+    # and a run in which several each stall to their bound can still reach this
+    # one. scripts/tests/test_digest_rewrite.py holds each step's bound under it.
     timeout-minutes: 60
     steps:
       - name: Checkout
@@ -1224,7 +1252,7 @@ jobs:
               'Renovate manager coverage': '${{ needs.renovate-coverage.result }}',
               'Loki volume warns before cutoff': '${{ needs.log-volume-budget.result }}',
               'Falco loads every rule set it installs': '${{ needs.falco-rule-floor.result }}',
-              'Gate scripts lint and typecheck': '${{ needs.python-lint.result }}',
+              'Gate scripts pass lint, typecheck and shellcheck': '${{ needs.python-lint.result }}',
               'Policy validity (kustomize + kyverno)': '${{ needs.policy-validity.result }}',
               'The gates themselves are tested': '${{ needs.gate-tests.result }}',
               'Pods name ServiceAccounts that exist': '${{ needs.serviceaccount-bindings.result }}',

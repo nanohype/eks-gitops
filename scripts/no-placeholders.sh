@@ -102,7 +102,7 @@ fi
 
 if [ ! -s "$files" ]; then
   echo "Placeholder scan enumerated no files to scan."
-  echo "$(cat "$err")"
+  cat "$err"
   echo
   echo "git ls-files returned nothing matching the scanned extensions. This is"
   echo "not a clean tree — it is a scan that never ran."

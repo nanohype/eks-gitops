@@ -84,6 +84,7 @@ See `docs/configuration/adding-addons.md` for full guide.
 
 ```bash
 task lint:yaml                     # YAML lint all files
+task lint:shell                    # shellcheck the shell gates and harnesses under scripts/
 task kustomize:build               # Build all overlays (all environments)
 task kustomize:build:env           # Build overlays for ENVIRONMENT (default: development)
 task validate                      # Every gate below, in order
@@ -162,13 +163,30 @@ aggregate, so a clean `task validate` is necessary but not sufficient:
   `scripts/kyverno-test.sh policies/kyverno/tests` and
   `scripts/check-image-verification.py` (CI job `kyverno`). The verify-images
   cases verify real signatures, so the suite needs the network, and a run that
-  meets a transport failure on every attempt exits 2 rather than 1. The
+  meets a transport failure on every attempt exits 2 rather than 1. Each run is
+  bounded with GNU `timeout` (`gtimeout` from Homebrew's coreutils on macOS),
+  which sends it TERM at the bound and KILL a grace period later if it is still
+  going, and a run either signal ends counts as a transport failure. The
   contract gate renders each supply-chain overlay, so it needs kustomize.
 - **Digest pin under real admission** — `scripts/check-digest-rewrite.sh`
   (CI job `digest-rewrite`; locally `task validate:digest-rewrite`, outside the
-  aggregate because it brings up kind and needs Docker and the network). The
-  Kyverno CLI never runs the mutating webhook that pins a verified tag to its
-  digest, so this is the only gate that observes the pin.
+  aggregate because it brings up kind and needs Docker, GNU `timeout` and the
+  network). The Kyverno CLI never runs the mutating webhook that pins a verified
+  tag to its digest, so this is the only gate that observes the pin. A transport
+  failure inside verification refuses with the policy's own identity message, so
+  every refusal, of a release-signed submission or a branch-signed one, is
+  decided on the API server's message and the admission controller's log
+  together. Three causes exit 2 rather than 1: a transport failure named in
+  either, reported as the link it broke (kubectl's request to the API server,
+  the API server's call to Kyverno's webhook, or the verifier's reads of the
+  registry, the Sigstore trusted root and Rekor); an admission controller log
+  that cannot be read; and a refusal carrying the identity message with no
+  `image verification failed` line in that log, which a failed verification
+  always writes. A kubectl request that returns an answer runs under
+  `--request-timeout`. A wait runs to its own `--timeout` under GNU `timeout`
+  set above it, because `--request-timeout` ends a watch connection whether or
+  not it is answering. kind and helm run under GNU `timeout`. Both gates read
+  transport failures through the one pattern in `scripts/transport-failure.sh`.
 - **Secret scan** — gitleaks over the working tree (CI job `secrets`)
 - **Pods name ServiceAccounts that exist** — `scripts/check-serviceaccount-bindings.py`
   (CI job `serviceaccount-bindings`)
