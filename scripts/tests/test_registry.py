@@ -46,6 +46,17 @@ from gateloader import load
 registry = load("registry")
 
 
+def setUpModule():
+    """Every test reads docker credentials from an empty directory unless it
+    names its own, so no test reads the credentials of whoever runs the suite,
+    and a result does not depend on what they logged in to."""
+    empty = tempfile.mkdtemp()
+    unittest.addModuleCleanup(shutil.rmtree, empty)
+    isolated = mock.patch.dict(os.environ, {"DOCKER_CONFIG": empty})
+    isolated.start()
+    unittest.addModuleCleanup(isolated.stop)
+
+
 class Transport(fake.Transport):
     def get(self, jitter: float = 0.0):
         """http_get bound to this transport, a fixed clock and a fixed jitter draw."""
@@ -783,15 +794,28 @@ class ReadingDockerCredentials(unittest.TestCase):
     def setUp(self):
         self.dir = pathlib.Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.dir)
+        said = mock.patch.object(registry, "_SAID", set())
+        said.start()
+        self.addCleanup(said.stop)
 
     def write(self, doc) -> None:
         (self.dir / "config.json").write_text(doc if isinstance(doc, str) else json.dumps(doc))
 
+    def read(self) -> tuple[dict[str, str], str]:
+        """The credentials read from this test's directory, and what was printed."""
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            found = registry.docker_credentials(self.dir)
+        return found, err.getvalue()
+
     def test_a_bare_host_and_a_url_key_each_name_their_host(self):
+        """`docker login` writes a bare host; Docker Hub's key and an insecure
+        registry's are URLs, over HTTPS and plain HTTP."""
         self.write({"auths": {"public.ecr.aws": {"auth": "a"},
-                              "https://index.docker.io/v1/": {"auth": "b"}}})
-        self.assertEqual(registry.docker_credentials(self.dir),
-                         {"public.ecr.aws": "a", "index.docker.io": "b"})
+                              "https://index.docker.io/v1/": {"auth": "b"},
+                              "http://insecure.example/": {"auth": "c"}}})
+        self.assertEqual(self.read(), ({"public.ecr.aws": "a", "index.docker.io": "b",
+                                        "insecure.example": "c"}, ""))
 
     def test_a_key_keeps_the_port_it_names(self):
         """A registry on another port of a host is another registry."""
@@ -800,18 +824,55 @@ class ReadingDockerCredentials(unittest.TestCase):
         self.assertEqual(registry.docker_credentials(self.dir),
                          {"registry.example:5000": "a", "mirror.example:8443": "b"})
 
-    def test_an_entry_a_credential_helper_holds_is_left_out(self):
-        """The secret is in the helper, not the file, so there is nothing to send."""
-        self.write({"auths": {"public.ecr.aws": {}, "ghcr.io": "x", "": {"auth": "c"},
-                              "r.example": {"auth": ""}}, "credsStore": "desktop"})
-        self.assertEqual(registry.docker_credentials(self.dir), {})
+    def test_an_entry_a_credential_helper_holds_is_left_out_and_said(self):
+        """The secret is in the helper, not the file, so there is nothing to send,
+        and the hosts it leaves anonymous are named once."""
+        self.write({"auths": {"public.ecr.aws": {}, "ghcr.io": "x", "r.example": {"auth": ""},
+                              "": {"auth": "c"}, "[::1": {"auth": "d"}},
+                    "credsStore": "desktop"})
+        found, said = self.read()
+        self.assertEqual(found, {})
+        self.assertEqual(said, f"  {self.dir / 'config.json'}: stores no `auth` for ghcr.io, "
+                               f"public.ecr.aws, r.example, as when a credential helper "
+                               f"holds it, so each is read anonymously\n")
 
-    def test_no_file_or_an_unreadable_one_is_no_credentials(self):
-        self.assertEqual(registry.docker_credentials(self.dir), {})
-        for doc in ("not json", ["auths"], {"auths": ["public.ecr.aws"]}):
+    def test_a_config_with_no_logins_is_no_credentials_and_says_nothing(self):
+        for doc in ({}, {"credsStore": "desktop"}, {"auths": {}}):
             with self.subTest(doc=doc):
                 self.write(doc)
-                self.assertEqual(registry.docker_credentials(self.dir), {})
+                self.assertEqual(self.read(), ({}, ""))
+
+    def test_no_file_is_no_credentials_and_says_nothing(self):
+        self.assertEqual(self.read(), ({}, ""))
+
+    def test_a_file_that_is_no_docker_config_is_no_credentials_and_is_said(self):
+        path = self.dir / "config.json"
+        cases = {"not json": "not readable as a docker config",
+                 '["auths"]': "holds no `auths` object",
+                 '{"auths": ["public.ecr.aws"]}': "holds no `auths` object"}
+        for doc, reason in cases.items():
+            with self.subTest(doc=doc):
+                registry._SAID.clear()
+                self.write(doc)
+                found, said = self.read()
+                self.assertEqual(found, {})
+                self.assertTrue(said.startswith(f"  {path}: {reason}"), said)
+                self.assertTrue(said.endswith("so every registry is read anonymously\n"), said)
+
+    def test_a_config_that_cannot_be_read_is_said(self):
+        (self.dir / "config.json").mkdir()
+        found, said = self.read()
+        self.assertEqual(found, {})
+        self.assertIn("not readable as a docker config", said)
+
+    def test_a_config_is_said_once_however_many_reads_meet_it(self):
+        """A gate builds an OciRepository per chart, each reading the config again."""
+        self.write({"auths": {"public.ecr.aws": {}}})
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            for _ in range(3):
+                registry.docker_credentials(self.dir)
+        self.assertEqual(err.getvalue().count("\n"), 1, err.getvalue())
 
     def test_docker_config_names_the_directory_and_home_is_the_fallback(self):
         self.write({"auths": {"public.ecr.aws": {"auth": "a"}}})
@@ -825,11 +886,21 @@ class ReadingDockerCredentials(unittest.TestCase):
                 mock.patch.object(pathlib.Path, "home", return_value=home):
             self.assertEqual(registry.docker_credentials(), {"ghcr.io": "g"})
 
-    def test_a_repository_given_no_credentials_reads_them(self):
+    def test_a_repository_given_no_credentials_asks_with_the_ones_docker_stored(self):
         self.write({"auths": {"public.ecr.aws": {"auth": "a"}}})
+        sent = []
+
+        def get(url, headers, authorization, *, challenge=None, deadline=None):
+            if "/token/" in url:
+                sent.append(authorization)
+                return b'{"token": "t"}'
+            if challenge is not None:
+                return challenge('Bearer realm="https://public.ecr.aws/token/"', 0.0) and b"{}"
+            return b"{}"
+
         with mock.patch.dict(os.environ, {"DOCKER_CONFIG": str(self.dir)}):
-            repo = registry.OciRepository("oci://public.ecr.aws/x/y", lambda *a, **k: b"")
-        self.assertEqual(repo._credentials, {"public.ecr.aws": "a"})
+            registry.OciRepository("oci://public.ecr.aws/x/y", get).read("manifests/1")
+        self.assertEqual(sent, ["Basic a"])
 
 
 class ReadingAnOciChart(unittest.TestCase):
@@ -840,6 +911,17 @@ class ReadingAnOciChart(unittest.TestCase):
         reg = Registry("public.ecr.aws", "karpenter/karpenter", "1.2.3", self.META)
         t = reg.transport()
         self.assertEqual(registry.oci_chart_metadata(self.REF, "1.2.3", t.get()), self.META)
+
+    def test_each_reader_asks_for_its_token_with_the_credentials_it_is_given(self):
+        realm = "https://public.ecr.aws/token/"
+        for read in (registry.oci_chart_metadata, registry.oci_chart_content):
+            with self.subTest(read=read.__name__):
+                reg = Registry("public.ecr.aws", "karpenter/karpenter", "1.2.3", self.META,
+                               realm=realm)
+                t = reg.transport()
+                read(self.REF, "1.2.3", t.get(), credentials={"public.ecr.aws": "Y3JlZA=="})
+                self.assertEqual([auth(r) for r in t.requests if r.full_url.startswith(realm)],
+                                 ["Basic Y3JlZA=="])
 
     def test_the_token_is_scoped_to_pulling_this_repository_and_fetched_once(self):
         reg = Registry("public.ecr.aws", "karpenter/karpenter", "1.2.3", self.META)

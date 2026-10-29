@@ -419,7 +419,9 @@ class LoggingInToEcrPublic(unittest.TestCase):
             with self.subTest(job=name):
                 self.assertIs(given.get("output-env-credentials"), False)
                 self.assertIs(given.get("output-credentials"), True)
-                self.assertEqual(steps[login].get("env"), {
+                env = dict(steps[login].get("env") or {})
+                env.pop("ECR_PUBLIC_REGION", None)
+                self.assertEqual(env, {
                     "AWS_ACCESS_KEY_ID": f"${{{{ {outputs}aws-access-key-id }}}}",
                     "AWS_SECRET_ACCESS_KEY": f"${{{{ {outputs}aws-secret-access-key }}}}",
                     "AWS_SESSION_TOKEN": f"${{{{ {outputs}aws-session-token }}}}",
@@ -427,6 +429,30 @@ class LoggingInToEcrPublic(unittest.TestCase):
                 readers = [s.get("name") for i, s in enumerate(steps)
                            if i != login and outputs in str(s)]
                 self.assertEqual(readers, [], "another step reads the role's credentials")
+
+    def test_the_role_and_the_token_are_both_asked_of_us_east_1(self):
+        """ECR Public issues authorization tokens from us-east-1 alone."""
+        for name, (_, steps, creds, login) in self.logins.items():
+            with self.subTest(job=name):
+                self.assertEqual(steps[creds]["with"]["aws-region"], "us-east-1")
+                self.assertEqual(steps[login]["env"]["ECR_PUBLIC_REGION"], "us-east-1")
+
+    def test_a_login_that_fails_fails_the_job(self):
+        """With the role configured, a job that went on to read anonymously would
+        report a role it could not assume as the throttling the login prevents."""
+        for name, (job, steps, creds, login) in self.logins.items():
+            with self.subTest(job=name):
+                self.assertFalse(job.get("continue-on-error", False))
+                for step in (steps[creds], steps[login]):
+                    self.assertFalse(step.get("continue-on-error", False), step.get("name"))
+
+    def test_the_jobs_that_log_in_add_id_token_to_contents_read_and_nothing_else(self):
+        """A job's permissions replace the workflow's, so each grants contents: read
+        again beside the OIDC token, and no permission the login does not need."""
+        for name, (job, *_) in self.logins.items():
+            with self.subTest(job=name):
+                self.assertEqual(job.get("permissions"),
+                                 {"contents": "read", "id-token": "write"})
 
     def run_login(self, aws: str, docker: str
                   ) -> dict[str, tuple[subprocess.CompletedProcess, dict[str, str]]]:

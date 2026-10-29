@@ -657,6 +657,89 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('key if "://" in key else', 'key if key.startswith("https://") else', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "credentials: read only an https:// key as a URL" test_registry \
+  test_a_bare_host_and_a_url_key_each_name_their_host
+res $F
+
+# A docker config that leaves a logged-in client anonymous is said once on
+# stderr, and a missing one, which leaves nothing to say, is not.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    except FileNotFoundError:\n        return {}\n', '', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "credentials: say a missing docker config" test_registry \
+  test_no_file_is_no_credentials_and_says_nothing
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    if unusable:\n', '    if False:\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "credentials: leave a helper-held entry unsaid" test_registry \
+  test_an_entry_a_credential_helper_holds_is_left_out_and_said
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    if line not in _SAID:\n', '    if True:\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "credentials: say a config once for every read of it" test_registry \
+  test_a_config_is_said_once_however_many_reads_meet_it
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    try:\n        return urllib.parse.urlsplit(key if "://" in key else f"//{key}").netloc\n'
+              '    except ValueError:\n        return ""\n',
+              '    return urllib.parse.urlsplit(key if "://" in key else f"//{key}").netloc\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "credentials: raise on a key that names no URL" test_registry \
+  test_an_entry_a_credential_helper_holds_is_left_out_and_said
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    repo = OciRepository(ref, get, credentials)\n    config = ',
+              '    repo = OciRepository(ref, get)\n    config = ', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "chart metadata: drop the credentials it is given" test_registry \
+  test_each_reader_asks_for_its_token_with_the_credentials_it_is_given
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    repo = OciRepository(ref, get, credentials)\n    manifest = ',
+              '    repo = OciRepository(ref, get)\n    manifest = ', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "chart content: drop the credentials it is given" test_registry \
+  test_each_reader_asks_for_its_token_with_the_credentials_it_is_given
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
 m = s.replace('answered=err.code == 404)',
               'answered=True)', 1)
 assert m != s, "mutation did not land"
@@ -1301,6 +1384,40 @@ p.write_text(m)
 PY
 rejects "ecr-public: grant id-token to the whole workflow" test_workflows \
   test_id_token_is_granted_only_to_the_jobs_that_log_in
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("        id: ecr-public\n", "        id: ecr-public\n        continue-on-error: true\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "ecr-public: read anonymously when the role cannot be assumed" test_workflows \
+  test_a_login_that_fails_fails_the_job
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("      contents: read\n      id-token: write  #", "      contents: write\n      id-token: write  #", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "ecr-public: grant a logging-in job contents: write" test_workflows \
+  test_the_jobs_that_log_in_add_id_token_to_contents_read_and_nothing_else
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("          ECR_PUBLIC_REGION: *ecr-public-region\n", "          ECR_PUBLIC_REGION: us-west-2\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "ecr-public: ask for the token outside us-east-1" test_workflows \
+  test_the_role_and_the_token_are_both_asked_of_us_east_1 \
+  test_the_minted_token_is_handed_to_docker_on_stdin
 res $F
 
 

@@ -70,7 +70,13 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
   settings, not this repo. CI has no cluster, so first-party CRDs
   (Platform/Tenant/ModelGateway/BudgetPolicy, Grafana) are schema-skipped
   (the skip list in scripts/kubeconform-scan.sh) and validated only against the
-  real webhook out-of-band.
+  real webhook out-of-band. The `id-token` grant on `charts` and
+  `image-vulnerabilities` is job-wide, so every step of either job, and every
+  process a step starts, can request an OIDC token, not only the step that
+  assumes the pull role. Any role whose trust policy accepts this repository's
+  pull request or main subject can be assumed from either job, so what the
+  grant exposes is decided by those trust policies, which live outside this
+  repo.
 
 ## 3. Image supply chain  (`policies/kyverno/supply-chain/`, `scripts/check-image-verification.py`, `scripts/check-digest-rewrite.sh`)
 

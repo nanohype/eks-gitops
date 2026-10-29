@@ -400,33 +400,72 @@ def http_get(url: str, headers: Mapping[str, str] | None = None,
             sleep(wait)
 
 
+# The lines _say_once has printed in this process.
+_SAID: set[str] = set()
+
+
+def _say_once(line: str) -> None:
+    """Print `line` to stderr unless this process has already printed it.
+
+    Every OciRepository reads the docker config again, so a line about the
+    config would otherwise be printed once for every chart a gate reads.
+    """
+    if line not in _SAID:
+        _SAID.add(line)
+        print(line, file=sys.stderr)
+
+
+def _config_host(key: str) -> str:
+    """The registry host an `auths` key names, port included, or "" for none.
+
+    A key is the bare host `docker login <host>` writes, or a URL such as
+    Docker Hub's https://index.docker.io/v1/. JSON object keys are strings,
+    so every key reaches here as one.
+    """
+    try:
+        return urllib.parse.urlsplit(key if "://" in key else f"//{key}").netloc
+    except ValueError:
+        return ""
+
+
 def docker_credentials(config_dir: str | os.PathLike[str] | None = None) -> dict[str, str]:
     """The base64 `user:password` `docker login` stored, by registry host.
 
-    Read from `config_dir`, or from DOCKER_CONFIG, or from ~/.docker. A host
-    whose entry carries no `auth` field, because a credential helper holds its
-    secret, is left out, and so is every host when the file is missing or not
-    a JSON object: a client with no credentials pulls anonymously.
+    Read from `config_dir`, or from DOCKER_CONFIG, or from ~/.docker, and a
+    host with no credentials here is read anonymously. A file that is missing
+    or holds no `auths` holds no login, and is read that way silently. A file
+    that cannot be read, an `auths` that is not an object, and an entry with
+    no `auth`, as when a credential helper holds its secret, are each a login
+    this client cannot use, so each is printed to stderr once, naming the file
+    and the hosts it leaves anonymous.
     """
     if config_dir is None:
         config_dir = os.environ.get("DOCKER_CONFIG") or pathlib.Path.home() / ".docker"
+    path = pathlib.Path(config_dir) / DOCKER_CONFIG_FILE
     try:
-        doc = json.loads((pathlib.Path(config_dir) / DOCKER_CONFIG_FILE).read_text())
-    except (OSError, ValueError):
+        doc = json.loads(path.read_text())
+    except FileNotFoundError:
         return {}
-    auths = doc.get("auths") if isinstance(doc, dict) else None
+    except (OSError, ValueError) as exc:
+        _say_once(f"  {path}: not readable as a docker config ({exc}), so every "
+                  f"registry is read anonymously")
+        return {}
+    auths = doc.get("auths", {}) if isinstance(doc, dict) else None
     if not isinstance(auths, dict):
+        _say_once(f"  {path}: holds no `auths` object, so every registry is read anonymously")
         return {}
     found: dict[str, str] = {}
+    unusable: list[str] = []
     for key, entry in auths.items():
+        host = _config_host(key)
         auth = entry.get("auth") if isinstance(entry, dict) else None
-        if isinstance(key, str) and isinstance(auth, str) and auth:
-            # A key is the bare host `docker login <host>` writes, or a URL such
-            # as Docker Hub's https://index.docker.io/v1/; either names one
-            # registry host, its port included.
-            host = urllib.parse.urlsplit(key if "://" in key else f"//{key}").netloc
-            if host:
-                found[host] = auth
+        if host and isinstance(auth, str) and auth:
+            found[host] = auth
+        elif host:
+            unusable.append(host)
+    if unusable:
+        _say_once(f"  {path}: stores no `auth` for {', '.join(sorted(unusable))}, as when "
+                  f"a credential helper holds it, so each is read anonymously")
     return found
 
 
@@ -542,9 +581,13 @@ class OciRepository:
         return data
 
 
-def oci_chart_metadata(ref: str, version: str, get: Getter = http_get) -> dict:
-    """The Chart.yaml metadata `helm push` stores as an OCI chart's config blob."""
-    repo = OciRepository(ref, get)
+def oci_chart_metadata(ref: str, version: str, get: Getter = http_get, *,
+                       credentials: Mapping[str, str] | None = None) -> dict:
+    """The Chart.yaml metadata `helm push` stores as an OCI chart's config blob.
+
+    Read through an OciRepository over `get` and `credentials`.
+    """
+    repo = OciRepository(ref, get, credentials)
     config = repo.manifest(version).get("config") or {}
     if config.get("mediaType") != HELM_CONFIG:
         raise RegistryError(f"{ref}:{version} is not a Helm chart: its config media "
@@ -555,9 +598,13 @@ def oci_chart_metadata(ref: str, version: str, get: Getter = http_get) -> dict:
     return meta
 
 
-def oci_chart_content(ref: str, version: str, get: Getter = http_get) -> bytes:
-    """The packaged chart `helm push` stores as an OCI chart's content layer."""
-    repo = OciRepository(ref, get)
+def oci_chart_content(ref: str, version: str, get: Getter = http_get, *,
+                      credentials: Mapping[str, str] | None = None) -> bytes:
+    """The packaged chart `helm push` stores as an OCI chart's content layer.
+
+    Read through an OciRepository over `get` and `credentials`.
+    """
+    repo = OciRepository(ref, get, credentials)
     manifest = repo.manifest(version)
     if (manifest.get("config") or {}).get("mediaType") != HELM_CONFIG:
         raise RegistryError(f"{ref}:{version} is not a Helm chart")
