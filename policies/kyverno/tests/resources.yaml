@@ -178,18 +178,25 @@ spec:
 # verify-images fixtures. Every nanohype reference is pinned by digest: the CLI
 # runs the validating path only, never the digest mutation admission runs first,
 # so a tag reaching verifyDigest fails here the way it would at the validating
-# webhook (vi-tag-only). The signed digest is a release of the operator, signed
-# and SPDX-attested by release.yaml on a tag; the branch-signed digest is a fab
-# build signed by ci.yml on refs/heads/main, a real org signature from a
-# workflow the policy does not trust.
+# webhook (vi-tag-only). Each signed digest is a release of an
+# eks-agent-platform image, signed and SPDX-attested by release.yaml on a tag;
+# the branch-signed digest is a fab build signed by ci.yml on refs/heads/main, a
+# real org signature from a workflow the policy does not trust.
 #
-# Both digests carry cosign's legacy format: a signature under the
-# sha256-<digest>.sig tag, the attestation under .att, and no Sigstore bundle
-# referrer (`cosign tree <image>` lists which). Kyverno verifies a bundle when
-# the image carries one and reads the legacy tags only when it carries none, so
-# every row here decides on the legacy path. Bundle verification is a separate
-# path through Kyverno, and only a fixture signed in the bundle format
-# exercises it.
+# cosign records a signature in one of two formats, and Kyverno verifies each
+# on its own path: a Sigstore bundle attached as an OCI referrer when the image
+# carries one, and the legacy sha256-<digest>.sig and .att tags only when it
+# carries none (`cosign tree <image>` lists which an image has).
+#
+#   legacy  operator@sha256:06a46523… (vi-signed, vi-signed-with-sidecar,
+#           vi-branch-signed-init) and the branch-signed fab build
+#   bundle  operator@sha256:589c5977… and eval-runner@sha256:1f033a7e…
+#           (vi-bundle-signed-operator, vi-bundle-signed-eval-runner)
+#
+# The bundle fixtures are the operator and eval-runner releases the pinned
+# operator chart renders, so a chart bump that moves either image moves its
+# fixture with it. The refused rows are all legacy: a refusal on the bundle
+# path needs a bundle signed by a workflow the policy does not trust.
 #
 # A non-nanohype image is outside matchImageReferences (ghcr.io/nanohype/*), so
 # nothing is verified and the pod passes. Widening the glob to "*" makes this
@@ -242,6 +249,40 @@ spec:
     - name: sidecar
       image: registry.k8s.io/pause:3.10
 ---
+# The operator release the pinned chart renders, signed and SPDX-attested as
+# Sigstore bundles, pinned by digest.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vi-bundle-signed-operator
+  namespace: workloads
+  labels:
+    app.kubernetes.io/name: example
+spec:
+  securityContext:
+    runAsNonRoot: true
+  containers:
+    - name: app
+      image: ghcr.io/nanohype/eks-agent-platform/operator@sha256:589c59773972ac113d2512e8ad0db86ceec924ae7b44fc2ae5ce040dea5fe3f0
+---
+# The eval-runner release the pinned chart's WorkflowTemplate runs, in the same
+# bundle format. Its step pods land in the eval-runner namespace, which the
+# policy does not exclude, so each step's eval-runner container is verified at
+# admission.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vi-bundle-signed-eval-runner
+  namespace: workloads
+  labels:
+    app.kubernetes.io/name: example
+spec:
+  securityContext:
+    runAsNonRoot: true
+  containers:
+    - name: app
+      image: ghcr.io/nanohype/eks-agent-platform/eval-runner@sha256:1f033a7e65ae29325d6507555886bc5545712014ed06ebd68dcbdeb1299cfe06
+---
 # A signed image named by tag. verifyDigest refuses an image that reaches
 # validation without a digest, which at admission means the pin did not happen.
 apiVersion: v1
@@ -256,7 +297,7 @@ spec:
     runAsNonRoot: true
   containers:
     - name: app
-      image: ghcr.io/nanohype/eks-agent-platform/operator:0.6.1
+      image: ghcr.io/nanohype/eks-agent-platform/operator:0.6.2
 ---
 # Signed by the org, from ci.yml on a branch push. The subject regex admits only
 # release.ya?ml on refs/tags, so this fails the signature validation.

@@ -127,6 +127,43 @@ def identity(spec) -> dict:
     return spec["attestors"][0]["cosign"]["keyless"]["identities"][0]
 
 
+# The certificate subject each release-signed fixture in the Kyverno suite is
+# signed under, keyed by the digest-pinned reference its pods name. Each entry
+# is what `cosign verify --certificate-identity <subject>
+# --certificate-oidc-issuer https://token.actions.githubusercontent.com <image>`
+# accepts for that image.
+_RELEASE = "https://github.com/nanohype/eks-agent-platform/.github/workflows/release.yaml@refs/tags/"
+RELEASE_SIGNED_FIXTURES = {
+    # cosign's legacy .sig/.att format.
+    "ghcr.io/nanohype/eks-agent-platform/operator@sha256:"
+    "06a465237e0caeb3fecfd46ae7cd143c7dc27b7164143bb8fde7127081392549": _RELEASE + "operator-v0.6.1",
+    # Sigstore bundles, attached as OCI referrers.
+    "ghcr.io/nanohype/eks-agent-platform/operator@sha256:"
+    "589c59773972ac113d2512e8ad0db86ceec924ae7b44fc2ae5ce040dea5fe3f0": _RELEASE + "operator-v0.6.2",
+    "ghcr.io/nanohype/eks-agent-platform/eval-runner@sha256:"
+    "1f033a7e65ae29325d6507555886bc5545712014ed06ebd68dcbdeb1299cfe06": _RELEASE + "eval-runner-v0.1.1",
+}
+SUITE = gate.ROOT / "policies" / "kyverno" / "tests"
+
+
+def admitted_nanohype_images() -> set[str]:
+    """Every ghcr.io/nanohype image a pod in a `pass` verify-images row names."""
+    manifest = yaml.safe_load((SUITE / "kyverno-test.yaml").read_text())
+    admitted = {name for row in manifest["results"]
+                if row.get("policy") == gate.POLICY_NAME and row.get("result") == "pass"
+                for name in row.get("resources") or []}
+    images = set()
+    for rel in manifest["resources"]:
+        for doc in yaml.safe_load_all((SUITE / rel).read_text()):
+            if not doc or doc["metadata"]["name"] not in admitted:
+                continue
+            spec = doc.get("spec") or {}
+            for field in gate.CONTAINER_FIELDS:
+                images |= {c["image"] for c in spec.get(field) or []
+                           if c["image"].startswith(gate.REGISTRY_PREFIX)}
+    return images
+
+
 class TheShippedPolicy(unittest.TestCase):
     def test_it_satisfies_the_contract(self):
         code, out = run_gate(copy.deepcopy(SHIPPED))
@@ -162,6 +199,28 @@ class TheReleaseIdentity(unittest.TestCase):
         self.assertIsNone(re.search(
             gate.SUBJECT_REGEXP,
             "https://github.com/nanohype/fab/.github/workflows/ci.yml@refs/heads/main"))
+
+    def test_the_release_signed_fixture_subjects_are_accepted(self):
+        """The identity on each release-signed fixture, legacy and bundle alike,
+        is one the corpus accepts."""
+        for image, subject in RELEASE_SIGNED_FIXTURES.items():
+            with self.subTest(image=image):
+                self.assertIn(subject, gate.ACCEPTED_SUBJECTS)
+                self.assertTrue(re.search(gate.SUBJECT_REGEXP, subject))
+
+
+class TheReleaseSignedFixtures(unittest.TestCase):
+    """The admitted rows of the Kyverno suite and the subjects recorded for them
+    name the same images, so a release fixture cannot be added, or retired,
+    without the identity it is signed under being decided here too."""
+
+    def test_every_admitted_nanohype_image_has_a_recorded_subject(self):
+        unrecorded = sorted(admitted_nanohype_images() - set(RELEASE_SIGNED_FIXTURES))
+        self.assertFalse(unrecorded, f"admitted fixtures with no recorded subject: {unrecorded}")
+
+    def test_every_recorded_subject_belongs_to_an_admitted_fixture(self):
+        orphaned = sorted(set(RELEASE_SIGNED_FIXTURES) - admitted_nanohype_images())
+        self.assertFalse(orphaned, f"subjects recorded for no admitted fixture: {orphaned}")
 
 
 class AWidenedSubjectIsRefused(unittest.TestCase):
