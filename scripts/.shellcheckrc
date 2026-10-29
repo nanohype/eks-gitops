@@ -1,4 +1,0 @@
-# The gates here source shared shell from beside them; follow it from whatever
-# directory shellcheck runs in, without -x.
-external-sources=true
-source-path=SCRIPTDIR

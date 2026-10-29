@@ -185,8 +185,13 @@ aggregate, so a clean `task validate` is necessary but not sufficient:
   always writes. A kubectl request that returns an answer runs under
   `--request-timeout`. A wait runs to its own `--timeout` under GNU `timeout`
   set above it, because `--request-timeout` ends a watch connection whether or
-  not it is answering. kind and helm run under GNU `timeout`. Both gates read
-  transport failures through the one pattern in `scripts/transport-failure.sh`.
+  not it is answering. kind and helm run under GNU `timeout`. Both gates make
+  the requests and hand what came back to `scripts/verdicts.py`, which holds
+  every verdict on that path: the one transport-failure pattern, a refusal's
+  cause, the identity and pin outcomes, a run's retry, and what a GNU `timeout`
+  status of 124 or 137 means. `scripts/tests/test_verdicts.py` covers every
+  line and branch of it, and `scripts/tests/run.py` fails a run that leaves one
+  uncovered.
 - **Secret scan** — gitleaks over the working tree (CI job `secrets`)
 - **Pods name ServiceAccounts that exist** — `scripts/check-serviceaccount-bindings.py`
   (CI job `serviceaccount-bindings`)

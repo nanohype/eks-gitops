@@ -27,7 +27,7 @@ tasks:
       - yamllint -c .yamllint.yaml .
 
   lint:shell:
-    desc: "Shell lint — shellcheck over the shell gates and harnesses under scripts/, configured by scripts/.shellcheckrc"
+    desc: "Shell lint — shellcheck over the shell gates and harnesses under scripts/"
     cmds:
       # Identical to the python-lint job's step. A glob matching nothing is
       # handed to shellcheck as a path, which it refuses.
@@ -83,11 +83,11 @@ tasks:
       - KUBECONFORM_SKIP="" ./scripts/kubeconform-scan.sh applicationsets/
 
   validate:gate-tests:
-    desc: "Gate-script unit tests + the coverage ratchet"
+    desc: "Gate-script unit tests + their coverage floors"
     cmds:
-      # Through coverage so the ratchet in run.py applies. Bare `./run.py` still
-      # works and skips the ratchet — a developer running the suite should not
-      # be told the measurement failed, but CI and this target always measure.
+      # Through coverage so the floors in run.py apply. Bare `./run.py` still
+      # works and skips them — a developer running the suite should not be told
+      # the measurement failed, but CI and this target always measure.
       - COVERAGE_REQUIRED=1 coverage run --rcfile=.coveragerc scripts/tests/run.py
 
   validate:env-coverage:

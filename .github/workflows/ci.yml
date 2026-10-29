@@ -419,7 +419,7 @@ jobs:
       # argv. Keep the two argv-identical: a local gate and its CI counterpart
       # drifting apart is how a green `task validate` stops meaning anything
       # about the build.
-      - name: Gate-script unit tests and coverage ratchet
+      - name: Gate-script unit tests and coverage floors
         run: COVERAGE_REQUIRED=1 coverage run --rcfile=.coveragerc scripts/tests/run.py
       # A unit test says a gate computes the right answer on a fixture. A
       # positive control says the gate REJECTS the violation it exists to
@@ -520,9 +520,9 @@ jobs:
         run: ruff check .
       - name: Typecheck
         run: mypy
-      # The shell gates and the harnesses that drive them, under
-      # scripts/.shellcheckrc. The runner image ships a shellcheck of its own, so
-      # the pinned one is installed ahead of it on PATH and its version printed.
+      # The shell gates and the harnesses that drive them. The runner image
+      # ships a shellcheck of its own, so the pinned one is installed ahead of
+      # it on PATH and its version printed.
       - name: Install ShellCheck
         run: |
           curl -fsSL --connect-timeout 20 --max-time 120 --retry 3 \
@@ -665,6 +665,12 @@ jobs:
           tar -xz -C /tmp -f /tmp/kyverno.tar.gz kyverno
           sudo install -m 0755 /tmp/kyverno /usr/local/bin/kyverno
           kyverno version
+
+      # kyverno-test.sh asks scripts/verdicts.py what each run established.
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
 
       - name: Run policy unit tests
         run: ./scripts/kyverno-test.sh policies/kyverno/tests

@@ -16,18 +16,27 @@ Two assertions close that:
 Both are floors, not exact counts: adding tests must never require editing
 either, or the floor becomes something people lower to make a run go green.
 The coverage bounds below hold to the same rule: adding a test never requires
-an edit here, and adding an untested gate does.
+an edit here, and adding a gate no test executes fails the run that adds it.
 """
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
+import json
+import math
 import os
 import pathlib
 import sys
 import unittest
+from typing import NamedTuple
 
 HERE = pathlib.Path(__file__).resolve().parent
+
+# The directory `coverage run` started in, read before any test can change it.
+# Coverage names each file in its report relative to that directory.
+STARTED_IN = pathlib.Path.cwd()
 
 # Named rather than counted. A module that disappears takes its assertions with
 # it, and nothing else in the suite would notice.
@@ -67,15 +76,20 @@ EXPECTED = (
     "test_render_addons",
     "test_image_pins",
     "test_log_volume_budget",
-    # How the Kyverno suite's runner reads a run: a transport failure on the
-    # image-verification path, in a row's message or the verifier's log, or a
-    # run its time bound ended or killed, is a run repeated and then one that
-    # could not verify, never a verdict.
+    # Every verdict on the signature-verification path that the digest-rewrite
+    # gate and the Kyverno suite's runner reach, in the one module both scripts
+    # ask: a transport failure, a run its time bound ended or killed, a
+    # refusal's cause, an identity outcome and a digest pin, each read to the
+    # exit status the script acts on.
+    "test_verdicts",
+    # How the Kyverno suite's runner acts on what verdicts.py reads out of a
+    # run: a run repeated and then one that could not verify, never a verdict,
+    # and a reading that could not be reached is never a pass.
     "test_kyverno_test",
-    # The verdicts the digest-rewrite gate reaches at each step: every refusal,
-    # of a release-signed submission or a foreign identity, decided on one rule
-    # over the window the verifier's log is read from, and a bound on every step,
-    # decided without the cluster it runs on in CI.
+    # The digest-rewrite gate's steps against a stubbed kubectl: each refusal
+    # handed to verdicts.py with the window the verifier's log is read from, the
+    # log read only when the refusal alone decides nothing, and a bound on every
+    # step, all without the cluster it runs on in CI.
     "test_digest_rewrite",
     # The image population both image gates read, and the acknowledgement file
     # the vulnerability verdict is decided against. One walk answers every
@@ -108,6 +122,26 @@ EXPECTED = (
     # The workflows as YAML: a timeout on every job, a bound on every download,
     # and the conditions deciding which key the chart cache is kept under.
     "test_workflows",
+    # The AI control plane held to llm-policy and to itself: model ids Bedrock
+    # accepts, routes IAM allows, and a budget the kill switch can act on.
+    "test_ai_config",
+    # An alert guarding `!= 0` and the rule in its group reporting the zero it
+    # excludes, which only `== bool 0` does.
+    "test_alert_coverage",
+    # Which identifiers in an Athena panel's SQL are columns, held to the ones
+    # the CUR export delivers.
+    "test_athena_panel_columns",
+    # A source reading the catalog's URL from the cluster Secret reads its
+    # revision from there too.
+    "test_catalog_revision",
+    # The environments a cluster selector reaches, and a values file for each.
+    "test_env_coverage",
+    # One remote reference per ExternalSecret, patched by the appset rendering
+    # its directory and by no other.
+    "test_externalsecret_keys",
+    # The ServiceAccounts a chart's pods run as and the ones it creates, held to
+    # one set in both directions.
+    "test_serviceaccount_bindings",
 )
 
 # A floor well under the real count. It catches "discovery found almost nothing",
@@ -124,129 +158,91 @@ MIN_TESTS = 31
 #
 # A gate with neither has been read by nobody and asserts nothing that anything
 # has checked. controls.py exempts every gate that reaches a chart registry or an
-# API — the exemption is honest, because a control cannot be written for a gate
-# whose input arrives over the network — and for exactly those a unit test is the
-# only proof available.
+# API, since a control cannot be written for a gate whose input arrives over the
+# network, and for exactly those a unit test is the only proof available.
 #
-# `control_exempt_gates` below reads that exemption list out of controls.py
-# rather than repeating it, and check_coverage fails on any gate in both it and
-# the uncovered set. A gate added to the exemption must arrive with tests, and
-# cannot be excused by a percentage that moves a point.
+# check_coverage fails on any Python file in scripts/ that the suite never
+# executes, so a gate arrives with tests or fails the run that adds it. It reads
+# the exemption list out of controls.py rather than repeating it
+# (`control_exempt_gates` below), names an exempt gate the suite never executes
+# apart from the rest, and fails on an exempt gate with no floor of its own in
+# PER_GATE_FLOORS. "Executed" is coverage's reading, and coverage cannot tell a
+# test from an import: a gate a test module only loads, to read a constant,
+# executes its module body with no assertion of its own. The per-file floors are
+# what hold the half of a gate that decides its verdict covered.
 #
 # testing-rubric's `security-critical-100` (severity: reject) asks for a per-file
-# 100% override on every file on a security-critical path. Three gates sit on
-# one: check-policy-admission.py is an approval gate, deciding whether the fleet
-# is admissible at Enforce; check-image-verification.py holds the signature-
-# verification contract; and check-policy-validity.py holds every rendered
-# ImageValidatingPolicy to the digest pin that verification depends on. Each
-# carries 100 in PER_GATE_FLOORS, so a branch added to any of them without a
-# test fails this run rather than lowering a ratchet.
-#
-# The floors that follow are the weaker half. They stop a covered file
-# regressing; they cannot state what is covered, and a count loose enough to
-# survive an honest refactor is loose enough to miss a decision going untested.
+# 100% override on every file on a security-critical path. These sit on one:
+# check-policy-admission.py is an approval gate, deciding whether the fleet is
+# admissible at Enforce; check-image-verification.py holds the signature-
+# verification contract; check-policy-validity.py holds every rendered
+# ImageValidatingPolicy to the digest pin that verification depends on; and
+# verdicts.py decides what each refusal, run and time bound on the verification
+# path in check-digest-rewrite.sh and kyverno-test.sh established. Each carries
+# 100 lines and 100 branches in PER_GATE_FLOORS, so a branch added to any of
+# them without a test fails this run rather than lowering a ratchet.
 
-# Combined statement+branch coverage floor over the gate scripts, enforced when
-# `coverage` is available. A ratchet, not a target: set just under what the suite
-# reaches, so coverage cannot fall silently, and raising it is what lands with
-# the tests that earn it.
-#
-# The org testing-rubric asks for 75% lines and 60% branches, and this sits under
-# that. What the gap is made of is readable rather than asserted here: the gates
-# still carrying no unit tests are the ones controls.py DOES cover, so each of
-# them has been observed to reject the violation it names. Read the standing with
+# testing-rubric's content.coverage_floor over the gate scripts, enforced when
+# `coverage` is collecting. Statements and branches are measured apart, each
+# against its own floor: a combined figure averages one over the other, so a
+# branch shortfall hides behind line coverage and the reverse. coverage.py counts
+# statements and branches, so the rubric's lines and statements floors both read
+# its statement count, and its functions floor has no counterpart here. Both
+# figures come from coverage's JSON report. Read the standing with
 #
 #     COVERAGE_REQUIRED=1 coverage run --rcfile=.coveragerc scripts/tests/run.py
 #     coverage report --rcfile=.coveragerc --include="scripts/*.py"
 #
-# rather than from a number written here, which would be accurate on the day and
-# a confident falsehood after the next test lands.
-#
-# COMBINED_FLOOR is compared against what coverage.report() returns, which with
-# branch=True is a COMBINED statement-and-branch figure, not line coverage. The
-# two differ enough to matter, so the name here says combined and the printed
-# line says so too. Calling a combined figure "line coverage" would be a
-# measurement mislabelled as the one the rubric asks about.
-#
-# What the number does NOT capture: scripts/tests/controls.py runs most gates end
-# to end as a subprocess against a mutated tree, so those gates have behavioural
-# coverage this line count cannot see. Neither figure substitutes for the other —
-# the controls prove a gate rejects, the unit tests prove it computes the right
-# answer on a case the real tree does not contain.
-#
-# MOST, and the exceptions are the ones that matter to this floor. controls.py
-# exempts every gate that reaches a chart registry or an API, and its own run
-# prints the split. Those gates have neither kind of coverage, they are the
-# largest in the tree, and among them are the gates on the paths testing-rubric
-# calls security-critical. So this figure being low is not offset by behavioural
-# coverage for precisely the files where that offset was being claimed.
-COMBINED_FLOOR = 45
+# What neither figure captures: scripts/tests/controls.py runs every gate it does
+# not exempt end to end as a subprocess against a mutated tree, so those gates
+# have behavioural coverage this count cannot see. The controls prove a gate
+# rejects; the unit tests prove it computes the right verdict on a case the real
+# tree does not contain; neither substitutes for the other. The gates controls.py
+# exempts have no behavioural coverage, so for them the unit figure is the whole
+# of the evidence, which is why each must carry a floor in PER_GATE_FLOORS.
+LINE_FLOOR = 75
+BRANCH_FLOOR = 60
 
-# The gate scripts allowed to carry NO unit coverage at all, by name,
-# complementing the floors below. The floors stop a covered file regressing;
-# this stops a gate arriving with no tests. check_coverage fails on any gate
-# reading as uncovered that is not named here, so a gate added without tests
-# fails the run that adds it, and so does a change that adds one untested gate
-# while covering another, which a count of uncovered gates reads as no change.
-#
-# A downward-only ratchet. A gate named here that reads as covered is reported
-# and does not fail the run, so adding a test never requires an edit to this
-# file; drop the name in the change that gives the gate tests of its own.
-# "Uncovered" is coverage's reading, and coverage cannot tell a test from an
-# import: a gate a test module only loads, to read a constant or because a gate
-# under test loads it by path, executes its module body and reads as covered
-# with no assertion of its own. Failing on a named gate that reads covered would
-# make that import an edit here, and keeping the name costs nothing a count
-# would have caught: the name excuses that one gate, which was already excused.
-#
-# A name here that is no gate in scripts/ fails: it would excuse whichever gate
-# is next given that name. The per-gate floors and the controls in
-# scripts/tests/controls.py are where a gate's behaviour is asserted.
-UNTESTED_GATES = frozenset({
-    "check-ai-config.py",
-    "check-alert-coverage.py",
-    "check-athena-panel-columns.py",
-    "check-catalog-revision.py",
-    "check-env-coverage.py",
-    "check-externalsecret-keys.py",
-    "check-serviceaccount-bindings.py",
-})
-
-PER_GATE_FLOORS = {
-    "scripts/check-named-things.py": 40,
-    "scripts/check-renovate-coverage.py": 90,
-    "scripts/check-label-values.py": 40,
-    "scripts/check-sync-waves.py": 10,
-    "scripts/gatelib.py": 70,
+# Per-file (lines, branches) floors, in percent. Below 100 each is a ratchet set
+# just under what the suite reaches, so a covered file cannot regress silently,
+# and raising one is what lands with the tests that earn it. A file with no
+# branches reads as covering all of them.
+PER_GATE_FLOORS: dict[str, tuple[int, int]] = {
+    "scripts/check-named-things.py": (42, 34),
+    "scripts/check-renovate-coverage.py": (90, 84),
+    "scripts/check-label-values.py": (56, 54),
+    "scripts/check-sync-waves.py": (14, 1),
+    "scripts/gatelib.py": (73, 80),
     # The registry client checks every chart archive against a digest and
     # handles a pull token. That is signature verification's path in the sense
     # testing-rubric's `security-critical-100` uses, so its floor is that rule's
     # 100 rather than a ratchet: a branch no test reaches here is a check that
     # nothing proves still checks.
-    "scripts/registry.py": 100,
-    # The security-critical gates, at the rubric's per-file override; see
+    "scripts/registry.py": (100, 100),
+    # The security-critical files, at the rubric's per-file override; see
     # THE ASSERTION THAT IS NOT A NUMBER above.
-    "scripts/check-policy-admission.py": 100,
-    "scripts/check-image-verification.py": 100,
-    "scripts/check-policy-validity.py": 100,
+    "scripts/check-policy-admission.py": (100, 100),
+    "scripts/check-image-verification.py": (100, 100),
+    "scripts/check-policy-validity.py": (100, 100),
+    "scripts/verdicts.py": (100, 100),
     # The control-exempt gates. Their floors are what keeps the verdict half
     # covered after the module that covers it is edited.
-    "scripts/check-platform-crs.py": 51,
-    "scripts/validate-dashboards.py": 50,
-    "scripts/render-addons.py": 65,
-    "scripts/check-log-volume-budget.py": 60,
-    "scripts/check-falco-rule-floor.py": 50,
-    "scripts/check-alert-severity-routes.py": 95,
-    "scripts/check-image-vulnerabilities.py": 75,
-    "scripts/check-image-pins.py": 90,
+    "scripts/check-platform-crs.py": (51, 51),
+    "scripts/validate-dashboards.py": (52, 49),
+    "scripts/render-addons.py": (67, 56),
+    "scripts/check-log-volume-budget.py": (65, 59),
+    "scripts/check-falco-rule-floor.py": (58, 33),
+    "scripts/check-alert-severity-routes.py": (96, 90),
+    "scripts/check-image-vulnerabilities.py": (76, 70),
+    "scripts/check-image-pins.py": (91, 85),
     # The half of the directory-size gate that decides the verdict. The rest is
     # `--sync`, `--live` and `--self-test`, which run against a clone.
-    "scripts/check-directory-manifest-size.py": 70,
+    "scripts/check-directory-manifest-size.py": (68, 71),
     # The Go reading and the offline verdict. `--sync`, `--live` and the chart
     # render reach the network and are covered by stubbing what they return.
-    "scripts/check-lb-scheme-inputs.py": 70,
+    "scripts/check-lb-scheme-inputs.py": (69, 73),
     # Both verdicts over stubbed reads, --sync and --self-test.
-    "scripts/check-chart-deprecation.py": 85,
+    "scripts/check-chart-deprecation.py": (86, 80),
 }
 
 
@@ -303,16 +299,62 @@ def control_exempt_gates() -> tuple[list[str], str]:
     return exempt, ""
 
 
+def percent(covered: int, total: int) -> float:
+    return 100.0 if total == 0 else 100.0 * covered / total
+
+
+def shown(pct: float) -> str:
+    """`pct` cut, not rounded, to one decimal, so a figure short of its floor
+    never prints as reaching it."""
+    return f"{math.floor(pct * 10) / 10:.1f}%"
+
+
+class Figures(NamedTuple):
+    """Covered and total statements and branches, named as coverage's JSON report names them."""
+
+    covered_lines: int
+    num_statements: int
+    covered_branches: int
+    num_branches: int
+
+    @classmethod
+    def of(cls, summary: dict) -> Figures:
+        return cls(*(int(summary.get(field, 0)) for field in cls._fields))
+
+    @property
+    def lines(self) -> float:
+        return percent(self.covered_lines, self.num_statements)
+
+    @property
+    def branches(self) -> float:
+        return percent(self.covered_branches, self.num_branches)
+
+
+def coverage_figures(cov) -> tuple[dict[pathlib.Path, Figures], Figures]:
+    """Per-file and total figures, read from coverage's JSON report.
+
+    The report lists every file under the configured source, executed or not,
+    and names each relative to STARTED_IN, so each name is resolved against it.
+    """
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        cov.json_report(outfile="-")
+    report = json.loads(out.getvalue())
+    files = {(STARTED_IN / name).resolve(): Figures.of(entry["summary"])
+             for name, entry in report["files"].items()}
+    return files, Figures.of(report["totals"])
+
+
 def check_coverage() -> int:
-    """Enforce the coverage ratchet, when this run was measured.
+    """Enforce the coverage floors, when this run was measured.
 
     Silent when coverage is not collecting: the floors exist to stop a
     regression, and a developer running the suite bare should not be told the
-    measurement failed. CI always measures, so the ratchet always applies there
-    — `task validate:gate-tests` and the CI step both invoke through coverage.
+    measurement failed. CI always measures, so the floors always apply there —
+    `task validate:gate-tests` and the CI step both invoke through coverage.
     """
     # COVERAGE_REQUIRED is set by the callers that always measure — the Taskfile
-    # target and the CI step. Without it a bare `./run.py` skips the ratchet,
+    # target and the CI step. Without it a bare `./run.py` skips the floors,
     # which is right for a developer; with it, a run that could not measure is a
     # failure rather than a silent pass. Otherwise "the measurement did not run"
     # and "the measurement passed" print the same thing, which is the shape this
@@ -324,7 +366,7 @@ def check_coverage() -> int:
     except ImportError:
         if required:
             print("FAIL  COVERAGE_REQUIRED=1 but the coverage package is not "
-                  "importable — the ratchet did not run, which is not a pass.")
+                  "importable — the floors were not checked, which is not a pass.")
             return 1
         return 0
 
@@ -333,69 +375,53 @@ def check_coverage() -> int:
         if required:
             print("FAIL  COVERAGE_REQUIRED=1 but this process is not running under "
                   "coverage — invoke it as `coverage run --rcfile=.coveragerc "
-                  "scripts/tests/run.py`. The ratchet did not run.")
+                  "scripts/tests/run.py`. The floors were not checked.")
             return 1
         return 0
 
     cov.stop()
     cov.save()
-    data = cov.get_data()
-    if not data.measured_files():
+    if not cov.get_data().measured_files():
         print("FAIL  coverage collected no data — the run was measured and saw "
               "nothing, which reports the same as full coverage of an empty set.")
         return 1
 
-    import io
-    buf = io.StringIO()
-    total = cov.report(file=buf, show_missing=False)
+    files, total = coverage_figures(cov)
 
     failures = []
-    if total < COMBINED_FLOOR:
-        failures.append(f"combined statement+branch coverage {total:.1f}% is below "
-                        f"the {COMBINED_FLOOR}% ratchet")
+    for what, pct, floor in (("line", total.lines, LINE_FLOOR),
+                             ("branch", total.branches, BRANCH_FLOOR)):
+        if pct < floor:
+            failures.append(f"{what} coverage over the gate scripts is {shown(pct)}, below "
+                            f"testing-rubric's {floor}% floor")
 
     root = HERE.parent.parent
-    for rel, floor in sorted(PER_GATE_FLOORS.items()):
-        path = str(root / rel)
-        if path not in data.measured_files():
+    for rel, (line_floor, branch_floor) in sorted(PER_GATE_FLOORS.items()):
+        figures = files.get(root / rel)
+        if figures is None or figures.covered_lines == 0:
             failures.append(f"{rel} carries a coverage floor but was not measured — "
                             f"the gate was renamed, or its tests stopped importing it")
             continue
-        analysis = cov._analyze(path)
-        pct = analysis.numbers.pc_covered
-        if pct < floor:
-            failures.append(f"{rel} at {pct:.0f}% is below its {floor}% floor")
+        for what, pct, floor in (("lines", figures.lines, line_floor),
+                                 ("branches", figures.branches, branch_floor)):
+            if pct < floor:
+                failures.append(f"{rel}: {what} at {shown(pct)} are below its {floor}% floor")
 
-    # Gate scripts with no unit coverage whatsoever. Read from what coverage
-    # measured over every gate in scripts/, so a gate added tomorrow is in the
-    # population without anyone remembering to add it.
+    # Read from every Python file in scripts/, so a gate added tomorrow is in
+    # the population without anyone remembering to add it.
     gates = sorted((root / "scripts").glob("*.py"))
-    uncovered = []
-    for gate in gates:
-        path = str(gate)
-        if path not in data.measured_files():
-            uncovered.append(gate.name)
-            continue
-        if cov._analyze(path).numbers.pc_covered == 0:
-            uncovered.append(gate.name)
-    unexcused = sorted(set(uncovered) - UNTESTED_GATES)
-    if unexcused:
+    unexecuted = [g.name for g in gates
+                  if (figures := files.get(g)) is None or figures.covered_lines == 0]
+    if unexecuted:
         failures.append(
-            f"{len(unexcused)} gate script(s) carry no unit coverage and are not in "
-            f"UNTESTED_GATES: {', '.join(unexcused)}. A gate arrives with tests"
+            f"{len(unexecuted)} Python file(s) in scripts/ are never executed by the suite: "
+            f"{', '.join(unexecuted)}. A gate arrives with tests"
         )
-    unknown = sorted(UNTESTED_GATES - {g.name for g in gates})
-    if unknown:
-        failures.append(
-            f"UNTESTED_GATES names {', '.join(unknown)}, which is no gate in scripts/ — "
-            f"the name would excuse whichever gate is next given it"
-        )
-    covered_now = sorted(UNTESTED_GATES - set(uncovered) - set(unknown))
 
     exempt, exempt_problem = control_exempt_gates()
     if exempt_problem:
         failures.append(exempt_problem)
-    unproven = sorted(set(exempt) & set(uncovered))
+    unproven = sorted(set(exempt) & set(unexecuted))
     if unproven:
         failures.append(
             f"{len(unproven)} gate(s) have neither a positive control nor unit "
@@ -404,28 +430,29 @@ def check_coverage() -> int:
             f"that decides the verdict is the only proof available that they say "
             f"anything at all"
         )
+    floorless = sorted(g for g in exempt if f"scripts/{g}" not in PER_GATE_FLOORS)
+    if floorless:
+        failures.append(
+            f"{len(floorless)} control-exempt gate(s) carry no floor in PER_GATE_FLOORS: "
+            f"{', '.join(floorless)}. Unit tests are the only proof these say anything, "
+            f"so the half that decides the verdict needs a floor holding it covered"
+        )
 
     if failures:
         print()
         for f in failures:
             print(f"FAIL  {f}")
-        print("\n  Coverage floors and UNTESTED_GATES ratchet. Add the tests that "
-              "\n  restore the number, or move the bound deliberately in "
-              "\n  scripts/tests/run.py with the reason.")
+        print("\n  Add the tests that restore a figure, or move a per-file ratchet"
+              "\n  deliberately in scripts/tests/run.py with the reason. LINE_FLOOR and"
+              "\n  BRANCH_FLOOR are testing-rubric's, and move only with it.")
         return 1
 
-    print(f"coverage ratchet OK: {total:.1f}% combined statement+branch "
-          f"(floor {COMBINED_FLOOR}%), {len(PER_GATE_FLOORS)} per-gate floor(s) held, "
-          f"{len(uncovered)} of {len(gates)} gate script(s) with no unit coverage, "
-          f"each named in UNTESTED_GATES. Under the rubric's 75% lines / 60% "
-          f"branches — see the note in this file.")
-    if covered_now:
-        print(f"UNTESTED_GATES names {len(covered_now)} gate(s) that read as covered: "
-              f"{', '.join(covered_now)}. Drop a name once its gate has tests of its own; "
-              f"a gate a test only imports reads as covered too.")
-    print(f"control-exempt gates: all {len(exempt)} carry unit coverage. "
-          f"scripts/tests/controls.py holds the other half of the claim — that "
-          f"every gate it does NOT exempt rejects the violation it names.")
+    print(f"coverage OK: lines {shown(total.lines)} (floor {LINE_FLOOR}%), branches "
+          f"{shown(total.branches)} (floor {BRANCH_FLOOR}%), {len(PER_GATE_FLOORS)} "
+          f"per-file floor(s) held, all {len(gates)} Python file(s) in scripts/ executed.")
+    print(f"control-exempt gates: all {len(exempt)} carry unit coverage and a floor of "
+          f"their own. scripts/tests/controls.py holds the other half of the claim — "
+          f"that every gate it does NOT exempt rejects the violation it names.")
     return 0
 
 

@@ -72,7 +72,10 @@ ALL_MODULES=(test_policy_admission test_platform_crs test_dashboards
   test_corpus_floors test_registry test_chart_deprecation test_falco_rule_floor
   test_image_vulnerabilities test_renovate_coverage test_lb_scheme_inputs
   test_kubeconform_scan test_image_extraction test_image_verification
-  test_policy_validity test_kyverno_test test_digest_rewrite test_workflows)
+  test_policy_validity test_verdicts test_kyverno_test test_digest_rewrite
+  test_workflows test_ai_config test_alert_coverage test_athena_panel_columns
+  test_catalog_revision test_env_coverage test_externalsecret_keys
+  test_serviceaccount_bindings)
 
 # Bytecode caching keys on (mtime, size). A restore and the next mutation inside
 # the same second can hand the run the PREVIOUS mutant's module, and the suite
@@ -84,15 +87,22 @@ _suite() {
     && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest "$@" ) >"$OUT" 2>&1
 }
 
-# rejects <label> <module> <test-id>...
+# rejects <label> <module>[,<module>...] <test-id>...
 #
 # The suite must exit non-zero AND every named test id must appear on a FAIL: or
 # ERROR: line. A mutant caught only by tests other than the ones that name the
 # behaviour is reported as a miss, because the assertion that was supposed to
 # hold the behaviour did not.
+#
+# A behaviour one module decides and a script acts on is held in two places,
+# the unit test on the decision and the gate test on the run it changes, so a
+# probe may name several modules, comma-separated. A test id is matched by its
+# name alone, so the ids a probe names are distinct across its modules.
 rejects() {
-  local label="$1" module="$2"; shift 2
-  _suite "$module"
+  local label="$1" modules=()
+  IFS=, read -ra modules <<<"$2"
+  shift 2
+  _suite "${modules[@]}"
   local rc=$?
   if [ "$rc" -eq 126 ] || [ "$rc" -eq 127 ]; then
     printf "  HARNESS %-56s rc=%s — python did not run; not a verdict\n" "$label" "$rc"
@@ -1847,22 +1857,499 @@ rejects "digest pin: read an absent field as false" test_policy_validity \
   test_an_absent_field_reads_as_the_crd_default
 res $F
 
+# Every verdict on the image-verification path is decided in scripts/verdicts.py
+# and acted on by the shell gate that asked. A reverted verdict is named by the
+# unit test holding it and by the gate test whose run it changes; a reverted
+# action is named by the gate test alone.
+F=scripts/verdicts.py
+
 # A transport failure on the image-verification path decides no row: reading
 # the image reports it as the row's error, and anything after that reports the
 # policy's own message with only the verifier's log naming the cause.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("    reasons = [ended] if ended else transport_failures(output)\n",
+              "    reasons = [ended] if ended else []\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "transport: decide a run that met one on its rows" test_verdicts,test_kyverno_test \
+  test_a_failure_behind_the_policys_message_is_run_again \
+  test_the_last_attempt_could_not_verify \
+  test_one_that_clears_is_run_again \
+  test_one_behind_the_policy_message_is_not_a_regression \
+  test_an_expected_failure_it_produced_is_not_a_pass
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("    if attempt >= attempts:\n", "    if attempt > attempts:\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "attempts: run the suite again after the last attempt" test_verdicts,test_kyverno_test \
+  test_the_last_attempt_could_not_verify \
+  test_one_killed_every_time_cannot_run \
+  test_one_cut_off_every_time_cannot_run
+res $F
+
+# GNU timeout exits 124 for a command its TERM ended and 137 for one it killed
+# after the grace. Neither finished, so neither decided anything, and the step
+# itself wrote nothing that says so.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("    if status == TIMED_OUT:\n", "    if status == -TIMED_OUT:\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "bound: read a command its TERM ended as one that finished" \
+  test_verdicts,test_kyverno_test,test_digest_rewrite \
+  test_a_command_its_term_ended_did_not_finish \
+  test_a_run_its_bound_ended_is_run_again_whatever_it_printed \
+  test_one_cut_off_is_run_again \
+  test_one_cut_off_every_time_cannot_run \
+  test_a_wait_the_bound_ended_says_so \
+  test_a_cluster_the_bound_ended_says_so
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("    if status == KILLED:\n", "    if status == -KILLED:\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "bound: read a command the kill ended as one that finished" \
+  test_verdicts,test_kyverno_test,test_digest_rewrite \
+  test_a_command_its_kill_ended_was_killed \
+  test_a_run_killed_is_run_again_whatever_it_printed \
+  test_one_killed_is_run_again \
+  test_one_killed_every_time_cannot_run \
+  test_an_install_the_bound_killed_says_so
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("    reasons = [ended] if ended else transport_failures(output)\n",
+              "    reasons = [ended, *transport_failures(output)] if ended else transport_failures(output)\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "bound: quote what a run the bound ended had printed" test_verdicts \
+  test_a_bound_ending_the_last_run_is_named_and_not_its_output
+res $F
+
+# Each endpoint on the verification path is reached before any row is run.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('REACHABLE = re.compile(r"2[0-9][0-9]|401")', 'REACHABLE = re.compile(r"[0-9]+")', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "endpoint: run the suite against one that did not answer" test_verdicts,test_kyverno_test \
+  test_anything_else_did_not \
+  test_an_endpoint_that_does_not_answer_cannot_run_and_tests_nothing
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('REACHABLE = re.compile(r"2[0-9][0-9]|401")', 'REACHABLE = re.compile(r"2[0-9][0-9]")', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "endpoint: read the registry's token challenge as no answer" test_verdicts \
+  test_a_success_or_the_registrys_challenge_answered
+res $F
+
+# The one transport-failure pattern both gates read. Each phrase a fixture
+# carries alone is held by the test naming that outage.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('|tuf: failed to download|', '|', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "pattern: miss a trusted root that could not be fetched" test_verdicts,test_digest_rewrite \
+  test_each_phrase_is_one \
+  test_a_trusted_root_that_could_not_be_fetched_is_not_a_denial
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('|unexpected status code (?:429|5[0-9][0-9])|', '|unexpected status code 5[0-9][0-9]|', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "pattern: miss a throttled registry" test_verdicts,test_digest_rewrite \
+  test_each_phrase_is_one \
+  test_a_registry_429_refusal_cannot_run
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('|\\]\\[(?:429|5[0-9][0-9])\\]"', '"', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "pattern: miss a Rekor 5xx" test_verdicts,test_digest_rewrite \
+  test_each_phrase_is_one \
+  test_a_rekor_5xx_is_not_a_denial
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('\\]\\[(?:429|5[0-9][0-9])\\]", re.IGNORECASE)', '\\]\\[(?:429|5[0-9][0-9])\\]")', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "pattern: read it in one case only" test_verdicts \
+  test_case_is_ignored
+res $F
+
+# How a diagnostic quotes the lines naming one: uncoloured, from shortly before
+# the phrase, cut to width, each once, three at most.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("    for line in lines_of(uncoloured(text)):\n", "    for line in lines_of(text):\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "quote: read a line with its colour codes in it" test_verdicts \
+  test_its_colour_is_cut_away_before_it_is_read
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("        excerpt = line[max(0, found.start() - CONTEXT):][:WIDTH]\n",
+              "        excerpt = line[:WIDTH]\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "quote: quote a line from its start whatever its length" test_verdicts \
+  test_a_line_is_quoted_from_shortly_before_its_first_phrase
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("        if excerpt in quoted:\n            continue\n", "", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "quote: quote a line each time it is seen" test_verdicts \
+  test_a_line_seen_twice_is_quoted_once
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("        if len(quoted) == QUOTED:\n            break\n", "", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "quote: quote every line naming one" test_verdicts \
+  test_at_most_three_distinct_lines_are_quoted
+res $F
+
+# The verdict on a foreign identity, one function for the pod and the
+# ephemeral container alike.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    blocks = "Deny" in actions.split(",")\n', '    blocks = True\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "foreign: fail an admission under any action" test_verdicts,test_digest_rewrite \
+  test_admitted_under_audit_holds_and_is_reported \
+  test_denied_for_its_identity_under_audit_is_a_finding \
+  test_admitted_under_audit_is_reported_not_blocked \
+  test_denied_for_its_identity_under_audit_fails
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    blocks = "Deny" in actions.split(",")\n', '    blocks = "Deny" in actions\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "foreign: block under an action merely containing Deny" test_verdicts \
+  test_an_action_merely_containing_deny_does_not_block
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("    status, said = refusal_cause(refusal)\n    if status != HOLDS:\n        return status, said\n"
+              "    if IDENTITY_MESSAGE not in refusal.text:\n",
+              "    if IDENTITY_MESSAGE not in refusal.text:\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "foreign: read a transport refusal as a regression" test_verdicts,test_digest_rewrite \
+  test_refused_for_a_transport_failure_could_not_decide \
+  test_refused_for_a_transport_failure_cannot_run
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("    if IDENTITY_MESSAGE not in refusal.text:\n", "    if False:\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "foreign: read any refusal as one for its identity" test_verdicts,test_digest_rewrite \
+  test_refused_for_another_reason_is_a_finding_that_shows_it \
+  test_refused_for_another_reason_fails_and_shows_it
+res $F
+
+# A transport failure inside verification refuses with the policy's identity
+# message, which under Deny is what a correct denial says. Only the verifier's
+# log names the cause, and only a log carrying a verifier line is the
+# verifier's. Every refusal, foreign or release-signed, is decided on that one
+# rule, whichever step made the request.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    cause = transport_failures("\\n".join(lines))\n', "    cause = []\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "refusal: read the refusal text and not the verifier's log" test_verdicts,test_digest_rewrite \
+  test_an_outage_behind_the_identity_message_is_not_a_denial \
+  test_a_trusted_root_that_could_not_be_fetched_is_not_a_denial \
+  test_a_rekor_5xx_is_not_a_denial
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("    if IDENTITY_MESSAGE in refusal.text and not lines:\n", "    if False:\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "refusal: decide an identity refusal with no verifier line behind it" \
+  test_verdicts,test_digest_rewrite \
+  test_an_identity_refusal_with_no_verifier_line_is_of_unknown_cause \
+  test_a_log_without_the_verifiers_line_decides_no_denial \
+  test_a_log_without_the_verifiers_line_decides_no_audit_verdict \
+  test_a_signed_pod_refused_with_no_verifier_line_cannot_decide \
+  test_a_signed_ephemeral_container_refused_with_no_verifier_line_cannot_decide \
+  test_a_deployment_refused_with_no_verifier_line_cannot_decide \
+  test_a_deployments_pod_refused_with_no_verifier_line_cannot_decide
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    status, said = refusal_cause(refusal)\n    if status != HOLDS:\n        return status, said\n'
+              '    return FINDING, [f"  FAIL  {means}:"',
+              '    return FINDING, [f"  FAIL  {means}:"', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "refusal: fail a release-signed refusal whose cause is unknown" \
+  test_verdicts,test_digest_rewrite \
+  test_one_of_unknown_cause_is_not \
+  test_its_log_is_asked_for_before_it_is_decided \
+  test_a_signed_pod_refused_with_no_verifier_line_cannot_decide \
+  test_a_signed_ephemeral_container_refused_with_no_verifier_line_cannot_decide \
+  test_a_deployment_refused_with_no_verifier_line_cannot_decide \
+  test_a_deployments_pod_refused_with_no_verifier_line_cannot_decide
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("    return [line for line in lines_of(uncoloured(log)) if VERIFIER_FAILED in line]\n",
+              "    return lines_of(uncoloured(log))\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "log: read the controller's own errors as the verifier's" test_verdicts,test_digest_rewrite \
+  test_the_controllers_own_errors_are_not \
+  test_a_connection_the_webhook_server_dropped_is_not_the_verifiers
+res $F
+
+# A transport failure in the refusal is named by the link it broke: kubectl's
+# own request to the API server, the API server's call to Kyverno's webhook, or
+# the verifier's reads of the registry, the trusted root and Rekor.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("    if not ANSWERED.search(refusal.text):\n", "    if False:\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "cause: blame the registry for a request kubectl got no answer for" \
+  test_verdicts,test_digest_rewrite \
+  test_a_request_kubectl_got_no_answer_for_reads_no_log \
+  test_a_request_kubectl_got_no_answer_for_is_not_the_registry \
+  test_a_signed_pod_kubectl_got_no_answer_for_is_not_the_registry
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("    if WEBHOOK_UNANSWERED in refusal.text:\n", "    if False:\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "cause: blame the registry for a webhook that did not answer" \
+  test_verdicts,test_digest_rewrite \
+  test_a_webhook_the_api_server_got_no_answer_from \
+  test_a_webhook_the_api_server_got_no_answer_from_is_not_the_registry
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('ANSWERED = re.compile(r"^Error (?:from server|creating:)", re.MULTILINE)',
+              'ANSWERED = re.compile(r"^Error from server", re.MULTILINE)', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "cause: read the ReplicaSet's refusal as kubectl's own" test_verdicts,test_digest_rewrite \
+  test_the_replicasets_refusal_carries_an_answer \
+  test_a_deployments_pod_the_registry_throttled_cannot_run
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('ANSWERED = re.compile(r"^Error (?:from server|creating:)", re.MULTILINE)',
+              'ANSWERED = re.compile(r"^Error (?:from server|creating:)")', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "cause: read only a refusal's first line for an answer" test_verdicts \
+  test_an_answer_after_kubectls_warnings_is_an_answer
+res $F
+
+# The messages a refusal is decided on are the ones the policy and the
+# verifier write.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('\nIDENTITY_MESSAGE = "image is not signed by a nanohype release workflow"\n',
+              '\nIDENTITY_MESSAGE = "image is not signed by a nanohype workflow"\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "identity: decide a denial on a message the policy does not write" test_verdicts \
+  test_it_is_the_policys
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('\nVERIFIER_FAILED = "image verification failed"\n',
+              '\nVERIFIER_FAILED = "image verification error"\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "verifier: look for a line the verifier does not write" test_verdicts \
+  test_a_failed_verification_is_the_verifiers \
+  test_the_fixtures_line_is_one_the_verifier_writes
+res $F
+
+# A pin is the tag joined to a digest, and nothing else.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    return re.fullmatch(re.escape(tagged) + r"@sha256:[0-9a-f]{64}", image) is not None\n',
+              '    return re.match(re.escape(tagged) + r"@sha256:[0-9a-f]{64}", image) is not None\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "pin: accept a digest with more after it" test_verdicts \
+  test_what_is_not_the_tag_joined_to_a_digest_is_not
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    if pinned(tagged, image):\n', '    if image.startswith(tagged):\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "pin: accept the tag with no digest joined to it" test_verdicts,test_digest_rewrite \
+  test_each_site_names_where_the_pin_was_read \
+  test_a_tag_left_unpinned_fails
+res $F
+
+# What the Kyverno suite's runner does with each answer.
 F=scripts/kyverno-test.sh
 
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('  [ -z "$transport" ] && break\n', "  break\n", 1)
+m = s.replace("    4) printf '%s\\n' \"$said\"\n", "    4) break ;;\n    40) printf '%s\\n' \"$said\"\n", 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
-rejects "transport: decide a run that met one on its rows" test_kyverno_test \
+rejects "transport: decide a run verdicts.py asked to repeat on its rows" test_kyverno_test \
   test_one_that_clears_is_run_again \
   test_one_behind_the_policy_message_is_not_a_regression \
   test_an_expected_failure_it_produced_is_not_a_pass
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("    *) printf '%s\\n' \"$out\"\n", "    *) break ;;\n    99) printf '%s\\n' \"$out\"\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "verdicts: read a run verdicts.py could not decide as a decided one" test_kyverno_test \
+  test_a_verdict_that_could_not_be_reached_is_not_a_pass
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('kyverno-run --status="$rc" \\\n', 'kyverno-run --status=0 \\\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "bound: hand verdicts.py a status the run did not exit with" test_kyverno_test \
+  test_one_cut_off_is_run_again \
+  test_one_killed_is_run_again
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('--status="$code" || exit 2\n', '--status="$code" || :\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "endpoint: run the suite past one that did not answer" test_kyverno_test \
+  test_an_endpoint_that_does_not_answer_cannot_run_and_tests_nothing
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('if ! command -v python3 >/dev/null 2>&1; then\n', 'if false; then\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "verdicts: run with no python3 to decide a run" test_kyverno_test \
+  test_no_python_cannot_run_and_tests_nothing
 res $F
 
 edit $F <<'PY'
@@ -1919,30 +2406,6 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('    124) transport=', '    124000) transport=', 1)
-assert m != s, "mutation did not land"
-p.write_text(m)
-PY
-rejects "bound: decide a run the bound ended on its rows" test_kyverno_test \
-  test_one_cut_off_is_run_again \
-  test_one_cut_off_every_time_cannot_run
-res $F
-
-edit $F <<'PY'
-import pathlib, sys
-p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('    137) transport=', '    137000) transport=', 1)
-assert m != s, "mutation did not land"
-p.write_text(m)
-PY
-rejects "bound: decide a run the kill ended on its rows" test_kyverno_test \
-  test_one_killed_is_run_again \
-  test_one_killed_every_time_cannot_run
-res $F
-
-edit $F <<'PY'
-import pathlib, sys
-p = pathlib.Path(sys.argv[1]); s = p.read_text()
 m = s.replace('if [ -z "$TIMEOUT_CMD" ]; then\n', 'if false; then\n', 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
@@ -1973,94 +2436,131 @@ rejects "bound: let the kill grace outlast the job" test_kyverno_test \
   test_every_attempt_fits_inside_the_jobs_timeout
 res $F
 
+# Neither gate words a transport failure or a refusal message of its own: a
+# phrase only one of them knew would be an outage one gate reports as a run
+# that could not verify and the other as a verdict on a signature.
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('. "$ROOT/scripts/transport-failure.sh"\n', '. "$ROOT/scripts/transport-failure.sh"\ntransport_failures() { uncoloured | grep -oiE \'.{0,60}(no such host|i/o timeout).*\'; }\n', 1)
+m = s.replace('VERDICTS="$ROOT/scripts/verdicts.py"\n',
+              'VERDICTS="$ROOT/scripts/verdicts.py"\n'
+              "own_failures() { grep -oiE '.{0,60}(no such host|i/o timeout).*'; }\n", 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
-rejects "pattern: classify with phrases of its own after the shared ones" test_digest_rewrite \
+rejects "pattern: classify with phrases of its own beside verdicts.py" test_digest_rewrite \
   test_no_gate_words_a_transport_failure_of_its_own
 res $F
 
-# The verdict on a foreign identity, one function for the pod and the
-# ephemeral container alike.
+# What the digest-rewrite gate does with each answer.
 F=scripts/check-digest-rewrite.sh
 
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('  if [ "$outcome" = admitted ]; then\n    case ",$actions," in\n', '  if [ "$outcome" = admitted ]; then\n    case ",Deny," in\n', 1)
+m = s.replace('VERDICTS="$ROOT/scripts/verdicts.py"\n',
+              'VERDICTS="$ROOT/scripts/verdicts.py"\n'
+              "own_failures() { grep -iE 'no such host|i/o timeout|connection refused|toomanyrequests'; }\n", 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
-rejects "foreign: fail an admission under any action" test_digest_rewrite \
-  test_admitted_under_audit_is_reported_not_blocked
+rejects "pattern: classify with a list of its own beside verdicts.py" test_digest_rewrite \
+  test_no_gate_words_a_transport_failure_of_its_own
 res $F
 
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('  require_known_cause "$what"\n  if ! grep -qF "$IDENTITY_MESSAGE"', '  if ! grep -qF "$IDENTITY_MESSAGE"', 1)
+m = s.replace('VERDICTS="$ROOT/scripts/verdicts.py"\n',
+              'VERDICTS="$ROOT/scripts/verdicts.py"\n'
+              'IDENTITY_MESSAGE="image is not signed by a nanohype release workflow"\n', 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
-rejects "foreign: read a transport refusal as a regression" test_digest_rewrite \
-  test_refused_for_a_transport_failure_cannot_run
-res $F
-
-# A transport failure inside verification refuses with the policy's identity
-# message, which under Deny is what a correct denial says. Only the verifier's
-# log names the cause, and only a log carrying a verifier line is the
-# verifier's. Every refusal, foreign or release-signed, is decided on that one
-# rule, whichever step made the request.
-edit $F <<'PY'
-import pathlib, sys
-p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('    read_verifier_log\n    cause="$(transport_failures <"$WORK/log")"\n', '    read_verifier_log\n', 1)
-assert m != s, "mutation did not land"
-p.write_text(m)
-PY
-rejects "refusal: read the refusal text and not the verifier's log" test_digest_rewrite \
-  test_a_trusted_root_that_could_not_be_fetched_is_not_a_denial \
-  test_a_rekor_5xx_is_not_a_denial
+rejects "identity: decide on a copy of the policy's message" test_digest_rewrite \
+  test_no_gate_decides_on_a_message_of_its_own
 res $F
 
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('  if grep -qF "$IDENTITY_MESSAGE" "$WORK/err" && [ ! -s "$WORK/log" ]; then\n', '  if false; then\n', 1)
+m = s.replace('VERDICTS="$ROOT/scripts/verdicts.py"\n', 'VERDICTS="$ROOT/scripts/verdicts-own.py"\n', 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
-rejects "refusal: decide an identity refusal with no verifier line behind it" test_digest_rewrite \
-  test_a_log_without_the_verifiers_line_decides_no_denial \
-  test_a_log_without_the_verifiers_line_decides_no_audit_verdict \
-  test_a_signed_pod_refused_with_no_verifier_line_cannot_decide \
-  test_a_signed_ephemeral_container_refused_with_no_verifier_line_cannot_decide \
-  test_a_deployment_refused_with_no_verifier_line_cannot_decide \
-  test_a_deployments_pod_refused_with_no_verifier_line_cannot_decide
+rejects "verdicts: decide through a module of its own" test_digest_rewrite \
+  test_both_gates_ask_verdicts
 res $F
 
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('  require_known_cause "$1"\n  fail=1\n', '  fail=1\n', 1)
+m = s.replace("    3) fail=1 ;;\n", "    3) ;;\n", 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
-rejects "refusal: fail a release-signed refusal whose cause is unknown" test_digest_rewrite \
-  test_a_signed_pod_refused_with_no_verifier_line_cannot_decide \
-  test_a_signed_ephemeral_container_refused_with_no_verifier_line_cannot_decide \
-  test_a_deployment_refused_with_no_verifier_line_cannot_decide \
-  test_a_deployments_pod_refused_with_no_verifier_line_cannot_decide
+rejects "act: read a finding as a pass" test_digest_rewrite \
+  test_admitted_under_deny_fails \
+  test_a_tag_left_unpinned_fails \
+  test_a_signed_pod_the_verifier_refused_fails
 res $F
 
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('    refused_release_signed "the signed pod" ', '    fail=1; show_err; : ', 1)
+m = s.replace("    2) exit 2 ;;\n", "    2) ;;\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "act: carry on past a refusal of unknown cause" test_digest_rewrite \
+  test_refused_for_a_transport_failure_cannot_run \
+  test_a_registry_429_refusal_cannot_run \
+  test_a_signed_pod_refused_with_no_verifier_line_cannot_decide
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    *) cannot_run "scripts/verdicts.py exited $1 answering $2, so no verdict was reached." ;;\n',
+              '    *) ;;\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "act: read a verdict verdicts.py could not reach as a pass" test_digest_rewrite \
+  test_a_pin_verdicts_py_could_not_decide_is_no_verdict
+res $F
+
+# A refusal's cause is read from the refusal first. Only when the refusal
+# names none is the verifier's log read, so a request kubectl got no answer for
+# is never followed by a read of a log no admission wrote to.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('  if [ "$rc" -eq 4 ]; then\n', '  if false; then\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "refusal: decide without the verifier's log" test_digest_rewrite \
+  test_denied_for_its_identity_under_deny_passes \
+  test_a_signed_pod_the_verifier_refused_fails
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('  python3 "$VERDICTS" "${args[@]}"\n  rc=$?\n',
+              '  read_verifier_log\n  python3 "$VERDICTS" "${args[@]}" --log="$WORK/log"\n  rc=$?\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "refusal: read the log for a request no admission answered" test_digest_rewrite \
+  test_a_request_kubectl_got_no_answer_for_is_not_the_registry
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    decide release-signed --what="the signed pod" ', '    fail=1; : --what="the signed pod" ', 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
@@ -2071,7 +2571,8 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('    refused_release_signed "the signed ephemeral container" \\\n', '    fail=1; show_err; : \\\n', 1)
+m = s.replace('    decide release-signed --what="the signed ephemeral container" ',
+              '    fail=1; : --what="the signed ephemeral container" ', 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
@@ -2082,7 +2583,7 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('    refused_release_signed "the Deployment" ', '    fail=1; show_err; : ', 1)
+m = s.replace('    decide release-signed --what="the Deployment" ', '    fail=1; : --what="the Deployment" ', 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
@@ -2093,7 +2594,8 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('    refused_release_signed "the Deployment\'s pod" \\\n', '    fail=1; show_err; : \\\n', 1)
+m = s.replace('    decide release-signed --what="the Deployment\'s pod" ',
+              '    fail=1; : --what="the Deployment\'s pod" ', 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
@@ -2115,18 +2617,7 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('uncoloured <"$WORK/log.raw" | grep -F "$VERIFIER_FAILED" >"$WORK/log"\n', 'uncoloured <"$WORK/log.raw" >"$WORK/log"\n', 1)
-assert m != s, "mutation did not land"
-p.write_text(m)
-PY
-rejects "log: read the controller's own errors as the verifier's" test_digest_rewrite \
-  test_a_connection_the_webhook_server_dropped_is_not_the_verifiers
-res $F
-
-edit $F <<'PY'
-import pathlib, sys
-p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace(' >"$WORK/log.raw" 2>"$WORK/log.err"; then\n', ' >"$WORK/log.raw" 2>"$WORK/log.err" || true; then\n', 1)
+m = s.replace(' >"$WORK/log" 2>"$WORK/log.err"; then\n', ' >"$WORK/log" 2>"$WORK/log.err" || true; then\n', 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
@@ -2135,62 +2626,13 @@ rejects "log: decide over a log that could not be read" test_digest_rewrite \
   test_a_log_read_that_times_out_decides_no_refusal
 res $F
 
-# A transport failure in the refusal is named by the link it broke: kubectl's
-# own request to the API server, the API server's call to Kyverno's webhook, or
-# the verifier's reads of the registry, the trusted root and Rekor.
-edit $F <<'PY'
-import pathlib, sys
-p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('''    if ! grep -qE '^Error (from server|creating:)' "$WORK/err"; then\n''', '    if false; then\n', 1)
-assert m != s, "mutation did not land"
-p.write_text(m)
-PY
-rejects "cause: blame the registry for a request kubectl got no answer for" test_digest_rewrite \
-  test_a_request_kubectl_got_no_answer_for_is_not_the_registry \
-  test_a_signed_pod_kubectl_got_no_answer_for_is_not_the_registry
-res $F
-
-edit $F <<'PY'
-import pathlib, sys
-p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('''    elif grep -qF 'failed calling webhook' "$WORK/err"; then\n''', '    elif false; then\n', 1)
-assert m != s, "mutation did not land"
-p.write_text(m)
-PY
-rejects "cause: blame the registry for a webhook that did not answer" test_digest_rewrite \
-  test_a_webhook_the_api_server_got_no_answer_from_is_not_the_registry
-res $F
-
-edit $F <<'PY'
-import pathlib, sys
-p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace("""'^Error (from server|creating:)'""", """'^Error from server'""", 1)
-assert m != s, "mutation did not land"
-p.write_text(m)
-PY
-rejects "cause: read the ReplicaSet's refusal as kubectl's own" test_digest_rewrite \
-  test_a_deployments_pod_the_registry_throttled_cannot_run
-res $F
-
-# The message a denial is decided on is the one the policy writes.
-edit $F <<'PY'
-import pathlib, sys
-p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('\nIDENTITY_MESSAGE="image is not signed by a nanohype release workflow"\n', '\nIDENTITY_MESSAGE="image is not signed by a nanohype workflow"\n', 1)
-assert m != s, "mutation did not land"
-p.write_text(m)
-PY
-rejects "identity: decide a denial on a message the policy does not write" test_digest_rewrite \
-  test_the_script_reads_the_policys_identity_message
-res $F
-
 # Each request is marked before it is sent, and the log is read from before
 # the mark, so the window holds the line the verifier logged as it refused.
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
 m = s.replace('  mark_sent\n  if ! admitted="$(kube create', '  if ! admitted="$(kube create', 1)
-m = m.replace('    refused_release_signed "the signed pod" ', '    mark_sent\n    refused_release_signed "the signed pod" ', 1)
+m = m.replace('    decide release-signed --what="the signed pod" ', '    mark_sent\n    decide release-signed --what="the signed pod" ', 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
@@ -2202,7 +2644,8 @@ edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
 m = s.replace('  mark_sent\n  if ephemeral="$(kube patch', '  if ephemeral="$(kube patch', 1)
-m = m.replace('    refused_release_signed "the signed ephemeral container"', '    mark_sent\n    refused_release_signed "the signed ephemeral container"', 1)
+m = m.replace('    decide release-signed --what="the signed ephemeral container"',
+              '    mark_sent\n    decide release-signed --what="the signed ephemeral container"', 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
@@ -2214,7 +2657,8 @@ edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
 m = s.replace('  local outcome=refused\n  mark_sent\n', '  local outcome=refused\n', 1)
-m = m.replace('  decide_foreign "the branch-signed ephemeral container"', '  mark_sent\n  decide_foreign "the branch-signed ephemeral container"', 1)
+m = m.replace('  decide foreign-identity --what="the branch-signed ephemeral container"',
+              '  mark_sent\n  decide foreign-identity --what="the branch-signed ephemeral container"', 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
@@ -2226,7 +2670,7 @@ edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
 m = s.replace('  mark_sent\n  if ! stored="$(kube create', '  if ! stored="$(kube create', 1)
-m = m.replace('    refused_release_signed "the Deployment" ', '    mark_sent\n    refused_release_signed "the Deployment" ', 1)
+m = m.replace('    decide release-signed --what="the Deployment" ', '    mark_sent\n    decide release-signed --what="the Deployment" ', 1)
 m = m.replace('  if [ "$stored" = "$TAGGED" ]; then\n', '  mark_sent\n  if [ "$stored" = "$TAGGED" ]; then\n', 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
@@ -2240,7 +2684,8 @@ edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
 m = s.replace('  mark_sent\n  if kube create -f "$SUITE/branch-signed.yaml"', '  if kube create -f "$SUITE/branch-signed.yaml"', 1)
-m = m.replace('    decide_foreign "the branch-signed image" refused\n', '    mark_sent\n    decide_foreign "the branch-signed image" refused\n', 1)
+m = m.replace('    decide foreign-identity --what="the branch-signed image" --outcome=refused',
+              '    mark_sent\n    decide foreign-identity --what="the branch-signed image" --outcome=refused', 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
@@ -2328,23 +2773,13 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('    124) echo "$1 did not finish within ${seconds}s, so GNU timeout ended it." >&2 ;;\n', '', 1)
+m = s.replace('  python3 "$VERDICTS" bound --command="$1" --status="$rc" --seconds="$seconds" >&2\n', '', 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
 rejects "bound: leave a step the bound ended unnamed" test_digest_rewrite \
   test_a_wait_the_bound_ended_says_so \
-  test_a_cluster_the_bound_ended_says_so
-res $F
-
-edit $F <<'PY'
-import pathlib, sys
-p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('    137) echo "$1 was killed before it finished." >&2 ;;\n', '', 1)
-assert m != s, "mutation did not land"
-p.write_text(m)
-PY
-rejects "bound: leave a step the bound killed unnamed" test_digest_rewrite \
+  test_a_cluster_the_bound_ended_says_so \
   test_an_install_the_bound_killed_says_so
 res $F
 
@@ -2476,55 +2911,136 @@ rejects "delete: carry on past an object still present" test_digest_rewrite \
   test_an_admitted_signed_pod_not_deleted_in_time_cannot_run
 res $F
 
-edit $F <<'PY'
-import pathlib, sys
-p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('. "$ROOT/scripts/transport-failure.sh"\n', "uncoloured() { cat; }\ntransport_failures() { grep -iE 'no such host|i/o timeout|connection refused|context deadline|TLS handshake|unexpected status code 5[0-9][0-9]|toomanyrequests'; }\n", 1)
-assert m != s, "mutation did not land"
-p.write_text(m)
-PY
-rejects "pattern: classify with a list of its own" test_digest_rewrite \
-  test_both_gates_source_the_shared_pattern \
-  test_no_gate_words_a_transport_failure_of_its_own \
-  test_a_trusted_root_that_could_not_be_fetched_is_not_a_denial \
-  test_a_registry_429_refusal_cannot_run
-res $F
-
-# The one pattern both gates read. Each phrase a fixture carries alone is held
-# by the test naming that outage.
-F=scripts/transport-failure.sh
+# The configuration gates, each reverted at the decision its verdict rests on.
+F=scripts/check-ai-config.py
 
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('|tuf: failed to download|', '|', 1)
+m = s.replace("            if allowed and mid not in allowed:\n", "            if False:\n", 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
-rejects "pattern: miss a trusted root that could not be fetched" test_digest_rewrite \
-  test_a_trusted_root_that_could_not_be_fetched_is_not_a_denial
+rejects "ai-config: route to a model the allowlist omits" test_ai_config \
+  test_a_route_outside_the_allowlist_is_denied_by_iam
 res $F
 
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('|unexpected status code (429|5[0-9][0-9])|', '|unexpected status code 5[0-9][0-9]|', 1)
+m = s.replace("            if not mid.startswith(GEO_PREFIX):\n", "            if False:\n", 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
-rejects "pattern: miss a throttled registry" test_digest_rewrite \
-  test_a_registry_429_refusal_cannot_run
+rejects "ai-config: accept another region's inference profile" test_ai_config \
+  test_a_global_profile_is_refused_for_its_prefix \
+  test_another_regions_profile_is_refused_for_its_prefix
+res $F
+
+F=scripts/check-alert-coverage.py
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace(r'==\s*bool\s+0")', r'==\s*(?:bool\s+)?0")', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "alert-coverage: count a bare == 0 as a cover" test_alert_coverage \
+  test_covered_without_the_bool_modifier_never_fires
+res $F
+
+F=scripts/check-athena-panel-columns.py
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("    return idents - SQL_VOCAB - TABLE_NAMES - aliases\n",
+              "    return idents - SQL_VOCAB - TABLE_NAMES\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "athena-columns: read a query's alias as a column" test_athena_panel_columns \
+  test_an_alias_is_not_a_column_wherever_it_is_named
+res $F
+
+F=scripts/check-catalog-revision.py
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("                if URL_ANNOTATION not in url:\n"
+              "                    continue  # a chart registry, not this catalog\n", "", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "catalog-revision: read a chart version as a catalog revision" test_catalog_revision \
+  test_a_chart_version_is_not_a_catalog_revision
+res $F
+
+F=scripts/check-env-coverage.py
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("            envs -= vals\n", "            pass\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "env-coverage: ignore an environment the selector excludes" test_env_coverage \
+  test_an_exclusion_narrows_reach \
+  test_an_addon_its_appset_excludes_from_the_hub_needs_no_hub_values
+res $F
+
+F=scripts/check-externalsecret-keys.py
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("    return max(matches, key=len) if matches else None\n",
+              "    return dirs[0] if dirs else None\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "externalsecret-keys: let one app's patch vouch for another's" test_externalsecret_keys \
+  test_the_longest_directory_shipping_the_manifest_owns_it \
+  test_another_apps_patch_does_not_vouch_for_a_same_named_secret
 res $F
 
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace("|\\]\\[(429|5[0-9][0-9])\\]'", "'", 1)
+m = s.replace('posix.startswith(d.rstrip("/") + "/")', 'posix.startswith(d.rstrip("/"))', 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
-rejects "pattern: miss a Rekor 5xx" test_digest_rewrite \
-  test_a_rekor_5xx_is_not_a_denial
+rejects "externalsecret-keys: let a sibling sharing a prefix own a manifest" test_externalsecret_keys \
+  test_a_sibling_sharing_a_prefix_does_not_own_it
+res $F
+
+F=scripts/check-serviceaccount-bindings.py
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("            if (name, sa) in EXTERNAL_CONSUMERS:\n",
+              "            if sa in {s for _, s in EXTERNAL_CONSUMERS}:\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "serviceaccount-bindings: exempt an account in any chart" test_serviceaccount_bindings \
+  test_the_exemption_is_keyed_on_the_chart
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("        for sa in sorted(used - created):\n", "        for sa in sorted(set()):\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "serviceaccount-bindings: let a pod name an account nothing creates" test_serviceaccount_bindings \
+  test_a_pod_naming_an_account_the_chart_does_not_create_fails
 res $F
 
 echo
@@ -2543,7 +3059,7 @@ echo "RESULT pass=$pass fail=$fail"
 # The floor this harness owes for the same reason the gates owe theirs: with
 # every `rejects` line deleted it would report pass=0 fail=0 and exit 0, which is
 # a green run over nothing planted.
-MIN_PROBES=139
+MIN_PROBES=175
 total=$((pass + fail))
 if [ "$total" -lt "$MIN_PROBES" ]; then
   echo "FAIL  ran $total probe(s), under the floor of $MIN_PROBES — this harness"

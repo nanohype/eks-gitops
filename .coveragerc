@@ -1,8 +1,8 @@
 # Coverage over the gate scripts, measured by the unit-test suite in
 # scripts/tests. The positive controls in scripts/tests/controls.py exercise most
-# gates end to end as a subprocess, which this figure does not see — so the
-# number in scripts/tests/run.py is the floor under the UNIT tier specifically,
-# and it is not a floor under the correctness of a gate the controls cover.
+# gates end to end as a subprocess, which these figures do not see — so the
+# floors in scripts/tests/run.py are floors under the UNIT tier specifically,
+# and not under the correctness of a gate the controls cover.
 #
 # Most, not every: controls.py exempts the gates whose input arrives over the
 # network, and prints the split on every run. For those a unit test is the only
