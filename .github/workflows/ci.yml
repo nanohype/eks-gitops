@@ -53,7 +53,7 @@ env:
   SHELLCHECK_VERSION: v0.11.0
   SHELLCHECK_SHA256: b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6
   # renovate: datasource=github-releases depName=aquasecurity/trivy
-  TRIVY_VERSION: v0.72.0
+  TRIVY_VERSION: v0.76.1
   # renovate: datasource=npm depName=renovate
   RENOVATE_VERSION: 44.65.0
 
