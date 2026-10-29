@@ -17,6 +17,8 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import io
+import json
+import os
 import pathlib
 import tempfile
 import unittest
@@ -394,16 +396,28 @@ class ExpiredSkips(unittest.TestCase):
 
     def stale(self, units, skip, unreachable=()):
         asked = []
+        self.handed: list[tuple[pathlib.Path, dict, bool]] = []
 
-        def archive(source, chart, version):
+        def archive(source, chart, version, *, cache, credentials):
             asked.append(chart)
+            self.handed.append((cache, credentials, cache.is_dir()))
             if chart in unreachable:
                 raise gate.registry.ChartUnavailable("HTTP 401", answered=False)
-            return pathlib.Path(f"/cache/{chart}-{version}.tgz")
+            return cache / f"{chart}-{version}.tgz"
 
         with mock.patch.object(gate.registry, "chart_archive", archive), \
                 mock.patch.dict(gate.SKIP_CHARTS, skip, clear=True):
             return gate.stale_skips(units), asked
+
+    def test_the_fetch_is_handed_no_login_and_an_empty_cache_of_its_own(self):
+        """Deleted once it returns, so an archive it fetched is not one the next
+        fetch, of this chart or any other, finds waiting."""
+        self.stale([self.unit("a"), self.unit("b")], {"a": "x", "b": "y"}, unreachable={"b"})
+        self.assertEqual([credentials for _, credentials, _ in self.handed], [{}, {}])
+        caches = [cache for cache, _, _ in self.handed]
+        self.assertEqual([existed for _, _, existed in self.handed], [True, True])
+        self.assertNotIn(gate.registry.CHART_CACHE, caches)
+        self.assertEqual([cache.exists() for cache in caches], [False, False])
 
     def test_a_skipped_chart_that_fetches_is_stale(self):
         stale, asked = self.stale([self.unit("private")], {"private": "needs credentials"})
@@ -420,6 +434,73 @@ class ExpiredSkips(unittest.TestCase):
                                   {"private": "needs credentials"},
                                   unreachable={"private"})
         self.assertEqual((stale, asked), ([], ["private"]))
+
+
+class AnExpiredSkipIsAskedOfTheRegistryAnonymously(unittest.TestCase):
+    """End to end through the client. A chart only a login can fetch is not
+    called fetchable for a login stored where the gate runs, nor for an archive
+    an earlier fetch left in the chart cache: a run for a fork's pull request
+    has neither."""
+
+    HOST = "registry.example"
+    LOGIN = "bG9naW4="
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = pathlib.Path(tmp.name)
+        config = self.root / "docker"
+        config.mkdir()
+        (config / "config.json").write_text(
+            json.dumps({"auths": {self.HOST: {"auth": self.LOGIN}}}))
+        self.oci = fake.OciRegistry(self.HOST, "org/charts/private", "1.0.0",
+                                    {"name": "private"}, content=b"private-archive",
+                                    realm=f"https://{self.HOST}/token")
+        self.anonymous_served = False
+        self.unit = gate.Unit(appset="a.yaml", chart="private", version="1.0.0",
+                              repo=f"oci://{self.HOST}/org/charts", path="addons/x/private")
+        for patch in (mock.patch.object(gate.registry, "CHART_CACHE", self.root / "cache"),
+                      mock.patch.dict(os.environ, {"DOCKER_CONFIG": str(config)}),
+                      mock.patch.object(gate.registry, "_REFUSED_LOGINS", set()),
+                      mock.patch.object(gate.registry, "_SAID", set()),
+                      mock.patch.dict(gate.registry.http_get.__kwdefaults__,
+                                      {"urlopen": self.urlopen}),
+                      mock.patch.dict(gate.SKIP_CHARTS, {"private": "needs a login"},
+                                      clear=True)):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def urlopen(self, req, timeout=None):
+        """The fake registry, its realm issuing a token to the stored login alone
+        unless anonymous_served says otherwise."""
+        asked_anonymously = fake.auth(req) != f"Basic {self.LOGIN}"
+        if (req.full_url.startswith(f"https://{self.HOST}/token?") and asked_anonymously
+                and not self.anonymous_served):
+            raise fake.http_error(req.full_url, 401)
+        answer = self.oci(req)
+        if isinstance(answer, BaseException):
+            raise answer
+        return fake.served(answer)
+
+    def fetch_with_the_stored_login(self, cache=None):
+        """What the client fetches holding the login, to show it does fetch."""
+        with contextlib.redirect_stderr(io.StringIO()):
+            return gate.registry.chart_archive(self.unit.source, "private", "1.0.0",
+                                               cache=cache)
+
+    def test_a_chart_only_the_stored_login_fetches_is_no_stale_skip(self):
+        fetched = self.fetch_with_the_stored_login(self.root / "elsewhere")
+        self.assertEqual(fetched.read_bytes(), b"private-archive")
+        self.assertEqual(gate.stale_skips([self.unit]), [])
+
+    def test_an_archive_left_in_the_chart_cache_is_no_stale_skip(self):
+        kept = self.fetch_with_the_stored_login()
+        self.assertTrue(kept.is_relative_to(self.root / "cache"), kept)
+        self.assertEqual(gate.stale_skips([self.unit]), [])
+
+    def test_a_chart_an_anonymous_client_fetches_is_a_stale_skip(self):
+        self.anonymous_served = True
+        self.assertEqual(gate.stale_skips([self.unit]), [("private", "needs a login")])
 
 
 class TheDiscoveredCorpus(unittest.TestCase):

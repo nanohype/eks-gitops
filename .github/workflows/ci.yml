@@ -182,7 +182,8 @@ jobs:
   # token realm only when the realm and the registry it is reading are both
   # the host they were stored for, so one login serves both. A config it
   # cannot read, or an entry it can send no credentials from, as one a
-  # credential helper holds, is named once on its stderr.
+  # credential helper holds, is named once on its stderr, and so is a login a
+  # registry refuses, after which that registry is read anonymously.
   # scripts/tests/test_workflows.py evaluates both steps' conditions, runs the
   # login against stand-ins for both CLIs, holds both steps to failing the job
   # they run in, and holds the id-token grant to these two jobs, beside
