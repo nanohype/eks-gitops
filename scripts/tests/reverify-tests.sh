@@ -576,6 +576,19 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    basic = (credentials or {}).get(parts.netloc) if parts.scheme == "https" else None',
+              '    basic = next(iter((credentials or {}).values()), None)', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "token: send stored credentials to whichever realm a challenge names" test_registry \
+  test_a_realm_on_another_host_is_asked_anonymously \
+  test_a_realm_over_plain_http_is_asked_anonymously
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
 m = s.replace('answered=err.code == 404)',
               'answered=True)', 1)
 assert m != s, "mutation did not land"

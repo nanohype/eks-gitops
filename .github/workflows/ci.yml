@@ -151,10 +151,33 @@ jobs:
   # The cache path and key are anchored here. The jobs that restore the archives
   # alias one restore step, defined on the first of them, so none of them can
   # restore from anywhere else.
+  #
+  # ── Authenticated pulls from public.ecr.aws ──
+  # The per-address allowance above is the anonymous one. A client logged in
+  # with an ECR Public authorization token is metered against the AWS account
+  # that issued it instead, so this job and image-vulnerabilities, the two that
+  # read public.ecr.aws in bulk, log in before they read. The role named by the
+  # ECR_PUBLIC_PULL_ROLE_ARN repo variable is trusted from this repo's
+  # pull_request and main contexts and can do nothing but mint that token.
+  #
+  # The login is skipped, and the job reads anonymously as before, when the
+  # variable is unset and when the run is for a pull request from a fork, which
+  # GitHub issues no OIDC token to. Once the variable is set, a role that cannot
+  # be assumed fails the job on that step rather than falling back, so a
+  # misconfigured role is reported where it is, not as the throttling it exists
+  # to prevent.
+  #
+  # `docker login` stores the token in ~/.docker/config.json. trivy reads
+  # registry credentials from there, and scripts/registry.py sends them to the
+  # token realm on the host they were stored for, so one login serves both.
+  # ECR Public issues tokens from us-east-1 only.
   charts:
     name: Pinned chart archives
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -167,6 +190,19 @@ jobs:
           python-version-file: .python-version
       - name: Install Python dependencies
         run: pip install --require-hashes -r requirements.txt
+
+      - &ecr-public-credentials
+        name: Assume the ECR Public pull role
+        id: ecr-public
+        if: vars.ECR_PUBLIC_PULL_ROLE_ARN != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.ECR_PUBLIC_PULL_ROLE_ARN }}
+          aws-region: us-east-1
+      - &ecr-public-login
+        name: Log in to public.ecr.aws
+        if: steps.ecr-public.outcome == 'success'
+        run: aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws
 
       - name: Restore the chart archives kept last
         id: chart-cache
@@ -864,6 +900,11 @@ jobs:
     needs: charts
     # trivy pulls and scans every rendered image on top of the render.
     timeout-minutes: 30
+    # id-token mints the OIDC token the ECR Public login assumes its role with;
+    # see the charts job.
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -900,6 +941,8 @@ jobs:
 
       - *restore-charts
       - *charts-missed
+      - *ecr-public-credentials
+      - *ecr-public-login
 
       - name: Every fixed CRITICAL is acknowledged
         run: ./scripts/check-image-vulnerabilities.py

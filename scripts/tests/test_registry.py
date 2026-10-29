@@ -626,7 +626,7 @@ class RequestingAToken(unittest.TestCase):
             asked.append(url)
             return json.dumps(body or {"token": "t"}).encode()
 
-        self.assertEqual(registry.anonymous_token(challenge, "org/chart", get), "t")
+        self.assertEqual(registry.pull_token(challenge, "org/chart", get), "t")
         return asked[0]
 
     def test_the_scope_and_service_are_added_to_the_realm(self):
@@ -656,23 +656,126 @@ class RequestingAToken(unittest.TestCase):
 
     def test_a_challenge_other_than_bearer_is_refused(self):
         with self.assertRaisesRegex(registry.RegistryError, "Basic"):
-            registry.anonymous_token('Basic realm="r"', "c", lambda *a, **k: b"{}")
+            registry.pull_token('Basic realm="r"', "c", lambda *a, **k: b"{}")
 
     def test_a_challenge_with_no_realm_is_refused(self):
         with self.assertRaisesRegex(registry.RegistryError, "no realm"):
-            registry.anonymous_token('Bearer service="r"', "c", lambda *a, **k: b"{}")
+            registry.pull_token('Bearer service="r"', "c", lambda *a, **k: b"{}")
 
     def test_a_realm_that_returns_no_token_is_refused(self):
         for body in (b"{}", b'["t"]'):
             with self.subTest(body=body), \
                     self.assertRaisesRegex(registry.RegistryError, "no token"):
-                registry.anonymous_token('Bearer realm="https://a/t"', "c",
+                registry.pull_token('Bearer realm="https://a/t"', "c",
                                          lambda *a, _b=body, **k: _b)
 
     def test_a_realm_that_answers_something_other_than_json_raises_a_read_failure(self):
         with self.assertRaises(registry.READ_FAILURES):
-            registry.anonymous_token('Bearer realm="https://a/t"', "c",
+            registry.pull_token('Bearer realm="https://a/t"', "c",
                                      lambda *a, **k: b"<html>sign in</html>")
+
+
+class RequestingATokenAsALoggedInClient(unittest.TestCase):
+    """A token asked for with the credentials `docker login` stored.
+
+    ECR Public meters an anonymous client by its address, which a CI runner
+    shares, and a logged-in one by its account. The credentials reach a realm
+    only when it is the host they were stored for and it is HTTPS: a challenge
+    names its realm, so a registry that named another host's realm would
+    otherwise be handed whatever credentials the runner holds.
+    """
+
+    CREDENTIALS = {"public.ecr.aws": "QVdTOnNlY3JldA=="}
+
+    def authorization(self, realm: str, credentials=CREDENTIALS) -> str | None:
+        sent = []
+
+        def get(url, headers, authorization, **_):
+            sent.append(authorization)
+            return b'{"token": "t"}'
+
+        self.assertEqual(registry.pull_token(f'Bearer realm="{realm}"', "org/chart", get,
+                                             credentials), "t")
+        return sent[0]
+
+    def test_the_realm_the_credentials_were_stored_for_receives_them(self):
+        self.assertEqual(self.authorization("https://public.ecr.aws/token/"),
+                         "Basic QVdTOnNlY3JldA==")
+
+    def test_a_realm_on_another_host_is_asked_anonymously(self):
+        self.assertIsNone(self.authorization("https://auth.example/token"))
+
+    def test_a_realm_over_plain_http_is_asked_anonymously(self):
+        self.assertIsNone(self.authorization("http://public.ecr.aws/token/"))
+
+    def test_no_credentials_ask_anonymously(self):
+        self.assertIsNone(self.authorization("https://public.ecr.aws/token/", None))
+
+    def test_the_repository_hands_its_credentials_to_the_token_request(self):
+        sent = []
+
+        def get(url, headers, authorization, *, challenge=None, deadline=None):
+            if "/token/" in url:
+                sent.append(authorization)
+                return b'{"token": "t"}'
+            if challenge is not None:
+                return challenge('Bearer realm="https://public.ecr.aws/token/",'
+                                 'service="public.ecr.aws"', 0.0) and b"{}"
+            return b"{}"
+
+        repo = registry.OciRepository("oci://public.ecr.aws/karpenter/karpenter", get,
+                                      self.CREDENTIALS)
+        repo.read("manifests/1.2.3")
+        self.assertEqual(sent, ["Basic QVdTOnNlY3JldA=="])
+        self.assertEqual(repo.token, "t")
+
+
+class ReadingDockerCredentials(unittest.TestCase):
+    """What `docker login` left in a config directory, by registry host."""
+
+    def setUp(self):
+        self.dir = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.dir)
+
+    def write(self, doc) -> None:
+        (self.dir / "config.json").write_text(doc if isinstance(doc, str) else json.dumps(doc))
+
+    def test_a_bare_host_and_a_url_key_each_name_their_host(self):
+        self.write({"auths": {"public.ecr.aws": {"auth": "a"},
+                              "https://index.docker.io/v1/": {"auth": "b"}}})
+        self.assertEqual(registry.docker_credentials(self.dir),
+                         {"public.ecr.aws": "a", "index.docker.io": "b"})
+
+    def test_an_entry_a_credential_helper_holds_is_left_out(self):
+        """The secret is in the helper, not the file, so there is nothing to send."""
+        self.write({"auths": {"public.ecr.aws": {}, "ghcr.io": "x", "": {"auth": "c"},
+                              "r.example": {"auth": ""}}, "credsStore": "desktop"})
+        self.assertEqual(registry.docker_credentials(self.dir), {})
+
+    def test_no_file_or_an_unreadable_one_is_no_credentials(self):
+        self.assertEqual(registry.docker_credentials(self.dir), {})
+        for doc in ("not json", ["auths"], {"auths": ["public.ecr.aws"]}):
+            with self.subTest(doc=doc):
+                self.write(doc)
+                self.assertEqual(registry.docker_credentials(self.dir), {})
+
+    def test_docker_config_names_the_directory_and_home_is_the_fallback(self):
+        self.write({"auths": {"public.ecr.aws": {"auth": "a"}}})
+        with mock.patch.dict(os.environ, {"DOCKER_CONFIG": str(self.dir)}):
+            self.assertEqual(registry.docker_credentials(), {"public.ecr.aws": "a"})
+        home = self.dir / "home"
+        (home / ".docker").mkdir(parents=True)
+        (home / ".docker" / "config.json").write_text(
+            json.dumps({"auths": {"ghcr.io": {"auth": "g"}}}))
+        with mock.patch.dict(os.environ, {"DOCKER_CONFIG": ""}), \
+                mock.patch.object(pathlib.Path, "home", return_value=home):
+            self.assertEqual(registry.docker_credentials(), {"ghcr.io": "g"})
+
+    def test_a_repository_given_no_credentials_reads_them(self):
+        self.write({"auths": {"public.ecr.aws": {"auth": "a"}}})
+        with mock.patch.dict(os.environ, {"DOCKER_CONFIG": str(self.dir)}):
+            repo = registry.OciRepository("oci://public.ecr.aws/x/y", lambda *a, **k: b"")
+        self.assertEqual(repo._credentials, {"public.ecr.aws": "a"})
 
 
 class ReadingAnOciChart(unittest.TestCase):

@@ -16,7 +16,11 @@ What http_get does with each answer:
   * HTTP 401, on a read that passes a challenge handler, is answered once: the
     handler turns the WWW-Authenticate header into a token and the request is
     repeated inside the same RETRY_ATTEMPTS. A second 401 is reported, and so
-    is a first one on the last attempt, which leaves no request to repeat.
+    is a first one on the last attempt, which leaves no request to repeat. The
+    token is asked for with the credentials `docker login` stored for the
+    token realm's host when there are any, and anonymously when there are
+    none, so a registry that meters anonymous clients by address meters a
+    logged-in one by its account instead.
   * Every other status, and every network error, is reported on the attempt
     that produced it.
 
@@ -176,6 +180,11 @@ _LAST_SENT: dict[str, float] = {}
 CHART_CACHE = pathlib.Path.home() / ".cache" / "eks-gitops" / "charts"
 
 _CHALLENGE_PARAM = re.compile(r'(\w+)="([^"]*)"')
+
+# Where `docker login` keeps the credentials it stored, by the convention the
+# docker CLI and trivy both read: $DOCKER_CONFIG/config.json, or
+# ~/.docker/config.json when DOCKER_CONFIG is unset.
+DOCKER_CONFIG_FILE = "config.json"
 
 class Getter(Protocol):
     """What every registry read is handed. http_get is the one implementation;
@@ -390,10 +399,47 @@ def http_get(url: str, headers: Mapping[str, str] | None = None,
             sleep(wait)
 
 
-def anonymous_token(challenge: str, path: str, get: Getter = http_get) -> str:
+def docker_credentials(config_dir: str | os.PathLike[str] | None = None) -> dict[str, str]:
+    """The base64 `user:password` `docker login` stored, by registry host.
+
+    Read from `config_dir`, or from DOCKER_CONFIG, or from ~/.docker. A host
+    whose entry carries no `auth` field, because a credential helper holds its
+    secret, is left out, and so is every host when the file is missing or not
+    a JSON object: a client with no credentials pulls anonymously.
+    """
+    if config_dir is None:
+        config_dir = os.environ.get("DOCKER_CONFIG") or pathlib.Path.home() / ".docker"
+    try:
+        doc = json.loads((pathlib.Path(config_dir) / DOCKER_CONFIG_FILE).read_text())
+    except (OSError, ValueError):
+        return {}
+    auths = doc.get("auths") if isinstance(doc, dict) else None
+    if not isinstance(auths, dict):
+        return {}
+    found: dict[str, str] = {}
+    for key, entry in auths.items():
+        auth = entry.get("auth") if isinstance(entry, dict) else None
+        if isinstance(key, str) and isinstance(auth, str) and auth:
+            # docker writes the bare host for `docker login <host>`, and older
+            # clients wrote a URL; either names the same registry.
+            host = urllib.parse.urlsplit(key if "://" in key else f"//{key}").netloc
+            if host:
+                found[host] = auth
+    return found
+
+
+def pull_token(challenge: str, path: str, get: Getter = http_get,
+               credentials: Mapping[str, str] | None = None) -> str:
     """A pull token for `path` from the realm a registry's Bearer challenge names.
 
     The scope and service are added to whatever query the realm already carries.
+    When `credentials`, as docker_credentials returns them, hold an entry for
+    the realm's host and the realm is HTTPS, the request carries them as Basic
+    authorization, and the realm issues a token for that identity; otherwise
+    the request is anonymous. Keying them by the realm's host is what keeps a
+    registry's credentials from reaching any realm but the one they were stored
+    for, whichever realm a challenge names.
+
     A status the realm answers with is raised as a RegistryError, whatever it
     is: the realm issues tokens and holds no charts, so a 404 from it says
     nothing about whether `path` holds the pin.
@@ -401,7 +447,7 @@ def anonymous_token(challenge: str, path: str, get: Getter = http_get) -> str:
     scheme, _, params = challenge.strip().partition(" ")
     if scheme.lower() != "bearer":
         raise RegistryError(f"the registry asked for {scheme or 'no'} authentication, "
-                            f"and only an anonymous bearer token is supported")
+                            f"and only a bearer token is supported")
     fields = dict(_CHALLENGE_PARAM.findall(params))
     realm = fields.get("realm")
     if not realm:
@@ -412,8 +458,9 @@ def anonymous_token(challenge: str, path: str, get: Getter = http_get) -> str:
     if fields.get("service"):
         query.append(("service", fields["service"]))
     url = urllib.parse.urlunsplit(parts._replace(query=urllib.parse.urlencode(query)))
+    basic = (credentials or {}).get(parts.netloc) if parts.scheme == "https" else None
     try:
-        raw = get(url, {}, None)
+        raw = get(url, {}, f"Basic {basic}" if basic else None)
     except urllib.error.HTTPError as err:
         err.close()
         raise RegistryError(f"{realm} answered HTTP {err.code} to a token request for "
@@ -426,19 +473,22 @@ def anonymous_token(challenge: str, path: str, get: Getter = http_get) -> str:
 
 
 class OciRepository:
-    """Anonymous reads from one OCI repository, sharing one pull token.
+    """Reads from one OCI repository, sharing one pull token.
 
     The first read goes out without a token; the registry's 401 challenge is
-    answered once, and every later read carries the token it produced. A read
+    answered once, with pull_token over `credentials` (docker_credentials()
+    when none are given), and every later read carries the token it produced. A read
     refused while it carries that token is refused for a reason a second token
     would not change, so it is reported rather than answered again.
     """
 
-    def __init__(self, ref: str, get: Getter = http_get) -> None:
+    def __init__(self, ref: str, get: Getter = http_get,
+                 credentials: Mapping[str, str] | None = None) -> None:
         registry, _, self.path = ref.removeprefix("oci://").partition("/")
         self.base = f"https://{REGISTRY_API_HOSTS.get(registry, registry)}/v2/{self.path}"
         self.token: str | None = None
         self._get = get
+        self._credentials = docker_credentials() if credentials is None else credentials
 
     def read(self, suffix: str, accept: str | None = None) -> bytes:
         headers = {"Accept": accept} if accept else {}
@@ -450,7 +500,7 @@ class OciRepository:
     def _authorize(self, www_authenticate: str, deadline: float) -> str:
         """The Authorization a challenge asks for, fetched inside the challenged call's deadline."""
         get = functools.partial(self._get, deadline=deadline)
-        self.token = anonymous_token(www_authenticate, self.path, get)
+        self.token = pull_token(www_authenticate, self.path, get, self._credentials)
         return f"Bearer {self.token}"
 
     def manifest(self, reference: str, accept: str = OCI_MANIFEST) -> dict:
@@ -538,7 +588,7 @@ def _unavailable(err: BaseException) -> ChartUnavailable:
     """What a failed read says about the pin.
 
     An HTTPError arriving here answered a request for the pin itself — its
-    manifest, a blob, the index or the archive — because anonymous_token raises
+    manifest, a blob, the index or the archive — because pull_token raises
     every refusal from a token realm as a RegistryError. So a 404 here is the
     registry saying the pin is not there.
     """
