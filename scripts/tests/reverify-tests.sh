@@ -573,17 +573,85 @@ rejects "blob: keep bytes that do not match their digest" test_registry \
   test_a_blob_that_does_not_match_its_digest_is_refused
 res $F
 
+# A challenge is the registry's to write, so the stored credentials go to a
+# realm only when the realm and the registry being read are the one host they
+# were stored for, port included, and the realm is HTTPS.
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('    basic = (credentials or {}).get(parts.netloc) if parts.scheme == "https" else None',
-              '    basic = next(iter((credentials or {}).values()), None)', 1)
+m = s.replace('    basic = None\n'
+              '    if registry and parts.scheme == "https" and parts.netloc == registry:\n'
+              '        basic = (credentials or {}).get(registry)\n',
+              '    basic = next(iter((credentials or {}).values()), None)\n', 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
 rejects "token: send stored credentials to whichever realm a challenge names" test_registry \
   test_a_realm_on_another_host_is_asked_anonymously \
   test_a_realm_over_plain_http_is_asked_anonymously
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    basic = None\n'
+              '    if registry and parts.scheme == "https" and parts.netloc == registry:\n'
+              '        basic = (credentials or {}).get(registry)\n',
+              '    basic = (credentials or {}).get(parts.netloc) if parts.scheme == "https" else None\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "token: key the credentials by the realm a foreign registry names" test_registry \
+  test_a_registry_naming_the_realm_of_the_host_the_credentials_are_for_is_anonymous \
+  test_a_registry_naming_another_hosts_realm_is_sent_no_token_the_credentials_bought
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    if registry and parts.scheme == "https" and parts.netloc == registry:',
+              '    if registry and parts.scheme == "https" and parts.hostname == registry:', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "token: match the realm by hostname, dropping its port" test_registry \
+  test_a_registry_on_a_port_is_matched_with_its_port \
+  test_a_realm_on_another_port_of_the_host_is_asked_anonymously
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    if registry and parts.scheme == "https" and parts.netloc == registry:',
+              '    if registry and parts.netloc == registry:', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "token: send stored credentials over plain HTTP" test_registry \
+  test_a_realm_over_plain_http_is_asked_anonymously
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        self.token = pull_token(www_authenticate, self.path, get, registry=self.host,',
+              '        self.token = pull_token(www_authenticate, self.path, get, registry=None,', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "repository: name no registry to the token request" test_registry \
+  test_the_repository_hands_its_credentials_to_the_token_request
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('else f"//{key}").netloc', 'else f"//{key}").hostname', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "credentials: key a stored login by hostname, dropping its port" test_registry \
+  test_a_key_keeps_the_port_it_names
 res $F
 
 edit $F <<'PY'
@@ -1162,6 +1230,77 @@ p.write_text(m)
 PY
 rejects "cache: key the set on the branch, so a pull request starts empty" test_workflows \
   test_the_key_names_the_pins_and_not_the_branch_or_the_run
+res $F
+
+# The ECR Public login: the role assumed only when a variable names it and
+# never for a fork, the login only once it was, the role's credentials handed
+# to the login step alone, the pipe failing on a token that could not be
+# fetched, and the OIDC grant held to the jobs that log in.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace(" && (github.event_name != 'pull_request' || "
+              "github.event.pull_request.head.repo.full_name == github.repository)", "", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "ecr-public: assume the role for a fork's pull request" test_workflows \
+  test_the_role_is_assumed_only_when_configured_and_never_for_a_fork
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("        if: vars.ECR_PUBLIC_PULL_ROLE_ARN != '' && (", "        if: (", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "ecr-public: assume a role no variable names" test_workflows \
+  test_the_role_is_assumed_only_when_configured_and_never_for_a_fork
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("        if: steps.ecr-public.outcome == 'success'\n", "", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "ecr-public: log in whether or not the role was assumed" test_workflows \
+  test_the_login_runs_only_once_the_role_was_assumed
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("          output-env-credentials: false\n", "", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "ecr-public: export the role's credentials to every later step" test_workflows \
+  test_the_role_credentials_reach_the_login_step_alone
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("          set -o pipefail\n", "", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "ecr-public: leave the login's status to docker" test_workflows \
+  test_a_token_that_could_not_be_fetched_fails_the_step_whatever_docker_does
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("permissions:\n  contents: read\n", "permissions:\n  contents: read\n  id-token: write\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "ecr-public: grant id-token to the whole workflow" test_workflows \
+  test_id_token_is_granted_only_to_the_jobs_that_log_in
 res $F
 
 

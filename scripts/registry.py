@@ -18,9 +18,9 @@ What http_get does with each answer:
     repeated inside the same RETRY_ATTEMPTS. A second 401 is reported, and so
     is a first one on the last attempt, which leaves no request to repeat. The
     token is asked for with the credentials `docker login` stored for the
-    token realm's host when there are any, and anonymously when there are
-    none, so a registry that meters anonymous clients by address meters a
-    logged-in one by its account instead.
+    registry being read when the realm is HTTPS on that registry's own host,
+    and anonymously otherwise, so a registry that meters anonymous clients by
+    address meters a logged-in one by its account instead.
   * Every other status, and every network error, is reported on the attempt
     that produced it.
 
@@ -185,6 +185,7 @@ _CHALLENGE_PARAM = re.compile(r'(\w+)="([^"]*)"')
 # docker CLI and trivy both read: $DOCKER_CONFIG/config.json, or
 # ~/.docker/config.json when DOCKER_CONFIG is unset.
 DOCKER_CONFIG_FILE = "config.json"
+
 
 class Getter(Protocol):
     """What every registry read is handed. http_get is the one implementation;
@@ -420,25 +421,36 @@ def docker_credentials(config_dir: str | os.PathLike[str] | None = None) -> dict
     for key, entry in auths.items():
         auth = entry.get("auth") if isinstance(entry, dict) else None
         if isinstance(key, str) and isinstance(auth, str) and auth:
-            # docker writes the bare host for `docker login <host>`, and older
-            # clients wrote a URL; either names the same registry.
+            # A key is the bare host `docker login <host>` writes, or a URL such
+            # as Docker Hub's https://index.docker.io/v1/; either names one
+            # registry host, its port included.
             host = urllib.parse.urlsplit(key if "://" in key else f"//{key}").netloc
             if host:
                 found[host] = auth
     return found
 
 
-def pull_token(challenge: str, path: str, get: Getter = http_get,
+def pull_token(challenge: str, path: str, get: Getter = http_get, *,
+               registry: str | None = None,
                credentials: Mapping[str, str] | None = None) -> str:
     """A pull token for `path` from the realm a registry's Bearer challenge names.
 
     The scope and service are added to whatever query the realm already carries.
-    When `credentials`, as docker_credentials returns them, hold an entry for
-    the realm's host and the realm is HTTPS, the request carries them as Basic
-    authorization, and the realm issues a token for that identity; otherwise
-    the request is anonymous. Keying them by the realm's host is what keeps a
-    registry's credentials from reaching any realm but the one they were stored
-    for, whichever realm a challenge names.
+
+    `registry` is the host the challenged read went to, port included, and
+    `credentials` are what docker_credentials returns. The request carries the
+    credentials stored for `registry` as Basic authorization only when the
+    realm is HTTPS on that same host, and the realm then issues a token for
+    that identity. Every other request is anonymous: a registry with no stored
+    credentials, a realm over plain HTTP, and a realm on any other host, Docker
+    Hub's among them.
+
+    A challenge is the registry's to write. Were the credentials matched to the
+    realm alone, a registry naming the realm of a host the client holds
+    credentials for would have the client spend them on a token for that
+    identity, then receive the token on every read that follows. Matching the
+    realm to the registry being read keeps the credentials, and every token
+    they buy, on the host they were stored for.
 
     A status the realm answers with is raised as a RegistryError, whatever it
     is: the realm issues tokens and holds no charts, so a 404 from it says
@@ -458,7 +470,9 @@ def pull_token(challenge: str, path: str, get: Getter = http_get,
     if fields.get("service"):
         query.append(("service", fields["service"]))
     url = urllib.parse.urlunsplit(parts._replace(query=urllib.parse.urlencode(query)))
-    basic = (credentials or {}).get(parts.netloc) if parts.scheme == "https" else None
+    basic = None
+    if registry and parts.scheme == "https" and parts.netloc == registry:
+        basic = (credentials or {}).get(registry)
     try:
         raw = get(url, {}, f"Basic {basic}" if basic else None)
     except urllib.error.HTTPError as err:
@@ -476,16 +490,18 @@ class OciRepository:
     """Reads from one OCI repository, sharing one pull token.
 
     The first read goes out without a token; the registry's 401 challenge is
-    answered once, with pull_token over `credentials` (docker_credentials()
-    when none are given), and every later read carries the token it produced. A read
-    refused while it carries that token is refused for a reason a second token
-    would not change, so it is reported rather than answered again.
+    answered once, by pull_token for this repository's host over `credentials`
+    (docker_credentials() when none are given), and every later read carries
+    the token it produced. A read refused while it carries that token is
+    refused for a reason a second token would not change, so it is reported
+    rather than answered again.
     """
 
     def __init__(self, ref: str, get: Getter = http_get,
                  credentials: Mapping[str, str] | None = None) -> None:
         registry, _, self.path = ref.removeprefix("oci://").partition("/")
-        self.base = f"https://{REGISTRY_API_HOSTS.get(registry, registry)}/v2/{self.path}"
+        self.host = REGISTRY_API_HOSTS.get(registry, registry)
+        self.base = f"https://{self.host}/v2/{self.path}"
         self.token: str | None = None
         self._get = get
         self._credentials = docker_credentials() if credentials is None else credentials
@@ -500,7 +516,8 @@ class OciRepository:
     def _authorize(self, www_authenticate: str, deadline: float) -> str:
         """The Authorization a challenge asks for, fetched inside the challenged call's deadline."""
         get = functools.partial(self._get, deadline=deadline)
-        self.token = pull_token(www_authenticate, self.path, get, self._credentials)
+        self.token = pull_token(www_authenticate, self.path, get, registry=self.host,
+                                credentials=self._credentials)
         return f"Bearer {self.token}"
 
     def manifest(self, reference: str, accept: str = OCI_MANIFEST) -> dict:

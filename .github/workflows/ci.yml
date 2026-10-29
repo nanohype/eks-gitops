@@ -152,32 +152,44 @@ jobs:
   # alias one restore step, defined on the first of them, so none of them can
   # restore from anywhere else.
   #
-  # ── Authenticated pulls from public.ecr.aws ──
+  # ── Authenticated pulls from public.ecr.aws ──────────────────────────
   # The per-address allowance above is the anonymous one. A client logged in
   # with an ECR Public authorization token is metered against the AWS account
   # that issued it instead, so this job and image-vulnerabilities, the two that
   # read public.ecr.aws in bulk, log in before they read. The role named by the
   # ECR_PUBLIC_PULL_ROLE_ARN repo variable is trusted from this repo's
-  # pull_request and main contexts and can do nothing but mint that token.
+  # pull_request and main contexts and can do nothing but mint that token. The
+  # two jobs grant id-token at job level, and no other job and no workflow
+  # grants it, so no other job can mint the OIDC token the role is assumed
+  # with.
   #
-  # The login is skipped, and the job reads anonymously as before, when the
-  # variable is unset and when the run is for a pull request from a fork, which
-  # GitHub issues no OIDC token to. Once the variable is set, a role that cannot
-  # be assumed fails the job on that step rather than falling back, so a
-  # misconfigured role is reported where it is, not as the throttling it exists
-  # to prevent.
+  # The login is skipped, and the job reads anonymously, when the variable is
+  # unset and when the run is for a pull request from a fork, which GitHub
+  # issues no OIDC token to. Once the variable is set, a role that cannot be
+  # assumed fails the job on that step rather than falling back, so a
+  # misconfigured role is reported where it is, not as the throttling the login
+  # exists to prevent.
+  #
+  # The role's credentials reach the login step alone, as outputs of the step
+  # that assumed the role, not as environment every later step inherits. The
+  # login pipes the token into `docker login` under pipefail, so a token that
+  # could not be fetched fails the step whatever docker makes of the empty
+  # input it is handed. ECR Public issues tokens from us-east-1 only.
   #
   # `docker login` stores the token in ~/.docker/config.json. trivy reads
-  # registry credentials from there, and scripts/registry.py sends them to the
-  # token realm on the host they were stored for, so one login serves both.
-  # ECR Public issues tokens from us-east-1 only.
+  # registry credentials from there, and scripts/registry.py sends them to a
+  # token realm only when the realm and the registry it is reading are both
+  # the host they were stored for, so one login serves both.
+  # scripts/tests/test_workflows.py evaluates both steps' conditions, runs the
+  # login against stand-ins for both CLIs, and holds the id-token grant to
+  # these two jobs.
   charts:
     name: Pinned chart archives
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: read
-      id-token: write
+      id-token: write  # the OIDC token the ECR Public pull role is assumed with
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -199,10 +211,19 @@ jobs:
         with:
           role-to-assume: ${{ vars.ECR_PUBLIC_PULL_ROLE_ARN }}
           aws-region: us-east-1
+          output-credentials: true
+          output-env-credentials: false
       - &ecr-public-login
         name: Log in to public.ecr.aws
         if: steps.ecr-public.outcome == 'success'
-        run: aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws
+        env:
+          AWS_ACCESS_KEY_ID: ${{ steps.ecr-public.outputs.aws-access-key-id }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.ecr-public.outputs.aws-secret-access-key }}
+          AWS_SESSION_TOKEN: ${{ steps.ecr-public.outputs.aws-session-token }}
+        run: |
+          set -o pipefail
+          aws ecr-public get-login-password --region us-east-1 |
+            docker login --username AWS --password-stdin public.ecr.aws
 
       - name: Restore the chart archives kept last
         id: chart-cache
@@ -900,11 +921,11 @@ jobs:
     needs: charts
     # trivy pulls and scans every rendered image on top of the render.
     timeout-minutes: 30
-    # id-token mints the OIDC token the ECR Public login assumes its role with;
-    # see the charts job.
+    # The ECR Public login steps are anchored on the charts job, whose comment
+    # covers both jobs.
     permissions:
       contents: read
-      id-token: write
+      id-token: write  # the OIDC token the ECR Public pull role is assumed with
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

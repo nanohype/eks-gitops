@@ -11,12 +11,19 @@ for the next run, and the jobs that render a chart restore what it kept. Which
 key a set is kept under, and whether it is kept at all, is decided by step
 conditions over the outcome of the fetch, so KeepingTheChartCache evaluates
 those conditions for every outcome rather than reading them as text.
+
+The ECR Public login is the fourth, and LoggingInToEcrPublic evaluates its step
+conditions the same way, runs its script against stand-ins for the CLIs it
+calls, and holds the OIDC grant it needs to the jobs that log in.
 """
 
 from __future__ import annotations
 
+import os
 import pathlib
 import re
+import subprocess
+import tempfile
 import unittest
 
 import yaml
@@ -306,6 +313,195 @@ class KeepingTheChartCache(unittest.TestCase):
                         self.assertEqual(render(step["with"]["key"], {}), self.primary())
                         self.assertNotIn("restore-keys", step["with"])
         self.assertTrue(readers, "no job restores what the charts job keeps")
+
+
+CREDENTIALS_ACTION = "aws-actions/configure-aws-credentials@"
+ROLE_VARIABLE = "vars.ECR_PUBLIC_PULL_ROLE_ARN"
+
+
+def step_shell(doc: dict, job: dict, step: dict) -> list[str]:
+    """The command a Linux runner runs `step`'s script with, its path appended.
+
+    The step's own `shell`, else its job's `defaults.run.shell`, else the
+    workflow's. With none of them set the runner uses bash -e, which leaves a
+    pipeline's status to its last command; `shell: bash` adds pipefail.
+    """
+    shell = (step.get("shell")
+             or ((job.get("defaults") or {}).get("run") or {}).get("shell")
+             or ((doc.get("defaults") or {}).get("run") or {}).get("shell"))
+    if shell is None:
+        return ["bash", "-e"]
+    if shell == "bash":
+        return ["bash", "--noprofile", "--norc", "-eo", "pipefail"]
+    if shell == "sh":
+        return ["sh", "-e"]
+    raise ValueError(f"no reading of shell {shell!r}")
+
+
+class LoggingInToEcrPublic(unittest.TestCase):
+    """The jobs that read public.ecr.aws in bulk log in before they read, when they can.
+
+    A client logged in to ECR Public is metered by the AWS account its token
+    came from rather than by the runner's shared address. One step assumes the
+    pull role over OIDC and one hands the token it mints to `docker login`.
+    Which of them runs is decided by their conditions, so those are evaluated
+    for every event the workflow runs on, a configured role and an unset one,
+    and the login script is run against stand-ins for the aws and docker CLIs.
+    """
+
+    # Each job that logs in, and the step that reads public.ecr.aws in it.
+    READERS = {"ci.yml:charts": "render-addons.py --fetch",
+               "ci.yml:image-vulnerabilities": "check-image-vulnerabilities.py"}
+    REPO = "owner/repo"
+    OUTPUTS = {"aws-access-key-id": "key-id", "aws-secret-access-key": "secret-key",
+               "aws-session-token": "session-token"}
+
+    def setUp(self):
+        self.doc = workflows()["ci.yml"]
+        self.logins: dict[str, tuple[dict, list[dict], int, int]] = {}
+        for name, job in jobs().items():
+            steps = job.get("steps") or []
+            creds = [i for i, s in enumerate(steps)
+                     if str(s.get("uses", "")).startswith(CREDENTIALS_ACTION)]
+            logins = [i for i, s in enumerate(steps) if "docker login" in str(s.get("run", ""))]
+            if creds or logins:
+                self.assertEqual((len(creds), len(logins)), (1, 1),
+                                 f"{name} assumes the role and logs in once each")
+                self.logins[name] = (job, steps, creds[0], logins[0])
+        self.assertEqual(sorted(self.logins), sorted(self.READERS))
+
+    def condition(self, step: dict, context: dict[str, str], passing: bool = True) -> bool:
+        status = {"always": True, "success": passing, "failure": not passing,
+                  "cancelled": False}
+        return bool(evaluate(str(step.get("if") or "success()"), context, status))
+
+    def test_each_job_logs_in_before_it_reads(self):
+        for name, (_, steps, creds, login) in self.logins.items():
+            reads = [i for i, s in enumerate(steps) if self.READERS[name] in str(s.get("run", ""))]
+            with self.subTest(job=name):
+                self.assertEqual(len(reads), 1, f"{name} reads public.ecr.aws once")
+                self.assertLess(creds, login)
+                self.assertLess(login, reads[0])
+                self.assertEqual(steps[creds]["with"]["role-to-assume"],
+                                 f"${{{{ {ROLE_VARIABLE} }}}}")
+
+    def test_the_role_is_assumed_only_when_configured_and_never_for_a_fork(self):
+        """GitHub issues a fork's pull request no OIDC token, and an unset variable names no role."""
+        events = {"a push": ("push", ""),
+                  "a pull request from this repo": ("pull_request", self.REPO),
+                  "a pull request from a fork": ("pull_request", "fork/repo")}
+        for name, (_, steps, creds, _) in self.logins.items():
+            for role in ("", "the-role"):
+                for label, (event, head) in events.items():
+                    context = {ROLE_VARIABLE: role, "github.event_name": event,
+                               "github.event.pull_request.head.repo.full_name": head,
+                               "github.repository": self.REPO}
+                    with self.subTest(job=name, role=role or "unset", event=label):
+                        self.assertEqual(self.condition(steps[creds], context),
+                                         bool(role) and head != "fork/repo")
+
+    def test_the_login_runs_only_once_the_role_was_assumed(self):
+        """Skipped with the role, so an unconfigured or fork run reads anonymously."""
+        for name, (_, steps, creds, login) in self.logins.items():
+            outcome = f"steps.{steps[creds]['id']}.outcome"
+            with self.subTest(job=name):
+                self.assertTrue(self.condition(steps[login], {outcome: "success"}))
+                self.assertFalse(self.condition(steps[login], {outcome: "skipped"}))
+                self.assertFalse(self.condition(steps[login], {outcome: "failure"},
+                                                passing=False))
+
+    def test_the_role_credentials_reach_the_login_step_alone(self):
+        """As outputs of the step that assumed the role, not as environment every
+        later step in the job inherits."""
+        for name, (_, steps, creds, login) in self.logins.items():
+            given = steps[creds]["with"]
+            outputs = f"steps.{steps[creds]['id']}.outputs."
+            with self.subTest(job=name):
+                self.assertIs(given.get("output-env-credentials"), False)
+                self.assertIs(given.get("output-credentials"), True)
+                self.assertEqual(steps[login].get("env"), {
+                    "AWS_ACCESS_KEY_ID": f"${{{{ {outputs}aws-access-key-id }}}}",
+                    "AWS_SECRET_ACCESS_KEY": f"${{{{ {outputs}aws-secret-access-key }}}}",
+                    "AWS_SESSION_TOKEN": f"${{{{ {outputs}aws-session-token }}}}",
+                })
+                readers = [s.get("name") for i, s in enumerate(steps)
+                           if i != login and outputs in str(s)]
+                self.assertEqual(readers, [], "another step reads the role's credentials")
+
+    def run_login(self, aws: str, docker: str
+                  ) -> dict[str, tuple[subprocess.CompletedProcess, dict[str, str]]]:
+        """Each job's login step, run under the shell the runner gives it with
+        stand-ins for aws and docker, and what the stand-ins recorded, by job.
+
+        `aws` and `docker` are the bodies of the stand-ins; each runs with $LOG
+        naming a directory it records into, and with the environment the step
+        sets, its expressions rendered from the outputs in OUTPUTS.
+        """
+        runs = {}
+        for name, (job, steps, creds, login) in self.logins.items():
+            step = steps[login]
+            with tempfile.TemporaryDirectory() as tmp:
+                bin_dir = pathlib.Path(tmp) / "bin"
+                log = pathlib.Path(tmp) / "log"
+                bin_dir.mkdir()
+                log.mkdir()
+                for tool, body in (("aws", aws), ("docker", docker)):
+                    stub = bin_dir / tool
+                    stub.write_text(f"#!/bin/sh\n{body}\n")
+                    stub.chmod(0o755)
+                script = pathlib.Path(tmp) / "step.sh"
+                script.write_text(str(step["run"]))
+                context = {f"steps.{steps[creds]['id']}.outputs.{k}": v
+                           for k, v in self.OUTPUTS.items()}
+                env = {"PATH": f"{bin_dir}{os.pathsep}/usr/bin{os.pathsep}/bin", "LOG": str(log),
+                       **{k: render(str(v), context) for k, v in step["env"].items()}}
+                done = subprocess.run([*step_shell(self.doc, job, step), str(script)],
+                                      env=env, capture_output=True, text=True, timeout=30,
+                                      check=False)
+                runs[name] = (done, {f.name: f.read_text() for f in log.iterdir()})
+        self.assertTrue(runs, "no login step was run")
+        return runs
+
+    def test_the_minted_token_is_handed_to_docker_on_stdin(self):
+        runs = self.run_login(
+            aws='echo "$* $AWS_ACCESS_KEY_ID $AWS_SECRET_ACCESS_KEY $AWS_SESSION_TOKEN" '
+                '> "$LOG/aws"; echo minted-token',
+            docker='echo "$*" > "$LOG/docker"; cat > "$LOG/stdin"')
+        for name, (done, recorded) in runs.items():
+            with self.subTest(job=name):
+                self.assertEqual(done.returncode, 0, done.stderr)
+                self.assertEqual(recorded["aws"].split(),
+                                 ["ecr-public", "get-login-password", "--region", "us-east-1",
+                                  *self.OUTPUTS.values()])
+                self.assertEqual(recorded["docker"].split(),
+                                 ["login", "--username", "AWS", "--password-stdin",
+                                  "public.ecr.aws"])
+                self.assertEqual(recorded["stdin"], "minted-token\n")
+
+    def test_a_token_that_could_not_be_fetched_fails_the_step_whatever_docker_does(self):
+        """Without pipefail the pipeline's status is docker's, and a docker that
+        accepted the empty input would pass a login that never happened."""
+        runs = self.run_login(aws="echo 'Unable to locate credentials' >&2; exit 253",
+                              docker='cat > "$LOG/stdin"')
+        for name, (done, recorded) in runs.items():
+            with self.subTest(job=name):
+                self.assertNotEqual(done.returncode, 0)
+                self.assertEqual(recorded["stdin"], "")
+
+    def test_id_token_is_granted_only_to_the_jobs_that_log_in(self):
+        """A workflow-level grant hands every job, and every job added later, the
+        OIDC token the pull role is assumed with."""
+        granted = []
+        for name, doc in workflows().items():
+            with self.subTest(workflow=name):
+                self.assertEqual(doc.get("permissions"), {"contents": "read"})
+            for job_name, job in (doc.get("jobs") or {}).items():
+                permissions = job.get("permissions") or {}
+                if permissions == "write-all" or (
+                        isinstance(permissions, dict)
+                        and permissions.get("id-token", "none") != "none"):
+                    granted.append(f"{name}:{job_name}")
+        self.assertEqual(sorted(granted), sorted(self.logins))
 
 
 class TheEvaluator(unittest.TestCase):

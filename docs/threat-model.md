@@ -49,6 +49,17 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
   (ci.yml:416-419), and `trivy config` hard-failing on **MEDIUM+** against the
   *rendered* output (ci.yml:433-438). The workflow itself is least-privilege
   (`permissions: contents: read`, ci.yml:9-10).
+- **Elevation of privilege through the CI OIDC token** — `charts` and
+  `image-vulnerabilities` grant `id-token: write` so they can assume the ECR
+  Public pull role the `ECR_PUBLIC_PULL_ROLE_ARN` repo variable names.
+  Mitigated: the grant is job-level, `scripts/tests/test_workflows.py` holds it
+  to those two jobs, and `scripts/check-workflows.sh` fails a workflow-level
+  grant. The role, provisioned by landing-zone, is trusted from this repo's pull
+  request and main contexts and can only mint an ECR Public authorization token,
+  so a pull request that obtains it gains a pull quota and no access. A pull
+  request from a fork is issued no OIDC token and skips the login, and the
+  role's credentials reach the login step alone, as step outputs rather than job
+  environment.
 - **Denial of service / drift** — ApplicationSet `syncPolicy` runs `selfHeal` +
   `prune` with a bounded retry/backoff (every default ApplicationSet's
   syncPolicy, e.g. addons-observability.yaml), so manual drift is reverted and a

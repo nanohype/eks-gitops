@@ -680,14 +680,18 @@ class RequestingATokenAsALoggedInClient(unittest.TestCase):
 
     ECR Public meters an anonymous client by its address, which a CI runner
     shares, and a logged-in one by its account. The credentials reach a realm
-    only when it is the host they were stored for and it is HTTPS: a challenge
-    names its realm, so a registry that named another host's realm would
-    otherwise be handed whatever credentials the runner holds.
+    only when the registry being read and the realm are both the host they
+    were stored for, port included, and the realm is HTTPS. A challenge is the
+    registry's to write, so a registry naming another host's realm would
+    otherwise have the client spend that host's credentials on a token, and be
+    sent the token on every read.
     """
 
     CREDENTIALS = {"public.ecr.aws": "QVdTOnNlY3JldA=="}
+    LOGGED_IN = "Basic QVdTOnNlY3JldA=="
 
-    def authorization(self, realm: str, credentials=CREDENTIALS) -> str | None:
+    def authorization(self, realm: str, registry_host: str | None = "public.ecr.aws",
+                      credentials=CREDENTIALS) -> str | None:
         sent = []
 
         def get(url, headers, authorization, **_):
@@ -695,20 +699,38 @@ class RequestingATokenAsALoggedInClient(unittest.TestCase):
             return b'{"token": "t"}'
 
         self.assertEqual(registry.pull_token(f'Bearer realm="{realm}"', "org/chart", get,
-                                             credentials), "t")
+                                             registry=registry_host,
+                                             credentials=credentials), "t")
         return sent[0]
 
-    def test_the_realm_the_credentials_were_stored_for_receives_them(self):
-        self.assertEqual(self.authorization("https://public.ecr.aws/token/"),
-                         "Basic QVdTOnNlY3JldA==")
+    def test_the_realm_on_the_registry_the_credentials_were_stored_for_receives_them(self):
+        self.assertEqual(self.authorization("https://public.ecr.aws/token/"), self.LOGGED_IN)
+
+    def test_a_registry_on_a_port_is_matched_with_its_port(self):
+        """`docker login host:port` stores the port in the key, and the realm names it."""
+        self.assertEqual(self.authorization("https://registry.example:5000/token",
+                                            "registry.example:5000",
+                                            {"registry.example:5000": "cG9ydA=="}),
+                         "Basic cG9ydA==")
 
     def test_a_realm_on_another_host_is_asked_anonymously(self):
         self.assertIsNone(self.authorization("https://auth.example/token"))
+
+    def test_a_registry_naming_the_realm_of_the_host_the_credentials_are_for_is_anonymous(self):
+        """The realm is the credentials' host, and the registry being read is not."""
+        self.assertIsNone(self.authorization("https://public.ecr.aws/token/",
+                                             "registry.example"))
+
+    def test_a_realm_on_another_port_of_the_host_is_asked_anonymously(self):
+        self.assertIsNone(self.authorization("https://public.ecr.aws:8443/token/"))
 
     def test_a_realm_over_plain_http_is_asked_anonymously(self):
         self.assertIsNone(self.authorization("http://public.ecr.aws/token/"))
 
     def test_no_credentials_ask_anonymously(self):
+        self.assertIsNone(self.authorization("https://public.ecr.aws/token/", credentials=None))
+
+    def test_a_request_naming_no_registry_is_anonymous(self):
         self.assertIsNone(self.authorization("https://public.ecr.aws/token/", None))
 
     def test_the_repository_hands_its_credentials_to_the_token_request(self):
@@ -726,8 +748,33 @@ class RequestingATokenAsALoggedInClient(unittest.TestCase):
         repo = registry.OciRepository("oci://public.ecr.aws/karpenter/karpenter", get,
                                       self.CREDENTIALS)
         repo.read("manifests/1.2.3")
-        self.assertEqual(sent, ["Basic QVdTOnNlY3JldA=="])
+        self.assertEqual(sent, [self.LOGGED_IN])
         self.assertEqual(repo.token, "t")
+
+    def test_a_registry_naming_another_hosts_realm_is_sent_no_token_the_credentials_bought(self):
+        """End to end through http_get: the registry is answered with the token
+        the realm issues an anonymous client, on the repeat and every read after."""
+        realm = "https://public.ecr.aws/token/"
+
+        def serve(req):
+            if req.full_url.startswith(realm):
+                token = "account" if auth(req) == self.LOGGED_IN else "anonymous"
+                return json.dumps({"token": token}).encode()
+            if auth(req) is None:
+                return http_error(req.full_url, 401,
+                                  {"WWW-Authenticate": f'Bearer realm="{realm}"'})
+            return b"{}"
+
+        t = Transport(*[serve] * 4)
+        repo = registry.OciRepository("oci://registry.example/org/chart", t.get(),
+                                      self.CREDENTIALS)
+        repo.read("manifests/1.2.3")
+        repo.read("manifests/1.2.3")
+        sent = [(urllib.parse.urlsplit(r.full_url).netloc, auth(r)) for r in t.requests]
+        self.assertEqual(sent, [("registry.example", None),
+                                ("public.ecr.aws", None),
+                                ("registry.example", "Bearer anonymous"),
+                                ("registry.example", "Bearer anonymous")])
 
 
 class ReadingDockerCredentials(unittest.TestCase):
@@ -745,6 +792,13 @@ class ReadingDockerCredentials(unittest.TestCase):
                               "https://index.docker.io/v1/": {"auth": "b"}}})
         self.assertEqual(registry.docker_credentials(self.dir),
                          {"public.ecr.aws": "a", "index.docker.io": "b"})
+
+    def test_a_key_keeps_the_port_it_names(self):
+        """A registry on another port of a host is another registry."""
+        self.write({"auths": {"registry.example:5000": {"auth": "a"},
+                              "https://mirror.example:8443/v2/": {"auth": "b"}}})
+        self.assertEqual(registry.docker_credentials(self.dir),
+                         {"registry.example:5000": "a", "mirror.example:8443": "b"})
 
     def test_an_entry_a_credential_helper_holds_is_left_out(self):
         """The secret is in the helper, not the file, so there is nothing to send."""
