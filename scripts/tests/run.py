@@ -105,6 +105,9 @@ EXPECTED = (
     # What a failed schema scan leaves in the log: kubeconform's own output, the
     # status it exited with, and the catalog commits the run read.
     "test_kubeconform_scan",
+    # The workflows as YAML: a timeout on every job, a bound on every download,
+    # and the conditions deciding which key the chart cache is kept under.
+    "test_workflows",
 )
 
 # A floor well under the real count. It catches "discovery found almost nothing",
@@ -234,7 +237,7 @@ PER_GATE_FLOORS = {
     "scripts/check-log-volume-budget.py": 60,
     "scripts/check-falco-rule-floor.py": 50,
     "scripts/check-alert-severity-routes.py": 95,
-    "scripts/check-image-vulnerabilities.py": 50,
+    "scripts/check-image-vulnerabilities.py": 75,
     "scripts/check-image-pins.py": 90,
     # The half of the directory-size gate that decides the verdict. The rest is
     # `--sync`, `--live` and `--self-test`, which run against a clone.

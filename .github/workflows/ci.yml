@@ -16,6 +16,14 @@ permissions:
 # A tarball bump also invalidates the hardcoded SHA256 below it, so a human
 # confirms the new checksum.
 #
+# Every tarball is downloaded under curl's --connect-timeout, --max-time and
+# --retry. Without them a download a mirror stops serving mid-body runs until
+# the job's timeout, and the job is cancelled on that step with nothing said
+# about the download. Every job sets a timeout-minutes of its own for the same
+# reason one level up: the runner's default is six hours, which a hung step
+# spends holding a runner and the merge gate. scripts/tests/test_workflows.py
+# holds every workflow in .github/workflows/ to both.
+#
 # RENOVATE_VERSION is pinned for a second reason. The drift check compares
 # scripts/renovate-manager-defaults.json against the defaults inside this exact
 # package, so an unpinned install would move the thing being compared: a default
@@ -53,6 +61,7 @@ jobs:
   placeholders:
     name: Zero-placeholder gate
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -65,6 +74,7 @@ jobs:
   lint:
     name: Lint YAML
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -95,11 +105,35 @@ jobs:
   # without its charts.
   #
   # The key is the appset pins and the client that verified the archives, so a
-  # run that moves neither fetches nothing. restore-keys hands a pin bump the
-  # previous set, so only the moved chart is fetched; a client change hands it
-  # archives the client re-checks against their digest records, and fetches
-  # again any that carry none. --fetch removes every cached file no pin names, so
-  # the carried set holds the current pins and nothing older.
+  # run that moves neither fetches nothing, and names nothing about the branch
+  # or the run, so a pull request whose pins match main's restores main's set.
+  # --fetch removes every cached file no pin names, so whatever set a run starts
+  # from, the set it keeps holds the current pins and nothing older.
+  #
+  # The cache is restored and saved as separate steps, because a combined
+  # actions/cache step saves only when the whole job succeeds: a fetch that
+  # verified every chart but the one a registry throttled would keep none of
+  # them, and the next run would read every chart again from an address in the
+  # same position. The save runs whatever the fetch did. A complete set goes
+  # under the key every rendering job restores. A set the fetch left incomplete
+  # goes under a key of its own, charts-partial- followed by the same pins hash,
+  # the run and its attempt, so no later save collides with it, since a saved
+  # key is never replaced.
+  #
+  # A restore that misses its key exactly takes the newest key the key is a
+  # prefix of, before it reads restore-keys, so no incomplete set's key begins
+  # with the key the rendering jobs restore: they restore a complete set or
+  # nothing. This job's restore-keys hand it, in order, the newest set an earlier
+  # attempt at the same pins left incomplete, so a re-run fetches only what that
+  # attempt did not reach, and then the newest set kept for any pins, so a pin
+  # bump fetches only the moved chart. A client change hands it archives the
+  # client re-checks against their digest records, and fetches again any that
+  # carry none.
+  #
+  # ECR Public serves an anonymous client one image pull a second, and one chart
+  # read is several requests to it, so REQUEST_SPACING_SECONDS in
+  # scripts/registry.py holds every request to public.ecr.aws apart rather than
+  # leaving the retries to wait out the 429 a burst draws.
   #
   # This job and every job that restores its archives allow longer than
   # registry.CALL_BOUND_SECONDS. Each call runs to a deadline,
@@ -134,16 +168,33 @@ jobs:
       - name: Install Python dependencies
         run: pip install --require-hashes -r requirements.txt
 
-      - name: Cache chart archives
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      - name: Restore the chart archives kept last
+        id: chart-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: &chart-cache ~/.cache/eks-gitops/charts
           key: &chart-cache-key charts-${{ hashFiles('applicationsets/*.yaml', 'scripts/registry.py') }}
           restore-keys: |
+            charts-partial-${{ hashFiles('applicationsets/*.yaml', 'scripts/registry.py') }}-
             charts-
 
       - name: Fetch every pinned chart
+        id: fetch
         run: ./scripts/render-addons.py --fetch
+
+      - name: Keep the complete set under the key the rendering jobs restore
+        if: always() && steps.fetch.outcome == 'success' && steps.chart-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: *chart-cache
+          key: ${{ steps.chart-cache.outputs.cache-primary-key }}
+
+      - name: Keep what the fetch verified before it stopped
+        if: always() && (steps.fetch.outcome == 'failure' || steps.fetch.outcome == 'cancelled')
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: *chart-cache
+          key: charts-partial-${{ hashFiles('applicationsets/*.yaml', 'scripts/registry.py') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
   # ── Dashboard gate ───────────────────────────────────────────────────
   # Every spec.grafanaCom.id must (a) still exist on grafana.com and (b) be
@@ -156,6 +207,7 @@ jobs:
   dashboards:
     name: Dashboard gate
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -235,6 +287,7 @@ jobs:
   serviceaccount-bindings:
     name: Pods name ServiceAccounts that exist
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -303,6 +356,7 @@ jobs:
   catalog-revision:
     name: a catalog source reads its revision, never pins one
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -324,6 +378,7 @@ jobs:
   gate-tests:
     name: the gates themselves are tested
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -348,7 +403,8 @@ jobs:
       # should.
       - name: Install Kyverno CLI
         run: |
-          curl -fsSL -o /tmp/kyverno.tar.gz "https://github.com/kyverno/kyverno/releases/download/${KYVERNO_VERSION}/kyverno-cli_${KYVERNO_VERSION}_linux_x86_64.tar.gz"
+          curl -fsSL --connect-timeout 20 --max-time 120 --retry 3 \
+            -o /tmp/kyverno.tar.gz "https://github.com/kyverno/kyverno/releases/download/${KYVERNO_VERSION}/kyverno-cli_${KYVERNO_VERSION}_linux_x86_64.tar.gz"
           echo "${KYVERNO_SHA256}  /tmp/kyverno.tar.gz" | sha256sum -c -
           tar -xz -C /tmp -f /tmp/kyverno.tar.gz kyverno
           sudo install -m 0755 /tmp/kyverno /usr/local/bin/kyverno
@@ -412,6 +468,7 @@ jobs:
   policy-validity:
     name: every rendered policy is one Kyverno will accept
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -422,7 +479,8 @@ jobs:
       # confirms the new one.
       - name: Install Kyverno CLI
         run: |
-          curl -fsSL -o /tmp/kyverno.tar.gz "https://github.com/kyverno/kyverno/releases/download/${KYVERNO_VERSION}/kyverno-cli_${KYVERNO_VERSION}_linux_x86_64.tar.gz"
+          curl -fsSL --connect-timeout 20 --max-time 120 --retry 3 \
+            -o /tmp/kyverno.tar.gz "https://github.com/kyverno/kyverno/releases/download/${KYVERNO_VERSION}/kyverno-cli_${KYVERNO_VERSION}_linux_x86_64.tar.gz"
           echo "${KYVERNO_SHA256}  /tmp/kyverno.tar.gz" | sha256sum -c -
           tar -xz -C /tmp -f /tmp/kyverno.tar.gz kyverno
           sudo install -m 0755 /tmp/kyverno /usr/local/bin/kyverno
@@ -532,6 +590,7 @@ jobs:
   renovate-coverage:
     name: every chart pin is watched by a manager that resolves
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -600,7 +659,8 @@ jobs:
 
       - name: Install Kyverno CLI
         run: |
-          curl -fsSL -o /tmp/kyverno.tar.gz "https://github.com/kyverno/kyverno/releases/download/${KYVERNO_VERSION}/kyverno-cli_${KYVERNO_VERSION}_linux_x86_64.tar.gz"
+          curl -fsSL --connect-timeout 20 --max-time 120 --retry 3 \
+            -o /tmp/kyverno.tar.gz "https://github.com/kyverno/kyverno/releases/download/${KYVERNO_VERSION}/kyverno-cli_${KYVERNO_VERSION}_linux_x86_64.tar.gz"
           echo "${KYVERNO_SHA256}  /tmp/kyverno.tar.gz" | sha256sum -c -
           tar -xz -C /tmp -f /tmp/kyverno.tar.gz kyverno
           sudo install -m 0755 /tmp/kyverno /usr/local/bin/kyverno
@@ -677,13 +737,15 @@ jobs:
         run: pip install --require-hashes -r requirements.txt
       - name: Install kind
         run: |
-          curl -fsSL -o /tmp/kind "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
+          curl -fsSL --connect-timeout 20 --max-time 120 --retry 3 \
+            -o /tmp/kind "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
           echo "${KIND_SHA256}  /tmp/kind" | sha256sum -c -
           sudo install -m 0755 /tmp/kind /usr/local/bin/kind
           kind version
       - name: Install kubectl
         run: |
-          curl -fsSL -o /tmp/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          curl -fsSL --connect-timeout 20 --max-time 120 --retry 3 \
+            -o /tmp/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
           echo "${KUBECTL_SHA256}  /tmp/kubectl" | sha256sum -c -
           sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
           kubectl version --client
@@ -726,6 +788,7 @@ jobs:
   fork-safety:
     name: Fork-safety gate
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -892,7 +955,8 @@ jobs:
 
       - name: Install Kyverno CLI
         run: |
-          curl -fsSL -o /tmp/kyverno.tar.gz "https://github.com/kyverno/kyverno/releases/download/${KYVERNO_VERSION}/kyverno-cli_${KYVERNO_VERSION}_linux_x86_64.tar.gz"
+          curl -fsSL --connect-timeout 20 --max-time 120 --retry 3 \
+            -o /tmp/kyverno.tar.gz "https://github.com/kyverno/kyverno/releases/download/${KYVERNO_VERSION}/kyverno-cli_${KYVERNO_VERSION}_linux_x86_64.tar.gz"
           echo "${KYVERNO_SHA256}  /tmp/kyverno.tar.gz" | sha256sum -c -
           tar -xz -C /tmp -f /tmp/kyverno.tar.gz kyverno
           sudo install -m 0755 /tmp/kyverno /usr/local/bin/kyverno
@@ -914,6 +978,7 @@ jobs:
   appsets:
     name: ApplicationSet schema + sync waves
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -941,7 +1006,8 @@ jobs:
         run: |
           if [ ! -x "$HOME/.local/bin/kubeconform" ]; then
             mkdir -p "$HOME/.local/bin"
-            curl -fsSL -o /tmp/kubeconform.tar.gz "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+            curl -fsSL --connect-timeout 20 --max-time 120 --retry 3 \
+              -o /tmp/kubeconform.tar.gz "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
             echo "${KUBECONFORM_SHA256}  /tmp/kubeconform.tar.gz" | sha256sum -c -
             tar -xz -C "$HOME/.local/bin" -f /tmp/kubeconform.tar.gz kubeconform
           fi
@@ -1004,6 +1070,7 @@ jobs:
   appset-render:
     name: Appset render (Karpenter subnet selector)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1030,6 +1097,7 @@ jobs:
   secrets:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1038,7 +1106,8 @@ jobs:
 
       - name: Install gitleaks
         run: |
-          curl -fsSL -o /tmp/gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL --connect-timeout 20 --max-time 120 --retry 3 \
+            -o /tmp/gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tar.gz" | sha256sum -c -
           tar -xz -C /tmp -f /tmp/gitleaks.tar.gz gitleaks
           sudo install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks
@@ -1050,6 +1119,7 @@ jobs:
   validate:
     name: Validate (${{ matrix.environment }})
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: lint
     strategy:
       fail-fast: false
@@ -1143,7 +1213,8 @@ jobs:
         run: |
           if [ ! -x "$HOME/.local/bin/kubeconform" ]; then
             mkdir -p "$HOME/.local/bin"
-            curl -fsSL -o /tmp/kubeconform.tar.gz "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+            curl -fsSL --connect-timeout 20 --max-time 120 --retry 3 \
+              -o /tmp/kubeconform.tar.gz "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
             echo "${KUBECONFORM_SHA256}  /tmp/kubeconform.tar.gz" | sha256sum -c -
             tar -xz -C "$HOME/.local/bin" -f /tmp/kubeconform.tar.gz kubeconform
           fi
@@ -1198,6 +1269,7 @@ jobs:
   pr-summary:
     name: PR Summary
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     if: always() && github.event_name == 'pull_request'
     needs:
       [
@@ -1282,6 +1354,7 @@ jobs:
   merge-gate:
     name: merge gate
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs:
       [
         placeholders,

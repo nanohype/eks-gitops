@@ -72,7 +72,7 @@ ALL_MODULES=(test_policy_admission test_platform_crs test_dashboards
   test_corpus_floors test_registry test_chart_deprecation test_falco_rule_floor
   test_image_vulnerabilities test_renovate_coverage test_lb_scheme_inputs
   test_kubeconform_scan test_image_extraction test_image_verification
-  test_policy_validity test_kyverno_test test_digest_rewrite)
+  test_policy_validity test_kyverno_test test_digest_rewrite test_workflows)
 
 # Bytecode caching keys on (mtime, size). A restore and the next mutation inside
 # the same second can hand the run the PREVIOUS mutant's module, and the suite
@@ -777,7 +777,8 @@ assert m != s, "mutation did not land"
 p.write_text(m)
 PY
 rejects "deadline: make a request after it has passed" test_registry \
-  test_a_call_whose_deadline_has_passed_makes_no_request
+  test_a_call_whose_deadline_has_passed_makes_no_request \
+  test_a_spacing_wait_that_overran_the_deadline_sends_nothing
 res $F
 
 # urlopen's timeout bounds one wait on the socket, not a body. Read in one call,
@@ -874,6 +875,125 @@ rejects "keep: record the digest before the archive is in place" test_registry \
   test_an_archive_cut_off_before_its_rename_leaves_no_record
 res $F
 
+# A chart read from ECR Public is four requests, and sent back to back they
+# draw a 429 on their own. The spacing holds every request to a spaced host
+# apart, measured from the last request to that host by any call in the process,
+# and spends the same deadline as every other wait.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('kept between requests to it")\n    sleep(wait)\n',
+              'kept between requests to it")\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "spacing: send a spaced host's requests back to back" test_registry \
+  test_successive_reads_of_a_spaced_host_are_spaced \
+  test_a_chart_read_spaces_its_challenge_token_and_repeat
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    spacing = REQUEST_SPACING_SECONDS.get(host)\n',
+              '    spacing = max(REQUEST_SPACING_SECONDS.values())\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "spacing: hold every host to it" test_registry \
+  test_a_host_with_no_spacing_is_not_spaced
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        last_sent[host] = timer()\n',
+              '        last_sent.update(dict.fromkeys(REQUEST_SPACING_SECONDS, timer()))\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "spacing: measure it from the last request to any host" test_registry \
+  test_each_host_is_spaced_from_its_own_last_request
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    if timer() + wait >= deadline:\n        raise _ran_out(host, f"{where}, inside',
+              '    if False:\n        raise _ran_out(host, f"{where}, inside', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "spacing: take a wait that ends past the deadline" test_registry \
+  test_a_spacing_wait_that_would_end_past_the_deadline_is_reported_not_slept
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        last_sent = _LAST_SENT\n', '        last_sent = {}\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "spacing: start every call from an empty record" test_registry \
+  test_calls_given_no_record_share_the_processes
+res $F
+
+# A Retry-After shorter than the spacing still leaves the retry spaced from the
+# request it answered, and one longer than it counts toward the spacing rather
+# than having it added on top.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        _space(host, last_sent, deadline, where, sleep, timer)\n',
+              '        if attempt == 1:\n'
+              '            _space(host, last_sent, deadline, where, sleep, timer)\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "spacing: skip it before a retry" test_registry \
+  test_a_retry_after_inside_the_spacing_is_followed_by_what_it_left
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('file=sys.stderr)\n            sleep(wait)\n',
+              'file=sys.stderr)\n            sleep(wait)\n            last_sent[host] = timer()\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "spacing: run it from the end of a retry's wait" test_registry \
+  test_a_retry_after_that_outlasts_the_spacing_has_no_spacing_on_top
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('REQUEST_SPACING_SECONDS = {"public.ecr.aws": 1.1}',
+              'REQUEST_SPACING_SECONDS = {"public.ecr.aws": 1.0}', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "spacing: hold ECR Public to its quota with no margin" test_registry \
+  test_the_spacing_sits_above_the_quota_ecr_public_allows
+res $F
+
+# The deadline holds room for RETRY_MAX_WAIT_SECONDS before every retry, and a
+# registry that names no wait is the one a backoff stopping short of it serves
+# worst.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('RETRY_BASE_SECONDS = RETRY_MAX_WAIT_SECONDS / 2 ** (RETRY_ATTEMPTS - 2)\n',
+              'RETRY_BASE_SECONDS = 5.0\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "backoff: stop short of the longest wait" test_registry \
+  test_the_backoff_doubles_to_the_longest_wait_by_the_last_retry
+res $F
+
 # A job that reads through the client and allows no longer than one call is
 # cancelled mid-call. The scheduled reads of upstream are held to it as much as
 # the jobs that restore the chart cache.
@@ -886,6 +1006,149 @@ p.write_text(s.replace('    timeout-minutes: 20\n', ''))
 PY
 rejects "jobs: leave a scheduled upstream read on the runner default" test_registry \
   test_each_allows_longer_than_one_call
+res $F
+
+# A job with no timeout runs to the runner's six-hour default, a download with no
+# bound to the job's, and the chart cache is kept by conditions over the fetch's
+# outcome. test_workflows reads each out of the YAML.
+F=.github/workflows/ci.yml
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    name: Zero-placeholder gate\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n',
+              '    name: Zero-placeholder gate\n    runs-on: ubuntu-latest\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "jobs: leave one on the runner's six-hour default" test_workflows \
+  test_every_job_sets_a_timeout
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('--max-time 120 --retry 3 \\\n            -o /tmp/gitleaks',
+              '--retry 3 \\\n            -o /tmp/gitleaks', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "curl: read a download for as long as bytes arrive" test_workflows \
+  test_every_curl_carries_each_bound
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("        if: always() && (steps.fetch.outcome == 'failure'",
+              "        if: (steps.fetch.outcome == 'failure'", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "cache: keep a partial set only while the job is passing" test_workflows \
+  test_every_save_runs_whatever_the_job_did_before_it \
+  test_what_a_failed_or_cancelled_fetch_verified_is_kept_under_a_key_of_its_own
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("          key: charts-partial-${{ hashFiles('applicationsets/*.yaml', "
+              "'scripts/registry.py') }}-${{ github.run_id }}-${{ github.run_attempt }}\n",
+              "          key: ${{ steps.chart-cache.outputs.cache-primary-key }}\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "cache: keep a partial set under the key the rendering jobs restore" test_workflows \
+  test_what_a_failed_or_cancelled_fetch_verified_is_kept_under_a_key_of_its_own \
+  test_no_incomplete_set_is_kept_under_a_key_the_rendering_jobs_restore
+res $F
+
+# A restore that misses its key exactly takes the newest key beginning with it,
+# so a partial key that extends the rendering jobs' key is one they restore.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("          key: charts-partial-${{ hashFiles('applicationsets/*.yaml', "
+              "'scripts/registry.py') }}-${{ github.run_id }}-${{ github.run_attempt }}\n",
+              "          key: ${{ steps.chart-cache.outputs.cache-primary-key }}"
+              "-partial-${{ github.run_id }}-${{ github.run_attempt }}\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "cache: keep a partial set under a key extending the restored one" test_workflows \
+  test_no_incomplete_set_is_kept_under_a_key_the_rendering_jobs_restore
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("            charts-partial-${{ hashFiles('applicationsets/*.yaml', "
+              "'scripts/registry.py') }}-\n", "", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "cache: restore any pins' newest set before these pins' own" test_workflows \
+  test_restore_keys_try_the_incomplete_set_these_pins_left_first
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("          key: charts-partial-${{ hashFiles('applicationsets/*.yaml', "
+              "'scripts/registry.py') }}-",
+              "          key: charts-partial-${{ hashFiles('applicationsets/*.yaml') }}-", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "cache: keep a partial set under a pins hash its restore key misses" test_workflows \
+  test_restore_keys_try_the_incomplete_set_these_pins_left_first
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("            charts-\n", "", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "cache: restore nothing for pins no set was kept for" test_workflows \
+  test_restore_keys_then_hand_a_pin_bump_the_newest_set_complete_or_not
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace(" && steps.chart-cache.outputs.cache-hit != 'true'", "", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "cache: save a set that was restored whole" test_workflows \
+  test_a_set_restored_whole_is_not_saved_again
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6\n"
+              "        with:\n          path: &chart-cache",
+              "        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6\n"
+              "        with:\n          path: &chart-cache", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "cache: restore and save in one step that saves on success" test_workflows \
+  test_the_cache_is_restored_and_saved_as_separate_steps_around_the_fetch
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("'scripts/registry.py') }}\n", "'scripts/registry.py') }}-${{ github.ref }}\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "cache: key the set on the branch, so a pull request starts empty" test_workflows \
+  test_the_key_names_the_pins_and_not_the_branch_or_the_run
 res $F
 
 
@@ -1164,6 +1427,115 @@ p.write_text(m)
 PY
 rejects "review_by: count days on the runner's local calendar" test_image_vulnerabilities \
   test_an_entry_dated_the_local_day_is_due_on_the_utc_day
+res $F
+
+# A registry refusing trivy for now has said nothing about the image, and every
+# other failure has. Retried, the first is a scan; reported at once, it is an
+# image the gate examined nothing of. What trivy said is what tells a reader
+# which one an unscanned image was.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        if refused is None:\n', '        if True:\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "trivy: report a refusal that clears at once" test_image_vulnerabilities \
+  test_a_refused_scan_is_run_again_and_its_findings_are_the_result \
+  test_each_way_trivy_names_a_refusal_that_clears_is_retried
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace(r': |unexpected status code (?:429|5\d\d)\b")', r': ")', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "trivy: miss a refusal whose body names no code" test_image_vulnerabilities \
+  test_each_way_trivy_names_a_refusal_that_clears_is_retried
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace(r'unexpected status code (?:429|5\d\d)\b', r'unexpected status code \d\d\d\b', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "trivy: retry a status a wait cannot clear" test_image_vulnerabilities \
+  test_a_failure_a_wait_cannot_clear_is_reported_at_once
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('wait = SCAN_BACKOFF_SECONDS * 2 ** (attempt - 1) * (1',
+              'wait = SCAN_BACKOFF_SECONDS * (1', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "trivy: wait the same before every retry" test_image_vulnerabilities \
+  test_each_retry_waits_twice_the_last_and_the_attempts_are_bounded
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        if attempt == SCAN_ATTEMPTS:\n', '        if attempt == SCAN_ATTEMPTS + 1:\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "trivy: allow one invocation past SCAN_ATTEMPTS" test_image_vulnerabilities \
+  test_each_retry_waits_twice_the_last_and_the_attempts_are_bounded
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('                *(f"{indent}  {line}" for line in said)]\n', '                ]\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "trivy: name an unscanned image without what trivy said" test_image_vulnerabilities \
+  test_each_image_that_did_not_scan_is_named_with_trivys_stderr \
+  test_a_canary_that_did_not_scan_says_what_trivy_said \
+  test_only_the_end_of_a_long_stderr_is_quoted
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('self.stderr.splitlines()[-STDERR_LINES:]', 'self.stderr.splitlines()[:STDERR_LINES]', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "trivy: quote the start of a long stderr" test_image_vulnerabilities \
+  test_only_the_end_of_a_long_stderr_is_quoted
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        raise Unscannable("trivy exited 0 and wrote no JSON report", proc.stderr) from exc\n',
+              '        return []\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "trivy: read a run that wrote no report as a clean scan" test_image_vulnerabilities \
+  test_a_run_that_wrote_no_report_is_not_a_clean_one
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('                              exc.stderr) from exc\n',
+              '                              None) from exc\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "trivy: drop what a scan past its timeout had written" test_image_vulnerabilities \
+  test_a_scan_past_its_timeout_is_reported_with_what_trivy_had_said
 res $F
 
 

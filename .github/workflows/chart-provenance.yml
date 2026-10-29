@@ -34,7 +34,8 @@ permissions:
 # job records: a call the registry throttles to its deadline, or trickles a body
 # past it, reports which host it was reading before the job is cancelled, and a
 # registry that throttles call after call ends the job at its timeout rather
-# than at the runner's ceiling. test_registry holds them to it.
+# than at the runner's ceiling. test_registry holds them to it. Every other job
+# sets one too, which scripts/tests/test_workflows.py holds every workflow to.
 jobs:
   live:
     name: pinned charts still are what they were
@@ -65,6 +66,7 @@ jobs:
   sizes:
     name: pinned directory sources still measure what was recorded
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
