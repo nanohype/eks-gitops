@@ -207,6 +207,9 @@ class ReadingARuleSetThroughTheSharedClient(unittest.TestCase):
         self.assertEqual(len(token), 1)
         self.assertIn(f"scope=repository%3A{self.REPO.replace('/', '%2F')}%3Apull",
                       token[0])
+        self.assertEqual([fake.auth(r) for r in self.transport.requests
+                          if r.full_url.startswith("https://ghcr.io/token?")], [None],
+                         "the token was asked for with credentials the test did not write")
         self.assertEqual(urls.count(self.MANIFEST), 2)
         self.assertEqual(gate.failures, [])
 

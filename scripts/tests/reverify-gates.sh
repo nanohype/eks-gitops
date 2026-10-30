@@ -655,6 +655,26 @@ jobs:
 YAML
 run nonzero "zizmor: unpinned action" ./scripts/check-workflows.sh "$SP/wbad/.github/workflows"
 
+# A workflow-level id-token grant hands every job the OIDC token, and only the
+# auditor persona's excessive-permissions audit sees it. Everything else in the
+# file is clean, so a rejection is the grant's.
+mkdir -p "$SP/wgrant/.github/workflows"
+cat > "$SP/wgrant/.github/workflows/grant.yml" <<'YAML'
+on: push
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+YAML
+run 1 "zizmor: workflow-level id-token grant" ./scripts/check-workflows.sh "$SP/wgrant/.github/workflows"
+
 # A rejection is only as useful as what reaches the log: the line naming the
 # manifest, and the two catalog commits the scan read its schemas at. The status
 # alone says neither, so the captured output is read as well.

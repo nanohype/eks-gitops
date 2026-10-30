@@ -40,8 +40,9 @@ question is not "is this manifest valid against the newest CRDs" but "is it
 valid against the CRDs this catalog installs", and those are different whenever
 a chart bump is in flight.
 
-It needs the network: the operator chart is fetched anonymously from ghcr.io
-through registry.py's client, which keeps it in the chart cache. With
+It needs the network: the operator chart is public on ghcr.io and is fetched
+through registry.py's client, which keeps it in the chart cache and asks for
+its token with a `docker login` stored for ghcr.io when there is one. With
 --offline it skips instead of failing, so a local run without a registry is
 honest about having checked nothing.
 

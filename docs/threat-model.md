@@ -49,6 +49,17 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
   (ci.yml:416-419), and `trivy config` hard-failing on **MEDIUM+** against the
   *rendered* output (ci.yml:433-438). The workflow itself is least-privilege
   (`permissions: contents: read`, ci.yml:9-10).
+- **Elevation of privilege through the CI OIDC token** — `charts` and
+  `image-vulnerabilities` grant `id-token: write` so they can assume the ECR
+  Public pull role the `ECR_PUBLIC_PULL_ROLE_ARN` repo variable names.
+  Mitigated: the grant is job-level, `scripts/tests/test_workflows.py` holds it
+  to those two jobs, and `scripts/check-workflows.sh` fails a workflow-level
+  grant. The role, provisioned by landing-zone, is trusted from this repo's pull
+  request and main contexts and can only mint an ECR Public authorization token,
+  so a pull request that obtains it gains a pull quota and no access. A pull
+  request from a fork is issued no OIDC token and skips the login, and the
+  role's credentials reach the login step alone, as step outputs rather than job
+  environment.
 - **Denial of service / drift** — ApplicationSet `syncPolicy` runs `selfHeal` +
   `prune` with a bounded retry/backoff (every default ApplicationSet's
   syncPolicy, e.g. addons-observability.yaml), so manual drift is reverted and a
@@ -59,7 +70,13 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
   settings, not this repo. CI has no cluster, so first-party CRDs
   (Platform/Tenant/ModelGateway/BudgetPolicy, Grafana) are schema-skipped
   (the skip list in scripts/kubeconform-scan.sh) and validated only against the
-  real webhook out-of-band.
+  real webhook out-of-band. The `id-token` grant on `charts` and
+  `image-vulnerabilities` is job-wide, so every step of either job, and every
+  process a step starts, can request an OIDC token, not only the step that
+  assumes the pull role. Any role whose trust policy accepts this repository's
+  pull request or main subject can be assumed from either job, so what the
+  grant exposes is decided by those trust policies, which live outside this
+  repo.
 
 ## 3. Image supply chain  (`policies/kyverno/supply-chain/`, `scripts/check-image-verification.py`, `scripts/check-digest-rewrite.sh`)
 
@@ -123,13 +140,21 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
   `kube-node-lease`, `kyverno`) are excluded, so a nanohype image placed there is
   not verified.
 
-  A gate exercises a signing format only through a fixture signed in it. The
-  release and branch-signed fixtures under `policies/kyverno/tests/` carry
-  cosign's legacy `.sig`/`.att` format (`cosign tree <image>` lists the tags and
-  any bundle referrer), so both gates above decide on Kyverno's legacy path, and
-  bundle verification rests on Kyverno's implementation with no fixture here
-  behind it. A release signed in the bundle format, pinned beside the legacy
-  fixtures, is what puts that path under the same gates.
+  A gate exercises a signing format only through a fixture signed in it, and the
+  fixtures under `policies/kyverno/tests/` carry both of cosign's formats
+  (`cosign tree <image>` lists an image's legacy `.sig`/`.att` tags and any
+  Sigstore bundle referrer; `policies/kyverno/tests/resources.yaml` and each
+  fixture under `policies/kyverno/tests/supply-chain-digest/` state which
+  format a fixture carries). The legacy path is proven both ways:
+  `kyverno test` admits a legacy release signature and refuses a legacy branch
+  signature, and the digest-rewrite gate denies the legacy branch-signed pod
+  wherever an overlay says Deny. The bundle path is proven to admit:
+  `kyverno test` admits a bundle-signed operator release and eval-runner
+  release, and the digest-rewrite gate admits the bundle-signed operator tag and
+  pins it. No fixture shows the bundle path refusing an untrusted signer
+  identity, so that refusal rests on Kyverno's implementation. A bundle signed
+  by a workflow the policy does not trust, pinned beside the release fixtures,
+  is what puts that refusal under the same gates.
 
 ## 4. Admission / pod security  (`policies/kyverno/{best-practices,pod-security-standards}/`)
 
