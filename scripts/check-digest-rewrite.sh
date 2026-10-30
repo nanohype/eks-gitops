@@ -49,6 +49,11 @@
 # verifier line behind it. Each is a verification whose outcome is unknown, not
 # a rewrite that stopped and not an identity decided.
 #
+# This script makes the requests and reads what came back; scripts/verdicts.py
+# decides what each answer means, the pin, the identity and a refusal's cause,
+# with the one transport-failure pattern scripts/kyverno-test.sh reads through
+# too. scripts/tests/test_verdicts.py holds those decisions without a cluster.
+#
 # Every step is bounded, each on its own: a request that returns an answer by
 # REQUEST_TIMEOUT, a wait by its own *_TIMEOUT under a GNU timeout above it, and
 # kind and helm by GNU timeout. A step that stops answering ends on this
@@ -63,7 +68,7 @@ GROUP="$ROOT/policies/kyverno/supply-chain"
 APPSET="$ROOT/applicationsets/addons-security.yaml"
 CI="$ROOT/.github/workflows/ci.yml"
 POLICY=verify-images
-IDENTITY_MESSAGE="image is not signed by a nanohype release workflow"
+VERDICTS="$ROOT/scripts/verdicts.py"
 
 # Seconds one kubectl request that returns an answer may take: a create, get,
 # patch or apply, or a read of the verifier's log. A create reaching
@@ -97,41 +102,67 @@ KILL_TIMEOUT=10
 # with this component, and this run installs the chart as release kyverno.
 VERIFIER_NS=kyverno
 VERIFIER_PODS="app.kubernetes.io/instance=kyverno,app.kubernetes.io/component=admission-controller"
-# The message Kyverno's cosign verifier logs every failed verification under,
-# through logr's Error, which no verbosity setting suppresses.
-VERIFIER_FAILED="image verification failed"
 # Seconds the verifier's log is read from before a request was sent, because
 # `date +%s` truncates both ends of the window to the second. An earlier
 # request's transport failure inside that slack can only turn a decision into a
 # run that could not decide.
 LOG_SLACK=5
 
-# shellcheck source=transport-failure.sh
-. "$ROOT/scripts/transport-failure.sh"
-
 cannot_run() {
   printf '%s\n' "Cannot run: $*"
   exit 2
 }
 
-# The API server's refusal, with the checkout path elided so the reason fits.
-show_err() {
-  sed -e "s#$ROOT/##g" -e 's/^/        /' "$WORK/err" | cut -c1-240
+# What a status from scripts/verdicts.py means here: $1 is the status and $2 the
+# question it answered. A finding sets fail, and a run that could not decide ends
+# here. No interpreter failure exits 0, 3 or 4, so a traceback, or a python3
+# that did not start, ends the run as one that could not decide.
+act_on() {
+  case "$1" in
+    0) ;;
+    3) fail=1 ;;
+    2) exit 2 ;;
+    *) cannot_run "scripts/verdicts.py exited $1 answering $2, so no verdict was reached." ;;
+  esac
+}
+
+# scripts/verdicts.py's answer to the question its arguments ask, acted on.
+verdict() {
+  python3 "$VERDICTS" "$@"
+  act_on "$?" "$1"
+}
+
+# A verdict on the request mark_sent marked, whose refusal, when it was refused,
+# is in $WORK/err. Every refusal this script decides comes through here, so one
+# rule holds on every path: verdicts.py establishes its cause first, from the
+# refusal and, where the refusal does not name one, from the verifier's log read
+# for it. It asks for that log by exiting 4 rather than being handed it, so a
+# request kubectl got no answer for is never followed by a read of a log no
+# admission wrote to.
+decide() {
+  local rc
+  local -a args=("$@" --overlay="$rel" --root="$ROOT" --request-timeout="$REQUEST_TIMEOUT"
+                 --refusal="$WORK/err")
+  python3 "$VERDICTS" "${args[@]}"
+  rc=$?
+  if [ "$rc" -eq 4 ]; then
+    read_verifier_log
+    python3 "$VERDICTS" "${args[@]}" --log="$WORK/log"
+    rc=$?
+  fi
+  act_on "$rc" "$1"
 }
 
 # The remaining arguments, run under GNU timeout: TERM after $1 seconds, and a
 # kill KILL_TIMEOUT seconds after that to a command still going. A command the
-# bound ended has written nothing that says so, so this writes the line that
-# does to standard error, where the caller's diagnostic reads it.
+# bound ended has written nothing that says so, so the line verdicts.py words
+# for it goes to standard error, where the caller's diagnostic reads it.
 bounded() {
   local seconds="$1" rc
   shift
   "$TIMEOUT_CMD" -k "$KILL_TIMEOUT" "$seconds" "$@"
   rc=$?
-  case "$rc" in
-    124) echo "$1 did not finish within ${seconds}s, so GNU timeout ended it." >&2 ;;
-    137) echo "$1 was killed before it finished." >&2 ;;
-  esac
+  python3 "$VERDICTS" bound --command="$1" --status="$rc" --seconds="$seconds" >&2
   return "$rc"
 }
 
@@ -160,124 +191,27 @@ mark_sent() {
   sent="$(date +%s)"
 }
 
-# The verifier's lines among what every admission-controller replica logged
-# from LOG_SLACK seconds before the request marked $sent until this read,
-# uncoloured, into $WORK/log. That window holds the request's own line, because
-# a failed verification is logged before the refusal returns, and any line
-# another request logged inside it: one naming a transport failure can only end
-# the run as one that could not decide, and any other one shows the log read is
-# the verifier's.
+# What every admission-controller replica logged from LOG_SLACK seconds before
+# the request marked $sent until this read, into $WORK/log. That window holds
+# the request's own line, because a failed verification is logged before the
+# refusal returns, and any line another request logged inside it: one naming a
+# transport failure can only end the run as one that could not decide, and any
+# other verifier line shows the log read is the verifier's. verdicts.py keeps
+# the verifier's lines and sets the controller's own aside.
 #
-# Only the verifier's lines are kept: the controller's webhook server logs its
-# own connection errors to the same stream (a TLS handshake error as the API
-# server drops a connection), and those name no verification. Given a selector,
-# kubectl logs prints ten lines a pod unless --tail says otherwise, and a
-# selector matching no pod prints nothing and exits 0; an identity refusal is
-# decided only beside a verifier line for that reason. A log that cannot be
-# read, inside REQUEST_TIMEOUT or at all, leaves a refusal's cause unknown, so
-# the run cannot decide it.
+# Given a selector, kubectl logs prints ten lines a pod unless --tail says
+# otherwise, and a selector matching no pod prints nothing and exits 0; an
+# identity refusal is decided only beside a verifier line for that reason. A log
+# that cannot be read, inside REQUEST_TIMEOUT or at all, leaves a refusal's cause
+# unknown, so the run cannot decide it.
 read_verifier_log() {
   if kube logs -n "$VERIFIER_NS" -l "$VERIFIER_PODS" --tail=-1 \
-       --since="$(( $(date +%s) - sent + LOG_SLACK ))s" >"$WORK/log.raw" 2>"$WORK/log.err"; then
-    uncoloured <"$WORK/log.raw" | grep -F "$VERIFIER_FAILED" >"$WORK/log"
+       --since="$(( $(date +%s) - sent + LOG_SLACK ))s" >"$WORK/log" 2>"$WORK/log.err"; then
     return 0
   fi
   sed 's/^/        /' "$WORK/log.err" | cut -c1-240
   cannot_run "$rel: the admission controller's log could not be read, so whether a
 refusal was the policy deciding or an outage on the verification path is unknown."
-}
-
-# A refusal, in $WORK/err, ends the run unless its cause is established. $1
-# names what was refused. Every refusal this script decides comes through here
-# first, so one rule holds on every path, and the verifier's log it reads is
-# always the one read for this refusal.
-#
-# The cluster states a refusal's cause in the same two places the Kyverno CLI
-# does for scripts/kyverno-test.sh. Reading the image failing refuses the
-# request with the transport error as the API server's message. A failure after
-# that — fetching the Sigstore trusted root, a Rekor lookup, the signature's
-# manifest — is counted as a signature that did not verify, so the refusal
-# carries the policy's own identity message and only the verifier's log names
-# the cause. Both are read, through the one pattern scripts/transport-failure.sh
-# holds for both gates.
-#
-# So a refusal carrying the identity message is decided only beside at least
-# one verifier line. A failed verification always logs one, so with none the
-# log read is not the verifier's, and its silence says nothing about whether
-# the identity or an outage refused the request.
-#
-# A transport failure in the refusal itself is named by where it happened.
-# kubectl writes an answer from the API server as "Error from server", and the
-# ReplicaSet writes each refusal of its pod as a FailedCreate event beginning
-# "Error creating:", so a refusal carrying neither is kubectl's own request
-# ending with no answer: its REQUEST_TIMEOUT passed, or its connection failed.
-# The API server writes "failed calling webhook" for an admission webhook it
-# got no answer from. Any other is the verifier's.
-require_known_cause() {
-  local cause site
-  site="$rel could not reach the registry, the Sigstore trusted root or Rekor for $1."
-  cause="$(transport_failures <"$WORK/err")"
-  if [ -n "$cause" ]; then
-    if ! grep -qE '^Error (from server|creating:)' "$WORK/err"; then
-      site="$rel: kubectl's request for $1 ended with no answer from the API server:
-its ${REQUEST_TIMEOUT}s bound passed or its connection failed."
-    elif grep -qF 'failed calling webhook' "$WORK/err"; then
-      site="$rel: the API server got no answer from Kyverno's admission webhook for $1."
-    fi
-  else
-    read_verifier_log
-    cause="$(transport_failures <"$WORK/log")"
-  fi
-  if [ -n "$cause" ]; then
-    show_err
-    printf '%s\n' "$cause" | sed 's/^/        /'
-    cannot_run "$site"
-  fi
-  if grep -qF "$IDENTITY_MESSAGE" "$WORK/err" && [ ! -s "$WORK/log" ]; then
-    show_err
-    cannot_run "$rel refused $1 with the identity message, but the admission
-controller's log carries no '$VERIFIER_FAILED' line, so whether the identity or
-an outage refused it is unknown."
-  fi
-  return 0
-}
-
-# A release-signed submission refused, in $WORK/err: a FAIL once the cause is
-# established. $1 names what was refused and $2 says what the refusal means.
-refused_release_signed() {
-  require_known_cause "$1"
-  fail=1
-  echo "  FAIL  $2:"
-  show_err
-}
-
-# A foreign identity, decided: an overlay whose validationActions include Deny
-# refuses it with the policy's identity message, and any other admits it and
-# reports it. $1 names what was submitted and $2 is "admitted" or "refused";
-# the refusal is in $WORK/err and the overlay's actions in $actions. A refusal
-# for a reason other than the identity is a FAIL.
-decide_foreign() {
-  local what="$1" outcome="$2"
-  if [ "$outcome" = admitted ]; then
-    case ",$actions," in
-      *,Deny,*) fail=1
-                echo "  FAIL  admitted $what under Deny." ;;
-      *) echo "  ok    admitted $what under $actions (reported, not blocked)" ;;
-    esac
-    return 0
-  fi
-  require_known_cause "$what"
-  if ! grep -qF "$IDENTITY_MESSAGE" "$WORK/err"; then
-    fail=1
-    echo "  FAIL  $what was refused for a reason other than its identity:"
-    show_err
-    return 0
-  fi
-  case ",$actions," in
-    *,Deny,*) echo "  ok    denied $what: $IDENTITY_MESSAGE" ;;
-    *) fail=1
-       echo "  FAIL  denied $what under $actions, which reports and does not block." ;;
-  esac
 }
 
 # Deletes what the remaining arguments name and waits for it to go. Anything
@@ -290,13 +224,6 @@ delete_within() {
   shift
   kube_wait "$DELETE_TIMEOUT" delete "$@" --wait=true >/dev/null 2>"$WORK/err" \
     || cannot_run "$rel: $what was not deleted within ${DELETE_TIMEOUT}s — $(head -1 "$WORK/err")"
-}
-
-# The tag joined to a digest, and nothing else.
-pinned() {
-  local tagged_re
-  tagged_re="$(printf '%s' "$TAGGED" | sed 's/[.]/\\./g')"
-  printf '%s' "$1" | grep -qE "^${tagged_re}@sha256:[0-9a-f]{64}$"
 }
 
 # The overlay rendered at $rendered, applied, and reported ready by Kyverno: an
@@ -323,25 +250,16 @@ retire_policy() {
 # containers are added, and it is deleted after them: the next overlay creates
 # the same pod.
 check_signed_pod() {
-  local admitted admitted_init admitted_main pair field image
+  local admitted admitted_init admitted_main
   mark_sent
   if ! admitted="$(kube create -f "$SUITE/pod.yaml" -o jsonpath='{.spec.initContainers[0].image} {.spec.containers[0].image}' 2>"$WORK/err")"; then
-    refused_release_signed "the signed pod" "denied the release-signed $TAGGED, so no digest was written"
+    decide release-signed --what="the signed pod" \
+      --means="denied the release-signed $TAGGED, so no digest was written"
     return 0
   fi
   read -r admitted_init admitted_main <<<"$admitted"
-  for pair in "init container:${admitted_init:-}" "container:${admitted_main:-}"; do
-    field="${pair%%:*}"; image="${pair#*:}"
-    if pinned "$image"; then
-      echo "  ok    admitted $TAGGED in the $field as $image"
-    else
-      fail=1
-      echo "  FAIL  admitted $TAGGED in the $field as '$image', with no digest joined"
-      echo "        to the tag. Verification and execution then resolve the tag"
-      echo "        separately, and anyone able to move it between those two moments"
-      echo "        runs an unverified image under a policy reporting success."
-    fi
-  done
+  verdict pinned --site=init-container --tagged="$TAGGED" --image="${admitted_init:-}"
+  verdict pinned --site=container --tagged="$TAGGED" --image="${admitted_main:-}"
   check_signed_ephemeral
   check_foreign_ephemeral
   delete_within "the signed pod" -f "$SUITE/pod.yaml"
@@ -355,16 +273,10 @@ check_signed_ephemeral() {
   if ephemeral="$(kube patch pod "$POD" -n "$POD_NS" --subresource=ephemeralcontainers \
         --type=strategic -p "{\"spec\":{\"ephemeralContainers\":[{\"name\":\"pinned\",\"image\":\"$TAGGED\"}]}}" \
         -o jsonpath='{.spec.ephemeralContainers[0].image}' 2>"$WORK/err")"; then
-    if pinned "$ephemeral"; then
-      echo "  ok    admitted $TAGGED as an ephemeral container as $ephemeral"
-    else
-      fail=1
-      echo "  FAIL  admitted $TAGGED as an ephemeral container as '$ephemeral', with"
-      echo "        no digest joined to the tag."
-    fi
+    verdict pinned --site=ephemeral-container --tagged="$TAGGED" --image="$ephemeral"
   else
-    refused_release_signed "the signed ephemeral container" \
-      "refused the release-signed $TAGGED as an ephemeral container"
+    decide release-signed --what="the signed ephemeral container" \
+      --means="refused the release-signed $TAGGED as an ephemeral container"
   fi
 }
 
@@ -376,7 +288,8 @@ check_foreign_ephemeral() {
   kube patch pod "$POD" -n "$POD_NS" --subresource=ephemeralcontainers \
       --type=strategic -p "{\"spec\":{\"ephemeralContainers\":[{\"name\":\"foreign\",\"image\":\"$FOREIGN\"}]}}" \
       -o name >/dev/null 2>"$WORK/err" && outcome=admitted
-  decide_foreign "the branch-signed ephemeral container" "$outcome"
+  decide foreign-identity --what="the branch-signed ephemeral container" \
+    --outcome="$outcome" --actions="$actions"
 }
 
 # The Deployment, stored as git wrote it; the pod it creates, pinned. A pod
@@ -395,7 +308,8 @@ check_deployment() {
 ${DELETE_TIMEOUT}s, so it would answer for this overlay's Deployment."
   mark_sent
   if ! stored="$(kube create -f "$SUITE/deployment.yaml" -o jsonpath='{.spec.template.spec.containers[0].image}' 2>"$WORK/err")"; then
-    refused_release_signed "the Deployment" "refused the Deployment of the release-signed $TAGGED"
+    decide release-signed --what="the Deployment" \
+      --means="refused the Deployment of the release-signed $TAGGED"
     return 0
   fi
   if [ "$stored" = "$TAGGED" ]; then
@@ -420,15 +334,10 @@ ${DELETE_TIMEOUT}s, so it would answer for this overlay's Deployment."
     kube get events -n "$DEPLOYMENT_NS" --field-selector reason=FailedCreate \
       -o jsonpath='{range .items[*]}{.message}{"\n"}{end}' >"$WORK/err" 2>"$WORK/events.err" \
       || cannot_run "$rel: the Deployment's events could not be read — $(head -1 "$WORK/events.err")"
-    refused_release_signed "the Deployment's pod" \
-      "the Deployment's ReplicaSet created no pod within ${CREATE_TIMEOUT}s"
-  elif pinned "$created"; then
-    echo "  ok    admitted the Deployment's pod as $created"
+    decide release-signed --what="the Deployment's pod" \
+      --means="the Deployment's ReplicaSet created no pod within ${CREATE_TIMEOUT}s"
   else
-    fail=1
-    echo "  FAIL  admitted the Deployment's pod as '$created', with no digest joined"
-    echo "        to the tag. A controller-created pod is the one that runs, and it"
-    echo "        must carry the digest admission verified."
+    verdict pinned --site=deployment-pod --tagged="$TAGGED" --image="$created"
   fi
   delete_within "the Deployment" -f "$SUITE/deployment.yaml" --cascade=foreground
 }
@@ -437,10 +346,12 @@ ${DELETE_TIMEOUT}s, so it would answer for this overlay's Deployment."
 check_foreign_pod() {
   mark_sent
   if kube create -f "$SUITE/branch-signed.yaml" -o name >/dev/null 2>"$WORK/err"; then
-    decide_foreign "the branch-signed image" admitted
+    decide foreign-identity --what="the branch-signed image" --outcome=admitted \
+      --actions="$actions"
     delete_within "the branch-signed pod" -f "$SUITE/branch-signed.yaml"
   else
-    decide_foreign "the branch-signed image" refused
+    decide foreign-identity --what="the branch-signed image" --outcome=refused \
+      --actions="$actions"
   fi
 }
 
@@ -466,7 +377,7 @@ install_kyverno() {
 }
 
 # Sourced, this file defines the functions above and runs nothing, so
-# scripts/tests/test_digest_rewrite.py can decide a verdict without a cluster.
+# scripts/tests/test_digest_rewrite.py can drive each step without a cluster.
 if [ "${BASH_SOURCE[0]}" != "$0" ]; then
   return 0
 fi

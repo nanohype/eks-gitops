@@ -77,7 +77,7 @@ FALCO_DIR = "/etc/falco"
 # raised past rules that exist — each of which removes rules in blocks.
 #
 # Raising it is what lands with a change that earns it, the same way the
-# coverage ratchet in scripts/tests/run.py works.
+# per-file coverage ratchets in scripts/tests/run.py work.
 RULE_FLOOR = 85
 
 # Falco loads a rule when its priority is at least this severe. Order is

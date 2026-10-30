@@ -30,12 +30,21 @@ PAUSE=5
 RUN_TIMEOUT=240
 KILL_TIMEOUT=10
 
-# shellcheck source=transport-failure.sh
-. "$ROOT/scripts/transport-failure.sh"
+# Decides what a run on the image-verification path established: whether an
+# endpoint answered, whether a run decided its rows, and whether to run the suite
+# again. It holds the one transport-failure pattern, which
+# scripts/check-digest-rewrite.sh reads through too.
+VERDICTS="$ROOT/scripts/verdicts.py"
 
 if ! command -v kyverno >/dev/null 2>&1; then
   echo "Cannot run: kyverno is not on PATH. No policy was tested — that is"
   echo "different from every policy passing."
+  exit 2
+fi
+
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "Cannot run: python3 is not on PATH, so what a run of the suite established"
+  echo "cannot be decided. No policy was tested."
   exit 2
 fi
 
@@ -68,32 +77,24 @@ cd "$ROOT" || { echo "Cannot run: $ROOT cannot be entered."; exit 2; }
 # An ImageValidatingPolicy row matching a ghcr.io/nanohype image verifies a
 # real signature: Kyverno reads the image, its signature and attestation from
 # the registry, the Sigstore trusted root from its TUF mirror, and checks each
-# entry against Rekor. A transport failure on that path reaches the table two
-# ways. Reading the image fails the row as "got error", with the transport error
-# as its message. Anything after that is counted as a signature that did not
-# verify, so the row reports the policy's own message: a row expecting a pass
-# fails and a row expecting a fail passes, neither for a reason the policy
-# decided. Only the verifier's log names that cause, which is why the suite runs
+# entry against Rekor. A transport failure on that path decides such a row for
+# a reason the policy did not, and verdicts.py names the two ways it reaches the
+# table. Only the verifier's log names the second, which is why the suite runs
 # with --detailed-results (the message column) and -v 1 (the log).
 #
-# So the three are reached first, and a run whose output carries a transport
-# failure anywhere, or that does not finish within RUN_TIMEOUT, has not decided
-# its image-verification rows either way. It is run again, up to ATTEMPTS
-# times, and a transport failure in every attempt exits 2: a run that could not
-# verify, not a regression and not a pass. A run carrying none is decided on
-# what the policies did: a failing row exits 1.
+# So the three are reached first, and each run is handed to verdicts.py, which
+# reads one carrying a transport failure anywhere, or one RUN_TIMEOUT ended, as
+# a run that decided none of its image-verification rows. It is run again, up to
+# ATTEMPTS times, and a transport failure in every attempt exits 2: a run that
+# could not verify, not a regression and not a pass. A run carrying none is
+# decided on what the policies did: a failing row exits 1.
 if grep -rqs --include='kyverno-test.yaml' 'isImageValidatingPolicy: true' "$TESTS"; then
   command -v curl >/dev/null 2>&1 \
     || { echo "Cannot run: curl is not on PATH, so the registry and Sigstore cannot be reached first."; exit 2; }
   for endpoint in https://ghcr.io/v2/ https://tuf-repo-cdn.sigstore.dev/timestamp.json \
                   https://rekor.sigstore.dev/api/v1/log; do
     code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$endpoint" 2>/dev/null)"
-    case "$code" in
-      2??|401) ;;
-      *) echo "Cannot run: $endpoint answered '${code:-nothing}', so the image-verification"
-         echo "rows would decide on an unreachable registry or log rather than on a signature."
-         exit 2 ;;
-    esac
+    python3 "$VERDICTS" endpoint --url="$endpoint" --status="$code" || exit 2
   done
 fi
 
@@ -101,29 +102,21 @@ attempt=1
 while :; do
   out="$("$TIMEOUT_CMD" -k "$KILL_TIMEOUT" "$RUN_TIMEOUT" kyverno test "$TESTS" --detailed-results -v 1 2>&1)"
   rc=$?
-  # timeout exits 124 when its TERM ended the run, and 137 when the run was
-  # still going KILL_TIMEOUT seconds later and was killed. A run killed for any
-  # other reason exits 137 too. None of them finished, so none decided a row,
-  # whatever it had printed.
-  case "$rc" in
-    124) transport="kyverno test did not finish within ${RUN_TIMEOUT}s" ;;
-    137) transport="kyverno test was killed before it finished" ;;
-    *) transport="$(printf '%s\n' "$out" | transport_failures)" ;;
+  said="$(printf '%s\n' "$out" | python3 "$VERDICTS" kyverno-run --status="$rc" \
+            --attempt="$attempt" --attempts="$ATTEMPTS" --seconds="$RUN_TIMEOUT")"
+  # verdicts.py's status: 0 decided, 4 run again, 2 could not verify. No
+  # interpreter failure exits 0 or 4, so any other status is a run nothing
+  # decided either.
+  case "$?" in
+    0) break ;;
+    4) printf '%s\n' "$said"
+       sleep $((attempt * PAUSE))
+       attempt=$((attempt + 1)) ;;
+    *) printf '%s\n' "$out"
+       echo
+       printf '%s\n' "${said:-Cannot run: scripts/verdicts.py could not read attempt $attempt.}"
+       exit 2 ;;
   esac
-  [ -z "$transport" ] && break
-  if [ "$attempt" -ge "$ATTEMPTS" ]; then
-    printf '%s\n' "$out"
-    echo
-    echo "Cannot run: all $ATTEMPTS runs met a transport failure on the image-verification"
-    echo "path, so no image-verification row above was decided by a signature. The last:"
-    printf '%s\n' "$transport" | sed 's/^/      /'
-    exit 2
-  fi
-  echo "Attempt $attempt of $ATTEMPTS met a transport failure, so its image-verification"
-  echo "rows decided nothing; running the suite again:"
-  printf '%s\n' "$transport" | sed 's/^/      /'
-  sleep $((attempt * PAUSE))
-  attempt=$((attempt + 1))
 done
 printf '%s\n' "$out"
 [ "$rc" -ne 0 ] && exit "$rc"

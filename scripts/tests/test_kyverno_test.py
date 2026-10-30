@@ -5,18 +5,19 @@ registry, the Sigstore TUF mirror or Rekor reaches the suite's table. Reading
 the image fails a row as "got error" with the transport error as its message;
 anything after that is counted as a signature that did not verify, so the row
 carries the policy's own message and only the verifier's log names the cause.
-The script classifies a run by both, bounds each run in time and counts one
-that does not finish as a transport failure too, repeats one that met a
-transport failure, and exits 2 when every attempt did. A run that met none is
-decided on its rows.
+The script bounds each run in time and hands it to scripts/verdicts.py, which
+classifies it by both and counts one that does not finish as a transport
+failure too. The script repeats a run that met a transport failure, and exits 2
+when every attempt did. A run that met none is decided on its rows.
 
-These run the real script with stubs named kyverno, timeout, curl and sleep
-first on PATH, and the few tools it reads output with linked beside them, so a
-kyverno installed on the machine cannot answer in the stub's place. Each
-kyverno call prints the next scripted run and records the arguments it was
-given; the timeout stub records the bounds and runs what it was handed, so a
-scripted run exiting 124 or 137 is what timeout reports for a run it ended or
-killed.
+scripts/tests/test_verdicts.py holds each of those decisions on its own. These
+hold the script to them: they run the real script with stubs named kyverno,
+timeout, curl and sleep first on PATH, and the interpreter and the few tools it
+reads output with linked beside them, so a kyverno installed on the machine
+cannot answer in the stub's place. Each kyverno call prints the next scripted
+run and records the arguments it was given; the timeout stub records the bounds
+and runs what it was handed, so a scripted run exiting 124 or 137 is what
+timeout reports for a run it ended or killed.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ import pathlib
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -35,8 +37,8 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 SCRIPT = ROOT / "scripts" / "kyverno-test.sh"
 CI = ROOT / ".github" / "workflows" / "ci.yml"
 
-# The tools the script runs besides the stubbed ones.
-TOOLS = ("grep", "sed", "head", "cut", "awk", "dirname")
+# The tools the script runs besides the stubbed ones and python3.
+TOOLS = ("grep", "sed", "head", "dirname")
 
 # The endpoints the script reaches before running the suite, in order.
 ENDPOINTS = ["https://ghcr.io/v2/", "https://tuf-repo-cdn.sigstore.dev/timestamp.json",
@@ -154,6 +156,8 @@ class KyvernoTestScript(unittest.TestCase):
             if found is None:
                 self.skipTest(f"{tool} is not on PATH")
             (self.bin / tool).symlink_to(found)
+        # The interpreter running these tests, which scripts/verdicts.py runs under.
+        (self.bin / "python3").symlink_to(sys.executable)
         self.stub("curl", CURL)
         self.stub("sleep", SLEEP)
         self.stub("timeout", TIMEOUT)
@@ -370,6 +374,28 @@ class WhatTheTableMustCarry(KyvernoTestScript):
         rc, said = self.run_script(kyverno=False)
         self.assertEqual(rc, 2, said)
         self.assertIn("kyverno is not on PATH", said)
+
+
+class WhatDecidesARun(KyvernoTestScript):
+    """scripts/verdicts.py decides each run, so a run it could not decide is undecided."""
+
+    def test_no_python_cannot_run_and_tests_nothing(self):
+        (self.bin / "python3").unlink()
+        rc, said = self.run_script(CLEAN)
+        self.assertEqual(rc, 2, said)
+        self.assertEqual(self.calls(), 0)
+        self.assertIn("python3 is not on PATH", said)
+
+    def test_a_verdict_that_could_not_be_reached_is_not_a_pass(self):
+        """An interpreter failing reads as a run nothing decided, never as a decided one."""
+        (self.bin / "python3").unlink()
+        self.stub("python3", "#!{bash}\ncat >/dev/null\nexit 1\n")
+        (self.tests / "kyverno-test.yaml").write_text("results: []\n")
+        rc, said = self.run_script(CLEAN)
+        self.assertEqual(rc, 2, said)
+        self.assertEqual(self.calls(), 1)
+        self.assertIn("Cannot run: scripts/verdicts.py could not read attempt 1.", said)
+        self.assertIn(SUMMARY_OK, said, "the run's own output is shown")
 
 
 if __name__ == "__main__":

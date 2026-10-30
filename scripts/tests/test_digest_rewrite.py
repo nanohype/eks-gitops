@@ -1,4 +1,4 @@
-"""Unit tests for the verdicts scripts/check-digest-rewrite.sh reaches.
+"""Unit tests for the steps scripts/check-digest-rewrite.sh takes, and what each concludes.
 
 The script admits a signed pod, its ephemeral containers, a Deployment and a
 branch-signed pod through each rendered supply-chain overlay, on a kind cluster
@@ -16,8 +16,11 @@ named for it and records the call, and the clock moves only when a request is
 sent or the script sleeps. Stubs named timeout, kind and helm record what runs
 under a bound and what the bound was.
 
-The same transport failures are classified by scripts/kyverno-test.sh, and both
-gates read them through the one pattern scripts/transport-failure.sh holds.
+Each step hands what it read to scripts/verdicts.py, which decides it, and
+scripts/tests/test_verdicts.py holds each decision on its own. These hold every
+step to the decision it reaches through the script: what the script asks, and
+what it reads before and after asking. scripts/kyverno-test.sh hands its runs
+to the same module, so both gates read transport failures through one pattern.
 """
 
 from __future__ import annotations
@@ -31,12 +34,14 @@ import tempfile
 import unittest
 
 import yaml
+from gateloader import load
 from shellgate import ESC, identity_message, setting, verifier_line
+
+verdicts = load("verdicts")
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 SCRIPT = ROOT / "scripts" / "check-digest-rewrite.sh"
 KYVERNO_TEST = ROOT / "scripts" / "kyverno-test.sh"
-SHARED = ROOT / "scripts" / "transport-failure.sh"
 CI = ROOT / ".github" / "workflows" / "ci.yml"
 
 IDENTITY = identity_message()
@@ -207,9 +212,7 @@ def no_answer_for(what: str) -> str:
 
 
 def shared_pattern() -> str:
-    found = re.search(r"^TRANSPORT_FAILURE='([^']+)'$", SHARED.read_text(), re.M)
-    assert found, f"{SHARED.name} sets no TRANSPORT_FAILURE"
-    return found.group(1)
+    return verdicts.TRANSPORT_FAILURE.pattern
 
 
 def literal_phrases(pattern: str) -> list[str]:
@@ -331,22 +334,14 @@ class AGateRun(unittest.TestCase):
         self.answer("logs", out=MISMATCH)
 
 
-class TheIdentityMessage(unittest.TestCase):
-    def test_the_script_reads_the_policys_identity_message(self):
-        """The script decides a denial on the message; a copy that drifts decides none."""
-        found = re.search(r'^IDENTITY_MESSAGE="([^"]+)"$', SCRIPT.read_text(), re.M)
-        self.assertIsNotNone(found, f"{SCRIPT.name} sets no IDENTITY_MESSAGE")
-        assert found is not None
-        self.assertEqual(found.group(1), IDENTITY)
-
-
 class DecidingARefusal(AGateRun):
     def decide(self, actions: str, outcome: str, err: str = "", verifier_log: str = "",
                logs_rc: int = 0, logs_err: str | None = None) -> tuple[int, str]:
-        (self.work / "err").write_text(err)
+        """The branch-signed pod admitted, or refused with `err`, under `actions`."""
+        if outcome == "refused":
+            self.answer("create-branch-signed", err=err, rc=1)
         self.answer("logs", out=verifier_log, err=logs_err, rc=logs_rc)
-        return self.run_gate(f'mark_sent\ndecide_foreign "the branch-signed image" {outcome}',
-                             actions)
+        return self.run_gate("check_foreign_pod", actions)
 
 
 class DecidingAForeignIdentity(DecidingARefusal):
@@ -361,12 +356,14 @@ class DecidingAForeignIdentity(DecidingARefusal):
         self.assertEqual(rc, 0, said)
         self.assertIn("FAIL  admitted the branch-signed image under Deny.", said)
         self.assertIn("fail=1", said)
+        self.assertEqual(self.calls_to("logs"), [], "an admission is decided on no log")
 
     def test_admitted_under_audit_is_reported_not_blocked(self):
         rc, said = self.decide("Audit", "admitted")
         self.assertEqual(rc, 0, said)
         self.assertIn("ok    admitted the branch-signed image under Audit", said)
         self.assertIn("fail=0", said)
+        self.assertEqual(len(self.calls_to("delete-branch-signed")), 1, self.calls())
 
     def test_denied_for_its_identity_under_deny_passes(self):
         rc, said = self.decide("Deny", "refused", DENIED, MISMATCH)
@@ -683,6 +680,18 @@ class AnAdmittedSignedPod(AGateRun):
         self.assertIn(f"FAIL  admitted {TAGGED} in the init container as '{TAGGED}'", said)
         self.assertIn("fail=1", said)
 
+    def test_a_pin_verdicts_py_could_not_decide_is_no_verdict(self):
+        """An interpreter failing ends the run as one that could not decide."""
+        python3 = self.bin / "python3"
+        python3.write_text(f"#!{self.bash}\nexit 1\n")
+        python3.chmod(0o755)
+        self.admit_signed_pod()
+        rc, said = self.run_gate("check_signed_pod")
+        self.assertEqual(rc, 2, said)
+        self.assertIn("Cannot run: scripts/verdicts.py exited 1 answering pinned, so no "
+                      "verdict was reached.", said)
+        self.assertNotIn("fail=", said)
+
 
 class DeletingWhatTheNextStepWouldMeet(AGateRun):
     """An object still present after DELETE_TIMEOUT ends the run."""
@@ -857,14 +866,16 @@ class EveryStepIsBounded(unittest.TestCase):
 
 
 class OneTransportPattern(unittest.TestCase):
-    """Both gates read the verifier's errors through scripts/transport-failure.sh."""
+    """Both gates hand what they read to scripts/verdicts.py, which holds the one pattern."""
 
-    SOURCE = re.compile(r'^\. "\$ROOT/scripts/transport-failure\.sh"$', re.M)
+    ASKS = re.compile(r'^VERDICTS="\$ROOT/scripts/verdicts\.py"$', re.M)
 
-    def test_both_gates_source_the_shared_pattern(self):
+    def test_both_gates_ask_verdicts(self):
         for gate in (SCRIPT, KYVERNO_TEST):
             with self.subTest(gate=gate.name):
-                self.assertRegex(gate.read_text(), self.SOURCE)
+                text = gate.read_text()
+                self.assertRegex(text, self.ASKS)
+                self.assertIn('python3 "$VERDICTS" ', "\n".join(executable_lines(text)))
 
     def test_no_gate_words_a_transport_failure_of_its_own(self):
         phrases = literal_phrases(shared_pattern())
@@ -874,6 +885,13 @@ class OneTransportPattern(unittest.TestCase):
             with self.subTest(gate=gate.name):
                 self.assertEqual(own_phrases(gate.read_text(), phrases), [])
                 self.assertNotRegex(gate.read_text(), r"(?m)^\s*TRANSPORT_FAILURE=")
+
+    def test_no_gate_decides_on_a_message_of_its_own(self):
+        """The messages a refusal is decided on are verdicts.py's, and nowhere else."""
+        for gate in (SCRIPT, KYVERNO_TEST):
+            with self.subTest(gate=gate.name):
+                self.assertEqual(own_phrases(gate.read_text(), [verdicts.IDENTITY_MESSAGE,
+                                                                verdicts.VERIFIER_FAILED]), [])
 
     def test_a_phrase_in_code_is_a_pattern_of_its_own_and_one_in_a_comment_is_not(self):
         phrases = literal_phrases(shared_pattern())
