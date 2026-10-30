@@ -140,13 +140,21 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
   `kube-node-lease`, `kyverno`) are excluded, so a nanohype image placed there is
   not verified.
 
-  A gate exercises a signing format only through a fixture signed in it. The
-  release and branch-signed fixtures under `policies/kyverno/tests/` carry
-  cosign's legacy `.sig`/`.att` format (`cosign tree <image>` lists the tags and
-  any bundle referrer), so both gates above decide on Kyverno's legacy path, and
-  bundle verification rests on Kyverno's implementation with no fixture here
-  behind it. A release signed in the bundle format, pinned beside the legacy
-  fixtures, is what puts that path under the same gates.
+  A gate exercises a signing format only through a fixture signed in it, and the
+  fixtures under `policies/kyverno/tests/` carry both of cosign's formats
+  (`cosign tree <image>` lists an image's legacy `.sig`/`.att` tags and any
+  Sigstore bundle referrer; `policies/kyverno/tests/resources.yaml` and each
+  fixture under `policies/kyverno/tests/supply-chain-digest/` state which
+  format a fixture carries). The legacy path is proven both ways:
+  `kyverno test` admits a legacy release signature and refuses a legacy branch
+  signature, and the digest-rewrite gate denies the legacy branch-signed pod
+  wherever an overlay says Deny. The bundle path is proven to admit:
+  `kyverno test` admits a bundle-signed operator release and eval-runner
+  release, and the digest-rewrite gate admits the bundle-signed operator tag and
+  pins it. No fixture shows the bundle path refusing an untrusted signer
+  identity, so that refusal rests on Kyverno's implementation. A bundle signed
+  by a workflow the policy does not trust, pinned beside the release fixtures,
+  is what puts that refusal under the same gates.
 
 ## 4. Admission / pod security  (`policies/kyverno/{best-practices,pod-security-standards}/`)
 

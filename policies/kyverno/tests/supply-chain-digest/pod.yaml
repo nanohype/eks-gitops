@@ -4,11 +4,14 @@
 # needs no rewrite, so the assertion would hold over a policy with mutateDigest
 # turned off — which is the state this suite exists to detect.
 #
-# The image is a release of the operator, keyless-signed and SPDX-attested by
-# release.yaml on a tag in cosign's legacy .sig/.att format, so verification
-# passes and the admitted spec shows what the mutation wrote. The same tag runs
-# as an init container too: the mutation pins every container field, and this
-# is where the init field's pin is observed.
+# The image is an operator release, keyless-signed and SPDX-attested by
+# release.yaml on a tag as Sigstore bundles, so admission verifies it on
+# Kyverno's bundle path and the admitted spec shows what the mutation wrote. An
+# operator chart bump must move this tag, and deployment.yaml's, to the operator
+# image the chart renders, so the gate verifies the format the deployed
+# operator is signed in. The same tag runs as an init container too: the
+# mutation pins every container field, and this is where the init field's pin
+# is observed.
 apiVersion: v1
 kind: Pod
 metadata:
@@ -17,7 +20,7 @@ metadata:
 spec:
   initContainers:
     - name: init
-      image: ghcr.io/nanohype/eks-agent-platform/operator:0.6.1
+      image: ghcr.io/nanohype/eks-agent-platform/operator:0.6.2
   containers:
     - name: manager
-      image: ghcr.io/nanohype/eks-agent-platform/operator:0.6.1
+      image: ghcr.io/nanohype/eks-agent-platform/operator:0.6.2

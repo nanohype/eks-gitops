@@ -284,7 +284,7 @@ spec:
         capabilities:
           drop: ["ALL"]
     - name: main
-      image: ghcr.io/nanohype/eks-agent-platform/eval-runner:0.1.0
+      image: ghcr.io/nanohype/eks-agent-platform/eval-runner:0.1.1
       command: ["/bin/sh", "-c", "true"]
       resources:
         requests: {{cpu: 100m, memory: 256Mi}}

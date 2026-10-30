@@ -98,10 +98,12 @@ results:
   # admission performs is asserted against a real API server by
   # scripts/check-digest-rewrite.sh rather than here.
   #
-  # The signed fixtures carry cosign's legacy .sig/.att format, so these rows
-  # prove the legacy verification path: a legacy release signature admitted, a
-  # legacy branch signature refused. They say nothing about a Sigstore bundle,
-  # which Kyverno verifies on a different path.
+  # Kyverno verifies cosign's legacy .sig/.att format and a Sigstore bundle on
+  # separate paths, and resources.yaml says which fixture carries which. The
+  # legacy path is proven both ways, a release signature admitted and a branch
+  # signature refused; the bundle path is proven to admit an operator and an
+  # eval-runner release. No row refuses a signer on the bundle path: vi-tag-only
+  # is bundle-signed and is refused for its missing digest.
   #
   # A pod whose namespace the policy excludes produces no result at all, and the
   # CLI reports an expectation with no result as a failure, so the namespace
@@ -109,7 +111,8 @@ results:
   - policy: verify-images
     isImageValidatingPolicy: true
     kind: Pod
-    resources: [vi-external-image, vi-signed, vi-signed-with-sidecar]
+    resources: [vi-external-image, vi-signed, vi-signed-with-sidecar,
+                vi-bundle-signed-operator, vi-bundle-signed-eval-runner]
     result: pass
   - policy: verify-images
     isImageValidatingPolicy: true

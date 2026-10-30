@@ -178,18 +178,34 @@ spec:
 # verify-images fixtures. Every nanohype reference is pinned by digest: the CLI
 # runs the validating path only, never the digest mutation admission runs first,
 # so a tag reaching verifyDigest fails here the way it would at the validating
-# webhook (vi-tag-only). The signed digest is a release of the operator, signed
-# and SPDX-attested by release.yaml on a tag; the branch-signed digest is a fab
-# build signed by ci.yml on refs/heads/main, a real org signature from a
-# workflow the policy does not trust.
+# webhook (vi-tag-only). Each release-signed digest is a release of an
+# eks-agent-platform image, signed and SPDX-attested by release.yaml on a tag;
+# the branch-signed digest is a fab build signed by ci.yml on refs/heads/main, a
+# real org signature from a workflow the policy does not trust.
 #
-# Both digests carry cosign's legacy format: a signature under the
-# sha256-<digest>.sig tag, the attestation under .att, and no Sigstore bundle
-# referrer (`cosign tree <image>` lists which). Kyverno verifies a bundle when
-# the image carries one and reads the legacy tags only when it carries none, so
-# every row here decides on the legacy path. Bundle verification is a separate
-# path through Kyverno, and only a fixture signed in the bundle format
-# exercises it.
+# cosign records a signature in one of two formats, and Kyverno verifies each
+# on its own path: a Sigstore bundle attached as an OCI referrer when the image
+# carries one, and the legacy sha256-<digest>.sig and .att tags only when it
+# carries none (`cosign tree <image>` lists which an image has).
+#
+#   legacy  operator@sha256:06a46523… (vi-signed, vi-signed-with-sidecar, the
+#           app container of vi-branch-signed-init) and fab@sha256:9e415943…
+#           (vi-branch-signed, the init container of vi-branch-signed-init)
+#   bundle  operator@sha256:589c5977… (vi-bundle-signed-operator), the same
+#           image by its tag operator:0.6.2 (vi-tag-only), and
+#           eval-runner@sha256:1f033a7e… (vi-bundle-signed-eval-runner)
+#
+# The identity refusals, vi-branch-signed and vi-branch-signed-init, are
+# decided on the legacy path. vi-tag-only names the bundle-signed operator
+# release by tag, and verifyDigest refuses it for the missing digest rather
+# than for its signer. No row shows the bundle path refusing a signer: that
+# takes a bundle signed by a workflow the policy does not trust.
+#
+# An operator chart bump must move the bundle fixtures, vi-tag-only, the
+# operator tag in supply-chain-digest/pod.yaml and deployment.yaml, and the
+# eval-runner tag in scripts/check-policy-admission.py to the operator and
+# eval-runner images the chart renders. `scripts/check-image-pins.py --list`
+# prints each rendered image beside the charts that render it.
 #
 # A non-nanohype image is outside matchImageReferences (ghcr.io/nanohype/*), so
 # nothing is verified and the pod passes. Widening the glob to "*" makes this
@@ -242,6 +258,40 @@ spec:
     - name: sidecar
       image: registry.k8s.io/pause:3.10
 ---
+# An operator release signed and SPDX-attested as Sigstore bundles, pinned by
+# digest.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vi-bundle-signed-operator
+  namespace: workloads
+  labels:
+    app.kubernetes.io/name: example
+spec:
+  securityContext:
+    runAsNonRoot: true
+  containers:
+    - name: app
+      image: ghcr.io/nanohype/eks-agent-platform/operator@sha256:589c59773972ac113d2512e8ad0db86ceec924ae7b44fc2ae5ce040dea5fe3f0
+---
+# An eval-runner release in the same bundle format. The operator chart's
+# WorkflowTemplate runs eval-runner in step pods in the eval-runner namespace,
+# which the policy does not exclude, so each step's eval-runner container is
+# verified at admission.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vi-bundle-signed-eval-runner
+  namespace: workloads
+  labels:
+    app.kubernetes.io/name: example
+spec:
+  securityContext:
+    runAsNonRoot: true
+  containers:
+    - name: app
+      image: ghcr.io/nanohype/eks-agent-platform/eval-runner@sha256:1f033a7e65ae29325d6507555886bc5545712014ed06ebd68dcbdeb1299cfe06
+---
 # A signed image named by tag. verifyDigest refuses an image that reaches
 # validation without a digest, which at admission means the pin did not happen.
 apiVersion: v1
@@ -256,7 +306,7 @@ spec:
     runAsNonRoot: true
   containers:
     - name: app
-      image: ghcr.io/nanohype/eks-agent-platform/operator:0.6.1
+      image: ghcr.io/nanohype/eks-agent-platform/operator:0.6.2
 ---
 # Signed by the org, from ci.yml on a branch push. The subject regex admits only
 # release.ya?ml on refs/tags, so this fails the signature validation.
