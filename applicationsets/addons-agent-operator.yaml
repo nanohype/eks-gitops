@@ -11,9 +11,10 @@
 # other ai-platform addons use, so it is covered by helm-render and Renovate's
 # chart pinning.
 # NOTE: the operator container image (chart default
-# ghcr.io/nanohype/eks-agent-platform/operator, tag = chart version) must be
-# published multi-arch (incl. arm64 for Graviton) for the pods to start; pin
-# image.repository/tag in addons/ai-platform/operator/values.yaml otherwise.
+# ghcr.io/nanohype/eks-agent-platform/operator, tagged with the chart's
+# appVersion rather than its version) must be published multi-arch (incl. arm64
+# for Graviton) for the pods to start; pin image.repository/tag in
+# addons/ai-platform/operator/values.yaml otherwise.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
@@ -57,9 +58,13 @@ spec:
         # request `.../charts/manifests/<version>`, which is not a package —
         # ArgoCD v3.4.2 fails to generate manifests from it. Same shape the Envoy
         # charts in addons-ai-platform use.
+        #
+        # Moving targetRevision must move the operator and eval-runner image
+        # fixtures to the images the chart renders; the verify-images fixtures
+        # note in policies/kyverno/tests/resources.yaml names each one.
         - repoURL: oci://ghcr.io/nanohype/eks-agent-platform/charts/operator
           chart: operator
-          targetRevision: 0.6.7
+          targetRevision: 0.6.19
           helm:
             # Matches the Application name above so Application == release ==
             # Deployment (eks-agent-platform-operator) — one fully-qualified name

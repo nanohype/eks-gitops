@@ -32,16 +32,18 @@
 #
 # ── What this catalog can and cannot do about these ──
 #
-# Every image below except one is built by the upstream project whose chart this
-# catalog pins. This repo chooses a chart version; it does not build the image,
-# and it cannot rebuild it against a patched dependency. The lever it has is the
-# pin, and the pin moves when upstream publishes a chart whose image carries the
-# fix — which Renovate opens a pull request for, and which this gate then either
-# clears or does not.
+# An image a chart here renders is built by the upstream project whose chart
+# this catalog pins. This repo chooses a chart version; it does not build the
+# image, and it cannot rebuild it against a patched dependency. The lever it has
+# is the pin, and the pin moves when upstream publishes a chart whose image
+# carries the fix — which Renovate opens a pull request for, and which this gate
+# then either clears or does not.
 #
-# The exception is ghcr.io/nanohype/eks-agent-platform/eval-runner, which is
-# built in this organisation. Its entries are requests to that repo's build, not
-# to a chart pin here.
+# The exception is an image built in this organisation (ghcr.io/nanohype/*), such
+# as the operator and eval-runner images the eks-agent-platform operator chart
+# renders. An entry for one is a request to the build in its own repository,
+# and it clears when a chart pin here moves to a version rendering the rebuilt
+# image.
 
 advisories:
   - id: CVE-2025-68121
@@ -177,120 +179,6 @@ advisories:
     images:
       - ghcr.io/aquasecurity/node-collector
       - us-docker.pkg.dev/fairwinds-ops/oss/goldilocks
-
-  - id: CVE-2026-59873
-    package: tar
-    reason: >-
-      The one first-party image in this list. eval-runner is built in
-      nanohype/eks-agent-platform, so the remedy is a rebuild on a base carrying
-      tar 7.5.19 and a new operator chart version here — not a decision this
-      repository can take on its own.
-    images:
-      - ghcr.io/nanohype/eks-agent-platform/eval-runner
-
-  - id: CVE-2026-13221
-    package: perl-base
-    reason: >-
-      perl in eval-runner's Debian 12 base layer (node:24-bookworm-slim), at
-      5.36.0-7+deb12u3 and fixed in 5.36.0-7+deb12u4. perl-base is an Essential
-      Debian package, so the slim base cannot drop it; the package tooling that
-      calls it runs while the image is built. At runtime nothing starts perl:
-      the image's CLI is the evaluate and score shims, each an exec of node
-      /app/cli.js, and every step of the eval-runner WorkflowTemplate the
-      operator chart ships is a /bin/sh script invoking those shims, aws, jq,
-      kubectl and coreutils. The same first-party image as CVE-2026-59873, with
-      the same remedy: a rebuild in nanohype/eks-agent-platform on a refreshed
-      base and an operator chart version here that pins it.
-    review_by: 2027-01-31
-    images:
-      - ghcr.io/nanohype/eks-agent-platform/eval-runner
-
-  - id: CVE-2026-42496
-    package: perl-base
-    reason: >-
-      The second perl advisory in the same base layer, against its Archive::Tar
-      module, fixed in the same package version. Archive::Tar runs only inside
-      a perl process, so it has the reach of CVE-2026-13221, and the same
-      remedy.
-    review_by: 2027-01-31
-    images:
-      - ghcr.io/nanohype/eks-agent-platform/eval-runner
-
-  - id: CVE-2026-8376
-    package: perl-base
-    reason: >-
-      The third perl advisory in the same base layer, fixed in the same package
-      version, with the same reach and remedy as CVE-2026-13221.
-    review_by: 2027-01-31
-    images:
-      - ghcr.io/nanohype/eks-agent-platform/eval-runner
-
-  - id: CVE-2026-56857
-    package: stdlib
-    reason: >-
-      The Go standard library compiled into every binary below, fixed in Go
-      1.26.9 and 1.27.2. The Go vulnerability database (GO-2026-6604) scopes it
-      to GOOS windows: on Windows, os.Root's Mkdir and MkdirAll can create a
-      directory outside the root through a junction, in the Windows
-      implementation those calls build from. Every image here is scanned and
-      run as a Linux image, on the Bottlerocket nodes the catalog's
-      EC2NodeClass selects, so none of them carries that implementation. Clears
-      as each upstream rebuilds on a patched toolchain and its chart pin moves;
-      the two nanohype/eks-agent-platform images clear with a rebuild there and
-      an operator chart version here that pins it.
-    review_by: 2027-01-31
-    images:
-      - alpine/kubectl
-      - docker.io/envoyproxy/ai-gateway-controller
-      - docker.io/envoyproxy/ai-gateway-extproc
-      - docker.io/envoyproxy/gateway
-      - docker.io/envoyproxy/ratelimit
-      - docker.io/falcosecurity/falcoctl
-      - docker.io/falcosecurity/k8s-metacollector
-      - docker.io/grafana/loki
-      - docker.io/grafana/loki-canary
-      - docker.io/grafana/tempo
-      - docker.io/velero/velero
-      - ghcr.io/aquasecurity/node-collector
-      - ghcr.io/external-secrets/external-secrets
-      - ghcr.io/grafana/grafana-operator
-      - ghcr.io/jkroepke/access-log-exporter
-      - ghcr.io/kedacore/keda
-      - ghcr.io/kedacore/keda-admission-webhooks
-      - ghcr.io/kedacore/keda-metrics-apiserver
-      - ghcr.io/nanohype/eks-agent-platform/eval-runner
-      - ghcr.io/nanohype/eks-agent-platform/operator
-      - ghcr.io/opencost/opencost
-      - ghcr.io/stakater/reloader
-      - mirror.gcr.io/aquasec/trivy-operator
-      - nats
-      - nats-streaming
-      - natsio/nats-server-config-reloader
-      - natsio/prometheus-nats-exporter
-      - prom/memcached-exporter
-      - public.ecr.aws/eks/aws-load-balancer-controller
-      - quay.io/argoproj/argo-events
-      - quay.io/argoproj/argo-rollouts
-      - quay.io/argoproj/argocli
-      - quay.io/argoproj/argoexec
-      - quay.io/argoproj/kubectl-argo-rollouts
-      - quay.io/argoproj/workflow-controller
-      - quay.io/cilium/cilium
-      - quay.io/cilium/hubble-relay
-      - quay.io/cilium/hubble-ui-backend
-      - quay.io/cilium/operator-aws
-      - quay.io/jetstack/cert-manager-acmesolver
-      - quay.io/jetstack/cert-manager-cainjector
-      - quay.io/jetstack/cert-manager-controller
-      - quay.io/jetstack/cert-manager-startupapicheck
-      - quay.io/jetstack/cert-manager-webhook
-      - registry.k8s.io/autoscaling/vpa-recommender
-      - registry.k8s.io/descheduler/descheduler
-      - registry.k8s.io/external-dns/external-dns
-      - registry.k8s.io/kube-state-metrics/kube-state-metrics
-      - registry.k8s.io/metrics-server/metrics-server
-      - us-docker.pkg.dev/fairwinds-ops/oss/goldilocks
-      - velero/velero-plugin-for-aws
 
   - id: CVE-2026-111497
     package: brotli-libs

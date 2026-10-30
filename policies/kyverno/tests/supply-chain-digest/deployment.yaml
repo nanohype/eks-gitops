@@ -4,8 +4,8 @@
 # reports as drift on every sync. The pin belongs on the pod the ReplicaSet
 # creates, which nothing in git owns, and that pod is where it is observed.
 #
-# The same tag as pod.yaml, release-signed in cosign's legacy .sig/.att format,
-# so every tier admits the pod and the check is the pin rather than a verdict.
+# The same tag as pod.yaml, release-signed as Sigstore bundles, so every tier
+# admits the pod and the check is the pin rather than a verdict.
 # The pod template's app.kubernetes.io/name label is the Deployment's name,
 # which is how the gate finds the pod.
 apiVersion: apps/v1
@@ -25,4 +25,4 @@ spec:
     spec:
       containers:
         - name: manager
-          image: ghcr.io/nanohype/eks-agent-platform/operator:0.6.1
+          image: ghcr.io/nanohype/eks-agent-platform/operator:0.6.2
