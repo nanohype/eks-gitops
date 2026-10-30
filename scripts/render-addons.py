@@ -54,6 +54,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 
 import gatelib
@@ -69,9 +70,10 @@ RENDER_TIMEOUT = 300
 APPSET_DIR = REPO_ROOT / "applicationsets"
 ENVIRONMENTS = ["development", "staging", "production", "hub"]
 
-# Charts that cannot be pulled by a public, credential-less CI. Keyed by chart
-# name, mapped to the reason — the same posture as the kubeconform first-party
-# skips in ci.yml: record the gap explicitly rather than pretend to cover it.
+# Charts that cannot be pulled anonymously, as a run for a pull request from a
+# fork, which holds no registry login, would pull them. Keyed by chart name,
+# mapped to the reason — the same posture as the kubeconform first-party skips
+# in ci.yml: record the gap explicitly rather than pretend to cover it.
 #
 # A skip is re-tested on every run (see stale_skips below). Declaring the gap is
 # honest; leaving it declared after it closes is not, and the difference is
@@ -275,17 +277,22 @@ def stale_skips(units: list[Unit]) -> list[tuple[str, str]]:
     true — which is worse than never having declared it, because the entry reads
     as a considered decision.
 
-    So ask the registry. If an anonymous fetch succeeds, the chart is fetchable
-    here and the skip must go.
+    So ask the registry, as a client holding no login and no cached archive. If
+    that fetch succeeds, the chart is fetchable anonymously and the skip must
+    go. A login stored where this runs, or an archive an earlier fetch left in
+    the chart cache, would answer for a client that has neither, so the fetch
+    is handed no credentials and a cache of its own, deleted once it returns.
     """
     stale = []
     for u in units:
         if u.chart not in SKIP_CHARTS:
             continue
-        try:
-            registry.chart_archive(u.source, u.chart, u.version)
-        except registry.ChartUnavailable:
-            continue
+        with tempfile.TemporaryDirectory() as empty:
+            try:
+                registry.chart_archive(u.source, u.chart, u.version,
+                                       cache=pathlib.Path(empty), credentials={})
+            except registry.ChartUnavailable:
+                continue
         stale.append((u.chart, SKIP_CHARTS[u.chart]))
     return stale
 

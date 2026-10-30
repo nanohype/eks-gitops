@@ -16,9 +16,21 @@ What http_get does with each answer:
   * HTTP 401, on a read that passes a challenge handler, is answered once: the
     handler turns the WWW-Authenticate header into a token and the request is
     repeated inside the same RETRY_ATTEMPTS. A second 401 is reported, and so
-    is a first one on the last attempt, which leaves no request to repeat.
+    is a first one on the last attempt, which leaves no request to repeat. The
+    token is asked for with the credentials `docker login` stored for the
+    registry being read when the realm is HTTPS on that registry's own host,
+    and anonymously otherwise, so a registry that meters anonymous clients by
+    address meters a logged-in one by its account instead.
   * Every other status, and every network error, is reported on the attempt
     that produced it.
+
+A stored login can be refused where an anonymous client is served, as one that
+has expired is. So a request answered HTTP 401 or 403 (LOGIN_REFUSED) while it
+carries the login, to a token realm, or the token the login bought, to the
+registry, is made again once anonymously. The host is read anonymously for the
+rest of the process, and stderr says so once. A token request answered with an
+error status anonymously as well, and a read refused anonymously as well, are
+reported naming the stored login.
 
 A request to a host named in REQUEST_SPACING_SECONDS goes out no sooner than
 that spacing after the last request to the same host, from any call in the
@@ -66,7 +78,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping
-from typing import Any, Protocol
+from typing import Any, NamedTuple, Protocol
 
 # A 429 is the registry rate-limiting this client, and a 502, 503 or 504 is a
 # proxy or server in front of it that could not answer this time. None of them
@@ -176,6 +188,25 @@ _LAST_SENT: dict[str, float] = {}
 CHART_CACHE = pathlib.Path.home() / ".cache" / "eks-gitops" / "charts"
 
 _CHALLENGE_PARAM = re.compile(r'(\w+)="([^"]*)"')
+
+# Where `docker login` keeps the credentials it stored, by the convention the
+# docker CLI and trivy both read: $DOCKER_CONFIG/config.json, or
+# ~/.docker/config.json when DOCKER_CONFIG is unset.
+DOCKER_CONFIG_FILE = "config.json"
+
+# The statuses that refuse a login: 401 when the credentials are not accepted,
+# 403 when what they identify is not allowed the read. A realm can issue a token
+# for a stale login and leave the refusal to the registry read that carries it,
+# which is how ECR Public answers one: a token from its realm, then HTTP 403 for
+# the manifest. Either way the refusal is of the login, and says nothing about
+# what an anonymous client may read.
+LOGIN_REFUSED = frozenset({401, 403})
+
+# The registry hosts that refused the login stored for them, in this process.
+# pull_token asks their realms anonymously, so a stale login costs one refusal
+# per process rather than one per chart.
+_REFUSED_LOGINS: set[str] = set()
+
 
 class Getter(Protocol):
     """What every registry read is handed. http_get is the one implementation;
@@ -390,10 +421,116 @@ def http_get(url: str, headers: Mapping[str, str] | None = None,
             sleep(wait)
 
 
-def anonymous_token(challenge: str, path: str, get: Getter = http_get) -> str:
+# The lines _say_once has printed in this process.
+_SAID: set[str] = set()
+
+
+def _say_once(line: str) -> None:
+    """Print `line` to stderr unless this process has already printed it.
+
+    Every OciRepository reads the docker config again, so a line about the
+    config would otherwise be printed once for every chart a gate reads.
+    """
+    if line not in _SAID:
+        _SAID.add(line)
+        print(line, file=sys.stderr)
+
+
+def _config_host(key: str) -> str:
+    """The registry host an `auths` key names, port included, or "" for none.
+
+    A key is the bare host `docker login <host>` writes, or a URL such as
+    Docker Hub's https://index.docker.io/v1/. JSON object keys are strings,
+    so every key reaches here as one.
+    """
+    try:
+        return urllib.parse.urlsplit(key if "://" in key else f"//{key}").netloc
+    except ValueError:
+        return ""
+
+
+def docker_credentials(config_dir: str | os.PathLike[str] | None = None) -> dict[str, str]:
+    """The base64 `user:password` `docker login` stored, by registry host.
+
+    Read from `config_dir`, or from DOCKER_CONFIG, or from ~/.docker, and a
+    host with no credentials here is read anonymously. A file that is missing
+    or holds no `auths` holds no login, and is read that way silently. A file
+    that cannot be read, an `auths` that is not an object, and an entry with
+    no `auth`, as when a credential helper holds its secret, are each a login
+    this client cannot use, so each is printed to stderr once, naming the file
+    and the hosts it leaves anonymous.
+    """
+    if config_dir is None:
+        config_dir = os.environ.get("DOCKER_CONFIG") or pathlib.Path.home() / ".docker"
+    path = pathlib.Path(config_dir) / DOCKER_CONFIG_FILE
+    try:
+        doc = json.loads(path.read_text())
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as exc:
+        _say_once(f"  {path}: not readable as a docker config ({exc}), so every "
+                  f"registry is read anonymously")
+        return {}
+    auths = doc.get("auths", {}) if isinstance(doc, dict) else None
+    if not isinstance(auths, dict):
+        _say_once(f"  {path}: holds no `auths` object, so every registry is read anonymously")
+        return {}
+    found: dict[str, str] = {}
+    unusable: list[str] = []
+    for key, entry in auths.items():
+        host = _config_host(key)
+        auth = entry.get("auth") if isinstance(entry, dict) else None
+        if host and isinstance(auth, str) and auth:
+            found[host] = auth
+        elif host:
+            unusable.append(host)
+    if unusable:
+        _say_once(f"  {path}: stores no `auth` for {', '.join(sorted(unusable))}, as when "
+                  f"a credential helper holds it, so each is read anonymously")
+    return found
+
+
+def _refuse_login(host: str, why: str) -> None:
+    """Record that `host` refused the login stored for it, and say so once."""
+    _REFUSED_LOGINS.add(host)
+    _say_once(f"  {host} refused the login `docker login` stored for it ({why}), so it "
+              f"is read anonymously")
+
+
+class PullToken(NamedTuple):
+    """A token a realm issued, and whether the stored login bought it."""
+
+    token: str
+    logged_in: bool
+
+
+def pull_token(challenge: str, path: str, get: Getter = http_get, *,
+               registry: str | None = None,
+               credentials: Mapping[str, str] | None = None) -> PullToken:
     """A pull token for `path` from the realm a registry's Bearer challenge names.
 
     The scope and service are added to whatever query the realm already carries.
+
+    `registry` is the host the challenged read went to, port included, and
+    `credentials` are what docker_credentials returns. The request carries the
+    credentials stored for `registry` as Basic authorization only when the
+    realm is HTTPS on that same host and `registry` has not refused them in
+    this process, and the realm then issues a token for that identity. Every
+    other request is anonymous: a registry with no stored credentials, a realm
+    over plain HTTP, and a realm on any other host, Docker Hub's among them.
+
+    A realm answering a status in LOGIN_REFUSED to the request carrying the
+    login is asked again once anonymously, and `registry` is recorded as having
+    refused it. An error status answering that request too is reported naming
+    the login.
+
+    A challenge is the registry's to write. Were the credentials matched to the
+    realm alone, a registry naming the realm of a host the client holds
+    credentials for would have the client spend them on a token for that
+    identity, then receive the token on every read that follows. Matching the
+    realm to the registry being read keeps the credentials, and every token
+    they buy, on the host they were stored for.
+
     A status the realm answers with is raised as a RegistryError, whatever it
     is: the realm issues tokens and holds no charts, so a 404 from it says
     nothing about whether `path` holds the pin.
@@ -401,7 +538,7 @@ def anonymous_token(challenge: str, path: str, get: Getter = http_get) -> str:
     scheme, _, params = challenge.strip().partition(" ")
     if scheme.lower() != "bearer":
         raise RegistryError(f"the registry asked for {scheme or 'no'} authentication, "
-                            f"and only an anonymous bearer token is supported")
+                            f"and only a bearer token is supported")
     fields = dict(_CHALLENGE_PARAM.findall(params))
     realm = fields.get("realm")
     if not realm:
@@ -412,37 +549,87 @@ def anonymous_token(challenge: str, path: str, get: Getter = http_get) -> str:
     if fields.get("service"):
         query.append(("service", fields["service"]))
     url = urllib.parse.urlunsplit(parts._replace(query=urllib.parse.urlencode(query)))
+    basic = None
+    if registry and parts.scheme == "https" and parts.netloc == registry:
+        basic = None if registry in _REFUSED_LOGINS else (credentials or {}).get(registry)
     try:
-        raw = get(url, {}, None)
+        raw = get(url, {}, f"Basic {basic}" if basic else None)
     except urllib.error.HTTPError as err:
         err.close()
-        raise RegistryError(f"{realm} answered HTTP {err.code} to a token request for "
-                            f"repository:{path}:pull") from err
+        if not (basic and registry) or err.code not in LOGIN_REFUSED:
+            raise RegistryError(f"{realm} answered HTTP {err.code} to a token request for "
+                                f"repository:{path}:pull") from err
+        _refuse_login(registry, f"HTTP {err.code} from {realm}")
+        basic = None
+        try:
+            raw = get(url, {}, None)
+        except urllib.error.HTTPError as again:
+            again.close()
+            raise RegistryError(
+                f"{realm} answered HTTP {err.code} to a token request for "
+                f"repository:{path}:pull carrying the login `docker login` stored for "
+                f"{registry}, and HTTP {again.code} to the same request made anonymously"
+            ) from again
     body = json.loads(raw)
     token = (body.get("token") or body.get("access_token")) if isinstance(body, dict) else None
     if not token:
         raise RegistryError(f"{realm} returned no token for repository:{path}:pull")
-    return str(token)
+    return PullToken(str(token), logged_in=bool(basic))
 
 
 class OciRepository:
-    """Anonymous reads from one OCI repository, sharing one pull token.
+    """Reads from one OCI repository, sharing one pull token.
 
     The first read goes out without a token; the registry's 401 challenge is
-    answered once, and every later read carries the token it produced. A read
-    refused while it carries that token is refused for a reason a second token
-    would not change, so it is reported rather than answered again.
+    answered once, by pull_token for this repository's host over `credentials`
+    (docker_credentials() when none are given), and every later read carries
+    the token it produced. A read refused while it carries an anonymous token
+    is refused for a reason a second token would not change, so it is reported
+    rather than answered again.
+
+    A read refused with a status in LOGIN_REFUSED while it carries a token the
+    stored login bought is a refusal of the login. The host is recorded as
+    having refused it, and the read is made again, as a call of its own, with a
+    token asked for anonymously, which every later read carries. A refusal of
+    that read too is reported naming the login; any other failure of it
+    propagates as it is, so a 404 still answers for the pin.
     """
 
-    def __init__(self, ref: str, get: Getter = http_get) -> None:
+    def __init__(self, ref: str, get: Getter = http_get,
+                 credentials: Mapping[str, str] | None = None) -> None:
         registry, _, self.path = ref.removeprefix("oci://").partition("/")
-        self.base = f"https://{REGISTRY_API_HOSTS.get(registry, registry)}/v2/{self.path}"
+        self.host = REGISTRY_API_HOSTS.get(registry, registry)
+        self.base = f"https://{self.host}/v2/{self.path}"
         self.token: str | None = None
+        self.logged_in = False
         self._get = get
+        self._credentials = docker_credentials() if credentials is None else credentials
 
     def read(self, suffix: str, accept: str | None = None) -> bytes:
         headers = {"Accept": accept} if accept else {}
         url = f"{self.base}/{suffix}"
+        try:
+            return self._read(url, headers)
+        except urllib.error.HTTPError as err:
+            if not self.logged_in or err.code not in LOGIN_REFUSED:
+                raise
+            err.close()
+            refused = err.code
+        _refuse_login(self.host, f"HTTP {refused} from {url} with the token it bought")
+        self.token, self.logged_in = None, False
+        try:
+            return self._read(url, headers)
+        except urllib.error.HTTPError as err:
+            if err.code not in LOGIN_REFUSED:
+                raise
+            err.close()
+            raise RegistryError(
+                f"{self.host} answered HTTP {refused} to {url} with the token the login "
+                f"`docker login` stored for it bought, and HTTP {err.code} to the same read "
+                f"made anonymously"
+            ) from err
+
+    def _read(self, url: str, headers: Mapping[str, str]) -> bytes:
         if self.token is None:
             return self._get(url, headers, None, challenge=self._authorize)
         return self._get(url, headers, f"Bearer {self.token}")
@@ -450,7 +637,9 @@ class OciRepository:
     def _authorize(self, www_authenticate: str, deadline: float) -> str:
         """The Authorization a challenge asks for, fetched inside the challenged call's deadline."""
         get = functools.partial(self._get, deadline=deadline)
-        self.token = anonymous_token(www_authenticate, self.path, get)
+        self.token, self.logged_in = pull_token(www_authenticate, self.path, get,
+                                                registry=self.host,
+                                                credentials=self._credentials)
         return f"Bearer {self.token}"
 
     def manifest(self, reference: str, accept: str = OCI_MANIFEST) -> dict:
@@ -475,9 +664,13 @@ class OciRepository:
         return data
 
 
-def oci_chart_metadata(ref: str, version: str, get: Getter = http_get) -> dict:
-    """The Chart.yaml metadata `helm push` stores as an OCI chart's config blob."""
-    repo = OciRepository(ref, get)
+def oci_chart_metadata(ref: str, version: str, get: Getter = http_get, *,
+                       credentials: Mapping[str, str] | None = None) -> dict:
+    """The Chart.yaml metadata `helm push` stores as an OCI chart's config blob.
+
+    Read through an OciRepository over `get` and `credentials`.
+    """
+    repo = OciRepository(ref, get, credentials)
     config = repo.manifest(version).get("config") or {}
     if config.get("mediaType") != HELM_CONFIG:
         raise RegistryError(f"{ref}:{version} is not a Helm chart: its config media "
@@ -488,9 +681,13 @@ def oci_chart_metadata(ref: str, version: str, get: Getter = http_get) -> dict:
     return meta
 
 
-def oci_chart_content(ref: str, version: str, get: Getter = http_get) -> bytes:
-    """The packaged chart `helm push` stores as an OCI chart's content layer."""
-    repo = OciRepository(ref, get)
+def oci_chart_content(ref: str, version: str, get: Getter = http_get, *,
+                      credentials: Mapping[str, str] | None = None) -> bytes:
+    """The packaged chart `helm push` stores as an OCI chart's content layer.
+
+    Read through an OciRepository over `get` and `credentials`.
+    """
+    repo = OciRepository(ref, get, credentials)
     manifest = repo.manifest(version)
     if (manifest.get("config") or {}).get("mediaType") != HELM_CONFIG:
         raise RegistryError(f"{ref}:{version} is not a Helm chart")
@@ -538,7 +735,7 @@ def _unavailable(err: BaseException) -> ChartUnavailable:
     """What a failed read says about the pin.
 
     An HTTPError arriving here answered a request for the pin itself — its
-    manifest, a blob, the index or the archive — because anonymous_token raises
+    manifest, a blob, the index or the archive — because pull_token raises
     every refusal from a token realm as a RegistryError. So a 404 here is the
     registry saying the pin is not there.
     """
@@ -657,15 +854,18 @@ def _https_archive(repo: str, chart: str, version: str, get: Getter) -> bytes:
 
 
 def chart_archive(source: str, chart: str, version: str, *,
-                  cache: pathlib.Path | None = None, get: Getter = http_get) -> pathlib.Path:
+                  cache: pathlib.Path | None = None, get: Getter = http_get,
+                  credentials: Mapping[str, str] | None = None) -> pathlib.Path:
     """A local archive of chart@version, fetched once into the chart cache.
 
     `source` is an oci:// chart reference — ArgoCD's repoURL with the chart name
     appended when it does not already end in it — or an HTTPS chart repository.
     An archive is kept only once it hashes to the digest its registry publishes,
     and that digest is recorded beside it. A cached archive that no longer
-    hashes to its record, or carries none, is fetched again. Raises
-    ChartUnavailable.
+    hashes to its record, or carries none, is fetched again. An OCI chart is
+    read through an OciRepository over `credentials`, so {} reads it
+    anonymously; an HTTPS repository is read anonymously whatever they hold.
+    Raises ChartUnavailable.
     """
     path = archive_path(source, chart, version, cache)
     if _intact(path):
@@ -675,7 +875,7 @@ def chart_archive(source: str, chart: str, version: str, *,
               f"kept; fetching it again", file=sys.stderr)
     try:
         if source.startswith("oci://"):
-            data = oci_chart_content(source, version, get)
+            data = oci_chart_content(source, version, get, credentials=credentials)
         else:
             data = _https_archive(source, chart, version, get)
     except READ_FAILURES as err:

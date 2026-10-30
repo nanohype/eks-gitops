@@ -13,20 +13,21 @@
 #
 # MEDIUM is the threshold, matching the `trivy config` gate over rendered output
 # so one severity floor governs both scanners. Low and informational findings
-# are reported and do not block: the ones this tree carries are template
-# expansions of `needs.<job>.result` (a value GitHub writes from four literals),
-# concurrency limits, and one undocumented-permissions note.
+# do not block. A passing run reports how many sit below the threshold and the
+# command that lists them, or zizmor's own output when its tally cannot be read.
 #
 # --persona=auditor is load-bearing and is a DIFFERENT AXIS from severity. Under
 # the default persona the excessive-permissions audit DOES NOT RUN AT ALL, so a
 # workflow-level `id-token: write` — which lets any job added later mint an OIDC
 # token and assume a deploy role, with no diff that looks like a permission
-# change — passes silently. Demonstrated: a planted workflow-level id-token
-# grant exits 0 under the default persona and 14 under auditor.
+# change — passes silently. Under auditor it is an excessive-permissions error,
+# and scripts/tests/reverify-gates.sh plants one and requires this gate to
+# reject it.
 #
-# This tree carries no id-token grant and all three workflows are
-# `contents: read`, so the setting changes no verdict today. It changes which
-# question is being asked.
+# Every workflow grants `contents: read` at the top. id-token is granted only at
+# job level, to the two ci.yml jobs that log in to ECR Public, `charts` and
+# `image-vulnerabilities`. scripts/tests/test_workflows.py holds the tree to
+# both.
 set -uo pipefail
 
 # A count is an operand, and an absent or failed producer yields an EMPTY one,

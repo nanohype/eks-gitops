@@ -120,9 +120,10 @@ fails to scan exits 2 with the image named and what trivy wrote to stderr about
 it.
 
 A registry that refuses for a reason that clears — an HTTP 429, or a 5xx from it
-or a proxy in front of it — has said nothing about the image, so that scan is
-run again after a backoff, up to SCAN_ATTEMPTS invocations. Every other failure
-is reported on the invocation that produced it.
+or a proxy in front of it — has said nothing about the image, and neither has a
+transfer cut off before a layer arrived whole, so that scan is run again after a
+backoff, up to SCAN_ATTEMPTS invocations. Every other failure is reported on
+the invocation that produced it.
 """
 
 from __future__ import annotations
@@ -169,8 +170,14 @@ SCAN_TIMEOUT = 600
 REFUSED_FOR_NOW = re.compile(
     r"\b(?:TOOMANYREQUESTS|UNAVAILABLE): |unexpected status code (?:429|5\d\d)\b")
 
-# Invocations one image is given while a registry refuses it for now, and the
-# wait before each retry: SCAN_BACKOFF_SECONDS doubling per retry, stretched by
+# How trivy says a transfer was cut off: a layer, or its own vulnerability
+# database, whose stream ended short of the length the registry sent, which Go
+# reports as io.ErrUnexpectedEOF. The bytes that did arrive say nothing about the
+# image, and the next connection is a new transfer.
+CUT_OFF = re.compile(r"\bunexpected EOF\b")
+
+# Invocations one image is given while each scan of it ends for a reason that
+# clears, and the wait before each retry: SCAN_BACKOFF_SECONDS doubling per retry, stretched by
 # up to SCAN_JITTER of itself so images a registry refused together are not
 # retried together. trivy retries a refused request itself, inside a few
 # seconds; ECR Public's per-address quota, shared by every job on a runner
@@ -258,9 +265,10 @@ def scan(ref: str, *, sleep: Callable[[float], None] = time.sleep,
          jitter: Callable[[], float] = random.random) -> list[Finding]:
     """Fixed findings at the reported severities, or Unscannable saying why not.
 
-    An invocation a registry refused for now, by REFUSED_FOR_NOW, is repeated
-    up to SCAN_ATTEMPTS invocations, each wait printed to stderr. Any other
-    failure is raised on the invocation that produced it.
+    An invocation a registry refused for now, by REFUSED_FOR_NOW, or whose
+    transfer was cut off, by CUT_OFF, is repeated up to SCAN_ATTEMPTS
+    invocations, each wait printed to stderr. Any other failure is raised on
+    the invocation that produced it.
     """
     cmd = ["trivy", "image", "--quiet", "--scanners", "vuln",
            "--severity", ",".join(REPORTED_SEVERITIES),
@@ -276,16 +284,17 @@ def scan(ref: str, *, sleep: Callable[[float], None] = time.sleep,
                               exc.stderr) from exc
         if proc.returncode == 0:
             return _findings(ref, proc)
-        refused = REFUSED_FOR_NOW.search(proc.stderr or "")
-        if refused is None:
+        said = proc.stderr or ""
+        clears = REFUSED_FOR_NOW.search(said) or CUT_OFF.search(said)
+        if clears is None:
             raise Unscannable(f"trivy exited {proc.returncode}", proc.stderr)
         if attempt == SCAN_ATTEMPTS:
             raise Unscannable(f"trivy exited {proc.returncode} on each of {SCAN_ATTEMPTS} "
-                              f"attempts, a registry refusing it every time",
+                              f"attempts, each ending for a reason that clears",
                               proc.stderr)
         wait = SCAN_BACKOFF_SECONDS * 2 ** (attempt - 1) * (1 + SCAN_JITTER * jitter())
-        print(f"  {ref}: attempt {attempt} of {SCAN_ATTEMPTS} was refused with "
-              f"'{refused.group(0).strip(': ')}', retrying in {wait:.0f}s", file=sys.stderr)
+        print(f"  {ref}: attempt {attempt} of {SCAN_ATTEMPTS} ended with "
+              f"'{clears.group(0).strip(': ')}', retrying in {wait:.0f}s", file=sys.stderr)
         sleep(wait)
 
 
