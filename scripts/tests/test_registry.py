@@ -39,11 +39,35 @@ import urllib.parse
 from unittest import mock
 
 import fakeregistry as fake
+import gateloader
 import yaml
 from fakeregistry import NOW, auth, http_error
 from gateloader import load
 
 registry = load("registry")
+
+
+def own_process_records(test: unittest.TestCase) -> None:
+    """Give `test` its own record of the lines said and the logins refused.
+
+    Both are the process's, so a refusal one test plants would otherwise leave
+    every later test in the run asking that host anonymously.
+    """
+    for name in ("_SAID", "_REFUSED_LOGINS"):
+        patch = mock.patch.object(registry, name, set[str]())
+        patch.start()
+        test.addCleanup(patch.stop)
+
+
+class TheSuiteReadsNoStoredLogin(unittest.TestCase):
+    def test_docker_config_is_an_empty_directory_the_harness_made(self):
+        """gateloader points the process at it before any gate is loaded, so no
+        suite reads the logins of whoever runs it, and a token request in a test
+        carries no credentials the test did not write."""
+        config = os.environ.get("DOCKER_CONFIG")
+        self.assertEqual(config, gateloader.DOCKER_CONFIG)
+        self.assertEqual(list(pathlib.Path(config).iterdir()), [])
+        self.assertEqual(registry.docker_credentials(), {})
 
 
 class Transport(fake.Transport):
@@ -626,7 +650,8 @@ class RequestingAToken(unittest.TestCase):
             asked.append(url)
             return json.dumps(body or {"token": "t"}).encode()
 
-        self.assertEqual(registry.anonymous_token(challenge, "org/chart", get), "t")
+        self.assertEqual(registry.pull_token(challenge, "org/chart", get),
+                         registry.PullToken("t", logged_in=False))
         return asked[0]
 
     def test_the_scope_and_service_are_added_to_the_realm(self):
@@ -656,23 +681,457 @@ class RequestingAToken(unittest.TestCase):
 
     def test_a_challenge_other_than_bearer_is_refused(self):
         with self.assertRaisesRegex(registry.RegistryError, "Basic"):
-            registry.anonymous_token('Basic realm="r"', "c", lambda *a, **k: b"{}")
+            registry.pull_token('Basic realm="r"', "c", lambda *a, **k: b"{}")
 
     def test_a_challenge_with_no_realm_is_refused(self):
         with self.assertRaisesRegex(registry.RegistryError, "no realm"):
-            registry.anonymous_token('Bearer service="r"', "c", lambda *a, **k: b"{}")
+            registry.pull_token('Bearer service="r"', "c", lambda *a, **k: b"{}")
 
     def test_a_realm_that_returns_no_token_is_refused(self):
         for body in (b"{}", b'["t"]'):
             with self.subTest(body=body), \
                     self.assertRaisesRegex(registry.RegistryError, "no token"):
-                registry.anonymous_token('Bearer realm="https://a/t"', "c",
+                registry.pull_token('Bearer realm="https://a/t"', "c",
                                          lambda *a, _b=body, **k: _b)
 
     def test_a_realm_that_answers_something_other_than_json_raises_a_read_failure(self):
         with self.assertRaises(registry.READ_FAILURES):
-            registry.anonymous_token('Bearer realm="https://a/t"', "c",
+            registry.pull_token('Bearer realm="https://a/t"', "c",
                                      lambda *a, **k: b"<html>sign in</html>")
+
+
+class RequestingATokenAsALoggedInClient(unittest.TestCase):
+    """A token asked for with the credentials `docker login` stored.
+
+    ECR Public meters an anonymous client by its address, which a CI runner
+    shares, and a logged-in one by its account. The credentials reach a realm
+    only when the registry being read and the realm are both the host they
+    were stored for, port included, and the realm is HTTPS. A challenge is the
+    registry's to write, so a registry naming another host's realm would
+    otherwise have the client spend that host's credentials on a token, and be
+    sent the token on every read.
+    """
+
+    CREDENTIALS = {"public.ecr.aws": "QVdTOnNlY3JldA=="}
+    LOGGED_IN = "Basic QVdTOnNlY3JldA=="
+
+    def setUp(self):
+        own_process_records(self)
+
+    def authorization(self, realm: str, registry_host: str | None = "public.ecr.aws",
+                      credentials=CREDENTIALS) -> str | None:
+        """What the token request carried, held to what the token says bought it."""
+        sent = []
+
+        def get(url, headers, authorization, **_):
+            sent.append(authorization)
+            return b'{"token": "t"}'
+
+        bought = registry.pull_token(f'Bearer realm="{realm}"', "org/chart", get,
+                                     registry=registry_host, credentials=credentials)
+        self.assertEqual(bought, registry.PullToken("t", logged_in=sent[0] is not None))
+        return sent[0]
+
+    def test_the_realm_on_the_registry_the_credentials_were_stored_for_receives_them(self):
+        self.assertEqual(self.authorization("https://public.ecr.aws/token/"), self.LOGGED_IN)
+
+    def test_a_host_that_refused_its_login_is_asked_anonymously(self):
+        registry._REFUSED_LOGINS.add("public.ecr.aws")
+        self.assertIsNone(self.authorization("https://public.ecr.aws/token/"))
+
+    def test_a_registry_on_a_port_is_matched_with_its_port(self):
+        """`docker login host:port` stores the port in the key, and the realm names it."""
+        self.assertEqual(self.authorization("https://registry.example:5000/token",
+                                            "registry.example:5000",
+                                            {"registry.example:5000": "cG9ydA=="}),
+                         "Basic cG9ydA==")
+
+    def test_a_realm_on_another_host_is_asked_anonymously(self):
+        self.assertIsNone(self.authorization("https://auth.example/token"))
+
+    def test_a_registry_naming_the_realm_of_the_host_the_credentials_are_for_is_anonymous(self):
+        """The realm is the credentials' host, and the registry being read is not."""
+        self.assertIsNone(self.authorization("https://public.ecr.aws/token/",
+                                             "registry.example"))
+
+    def test_a_realm_on_another_port_of_the_host_is_asked_anonymously(self):
+        self.assertIsNone(self.authorization("https://public.ecr.aws:8443/token/"))
+
+    def test_a_realm_over_plain_http_is_asked_anonymously(self):
+        self.assertIsNone(self.authorization("http://public.ecr.aws/token/"))
+
+    def test_no_credentials_ask_anonymously(self):
+        self.assertIsNone(self.authorization("https://public.ecr.aws/token/", credentials=None))
+
+    def test_a_request_naming_no_registry_is_anonymous(self):
+        self.assertIsNone(self.authorization("https://public.ecr.aws/token/", None))
+
+    def test_the_repository_hands_its_credentials_to_the_token_request(self):
+        sent = []
+
+        def get(url, headers, authorization, *, challenge=None, deadline=None):
+            if "/token/" in url:
+                sent.append(authorization)
+                return b'{"token": "t"}'
+            if challenge is not None:
+                return challenge('Bearer realm="https://public.ecr.aws/token/",'
+                                 'service="public.ecr.aws"', 0.0) and b"{}"
+            return b"{}"
+
+        repo = registry.OciRepository("oci://public.ecr.aws/karpenter/karpenter", get,
+                                      self.CREDENTIALS)
+        repo.read("manifests/1.2.3")
+        self.assertEqual(sent, [self.LOGGED_IN])
+        self.assertEqual((repo.token, repo.logged_in), ("t", True))
+
+    def test_a_registry_naming_another_hosts_realm_is_sent_no_token_the_credentials_bought(self):
+        """End to end through http_get: the registry is answered with the token
+        the realm issues an anonymous client, on the repeat and every read after."""
+        realm = "https://public.ecr.aws/token/"
+
+        def serve(req):
+            if req.full_url.startswith(realm):
+                token = "account" if auth(req) == self.LOGGED_IN else "anonymous"
+                return json.dumps({"token": token}).encode()
+            if auth(req) is None:
+                return http_error(req.full_url, 401,
+                                  {"WWW-Authenticate": f'Bearer realm="{realm}"'})
+            return b"{}"
+
+        t = Transport(*[serve] * 4)
+        repo = registry.OciRepository("oci://registry.example/org/chart", t.get(),
+                                      self.CREDENTIALS)
+        repo.read("manifests/1.2.3")
+        repo.read("manifests/1.2.3")
+        sent = [(urllib.parse.urlsplit(r.full_url).netloc, auth(r)) for r in t.requests]
+        self.assertEqual(sent, [("registry.example", None),
+                                ("public.ecr.aws", None),
+                                ("registry.example", "Bearer anonymous"),
+                                ("registry.example", "Bearer anonymous")])
+
+
+class AskingAgainWhenTheLoginIsRefused(unittest.TestCase):
+    """A stored login can be refused where an anonymous client is served, as one
+    that has expired is, so a refusal of the login is asked again anonymously.
+
+    The realm can refuse the login outright, or issue it a token the registry
+    then refuses on the read carrying it, which is how ECR Public answers a
+    stale one. Either way the host is read anonymously from then on, stderr
+    says so once, and a request refused anonymously as well is reported naming
+    the login: the status alone reads as a refusal nothing on this side could
+    change, when logging in again would.
+    """
+
+    CREDENTIALS = {"public.ecr.aws": "c3RhbGU="}
+    LOGGED_IN = "Basic c3RhbGU="
+    REALM = "https://public.ecr.aws/token/"
+    CHALLENGE = f'Bearer realm="{REALM}",service="public.ecr.aws"'
+    REF = "oci://public.ecr.aws/karpenter/karpenter"
+    MANIFEST = "https://public.ecr.aws/v2/karpenter/karpenter/manifests/1.2.3"
+
+    def setUp(self):
+        own_process_records(self)
+        self.sent: list[str | None] = []
+
+    def said(self, why: str) -> str:
+        """The line stderr carries once the host refused its login for `why`."""
+        return (f"  public.ecr.aws refused the login `docker login` stored for it "
+                f"({why}), so it is read anonymously\n")
+
+    def token(self, *answers, credentials=CREDENTIALS):
+        """pull_token over one scripted answer per request, each request's
+        Authorization recorded in self.sent."""
+        self.sent = []
+        steps = list(answers)
+
+        def get(url, headers, authorization, **_):
+            self.sent.append(authorization)
+            step = steps.pop(0)
+            if isinstance(step, BaseException):
+                raise step
+            return step
+
+        return registry.pull_token(self.CHALLENGE, "karpenter/karpenter", get,
+                                   registry="public.ecr.aws", credentials=credentials)
+
+    def serve(self, to_login, to_anonymous):
+        """A registry whose realm issues the token "login" to the stored login and
+        "anon" to everyone else, answering a read carrying either one with what
+        the matching callable returns for its URL."""
+        def answer(req):
+            url = req.full_url
+            if url.startswith(self.REALM):
+                token = "login" if auth(req) == self.LOGGED_IN else "anon"
+                return json.dumps({"token": token}).encode()
+            if auth(req) is None:
+                return http_error(url, 401, {"WWW-Authenticate": self.CHALLENGE})
+            return (to_login if auth(req) == "Bearer login" else to_anonymous)(url)
+        return Transport(*[answer] * 12)
+
+    def test_a_realm_refusing_the_login_is_asked_again_anonymously(self):
+        for code in sorted(registry.LOGIN_REFUSED):
+            with self.subTest(code=code):
+                registry._REFUSED_LOGINS.clear()
+                registry._SAID.clear()
+                with contextlib.redirect_stderr(io.StringIO()) as err:
+                    bought = self.token(http_error(self.REALM, code), b'{"token": "anon"}')
+                self.assertEqual(bought, registry.PullToken("anon", logged_in=False))
+                self.assertEqual(self.sent, [self.LOGGED_IN, None])
+                self.assertEqual(registry._REFUSED_LOGINS, {"public.ecr.aws"})
+                self.assertEqual(err.getvalue(), self.said(f"HTTP {code} from {self.REALM}"))
+
+    def test_a_realm_refusing_the_anonymous_request_too_names_the_login(self):
+        with contextlib.redirect_stderr(io.StringIO()), \
+                self.assertRaises(registry.RegistryError) as caught:
+            self.token(http_error(self.REALM, 401), http_error(self.REALM, 403))
+        self.assertEqual(str(caught.exception),
+                         f"{self.REALM} answered HTTP 401 to a token request for "
+                         f"repository:karpenter/karpenter:pull carrying the login `docker "
+                         f"login` stored for public.ecr.aws, and HTTP 403 to the same "
+                         f"request made anonymously")
+
+    def test_another_status_from_the_realm_is_no_refusal_of_the_login(self):
+        """A realm that does not know the scope, or fails, answers an anonymous
+        client the same way, so asking again spends a request on the same answer."""
+        for code in (400, 404, 500):
+            with self.subTest(code=code), \
+                    self.assertRaisesRegex(registry.RegistryError,
+                                           f"answered HTTP {code} to a token request for "
+                                           f"repository:karpenter/karpenter:pull$"):
+                self.token(http_error(self.REALM, code))
+            self.assertEqual(self.sent, [self.LOGGED_IN])
+            self.assertEqual(registry._REFUSED_LOGINS, set())
+
+    def test_a_refused_anonymous_request_is_not_asked_again(self):
+        with self.assertRaisesRegex(registry.RegistryError,
+                                    "answered HTTP 401 to a token request for "
+                                    "repository:karpenter/karpenter:pull$"):
+            self.token(http_error(self.REALM, 401), credentials={})
+        self.assertEqual(self.sent, [None])
+        self.assertEqual(registry._REFUSED_LOGINS, set())
+
+    def test_a_login_refused_once_is_not_offered_again_in_the_process(self):
+        """Every OciRepository asks for a token of its own, so a gate reading
+        several charts from the host would otherwise spend a refusal on each."""
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            self.token(http_error(self.REALM, 401), b'{"token": "anon"}')
+            bought = self.token(b'{"token": "anon"}')
+        self.assertEqual(bought, registry.PullToken("anon", logged_in=False))
+        self.assertEqual(self.sent, [None])
+        self.assertEqual(err.getvalue(), self.said(f"HTTP 401 from {self.REALM}"))
+
+    def test_a_read_refused_the_logins_token_is_made_again_anonymously(self):
+        """The realm issues the stale login a token and the registry refuses the
+        read carrying it. The read is made again with an anonymous token, which
+        every later read carries."""
+        for code in sorted(registry.LOGIN_REFUSED):
+            with self.subTest(code=code):
+                registry._REFUSED_LOGINS.clear()
+                registry._SAID.clear()
+                t = self.serve(lambda url, c=code: http_error(url, c), lambda url: b"{}")
+                repo = registry.OciRepository(self.REF, t.get(), self.CREDENTIALS)
+                with contextlib.redirect_stderr(io.StringIO()) as err:
+                    self.assertEqual(repo.read("manifests/1.2.3"), b"{}")
+                    self.assertEqual(repo.read("manifests/1.2.3"), b"{}")
+                token = t.urls()[1]
+                self.assertTrue(token.startswith(self.REALM), token)
+                self.assertEqual([(r.full_url, auth(r)) for r in t.requests],
+                                 [(self.MANIFEST, None), (token, self.LOGGED_IN),
+                                  (self.MANIFEST, "Bearer login"),
+                                  (self.MANIFEST, None), (token, None),
+                                  (self.MANIFEST, "Bearer anon"),
+                                  (self.MANIFEST, "Bearer anon")])
+                self.assertEqual((repo.token, repo.logged_in), ("anon", False))
+                self.assertEqual(err.getvalue(), self.said(
+                    f"HTTP {code} from {self.MANIFEST} with the token it bought"))
+
+    def test_a_later_read_refused_the_logins_token_is_made_again_anonymously(self):
+        """The manifest is served to the login's token and the config blob is not,
+        so the refusal arrives on a read carrying a token and no challenge."""
+        meta = {"name": "karpenter", "version": "1.2.3"}
+        blob = json.dumps(meta).encode()
+        digest = "sha256:" + hashlib.sha256(blob).hexdigest()
+        manifest = json.dumps({"config": {"mediaType": fake.HELM_CONFIG,
+                                          "digest": digest}}).encode()
+
+        def under_login(url):
+            return manifest if "/manifests/" in url else http_error(url, 403)
+
+        t = self.serve(under_login, lambda url: manifest if "/manifests/" in url else blob)
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(registry.oci_chart_metadata(self.REF, "1.2.3", t.get(),
+                                                         credentials=self.CREDENTIALS), meta)
+        blob_url = f"https://public.ecr.aws/v2/karpenter/karpenter/blobs/{digest}"
+        self.assertEqual([auth(r) for r in t.requests if r.full_url == blob_url],
+                         ["Bearer login", None, "Bearer anon"])
+
+    def test_a_repository_made_after_the_refusal_asks_anonymously_from_the_start(self):
+        t = self.serve(lambda url: http_error(url, 403), lambda url: b"{}")
+        with contextlib.redirect_stderr(io.StringIO()):
+            registry.OciRepository(self.REF, t.get(), self.CREDENTIALS).read("manifests/1.2.3")
+            first = len(t.requests)
+            registry.OciRepository(self.REF, t.get(), self.CREDENTIALS).read("manifests/1.2.3")
+        self.assertEqual([auth(r) for r in t.requests[first:]], [None, None, "Bearer anon"])
+
+    def test_a_read_refused_anonymously_too_names_the_login(self):
+        cache = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, cache)
+        t = self.serve(lambda url: http_error(url, 403), lambda url: http_error(url, 401))
+        with contextlib.redirect_stderr(io.StringIO()), \
+                self.assertRaises(registry.ChartUnavailable) as caught:
+            registry.chart_archive(self.REF, "karpenter", "1.2.3", cache=cache, get=t.get(),
+                                   credentials=self.CREDENTIALS)
+        self.assertFalse(caught.exception.answered)
+        self.assertEqual(str(caught.exception),
+                         f"RegistryError: public.ecr.aws answered HTTP 403 to {self.MANIFEST} "
+                         f"with the token the login `docker login` stored for it bought, and "
+                         f"HTTP 401 to the same read made anonymously")
+
+    def test_any_other_failure_of_the_anonymous_read_is_left_as_it_is(self):
+        """A 404 to the anonymous read is the registry answering for the pin."""
+        cache = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, cache)
+        t = self.serve(lambda url: http_error(url, 403), lambda url: http_error(url, 404))
+        with contextlib.redirect_stderr(io.StringIO()), \
+                self.assertRaises(registry.ChartUnavailable) as caught:
+            registry.chart_archive(self.REF, "karpenter", "1.2.3", cache=cache, get=t.get(),
+                                   credentials=self.CREDENTIALS)
+        self.assertTrue(caught.exception.answered)
+        self.assertEqual(str(caught.exception), f"HTTP 404 from {self.MANIFEST}")
+
+    def test_another_failure_under_the_logins_token_is_not_made_again(self):
+        t = self.serve(lambda url: http_error(url, 404), lambda url: b"{}")
+        repo = registry.OciRepository(self.REF, t.get(), self.CREDENTIALS)
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            repo.read("manifests/1.2.3")
+        self.assertEqual(caught.exception.code, 404)
+        self.assertEqual(len(t.requests), 3)
+        self.assertEqual(registry._REFUSED_LOGINS, set())
+
+    def test_a_read_refused_an_anonymous_token_is_not_made_again(self):
+        """With no login sent, a second anonymous token is refused for the same reason."""
+        for code in sorted(registry.LOGIN_REFUSED):
+            with self.subTest(code=code):
+                t = self.serve(lambda url: b"{}", lambda url, c=code: http_error(url, c))
+                repo = registry.OciRepository(self.REF, t.get(), {})
+                with self.assertRaises(urllib.error.HTTPError) as caught:
+                    repo.read("manifests/1.2.3")
+                self.assertEqual(caught.exception.code, code)
+                self.assertEqual(len(t.requests), 3)
+                self.assertEqual(registry._REFUSED_LOGINS, set())
+
+
+class ReadingDockerCredentials(unittest.TestCase):
+    """What `docker login` left in a config directory, by registry host."""
+
+    def setUp(self):
+        self.dir = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.dir)
+        own_process_records(self)
+
+    def write(self, doc) -> None:
+        (self.dir / "config.json").write_text(doc if isinstance(doc, str) else json.dumps(doc))
+
+    def read(self) -> tuple[dict[str, str], str]:
+        """The credentials read from this test's directory, and what was printed."""
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            found = registry.docker_credentials(self.dir)
+        return found, err.getvalue()
+
+    def test_a_bare_host_and_a_url_key_each_name_their_host(self):
+        """`docker login` writes a bare host; Docker Hub's key and an insecure
+        registry's are URLs, over HTTPS and plain HTTP."""
+        self.write({"auths": {"public.ecr.aws": {"auth": "a"},
+                              "https://index.docker.io/v1/": {"auth": "b"},
+                              "http://insecure.example/": {"auth": "c"}}})
+        self.assertEqual(self.read(), ({"public.ecr.aws": "a", "index.docker.io": "b",
+                                        "insecure.example": "c"}, ""))
+
+    def test_a_key_keeps_the_port_it_names(self):
+        """A registry on another port of a host is another registry."""
+        self.write({"auths": {"registry.example:5000": {"auth": "a"},
+                              "https://mirror.example:8443/v2/": {"auth": "b"}}})
+        self.assertEqual(registry.docker_credentials(self.dir),
+                         {"registry.example:5000": "a", "mirror.example:8443": "b"})
+
+    def test_an_entry_a_credential_helper_holds_is_left_out_and_said(self):
+        """The secret is in the helper, not the file, so there is nothing to send,
+        and the hosts it leaves anonymous are named once."""
+        self.write({"auths": {"public.ecr.aws": {}, "ghcr.io": "x", "r.example": {"auth": ""},
+                              "": {"auth": "c"}, "[::1": {"auth": "d"}},
+                    "credsStore": "desktop"})
+        found, said = self.read()
+        self.assertEqual(found, {})
+        self.assertEqual(said, f"  {self.dir / 'config.json'}: stores no `auth` for ghcr.io, "
+                               f"public.ecr.aws, r.example, as when a credential helper "
+                               f"holds it, so each is read anonymously\n")
+
+    def test_a_config_with_no_logins_is_no_credentials_and_says_nothing(self):
+        for doc in ({}, {"credsStore": "desktop"}, {"auths": {}}):
+            with self.subTest(doc=doc):
+                self.write(doc)
+                self.assertEqual(self.read(), ({}, ""))
+
+    def test_no_file_is_no_credentials_and_says_nothing(self):
+        self.assertEqual(self.read(), ({}, ""))
+
+    def test_a_file_that_is_no_docker_config_is_no_credentials_and_is_said(self):
+        path = self.dir / "config.json"
+        cases = {"not json": "not readable as a docker config",
+                 '["auths"]': "holds no `auths` object",
+                 '{"auths": ["public.ecr.aws"]}': "holds no `auths` object"}
+        for doc, reason in cases.items():
+            with self.subTest(doc=doc):
+                registry._SAID.clear()
+                self.write(doc)
+                found, said = self.read()
+                self.assertEqual(found, {})
+                self.assertTrue(said.startswith(f"  {path}: {reason}"), said)
+                self.assertTrue(said.endswith("so every registry is read anonymously\n"), said)
+
+    def test_a_config_that_cannot_be_read_is_said(self):
+        (self.dir / "config.json").mkdir()
+        found, said = self.read()
+        self.assertEqual(found, {})
+        self.assertIn("not readable as a docker config", said)
+
+    def test_a_config_is_said_once_however_many_reads_meet_it(self):
+        """A gate builds an OciRepository per chart, each reading the config again."""
+        self.write({"auths": {"public.ecr.aws": {}}})
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            for _ in range(3):
+                registry.docker_credentials(self.dir)
+        self.assertEqual(err.getvalue().count("\n"), 1, err.getvalue())
+
+    def test_docker_config_names_the_directory_and_home_is_the_fallback(self):
+        self.write({"auths": {"public.ecr.aws": {"auth": "a"}}})
+        with mock.patch.dict(os.environ, {"DOCKER_CONFIG": str(self.dir)}):
+            self.assertEqual(registry.docker_credentials(), {"public.ecr.aws": "a"})
+        home = self.dir / "home"
+        (home / ".docker").mkdir(parents=True)
+        (home / ".docker" / "config.json").write_text(
+            json.dumps({"auths": {"ghcr.io": {"auth": "g"}}}))
+        with mock.patch.dict(os.environ, {"DOCKER_CONFIG": ""}), \
+                mock.patch.object(pathlib.Path, "home", return_value=home):
+            self.assertEqual(registry.docker_credentials(), {"ghcr.io": "g"})
+
+    def test_a_repository_given_no_credentials_asks_with_the_ones_docker_stored(self):
+        self.write({"auths": {"public.ecr.aws": {"auth": "a"}}})
+        sent = []
+
+        def get(url, headers, authorization, *, challenge=None, deadline=None):
+            if "/token/" in url:
+                sent.append(authorization)
+                return b'{"token": "t"}'
+            if challenge is not None:
+                return challenge('Bearer realm="https://public.ecr.aws/token/"', 0.0) and b"{}"
+            return b"{}"
+
+        with mock.patch.dict(os.environ, {"DOCKER_CONFIG": str(self.dir)}):
+            registry.OciRepository("oci://public.ecr.aws/x/y", get).read("manifests/1")
+        self.assertEqual(sent, ["Basic a"])
 
 
 class ReadingAnOciChart(unittest.TestCase):
@@ -683,6 +1142,41 @@ class ReadingAnOciChart(unittest.TestCase):
         reg = Registry("public.ecr.aws", "karpenter/karpenter", "1.2.3", self.META)
         t = reg.transport()
         self.assertEqual(registry.oci_chart_metadata(self.REF, "1.2.3", t.get()), self.META)
+
+    def test_each_reader_asks_for_its_token_with_the_credentials_it_is_given(self):
+        realm = "https://public.ecr.aws/token/"
+        for read in (registry.oci_chart_metadata, registry.oci_chart_content):
+            with self.subTest(read=read.__name__):
+                reg = Registry("public.ecr.aws", "karpenter/karpenter", "1.2.3", self.META,
+                               realm=realm)
+                t = reg.transport()
+                read(self.REF, "1.2.3", t.get(), credentials={"public.ecr.aws": "Y3JlZA=="})
+                self.assertEqual([auth(r) for r in t.requests if r.full_url.startswith(realm)],
+                                 ["Basic Y3JlZA=="])
+
+    def test_an_archive_is_read_with_the_credentials_it_is_given(self):
+        """None is what docker stored, {} is anonymous whatever it stored, and
+        anything else is used as given."""
+        own_process_records(self)
+        config = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, config)
+        (config / "config.json").write_text(
+            json.dumps({"auths": {"public.ecr.aws": {"auth": "c3RvcmVk"}}}))
+        realm = "https://public.ecr.aws/token/"
+        cases = {"none given": (None, ["Basic c3RvcmVk"]), "empty": ({}, [None]),
+                 "given": ({"public.ecr.aws": "Z2l2ZW4="}, ["Basic Z2l2ZW4="])}
+        for label, (credentials, expected) in cases.items():
+            with self.subTest(label):
+                cache = pathlib.Path(tempfile.mkdtemp())
+                self.addCleanup(shutil.rmtree, cache)
+                reg = Registry("public.ecr.aws", "karpenter/karpenter", "1.2.3", self.META,
+                               realm=realm)
+                t = reg.transport()
+                with mock.patch.dict(os.environ, {"DOCKER_CONFIG": str(config)}):
+                    registry.chart_archive(self.REF, "karpenter", "1.2.3", cache=cache,
+                                           get=t.get(), credentials=credentials)
+                self.assertEqual([auth(r) for r in t.requests if r.full_url.startswith(realm)],
+                                 expected)
 
     def test_the_token_is_scoped_to_pulling_this_repository_and_fetched_once(self):
         reg = Registry("public.ecr.aws", "karpenter/karpenter", "1.2.3", self.META)

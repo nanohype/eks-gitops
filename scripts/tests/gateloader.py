@@ -11,18 +11,35 @@ own directory leads sys.path when it runs. A test process starts from
 scripts/tests, so scripts/ is put on sys.path here, and a module with an
 importable name is imported rather than loaded: the test then holds the same
 instance the gates it loads hold, and patches what they call.
+
+Every suite that loads a gate imports this module first, so it is also where
+the test process is kept from reading the logins of whoever runs it.
+registry.py reads a stored `docker login` from $DOCKER_CONFIG, and the process
+is pointed at an empty directory before any gate is loaded. A token request in
+such a suite then carries no credentials the test did not write, and a
+subprocess one of its tests starts inherits the same empty directory. A test
+reading a docker config of its own names that directory instead, for as long
+as it needs it.
 """
 
 from __future__ import annotations
 
+import atexit
 import importlib
 import importlib.util
+import os
 import pathlib
+import shutil
 import sys
+import tempfile
 
 SCRIPTS = pathlib.Path(__file__).resolve().parent.parent
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
+
+DOCKER_CONFIG = tempfile.mkdtemp(prefix="docker-config-")
+atexit.register(shutil.rmtree, DOCKER_CONFIG, True)
+os.environ["DOCKER_CONFIG"] = DOCKER_CONFIG
 
 
 def load(script: str):

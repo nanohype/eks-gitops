@@ -413,9 +413,9 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('        except registry.ChartUnavailable:\n            continue\n'
+m = s.replace('            except registry.ChartUnavailable:\n                continue\n'
               '        stale.append(',
-              '        except registry.ChartUnavailable:\n            pass\n'
+              '            except registry.ChartUnavailable:\n                pass\n'
               '        stale.append(', 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
@@ -444,6 +444,33 @@ p.write_text(m)
 PY
 rejects "fetch: carry the files no pin names" test_render_addons \
   test_the_pinned_archives_and_their_records_are_what_the_cache_holds
+res $F
+
+# The probe asks as a client with no login and no cache would, because a run
+# for a fork's pull request has neither.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('                                       cache=pathlib.Path(empty), credentials={})',
+              '                                       cache=pathlib.Path(empty))', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "stale skips: fetch with the login stored where the gate runs" test_render_addons \
+  test_a_chart_only_the_stored_login_fetches_is_no_stale_skip \
+  test_the_fetch_is_handed_no_login_and_an_empty_cache_of_its_own
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('                                       cache=pathlib.Path(empty), credentials={})',
+              '                                       credentials={})', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "stale skips: take an archive the chart cache holds for a fetch" test_render_addons \
+  test_an_archive_left_in_the_chart_cache_is_no_stale_skip
 res $F
 
 F=scripts/check-policy-admission.py
@@ -571,6 +598,357 @@ p.write_text(m)
 PY
 rejects "blob: keep bytes that do not match their digest" test_registry \
   test_a_blob_that_does_not_match_its_digest_is_refused
+res $F
+
+# A challenge is the registry's to write, so the stored credentials go to a
+# realm only when the realm and the registry being read are the one host they
+# were stored for, port included, and the realm is HTTPS.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    basic = None\n'
+              '    if registry and parts.scheme == "https" and parts.netloc == registry:\n'
+              '        basic = None if registry in _REFUSED_LOGINS else (credentials or {}).get(registry)\n',
+              '    basic = next(iter((credentials or {}).values()), None)\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "token: send stored credentials to whichever realm a challenge names" test_registry \
+  test_a_realm_on_another_host_is_asked_anonymously \
+  test_a_realm_over_plain_http_is_asked_anonymously
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    basic = None\n'
+              '    if registry and parts.scheme == "https" and parts.netloc == registry:\n'
+              '        basic = None if registry in _REFUSED_LOGINS else (credentials or {}).get(registry)\n',
+              '    basic = (credentials or {}).get(parts.netloc) if parts.scheme == "https" else None\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "token: key the credentials by the realm a foreign registry names" test_registry \
+  test_a_registry_naming_the_realm_of_the_host_the_credentials_are_for_is_anonymous \
+  test_a_registry_naming_another_hosts_realm_is_sent_no_token_the_credentials_bought
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    if registry and parts.scheme == "https" and parts.netloc == registry:',
+              '    if registry and parts.scheme == "https" and parts.hostname == registry:', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "token: match the realm by hostname, dropping its port" test_registry \
+  test_a_registry_on_a_port_is_matched_with_its_port \
+  test_a_realm_on_another_port_of_the_host_is_asked_anonymously
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    if registry and parts.scheme == "https" and parts.netloc == registry:',
+              '    if registry and parts.netloc == registry:', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "token: send stored credentials over plain HTTP" test_registry \
+  test_a_realm_over_plain_http_is_asked_anonymously
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('                                                registry=self.host,\n',
+              '                                                registry=None,\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "repository: name no registry to the token request" test_registry \
+  test_the_repository_hands_its_credentials_to_the_token_request
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('else f"//{key}").netloc', 'else f"//{key}").hostname', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "credentials: key a stored login by hostname, dropping its port" test_registry \
+  test_a_key_keeps_the_port_it_names
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('key if "://" in key else', 'key if key.startswith("https://") else', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "credentials: read only an https:// key as a URL" test_registry \
+  test_a_bare_host_and_a_url_key_each_name_their_host
+res $F
+
+# A docker config that leaves a logged-in client anonymous is said once on
+# stderr, and a missing one, which leaves nothing to say, is not.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    except FileNotFoundError:\n        return {}\n', '', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "credentials: say a missing docker config" test_registry \
+  test_no_file_is_no_credentials_and_says_nothing
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    if unusable:\n', '    if False:\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "credentials: leave a helper-held entry unsaid" test_registry \
+  test_an_entry_a_credential_helper_holds_is_left_out_and_said
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    if line not in _SAID:\n', '    if True:\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "credentials: say a config once for every read of it" test_registry \
+  test_a_config_is_said_once_however_many_reads_meet_it
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    try:\n        return urllib.parse.urlsplit(key if "://" in key else f"//{key}").netloc\n'
+              '    except ValueError:\n        return ""\n',
+              '    return urllib.parse.urlsplit(key if "://" in key else f"//{key}").netloc\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "credentials: raise on a key that names no URL" test_registry \
+  test_an_entry_a_credential_helper_holds_is_left_out_and_said
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    repo = OciRepository(ref, get, credentials)\n    config = ',
+              '    repo = OciRepository(ref, get)\n    config = ', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "chart metadata: drop the credentials it is given" test_registry \
+  test_each_reader_asks_for_its_token_with_the_credentials_it_is_given
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    repo = OciRepository(ref, get, credentials)\n    manifest = ',
+              '    repo = OciRepository(ref, get)\n    manifest = ', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "chart content: drop the credentials it is given" test_registry \
+  test_each_reader_asks_for_its_token_with_the_credentials_it_is_given
+res $F
+
+# A login the registry refuses is refused for a reason an anonymous client
+# need not share, so the refusal is asked again anonymously once, the host is
+# read anonymously from then on, and a refusal of that too names the login.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        if not (basic and registry) or err.code not in LOGIN_REFUSED:\n',
+              '        if True:\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "refused login: leave a realm's refusal of the login as it is" test_registry \
+  test_a_realm_refusing_the_login_is_asked_again_anonymously \
+  test_a_realm_refusing_the_anonymous_request_too_names_the_login
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        if not (basic and registry) or err.code not in LOGIN_REFUSED:\n',
+              '        if not (basic and registry):\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "refused login: ask the realm again whatever it answered" test_registry \
+  test_another_status_from_the_realm_is_no_refusal_of_the_login
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        if not (basic and registry) or err.code not in LOGIN_REFUSED:\n',
+              '        if not registry or err.code not in LOGIN_REFUSED:\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "refused login: ask again a realm that refused no login" test_registry \
+  test_a_refused_anonymous_request_is_not_asked_again
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    _REFUSED_LOGINS.add(host)\n', '', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "refused login: forget the refusal" test_registry \
+  test_a_login_refused_once_is_not_offered_again_in_the_process \
+  test_a_repository_made_after_the_refusal_asks_anonymously_from_the_start
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        basic = None if registry in _REFUSED_LOGINS else (credentials or {}).get(registry)\n',
+              '        basic = (credentials or {}).get(registry)\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "refused login: offer it again to the host that refused it" test_registry \
+  test_a_host_that_refused_its_login_is_asked_anonymously \
+  test_a_login_refused_once_is_not_offered_again_in_the_process
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        _refuse_login(registry, f"HTTP {err.code} from {realm}")\n        basic = None\n',
+              '        _refuse_login(registry, f"HTTP {err.code} from {realm}")\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "refused login: call the anonymous token the login's" test_registry \
+  test_a_realm_refusing_the_login_is_asked_again_anonymously
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    return PullToken(str(token), logged_in=bool(basic))',
+              '    return PullToken(str(token), logged_in=False)', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "refused login: never say the login bought the token" test_registry \
+  test_the_repository_hands_its_credentials_to_the_token_request \
+  test_a_read_refused_the_logins_token_is_made_again_anonymously
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    _say_once(f"  {host} refused the login', '    (lambda _: None)(f"  {host} refused the login', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "refused login: go anonymous without saying so" test_registry \
+  test_a_realm_refusing_the_login_is_asked_again_anonymously \
+  test_a_read_refused_the_logins_token_is_made_again_anonymously
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('            if not self.logged_in or err.code not in LOGIN_REFUSED:\n',
+              '            if True:\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "refused login: leave a read refused the login's token as it is" test_registry \
+  test_a_read_refused_the_logins_token_is_made_again_anonymously \
+  test_a_later_read_refused_the_logins_token_is_made_again_anonymously
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('            if not self.logged_in or err.code not in LOGIN_REFUSED:\n',
+              '            if err.code not in LOGIN_REFUSED:\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "refused login: make a read refused an anonymous token again" test_registry \
+  test_a_read_refused_an_anonymous_token_is_not_made_again \
+  test_a_401_on_the_blob_read_is_reported_not_answered_again
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('            if not self.logged_in or err.code not in LOGIN_REFUSED:\n',
+              '            if not self.logged_in:\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "refused login: make a read failing otherwise again" test_registry \
+  test_another_failure_under_the_logins_token_is_not_made_again
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        self.token, self.logged_in = None, False\n', '', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "refused login: make the read again with the refused token" test_registry \
+  test_a_read_refused_the_logins_token_is_made_again_anonymously
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('            if err.code not in LOGIN_REFUSED:\n                raise\n            err.close()\n            raise RegistryError(',
+              '            if True:\n                raise\n            err.close()\n            raise RegistryError(', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "refused login: report the anonymous refusal without the login" test_registry \
+  test_a_read_refused_anonymously_too_names_the_login
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('            if err.code not in LOGIN_REFUSED:\n                raise\n            err.close()\n            raise RegistryError(',
+              '            err.close()\n            raise RegistryError(', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "refused login: blame the login for a 404" test_registry \
+  test_any_other_failure_of_the_anonymous_read_is_left_as_it_is
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('            data = oci_chart_content(source, version, get, credentials=credentials)\n',
+              '            data = oci_chart_content(source, version, get)\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "chart archive: drop the credentials it is given" test_registry \
+  test_an_archive_is_read_with_the_credentials_it_is_given
 res $F
 
 edit $F <<'PY'
@@ -853,9 +1231,9 @@ import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
 m = s.replace('    except urllib.error.HTTPError as err:\n'
               '        err.close()\n'
-              '        raise RegistryError(f"{realm} answered HTTP',
+              '        if not (basic and registry) or err.code not in LOGIN_REFUSED:\n',
               '    except KeyError as err:\n'
-              '        raise RegistryError(f"{realm} answered HTTP', 1)
+              '        if True:\n', 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
@@ -992,6 +1370,20 @@ p.write_text(m)
 PY
 rejects "backoff: stop short of the longest wait" test_registry \
   test_the_backoff_doubles_to_the_longest_wait_by_the_last_retry
+res $F
+
+# The harness every registry-touching suite loads through keeps the process
+# off the logins of whoever runs it.
+F=scripts/tests/gateloader.py
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('os.environ["DOCKER_CONFIG"] = DOCKER_CONFIG\n', '', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "harness: read the docker config of whoever runs the suite" test_registry \
+  test_docker_config_is_an_empty_directory_the_harness_made
 res $F
 
 # A job that reads through the client and allows no longer than one call is
@@ -1149,6 +1541,111 @@ p.write_text(m)
 PY
 rejects "cache: key the set on the branch, so a pull request starts empty" test_workflows \
   test_the_key_names_the_pins_and_not_the_branch_or_the_run
+res $F
+
+# The ECR Public login: the role assumed only when a variable names it and
+# never for a fork, the login only once it was, the role's credentials handed
+# to the login step alone, the pipe failing on a token that could not be
+# fetched, and the OIDC grant held to the jobs that log in.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace(" && (github.event_name != 'pull_request' || "
+              "github.event.pull_request.head.repo.full_name == github.repository)", "", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "ecr-public: assume the role for a fork's pull request" test_workflows \
+  test_the_role_is_assumed_only_when_configured_and_never_for_a_fork
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("        if: vars.ECR_PUBLIC_PULL_ROLE_ARN != '' && (", "        if: (", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "ecr-public: assume a role no variable names" test_workflows \
+  test_the_role_is_assumed_only_when_configured_and_never_for_a_fork
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("        if: steps.ecr-public.outcome == 'success'\n", "", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "ecr-public: log in whether or not the role was assumed" test_workflows \
+  test_the_login_runs_only_once_the_role_was_assumed
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("          output-env-credentials: false\n", "", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "ecr-public: export the role's credentials to every later step" test_workflows \
+  test_the_role_credentials_reach_the_login_step_alone
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("          set -o pipefail\n", "", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "ecr-public: leave the login's status to docker" test_workflows \
+  test_a_token_that_could_not_be_fetched_fails_the_step_whatever_docker_does
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("permissions:\n  contents: read\n", "permissions:\n  contents: read\n  id-token: write\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "ecr-public: grant id-token to the whole workflow" test_workflows \
+  test_id_token_is_granted_only_to_the_jobs_that_log_in
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("        id: ecr-public\n", "        id: ecr-public\n        continue-on-error: true\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "ecr-public: read anonymously when the role cannot be assumed" test_workflows \
+  test_a_login_that_fails_fails_the_job
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("      contents: read\n      id-token: write  #", "      contents: write\n      id-token: write  #", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "ecr-public: grant a logging-in job contents: write" test_workflows \
+  test_the_jobs_that_log_in_add_id_token_to_contents_read_and_nothing_else
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("          ECR_PUBLIC_REGION: *ecr-public-region\n", "          ECR_PUBLIC_REGION: us-west-2\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "ecr-public: ask for the token outside us-east-1" test_workflows \
+  test_the_role_and_the_token_are_both_asked_of_us_east_1 \
+  test_the_minted_token_is_handed_to_docker_on_stdin
 res $F
 
 
@@ -1436,7 +1933,7 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('        if refused is None:\n', '        if True:\n', 1)
+m = s.replace('        if clears is None:\n', '        if True:\n', 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
@@ -1464,6 +1961,31 @@ assert m != s, "mutation did not land"
 p.write_text(m)
 PY
 rejects "trivy: retry a status a wait cannot clear" test_image_vulnerabilities \
+  test_a_failure_a_wait_cannot_clear_is_reported_at_once
+res $F
+
+# A layer whose stream ended short is a dropped connection, not a fact about the
+# image; a bare EOF, as from a config that does not parse, is.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        clears = REFUSED_FOR_NOW.search(said) or CUT_OFF.search(said)\n',
+              '        clears = REFUSED_FOR_NOW.search(said)\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "trivy: report a transfer cut off mid-layer at once" test_image_vulnerabilities \
+  test_a_transfer_cut_off_mid_layer_is_run_again
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace(r'CUT_OFF = re.compile(r"\bunexpected EOF\b")', r'CUT_OFF = re.compile(r"EOF")', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "trivy: retry any EOF trivy names" test_image_vulnerabilities \
   test_a_failure_a_wait_cannot_clear_is_reported_at_once
 res $F
 
