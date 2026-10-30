@@ -233,6 +233,10 @@ spec:
 # Its namespace is NOT added to `landed`. eval-runner belongs on no exclusion
 # list precisely because these pods are meant to comply on their own merits —
 # recording it would invert the claim this check exists to make.
+#
+# The operator submits every run under its Platform's own eval ServiceAccount,
+# eval-<platform>, which it creates in that namespace, so the pod names eval-ops:
+# the account of ops, the one Platform this catalog declares.
 RUNTIME_POD_NAMESPACE = "eval-runner"
 RUNTIME_POD_NAME = "policy-gate-runtime-pod"
 RUNTIME_POD_MANIFEST = f"""apiVersion: v1
@@ -245,7 +249,7 @@ metadata:
     workflows.argoproj.io/completed: "false"
 spec:
   restartPolicy: Never
-  serviceAccountName: eval-runner
+  serviceAccountName: eval-ops
   securityContext:
     runAsNonRoot: true
     runAsUser: 1000
@@ -284,7 +288,7 @@ spec:
         capabilities:
           drop: ["ALL"]
     - name: main
-      image: ghcr.io/nanohype/eks-agent-platform/eval-runner:0.1.1
+      image: ghcr.io/nanohype/eks-agent-platform/eval-runner:0.1.2
       command: ["/bin/sh", "-c", "true"]
       resources:
         requests: {{cpu: 100m, memory: 256Mi}}

@@ -1,11 +1,11 @@
 # eks-agent-platform operator — base Helm values (all environments).
 #
 # Per-cluster wiring (the serviceAccount eks.amazonaws.com/role-arn annotation,
-# config.environment, config.region) is injected by the addons-agent-operator
-# ApplicationSet from the in-cluster ArgoCD Secret (labels + annotations
-# cluster-bootstrap sets). The EKS cluster name the operator creates tenant Pod
-# Identity associations on comes from SSM (/eks-agent-platform/<env>/cluster/name),
-# read by the operator's config loader — not injected here.
+# config.environment, config.clusterName, config.region) is injected by the
+# addons-agent-operator ApplicationSet from the in-cluster ArgoCD Secret (labels +
+# annotations cluster-bootstrap sets). config.clusterName keys the operator's SSM
+# subtree (/eks-agent-platform/<clusterName>/) and prefixes every role it mints
+# for a Platform.
 # Do NOT set the role-arn here — it embeds the AWS account ID, which must never be
 # committed to this public repo.
 #
@@ -16,8 +16,12 @@
 # The operator's own runtime, folded into the chart (0.2.0+). Enabled on every
 # agent-platform cluster (matches the chart default; set explicitly so the
 # deployment intent is visible at the gitops layer).
-#   - eval-runtime: the Argo WorkflowTemplate + SA/RBAC. The eval-runner role ARN
-#     and report bucket are injected per-cluster by the ApplicationSet above.
+#   - eval-runtime: the Argo WorkflowTemplate and the RBAC its runs hold, bound
+#     to the eval runtime namespace's ServiceAccount group. The reports bucket is
+#     injected per-cluster by the addons-agent-operator ApplicationSet. Each
+#     Platform's runs hold their own eval-<platform> ServiceAccount and
+#     <cluster>-<platform>-eval role, which the operator mints, so no
+#     ServiceAccount or role ARN is configured here.
 # rollouts.enabled needs the Argo Rollouts CRD and stays off here.
 #
 # `slo` is gone rather than off. It shipped a PrometheusRule and an

@@ -191,9 +191,9 @@ spec:
 #   legacy  operator@sha256:06a46523… (vi-signed, vi-signed-with-sidecar, the
 #           app container of vi-branch-signed-init) and fab@sha256:9e415943…
 #           (vi-branch-signed, the init container of vi-branch-signed-init)
-#   bundle  operator@sha256:589c5977… (vi-bundle-signed-operator), the same
-#           image by its tag operator:0.6.2 (vi-tag-only), and
-#           eval-runner@sha256:1f033a7e… (vi-bundle-signed-eval-runner)
+#   bundle  operator@sha256:1e7d4ce9… (vi-bundle-signed-operator), the same
+#           image by its tag operator:0.7.0 (vi-tag-only), and
+#           eval-runner@sha256:674c0120… (vi-bundle-signed-eval-runner)
 #
 # The identity refusals, vi-branch-signed and vi-branch-signed-init, are
 # decided on the legacy path. vi-tag-only names the bundle-signed operator
@@ -206,6 +206,10 @@ spec:
 # eval-runner tag in scripts/check-policy-admission.py to the operator and
 # eval-runner images the chart renders. `scripts/check-image-pins.py --list`
 # prints each rendered image beside the charts that render it.
+# scripts/tests/test_image_verification.py holds those fixtures to one another,
+# each tag naming a release a bundle fixture is recorded under and each such
+# release named by a tag, so a bump that moves some of them fails there. Nothing
+# holds them to the chart pin itself.
 #
 # A non-nanohype image is outside matchImageReferences (ghcr.io/nanohype/*), so
 # nothing is verified and the pod passes. Widening the glob to "*" makes this
@@ -272,7 +276,7 @@ spec:
     runAsNonRoot: true
   containers:
     - name: app
-      image: ghcr.io/nanohype/eks-agent-platform/operator@sha256:589c59773972ac113d2512e8ad0db86ceec924ae7b44fc2ae5ce040dea5fe3f0
+      image: ghcr.io/nanohype/eks-agent-platform/operator@sha256:1e7d4ce9edbf602edc8cf72ca8dbff278b241122b56139a77f67eabe474d93ee
 ---
 # An eval-runner release in the same bundle format. The operator chart's
 # WorkflowTemplate runs eval-runner in step pods in the eval-runner namespace,
@@ -290,7 +294,7 @@ spec:
     runAsNonRoot: true
   containers:
     - name: app
-      image: ghcr.io/nanohype/eks-agent-platform/eval-runner@sha256:1f033a7e65ae29325d6507555886bc5545712014ed06ebd68dcbdeb1299cfe06
+      image: ghcr.io/nanohype/eks-agent-platform/eval-runner@sha256:674c0120c381c9b7ab01289e1ed875607864e976d3407734f9eb5be2e65b37dd
 ---
 # A signed image named by tag. verifyDigest refuses an image that reaches
 # validation without a digest, which at admission means the pin did not happen.
@@ -306,7 +310,7 @@ spec:
     runAsNonRoot: true
   containers:
     - name: app
-      image: ghcr.io/nanohype/eks-agent-platform/operator:0.6.2
+      image: ghcr.io/nanohype/eks-agent-platform/operator:0.7.0
 ---
 # Signed by the org, from ci.yml on a branch push. The subject regex admits only
 # release.ya?ml on refs/tags, so this fails the signature validation.

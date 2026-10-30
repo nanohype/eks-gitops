@@ -133,17 +133,23 @@ def identity(spec) -> dict:
 # --certificate-oidc-issuer https://token.actions.githubusercontent.com <image>`
 # accepts for that image.
 _RELEASE = "https://github.com/nanohype/eks-agent-platform/.github/workflows/release.yaml@refs/tags/"
-RELEASE_SIGNED_FIXTURES = {
-    # cosign's legacy .sig/.att format.
+# cosign's legacy .sig/.att format.
+LEGACY_SIGNED_FIXTURES = {
     "ghcr.io/nanohype/eks-agent-platform/operator@sha256:"
     "06a465237e0caeb3fecfd46ae7cd143c7dc27b7164143bb8fde7127081392549": _RELEASE + "operator-v0.6.1",
-    # Sigstore bundles, attached as OCI referrers.
-    "ghcr.io/nanohype/eks-agent-platform/operator@sha256:"
-    "589c59773972ac113d2512e8ad0db86ceec924ae7b44fc2ae5ce040dea5fe3f0": _RELEASE + "operator-v0.6.2",
-    "ghcr.io/nanohype/eks-agent-platform/eval-runner@sha256:"
-    "1f033a7e65ae29325d6507555886bc5545712014ed06ebd68dcbdeb1299cfe06": _RELEASE + "eval-runner-v0.1.1",
 }
+# Sigstore bundles, attached as OCI referrers. These must be the images the
+# pinned operator chart renders, so an operator chart bump moves them.
+BUNDLE_SIGNED_FIXTURES = {
+    "ghcr.io/nanohype/eks-agent-platform/operator@sha256:"
+    "1e7d4ce9edbf602edc8cf72ca8dbff278b241122b56139a77f67eabe474d93ee": _RELEASE + "operator-v0.7.0",
+    "ghcr.io/nanohype/eks-agent-platform/eval-runner@sha256:"
+    "674c0120c381c9b7ab01289e1ed875607864e976d3407734f9eb5be2e65b37dd": _RELEASE + "eval-runner-v0.1.2",
+}
+RELEASE_SIGNED_FIXTURES = {**LEGACY_SIGNED_FIXTURES, **BUNDLE_SIGNED_FIXTURES}
 SUITE = gate.ROOT / "policies" / "kyverno" / "tests"
+DIGEST_SUITE = SUITE / "supply-chain-digest"
+EKS_AGENT_PLATFORM = gate.REGISTRY_PREFIX + "eks-agent-platform/"
 
 
 def admitted_nanohype_images() -> set[str]:
@@ -163,6 +169,37 @@ def admitted_nanohype_images() -> set[str]:
                 images |= {c["image"] for c in spec.get(field) or []
                            if c["image"].startswith(gate.REGISTRY_PREFIX)}
     return images
+
+
+def images_in(node) -> set[str]:
+    """Every string under an `image` key at any depth of a parsed document."""
+    if isinstance(node, dict):
+        found = {v for k, v in node.items() if k == "image" and isinstance(v, str)}
+        for v in node.values():
+            found |= images_in(v)
+        return found
+    if isinstance(node, list):
+        return set().union(*(images_in(v) for v in node))
+    return set()
+
+
+def tag_pinned_releases() -> dict[str, str]:
+    """The release.yaml subject each tag-pinned eks-agent-platform image names,
+    keyed by the reference, across the Kyverno suite, the digest-rewrite
+    fixtures and check-policy-admission's runtime pod. `<image>:<version>` is
+    built by the release that tags the repository `<image>-v<version>`."""
+    admission = load("check-policy-admission")
+    docs = [yaml.safe_load(admission.RUNTIME_POD_MANIFEST)]
+    manifest = yaml.safe_load((SUITE / "kyverno-test.yaml").read_text())
+    for path in [SUITE / rel for rel in manifest["resources"]] + sorted(DIGEST_SUITE.glob("*.yaml")):
+        docs += [d for d in yaml.safe_load_all(path.read_text()) if d]
+    refs = {ref for doc in docs for ref in images_in(doc)
+            if ref.startswith(EKS_AGENT_PLATFORM) and "@" not in ref}
+    releases = {}
+    for ref in refs:
+        name, version = ref[len(EKS_AGENT_PLATFORM):].rsplit(":", 1)
+        releases[ref] = _RELEASE + f"{name}-v{version}"
+    return releases
 
 
 class TheShippedPolicy(unittest.TestCase):
@@ -222,6 +259,26 @@ class TheReleaseSignedFixtures(unittest.TestCase):
     def test_every_recorded_subject_belongs_to_an_admitted_fixture(self):
         orphaned = sorted(set(RELEASE_SIGNED_FIXTURES) - admitted_nanohype_images())
         self.assertFalse(orphaned, f"subjects recorded for no admitted fixture: {orphaned}")
+
+
+class TheTagPinnedFixtures(unittest.TestCase):
+    """vi-tag-only, the digest-rewrite pod and Deployment, and the policy-admission
+    runtime pod name by tag the releases the bundle-signed fixtures pin by
+    digest. An operator chart bump moves all of them to the images the chart
+    renders, so one moved without the others fails here."""
+
+    def test_both_images_are_named_by_tag(self):
+        names = {ref[len(EKS_AGENT_PLATFORM):].rsplit(":", 1)[0] for ref in tag_pinned_releases()}
+        self.assertEqual(names, {"operator", "eval-runner"})
+
+    def test_every_tag_names_a_bundle_signed_release(self):
+        bundles = set(BUNDLE_SIGNED_FIXTURES.values())
+        stray = sorted(ref for ref, release in tag_pinned_releases().items() if release not in bundles)
+        self.assertFalse(stray, f"tag-pinned images naming no bundle-signed fixture's release: {stray}")
+
+    def test_every_bundle_signed_release_is_named_by_a_tag(self):
+        unnamed = sorted(set(BUNDLE_SIGNED_FIXTURES.values()) - set(tag_pinned_releases().values()))
+        self.assertFalse(unnamed, f"bundle-signed releases no tag-pinned fixture names: {unnamed}")
 
 
 class AWidenedSubjectIsRefused(unittest.TestCase):

@@ -196,7 +196,7 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
   never literals (externalsecret.yaml:9-33; the druid keystore password is read
   back through an env var, :86-111). Cloud IAM is externalized too: the agent
   operator's `role-arn` is injected from a **cluster-Secret annotation**, so the
-  AWS account ID never lands in git (addons-agent-operator.yaml:67).
+  AWS account ID never lands in git (addons-agent-operator.yaml:89).
   `no-placeholders.sh` blocks the JVM `changeit` default and `FILL_ME`-class
   sentinels from shipping as config.
 - **Residual** — the architecture is backstopped by an enforced scan: a
@@ -226,11 +226,25 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
   stamps (agent-platform.yaml:49-70), when a budget crosses its cap (:108,165), and
   when evals regress or go stale (:224,284), each linking the recovery runbook
   (docs/runbooks/ai-platform-budget-killswitch.md).
+- **Information disclosure / tampering (one Platform's evals reaching
+  another's)** — the eval-reports bucket is shared by every Platform. The
+  operator runs each Platform's evals under its own `eval-<platform>`
+  ServiceAccount in the eval runtime namespace (`eval-runner`), bound by EKS Pod
+  Identity to a `<cluster>-<platform>-eval` role that can read only
+  `<platform>/manifests/*` and write only `<platform>/runs/*` in that bucket, and
+  submits no run until the Platform reports `EvalIdentityReady=True`. This
+  catalog configures no eval ServiceAccount or role ARN
+  (`applicationsets/addons-agent-operator.yaml`).
 - **Residual** — this repo only **declares** the `BudgetPolicy` / `Platform` /
   `ModelGateway` CRs and the alert rules. The *enforcement* — measuring spend,
   suspending a Platform, revoking IRSA — is the eks-agent-platform operator (a
   separate repo). The alert PromQL is untestable in CI (KSM CRDs are schema-skipped)
   and correct only if each selector matches the series KSM emits.
+  The eval run RBAC the operator chart installs is shared by every Platform's
+  runs: it binds the `eval-runner` namespace's ServiceAccount group to `get` on
+  every EvalSuite and `get`/`patch` on every EvalSuite's status, cluster-wide, so a
+  run can rewrite another Platform's score. The per-Platform role separates
+  Platforms inside the bucket and nowhere on the Kubernetes side.
 
 ## 7. Multi-tenancy  (`catalog/druid/chart/templates/role.yaml`)
 

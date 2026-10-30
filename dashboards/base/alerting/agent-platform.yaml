@@ -297,9 +297,11 @@ spec:
         description: >
           The oldest EvalSuite.status.lastRunAt is more than 48h in the past: evals
           are no longer running and the quality signal has gone stale (a below-bar
-          regression would now go unnoticed). Check the eval CronJob/scheduler, the
-          harness pod, and KSM RBAC on governance.nanohype.dev EvalSuites. File a
-          ticket — this does not page.
+          regression would now go unnoticed). Check that each suite's Platform
+          reports EvalIdentityReady=True (the operator suspends a suite's schedule
+          while it does not), the eval CronJob/scheduler, the harness pod, and KSM
+          RBAC on governance.nanohype.dev EvalSuites. File a ticket — this does not
+          page.
         runbook_url: https://github.com/nanohype/eks-gitops/blob/main/docs/runbooks/ai-platform-budget-killswitch.md
       data:
         - refId: A
@@ -374,8 +376,10 @@ spec:
           EvalSuite.status.lastRunAt is zero: this suite has been declared but has
           never completed a run, so it has produced no quality signal at all.
           AgentEvalBelowThreshold and AgentEvalStale both deliberately exclude this
-          state, so nothing else reports it. Check the eval-runner namespace for
-          pods rejected at admission, the Argo workflow-controller logs, and
+          state, so nothing else reports it. Check that the suite's Platform
+          reports EvalIdentityReady=True (the operator submits no run under a
+          Platform whose eval identity is not bound), the eval-runner namespace
+          for pods rejected at admission, the Argo workflow-controller logs, and
           whether the argoproj.io CRDs exist on this cluster.
         runbook_url: https://github.com/nanohype/eks-gitops/blob/main/docs/runbooks/ai-platform-budget-killswitch.md
       data:
