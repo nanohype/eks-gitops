@@ -1933,7 +1933,7 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('        if refused is None:\n', '        if True:\n', 1)
+m = s.replace('        if clears is None:\n', '        if True:\n', 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
@@ -1961,6 +1961,31 @@ assert m != s, "mutation did not land"
 p.write_text(m)
 PY
 rejects "trivy: retry a status a wait cannot clear" test_image_vulnerabilities \
+  test_a_failure_a_wait_cannot_clear_is_reported_at_once
+res $F
+
+# A layer whose stream ended short is a dropped connection, not a fact about the
+# image; a bare EOF, as from a config that does not parse, is.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        clears = REFUSED_FOR_NOW.search(said) or CUT_OFF.search(said)\n',
+              '        clears = REFUSED_FOR_NOW.search(said)\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "trivy: report a transfer cut off mid-layer at once" test_image_vulnerabilities \
+  test_a_transfer_cut_off_mid_layer_is_run_again
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace(r'CUT_OFF = re.compile(r"\bunexpected EOF\b")', r'CUT_OFF = re.compile(r"EOF")', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "trivy: retry any EOF trivy names" test_image_vulnerabilities \
   test_a_failure_a_wait_cannot_clear_is_reported_at_once
 res $F
 

@@ -388,7 +388,8 @@ class Trivy:
 
 
 class ScanningThroughARegistryThatRefusesForNow(unittest.TestCase):
-    """A 429 or a 5xx says nothing about the image, so the scan is run again.
+    """A 429, a 5xx or a transfer cut off says nothing about the image, so the
+    scan is run again.
 
     ECR Public refuses an anonymous client over its quota, and the quota belongs
     to the runner's address rather than to this job. Reported at once, an image
@@ -403,7 +404,7 @@ class ScanningThroughARegistryThatRefusesForNow(unittest.TestCase):
         self.assertEqual(len(trivy.calls), 2)
         self.assertEqual(trivy.waits, [gate.SCAN_BACKOFF_SECONDS])
         self.assertIn("attempt 1 of", trivy.said)
-        self.assertIn("refused with 'TOOMANYREQUESTS'", trivy.said)
+        self.assertIn("ended with 'TOOMANYREQUESTS'", trivy.said)
 
     def test_each_way_trivy_names_a_refusal_that_clears_is_retried(self):
         """The distribution codes a body carries, and the status when it carries none."""
@@ -419,13 +420,30 @@ class ScanningThroughARegistryThatRefusesForNow(unittest.TestCase):
                 trivy.scan()
                 self.assertEqual(len(trivy.calls), 2)
 
+    def test_a_transfer_cut_off_mid_layer_is_run_again(self):
+        """A layer whose stream ended short says nothing about the image: the
+        connection dropped, and the next scan is a new transfer."""
+        cut_off = ("2026-10-29T23:32:16Z\tFATAL\tFatal error\trun error: image scan error: "
+                   "scan error: scan failed: failed analysis: analyze error: pipeline error: "
+                   "failed to analyze layer (sha256:5eb2f3940bf1): walk error: failed to "
+                   "process the file: failed to analyze file: failed to analyze "
+                   "bin/rollouts-controller: unable to open bin/rollouts-controller: failed "
+                   "to open: failed to copy: unexpected EOF\n")
+        trivy = Trivy((1, "", cut_off), (0, REPORT, ""))
+        found = trivy.scan("quay.io/argoproj/argo-rollouts:v1.9.1")
+        self.assertEqual([f.id for f in found], ["CVE-2026-1"])
+        self.assertEqual(len(trivy.calls), 2)
+        self.assertEqual(trivy.waits, [gate.SCAN_BACKOFF_SECONDS])
+        self.assertIn("ended with 'unexpected EOF'", trivy.said)
+
     def test_a_failure_a_wait_cannot_clear_is_reported_at_once(self):
         """A missing image, a denied pull, a missing tool: asking again gets the
         same answer, after a wait that delays the report and changes nothing."""
         for refusal in ("DENIED: requested access to the resource is denied",
                         "MANIFEST_UNKNOWN: manifest unknown",
                         "unexpected status code 401 Unauthorized",
-                        "unexpected status code 404 Not Found"):
+                        "unexpected status code 404 Not Found",
+                        "failed to parse the image config: EOF"):
             with self.subTest(refusal=refusal):
                 trivy = Trivy((1, "", trivy_said(refusal)), (0, REPORT, ""))
                 with self.assertRaises(gate.Unscannable) as caught:
