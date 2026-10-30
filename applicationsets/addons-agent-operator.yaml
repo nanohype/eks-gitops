@@ -58,6 +58,10 @@ spec:
         # request `.../charts/manifests/<version>`, which is not a package —
         # ArgoCD v3.4.2 fails to generate manifests from it. Same shape the Envoy
         # charts in addons-ai-platform use.
+        #
+        # Moving targetRevision must move the operator and eval-runner image
+        # fixtures to the images the chart renders; the verify-images fixtures
+        # note in policies/kyverno/tests/resources.yaml names each one.
         - repoURL: oci://ghcr.io/nanohype/eks-agent-platform/charts/operator
           chart: operator
           targetRevision: 0.6.19

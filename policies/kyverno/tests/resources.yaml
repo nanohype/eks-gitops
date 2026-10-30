@@ -178,7 +178,7 @@ spec:
 # verify-images fixtures. Every nanohype reference is pinned by digest: the CLI
 # runs the validating path only, never the digest mutation admission runs first,
 # so a tag reaching verifyDigest fails here the way it would at the validating
-# webhook (vi-tag-only). Each signed digest is a release of an
+# webhook (vi-tag-only). Each release-signed digest is a release of an
 # eks-agent-platform image, signed and SPDX-attested by release.yaml on a tag;
 # the branch-signed digest is a fab build signed by ci.yml on refs/heads/main, a
 # real org signature from a workflow the policy does not trust.
@@ -188,15 +188,24 @@ spec:
 # carries one, and the legacy sha256-<digest>.sig and .att tags only when it
 # carries none (`cosign tree <image>` lists which an image has).
 #
-#   legacy  operator@sha256:06a46523… (vi-signed, vi-signed-with-sidecar,
-#           vi-branch-signed-init) and the branch-signed fab build
-#   bundle  operator@sha256:589c5977… and eval-runner@sha256:1f033a7e…
-#           (vi-bundle-signed-operator, vi-bundle-signed-eval-runner)
+#   legacy  operator@sha256:06a46523… (vi-signed, vi-signed-with-sidecar, the
+#           app container of vi-branch-signed-init) and fab@sha256:9e415943…
+#           (vi-branch-signed, the init container of vi-branch-signed-init)
+#   bundle  operator@sha256:589c5977… (vi-bundle-signed-operator), the same
+#           image by its tag operator:0.6.2 (vi-tag-only), and
+#           eval-runner@sha256:1f033a7e… (vi-bundle-signed-eval-runner)
 #
-# The bundle fixtures are the operator and eval-runner releases the pinned
-# operator chart renders, so a chart bump that moves either image moves its
-# fixture with it. The refused rows are all legacy: a refusal on the bundle
-# path needs a bundle signed by a workflow the policy does not trust.
+# The identity refusals, vi-branch-signed and vi-branch-signed-init, are
+# decided on the legacy path. vi-tag-only names the bundle-signed operator
+# release by tag, and verifyDigest refuses it for the missing digest rather
+# than for its signer. No row shows the bundle path refusing a signer: that
+# takes a bundle signed by a workflow the policy does not trust.
+#
+# An operator chart bump must move the bundle fixtures, vi-tag-only, the
+# operator tag in supply-chain-digest/pod.yaml and deployment.yaml, and the
+# eval-runner tag in scripts/check-policy-admission.py to the operator and
+# eval-runner images the chart renders. `scripts/check-image-pins.py --list`
+# prints each rendered image beside the charts that render it.
 #
 # A non-nanohype image is outside matchImageReferences (ghcr.io/nanohype/*), so
 # nothing is verified and the pod passes. Widening the glob to "*" makes this
@@ -249,8 +258,8 @@ spec:
     - name: sidecar
       image: registry.k8s.io/pause:3.10
 ---
-# The operator release the pinned chart renders, signed and SPDX-attested as
-# Sigstore bundles, pinned by digest.
+# An operator release signed and SPDX-attested as Sigstore bundles, pinned by
+# digest.
 apiVersion: v1
 kind: Pod
 metadata:
@@ -265,10 +274,10 @@ spec:
     - name: app
       image: ghcr.io/nanohype/eks-agent-platform/operator@sha256:589c59773972ac113d2512e8ad0db86ceec924ae7b44fc2ae5ce040dea5fe3f0
 ---
-# The eval-runner release the pinned chart's WorkflowTemplate runs, in the same
-# bundle format. Its step pods land in the eval-runner namespace, which the
-# policy does not exclude, so each step's eval-runner container is verified at
-# admission.
+# An eval-runner release in the same bundle format. The operator chart's
+# WorkflowTemplate runs eval-runner in step pods in the eval-runner namespace,
+# which the policy does not exclude, so each step's eval-runner container is
+# verified at admission.
 apiVersion: v1
 kind: Pod
 metadata:

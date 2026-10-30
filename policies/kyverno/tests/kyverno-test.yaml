@@ -101,8 +101,9 @@ results:
   # Kyverno verifies cosign's legacy .sig/.att format and a Sigstore bundle on
   # separate paths, and resources.yaml says which fixture carries which. The
   # legacy path is proven both ways, a release signature admitted and a branch
-  # signature refused; the bundle path is proven to admit the operator and
-  # eval-runner releases the pinned operator chart renders.
+  # signature refused; the bundle path is proven to admit an operator and an
+  # eval-runner release. No row refuses a signer on the bundle path: vi-tag-only
+  # is bundle-signed and is refused for its missing digest.
   #
   # A pod whose namespace the policy excludes produces no result at all, and the
   # CLI reports an expectation with no result as a failure, so the namespace

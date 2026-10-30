@@ -147,7 +147,8 @@ SUITE = gate.ROOT / "policies" / "kyverno" / "tests"
 
 
 def admitted_nanohype_images() -> set[str]:
-    """Every ghcr.io/nanohype image a pod in a `pass` verify-images row names."""
+    """Every ghcr.io/nanohype image in the container fields of a suite resource
+    whose name a `pass` verify-images row lists."""
     manifest = yaml.safe_load((SUITE / "kyverno-test.yaml").read_text())
     admitted = {name for row in manifest["results"]
                 if row.get("policy") == gate.POLICY_NAME and row.get("result") == "pass"
@@ -201,8 +202,8 @@ class TheReleaseIdentity(unittest.TestCase):
             "https://github.com/nanohype/fab/.github/workflows/ci.yml@refs/heads/main"))
 
     def test_the_release_signed_fixture_subjects_are_accepted(self):
-        """The identity on each release-signed fixture, legacy and bundle alike,
-        is one the corpus accepts."""
+        """The subject recorded for each release-signed fixture, legacy and bundle
+        alike, is one the corpus accepts and SUBJECT_REGEXP matches."""
         for image, subject in RELEASE_SIGNED_FIXTURES.items():
             with self.subTest(image=image):
                 self.assertIn(subject, gate.ACCEPTED_SUBJECTS)
