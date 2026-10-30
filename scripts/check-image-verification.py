@@ -104,8 +104,8 @@ SUBJECT_REGEXP = r"^https://github\.com/nanohype/[^/]+/\.github/workflows/releas
 # difference admits.
 ACCEPTED_SUBJECTS = (
     "https://github.com/nanohype/eks-agent-platform/.github/workflows/release.yaml@refs/tags/operator-v0.6.1",
-    "https://github.com/nanohype/eks-agent-platform/.github/workflows/release.yaml@refs/tags/operator-v0.6.2",
-    "https://github.com/nanohype/eks-agent-platform/.github/workflows/release.yaml@refs/tags/eval-runner-v0.1.1",
+    "https://github.com/nanohype/eks-agent-platform/.github/workflows/release.yaml@refs/tags/operator-v0.7.0",
+    "https://github.com/nanohype/eks-agent-platform/.github/workflows/release.yaml@refs/tags/eval-runner-v0.1.2",
     "https://github.com/nanohype/fab/.github/workflows/release.yml@refs/tags/v1.0.0",
 )
 REFUSED_SUBJECTS = (

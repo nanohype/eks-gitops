@@ -64,7 +64,7 @@ spec:
         # note in policies/kyverno/tests/resources.yaml names each one.
         - repoURL: oci://ghcr.io/nanohype/eks-agent-platform/charts/operator
           chart: operator
-          targetRevision: 0.6.19
+          targetRevision: 0.7.1
           helm:
             # Matches the Application name above so Application == release ==
             # Deployment (eks-agent-platform-operator) — one fully-qualified name
@@ -78,6 +78,10 @@ spec:
             valuesObject:
               config:
                 environment: '{{ index .metadata.labels "environment" }}'
+                # The chart's values.schema.json caps clusterName at the longest
+                # name with which every role the operator mints for a Platform
+                # fits IAM's 64-character role-name limit, so a cluster whose
+                # cluster_name label is longer fails to render here.
                 clusterName: '{{ index .metadata.labels "cluster_name" }}'
                 region: '{{ index .metadata.labels "region" }}'
               serviceAccount:
@@ -85,9 +89,12 @@ spec:
                   eks.amazonaws.com/role-arn: '{{ index .metadata.annotations "eks-agent-platform/operator-role-arn" }}'
               # eval-runtime reports bucket, read from a cluster-Secret annotation
               # published by cluster-bootstrap, never committed here; renders empty
-              # until then (the chart leaves the bucket empty when blank). The
-              # eval-runner ServiceAccount is bound to its role by an EKS Pod
-              # Identity association, so no role ARN is injected here.
+              # until then (the chart leaves the bucket empty when blank). No eval
+              # ServiceAccount or role ARN is injected: the operator creates each
+              # Platform's eval-<platform> ServiceAccount in the eval runtime
+              # namespace and binds it by EKS Pod Identity to that Platform's
+              # <cluster>-<platform>-eval role, and the chart's values.schema.json
+              # refuses an evalRuntime.serviceAccount key.
               evalRuntime:
                 evalReportsBucket: '{{ index .metadata.annotations "eks-agent-platform/eval-reports-bucket" }}'
             valueFiles:

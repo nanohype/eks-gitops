@@ -20,7 +20,7 @@ metadata:
 spec:
   initContainers:
     - name: init
-      image: ghcr.io/nanohype/eks-agent-platform/operator:0.6.2
+      image: ghcr.io/nanohype/eks-agent-platform/operator:0.7.0
   containers:
     - name: manager
-      image: ghcr.io/nanohype/eks-agent-platform/operator:0.6.2
+      image: ghcr.io/nanohype/eks-agent-platform/operator:0.7.0
