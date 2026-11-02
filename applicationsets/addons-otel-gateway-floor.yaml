@@ -41,7 +41,7 @@ spec:
       sources:
         - repoURL: https://open-telemetry.github.io/opentelemetry-helm-charts
           chart: opentelemetry-collector
-          targetRevision: 0.178.0
+          targetRevision: 0.178.1
           helm:
             releaseName: otel-gateway
             # extraEnvs is a list, so Helm replaces it wholesale — valuesObject
