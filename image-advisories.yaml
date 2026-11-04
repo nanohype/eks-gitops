@@ -199,6 +199,30 @@ advisories:
       - docker.io/nginxinc/nginx-unprivileged
       - ghcr.io/opencost/opencost-ui
 
+  - id: CVE-2026-91403
+    package: ca-certificates-bundle
+    reason: >-
+      The system CA bundle in the grafana-operator image's chainguard/static
+      base, at 20260413-r0 and fixed in 20260909-r3: the fixed bundle distrusts
+      the eMudhra intermediates whose keys are compromised, so until then a
+      certificate issued under one of them verifies. The operator is a Go binary
+      that reads this bundle for its outbound TLS, which in this render is the
+      Amazon Managed Grafana workspace the Grafana CR names (an Amazon Trust
+      Services chain) and grafana.com, where it fetches the dashboards declared
+      by id. A party able to intercept either and holding a certificate from a
+      distrusted intermediate could serve the operator a dashboard or read the
+      workspace token it sends, so the exposure is real and narrow rather than
+      absent. The Kubernetes API is verified against the service account's
+      ca.crt, not this bundle. The pin did not move because grafana-operator
+      chart 5.25.0, the release built on a newer base, is published at
+      grafana.github.io/helm-charts under a digest its release asset no longer
+      matches, which the chart fetch refuses as it should. Clears when a
+      grafana-operator chart whose archive matches its index pins an image on
+      ca-certificates-bundle 20260909-r3 or later.
+    review_by: 2026-12-04
+    images:
+      - ghcr.io/grafana/grafana-operator
+
   # ── Images a controller starts ────────────────────────────────────────
   #
   # Every entry below was invisible until the population took in the images a
