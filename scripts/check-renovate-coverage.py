@@ -946,6 +946,11 @@ class AnnotatedPins:
         return len(hits)
 
 
+# A CI tool pin in a workflow's top-level env block (two-space indent).
+CI_TOOL_PIN = re.compile(r"^  (?P<var>[A-Z][A-Z0-9_]*_VERSION):\s*\"?(?P<ver>[^\"\s]+)\"?\s*$",
+                         re.M)
+
+
 OTHER_FAMILIES = [
     Family(
         "git-pinned manifest directory",
@@ -966,9 +971,22 @@ OTHER_FAMILIES = [
         # line, so keying on the annotation finds every pin except the ones
         # that matter. The annotation is then checked as a property of each pin
         # found, by AnnotatedPins.
-        re.compile(r"^  (?P<var>[A-Z][A-Z0-9_]*_VERSION):\s*\"?(?P<ver>[^\"\s]+)\"?\s*$",
-                   re.M),
+        CI_TOOL_PIN,
         AnnotatedPins(ANNOTATED),
+    ),
+    # The two other workflows that render with helm (and, for diff.yml,
+    # kustomize) repeat those pins in env blocks of their own, read by the same
+    # customManager. Held to the same rule as ci.yml's, so a copy that loses its
+    # annotation, or a workflow the manager stops reaching, fails here.
+    *(
+        Family(
+            "CI tool binary",
+            rel,
+            CI_TOOL_PIN,
+            AnnotatedPins(ANNOTATED),
+        )
+        for rel in (".github/workflows/chart-provenance.yml",
+                    ".github/workflows/diff.yml")
     ),
     Family(
         "Go module",
@@ -1147,7 +1165,7 @@ def main() -> int:
     # chart at all, so certifying them alongside the pins would claim coverage
     # over a population this never examined.
     bearing = len({p.appset for p in pins})
-    *rest, last = [f.label for f in OTHER_FAMILIES]
+    *rest, last = list(dict.fromkeys(f.label for f in OTHER_FAMILIES))
     families = f"{', '.join(rest)} and {last}" if rest else last
     print(f"renovate coverage OK: {total} chart pin(s) across {bearing} of "
           f"{len(appset_files())} ApplicationSets, plus {others} pin(s) "
