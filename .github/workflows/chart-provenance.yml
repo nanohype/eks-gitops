@@ -28,6 +28,12 @@ on:
 permissions:
   contents: read
 
+# The helm the CI render gates use, pinned and watched exactly as ci.yml's env
+# block pins it.
+env:
+  # renovate: datasource=github-releases depName=helm/helm
+  HELM_VERSION: v4.3.1
+
 # The jobs that read through scripts/registry.py's client set a timeout above
 # registry.CALL_BOUND_SECONDS, one client call's deadline plus the socket read a
 # body still arriving then can have under way, for the reason ci.yml's charts
@@ -102,6 +108,8 @@ jobs:
 
       - name: Install Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+        with:
+          version: ${{ env.HELM_VERSION }} # zizmor: ignore[unpinned-tools]
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
