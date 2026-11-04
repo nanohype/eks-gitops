@@ -42,7 +42,7 @@ spec:
                   namespace: grafana-operator
                   chartRepo: https://grafana.github.io/helm-charts
                   chart: grafana-operator
-                  chartVersion: "5.24.0"
+                  chartVersion: "5.25.0"
                   path: addons/observability/grafana-operator
                   syncWave: "34"
   template:

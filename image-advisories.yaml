@@ -53,7 +53,6 @@ advisories:
       image can update separately — it moves when upstream rebuilds on a patched
       toolchain. Fixed in Go 1.24.13, 1.25.7 and 1.26.0-rc.3.
     images:
-      - docker.io/falcosecurity/k8s-metacollector
       - ghcr.io/aquasecurity/node-collector
       - nats
       - nats-streaming
@@ -66,11 +65,10 @@ advisories:
   - id: CVE-2024-24790
     package: stdlib
     reason: >-
-      The same shape as CVE-2025-68121 and on the same image, against an older
-      toolchain: k8s-metacollector 0.1.1 is built on Go 1.21.1, and the fix is in
-      1.21.11 and 1.22.4. The falco chart pin is what moves it.
+      The same shape as CVE-2025-68121, against an older toolchain in the NATS
+      images the argo-events eventbus controller starts. Fixed in Go 1.21.11 and
+      1.22.4; the argo-events chart pin is what moves it.
     images:
-      - docker.io/falcosecurity/k8s-metacollector
       - nats
       - nats-streaming
       - natsio/nats-server-config-reloader
@@ -79,10 +77,9 @@ advisories:
   - id: CVE-2026-33186
     package: google.golang.org/grpc
     reason: >-
-      A transitive module in three upstream controllers, fixed in grpc-go 1.79.3.
+      A transitive module in two upstream controllers, fixed in grpc-go 1.79.3.
       Not separable from the binary; it moves when each project rebuilds.
     images:
-      - docker.io/falcosecurity/k8s-metacollector
       - quay.io/argoproj/argo-events
       - registry.k8s.io/metrics-server/metrics-server
 
@@ -201,30 +198,6 @@ advisories:
       - alpine/kubectl
       - docker.io/nginxinc/nginx-unprivileged
       - ghcr.io/opencost/opencost-ui
-
-  - id: CVE-2026-111497
-    package: libbrotlidec1
-    reason: >-
-      The same Brotli decoder advisory in the falco image's Wolfi base, at
-      1.2.0-r3 and fixed in 1.2.0-r7. libcurl is the one package that depends
-      on it. The falco container runs /usr/bin/falco, which links neither
-      libcurl nor the decoder, and the falco chart's program_output, the setting
-      that would start a shell command such as curl, is disabled in the render.
-      Its probes are httpGet requests to falco's own /healthz. Clears when the
-      falco chart pins an image built on 1.2.0-r7.
-    review_by: 2027-01-31
-    images:
-      - docker.io/falcosecurity/falco
-
-  - id: CVE-2026-111497
-    package: libbrotlicommon1
-    reason: >-
-      The common library under the libbrotlidec1 decoder, which is the one
-      package in the falco image that depends on it: the same base layer,
-      fixed version, reach and remedy as the libbrotlidec1 entry.
-    review_by: 2027-01-31
-    images:
-      - docker.io/falcosecurity/falco
 
   # ── Images a controller starts ────────────────────────────────────────
   #
