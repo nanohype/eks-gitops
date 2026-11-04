@@ -54,6 +54,15 @@ env:
   SHELLCHECK_SHA256: b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6
   # renovate: datasource=github-releases depName=aquasecurity/trivy
   TRIVY_VERSION: v0.76.1
+  # helm and kustomize through their setup actions, which read an empty or
+  # absent version as "the latest release": unpinned, the render gates moved
+  # with whatever upstream published last, between two runs of the same tree.
+  # chart-provenance.yml and diff.yml carry the same two pins in their own env
+  # blocks, watched by the same manager, so a bump moves all three together.
+  # renovate: datasource=github-releases depName=helm/helm
+  HELM_VERSION: v4.3.1
+  # renovate: datasource=github-releases depName=kubernetes-sigs/kustomize
+  KUSTOMIZE_VERSION: 5.8.1
   # renovate: datasource=npm depName=renovate
   RENOVATE_VERSION: 44.65.0
 
@@ -358,6 +367,8 @@ jobs:
           persist-credentials: false
       - name: Install helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+        with:
+          version: ${{ env.HELM_VERSION }} # zizmor: ignore[unpinned-tools]
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
@@ -383,6 +394,8 @@ jobs:
           persist-credentials: false
       - name: Install helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+        with:
+          version: ${{ env.HELM_VERSION }} # zizmor: ignore[unpinned-tools]
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
@@ -473,8 +486,12 @@ jobs:
           sudo install -m 0755 /tmp/kyverno /usr/local/bin/kyverno
       - name: Install kustomize
         uses: imranismail/setup-kustomize@53f941b41dca13ed61874bbc6b4b6e1562877530 # v3
+        with:
+          kustomize-version: ${{ env.KUSTOMIZE_VERSION }} # zizmor: ignore[unpinned-tools]
       - name: Install Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+        with:
+          version: ${{ env.HELM_VERSION }} # zizmor: ignore[unpinned-tools]
       # Every other gate in this workflow checks a manifest. This one checks
       # the gates: a canary proves a gate RAN, and nothing proves it computes
       # the right answer. stdlib unittest, no test dependency to install.
@@ -549,6 +566,8 @@ jobs:
           sudo install -m 0755 /tmp/kyverno /usr/local/bin/kyverno
       - name: Install kustomize
         uses: imranismail/setup-kustomize@53f941b41dca13ed61874bbc6b4b6e1562877530 # v3
+        with:
+          kustomize-version: ${{ env.KUSTOMIZE_VERSION }} # zizmor: ignore[unpinned-tools]
       # kyverno test proves what a policy DOES; this proves the API server
       # would accept it at all. Kyverno enforces semantic rules no schema
       # encodes — on a ClusterPolicy verifyImages rule, mutateDigest:true under
@@ -769,6 +788,8 @@ jobs:
       # requires the refusal.
       - name: Install kustomize
         uses: imranismail/setup-kustomize@53f941b41dca13ed61874bbc6b4b6e1562877530 # v3
+        with:
+          kustomize-version: ${{ env.KUSTOMIZE_VERSION }} # zizmor: ignore[unpinned-tools]
       - name: Verify-images signing-identity contract
         run: |
           pip install --require-hashes -r requirements.txt
@@ -820,8 +841,12 @@ jobs:
           kubectl version --client
       - name: Install kustomize
         uses: imranismail/setup-kustomize@53f941b41dca13ed61874bbc6b4b6e1562877530 # v3
+        with:
+          kustomize-version: ${{ env.KUSTOMIZE_VERSION }} # zizmor: ignore[unpinned-tools]
       - name: Install Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+        with:
+          version: ${{ env.HELM_VERSION }} # zizmor: ignore[unpinned-tools]
       - name: Each supply-chain overlay pins a tag and decides a foreign identity
         run: ./scripts/check-digest-rewrite.sh
 
@@ -891,6 +916,8 @@ jobs:
 
       - name: Install Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+        with:
+          version: ${{ env.HELM_VERSION }} # zizmor: ignore[unpinned-tools]
 
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -946,6 +973,8 @@ jobs:
 
       - name: Install Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+        with:
+          version: ${{ env.HELM_VERSION }} # zizmor: ignore[unpinned-tools]
 
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -1018,9 +1047,13 @@ jobs:
 
       - name: Install Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+        with:
+          version: ${{ env.HELM_VERSION }} # zizmor: ignore[unpinned-tools]
 
       - name: Install kustomize
         uses: imranismail/setup-kustomize@53f941b41dca13ed61874bbc6b4b6e1562877530 # v3
+        with:
+          kustomize-version: ${{ env.KUSTOMIZE_VERSION }} # zizmor: ignore[unpinned-tools]
 
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -1209,9 +1242,13 @@ jobs:
 
       - name: Install kustomize
         uses: imranismail/setup-kustomize@53f941b41dca13ed61874bbc6b4b6e1562877530 # v3
+        with:
+          kustomize-version: ${{ env.KUSTOMIZE_VERSION }} # zizmor: ignore[unpinned-tools]
 
       - name: Install Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+        with:
+          version: ${{ env.HELM_VERSION }} # zizmor: ignore[unpinned-tools]
 
       - name: Render manifests
         run: |

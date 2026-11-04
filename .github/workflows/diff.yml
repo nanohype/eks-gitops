@@ -16,6 +16,14 @@ on:
 permissions:
   contents: read
 
+# The helm and kustomize the CI render gates use, pinned and watched exactly as
+# ci.yml's env block pins them, so this render matches theirs.
+env:
+  # renovate: datasource=github-releases depName=helm/helm
+  HELM_VERSION: v4.3.1
+  # renovate: datasource=github-releases depName=kubernetes-sigs/kustomize
+  KUSTOMIZE_VERSION: 5.8.1
+
 jobs:
   diff:
     runs-on: ubuntu-latest
@@ -29,9 +37,13 @@ jobs:
 
       - name: Install kustomize
         uses: imranismail/setup-kustomize@53f941b41dca13ed61874bbc6b4b6e1562877530 # v3
+        with:
+          kustomize-version: ${{ env.KUSTOMIZE_VERSION }} # zizmor: ignore[unpinned-tools]
 
       - name: Install Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+        with:
+          version: ${{ env.HELM_VERSION }} # zizmor: ignore[unpinned-tools]
 
       - name: Render manifests
         run: |
