@@ -53,7 +53,6 @@ advisories:
       image can update separately — it moves when upstream rebuilds on a patched
       toolchain. Fixed in Go 1.24.13, 1.25.7 and 1.26.0-rc.3.
     images:
-      - docker.io/falcosecurity/k8s-metacollector
       - ghcr.io/aquasecurity/node-collector
       - nats
       - nats-streaming
@@ -66,11 +65,10 @@ advisories:
   - id: CVE-2024-24790
     package: stdlib
     reason: >-
-      The same shape as CVE-2025-68121 and on the same image, against an older
-      toolchain: k8s-metacollector 0.1.1 is built on Go 1.21.1, and the fix is in
-      1.21.11 and 1.22.4. The falco chart pin is what moves it.
+      The same shape as CVE-2025-68121, against an older toolchain in the NATS
+      images the argo-events eventbus controller starts. Fixed in Go 1.21.11 and
+      1.22.4; the argo-events chart pin is what moves it.
     images:
-      - docker.io/falcosecurity/k8s-metacollector
       - nats
       - nats-streaming
       - natsio/nats-server-config-reloader
@@ -79,10 +77,9 @@ advisories:
   - id: CVE-2026-33186
     package: google.golang.org/grpc
     reason: >-
-      A transitive module in three upstream controllers, fixed in grpc-go 1.79.3.
+      A transitive module in two upstream controllers, fixed in grpc-go 1.79.3.
       Not separable from the binary; it moves when each project rebuilds.
     images:
-      - docker.io/falcosecurity/k8s-metacollector
       - quay.io/argoproj/argo-events
       - registry.k8s.io/metrics-server/metrics-server
 
@@ -202,29 +199,29 @@ advisories:
       - docker.io/nginxinc/nginx-unprivileged
       - ghcr.io/opencost/opencost-ui
 
-  - id: CVE-2026-111497
-    package: libbrotlidec1
+  - id: CVE-2026-91403
+    package: ca-certificates-bundle
     reason: >-
-      The same Brotli decoder advisory in the falco image's Wolfi base, at
-      1.2.0-r3 and fixed in 1.2.0-r7. libcurl is the one package that depends
-      on it. The falco container runs /usr/bin/falco, which links neither
-      libcurl nor the decoder, and the falco chart's program_output, the setting
-      that would start a shell command such as curl, is disabled in the render.
-      Its probes are httpGet requests to falco's own /healthz. Clears when the
-      falco chart pins an image built on 1.2.0-r7.
-    review_by: 2027-01-31
+      The system CA bundle in the grafana-operator image's chainguard/static
+      base, at 20260413-r0 and fixed in 20260909-r3: the fixed bundle distrusts
+      the eMudhra intermediates whose keys are compromised, so until then a
+      certificate issued under one of them verifies. The operator is a Go binary
+      that reads this bundle for its outbound TLS, which in this render is the
+      Amazon Managed Grafana workspace the Grafana CR names (an Amazon Trust
+      Services chain) and grafana.com, where it fetches the dashboards declared
+      by id. A party able to intercept either and holding a certificate from a
+      distrusted intermediate could serve the operator a dashboard or read the
+      workspace token it sends, so the exposure is real and narrow rather than
+      absent. The Kubernetes API is verified against the service account's
+      ca.crt, not this bundle. The pin did not move because grafana-operator
+      chart 5.25.0, the release built on a newer base, is published at
+      grafana.github.io/helm-charts under a digest its release asset no longer
+      matches, which the chart fetch refuses as it should. Clears when a
+      grafana-operator chart whose archive matches its index pins an image on
+      ca-certificates-bundle 20260909-r3 or later.
+    review_by: 2026-12-04
     images:
-      - docker.io/falcosecurity/falco
-
-  - id: CVE-2026-111497
-    package: libbrotlicommon1
-    reason: >-
-      The common library under the libbrotlidec1 decoder, which is the one
-      package in the falco image that depends on it: the same base layer,
-      fixed version, reach and remedy as the libbrotlidec1 entry.
-    review_by: 2027-01-31
-    images:
-      - docker.io/falcosecurity/falco
+      - ghcr.io/grafana/grafana-operator
 
   # ── Images a controller starts ────────────────────────────────────────
   #
