@@ -153,7 +153,7 @@ advisories:
       StatefulSet to load rule ConfigMaps (container loki-sc-rules), fixed in
       certifi 2026.10.18: it still trusts the emSign ECC root whose revoked
       intermediates had compromised keys. The loki chart pins
-      kiwigrid/k8s-sidecar 2.10.1. The sidecar's one TLS peer in this render is
+      kiwigrid/k8s-sidecar 2.14.1. The sidecar's one TLS peer in this render is
       the Kubernetes API, which the Kubernetes Python client verifies against
       the service account's ca.crt rather than certifi's bundle; the chart sets
       no REQ_URL, so the sidecar calls nothing else. Clears when a loki chart

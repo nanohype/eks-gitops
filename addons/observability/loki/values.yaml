@@ -115,6 +115,19 @@ lokiCanary:
     - key: CriticalAddonsOnly
       operator: Exists
 
+# Helm test hook (the loki-helm-test Pod).
+#
+# The chart's .helmignore once excluded templates/tests/ from the package, so
+# this Pod never rendered; from 18.x it ships, with its image tag defaulting to
+# `latest` rather than the appVersion every other Loki image uses. ArgoCD skips
+# `helm.sh/hook: test` resources, so the Pod is not applied at sync, but the
+# rendered manifest is what the image gates read and what a `helm test` run
+# would pull. Pinned to the chart's appVersion, as the kyverno test hook is, so
+# it moves with the chart bump that is reviewed rather than on its own schedule.
+test:
+  image:
+    tag: "3.7.8"
+
 # Caches
 chunksCache:
   resources:
