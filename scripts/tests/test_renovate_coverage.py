@@ -1070,6 +1070,10 @@ class TheNonChartPinFamilies(unittest.TestCase):
         root = pathlib.Path(tempfile.mkdtemp())
         (root / "renovate.json").write_text(json.dumps(cfg))
         for rel, body in ((".github/workflows/ci.yml", ci if ci is not None else self.ANNOTATED_CI),
+                          # The other two workflows whose env blocks the CI tool
+                          # family reads, each with its own annotated pin.
+                          (".github/workflows/chart-provenance.yml", self.ANNOTATED_CI),
+                          (".github/workflows/diff.yml", self.ANNOTATED_CI),
                           ("applicationsets/gateway-api-crds.yaml",
                            crds if crds is not None else self.CRDS),
                           ("applicationsets/rendertest/go.mod",

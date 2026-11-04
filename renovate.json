@@ -65,9 +65,9 @@
     },
     {
       "customType": "regex",
-      "description": "CI tools pinned in ci.yml's top-level env block: release binaries the workflow downloads (kyverno, kind, kubectl, gitleaks, kubeconform, shellcheck), trivy through its setup action, and the renovate package from npm. None is a GitHub Action, so the built-in managers do not see them and they age silently otherwise. Each pin this manager reads carries a `# renovate:` comment naming its datasource and package. A pin with a `*_SHA256` beside it fails that checksum on a bump until a human confirms the new one, so it never auto-merges blind. KIND_NODE_IMAGE carries no annotation, for the reason the kubectl and kind rule gives.",
+      "description": "CI tools pinned in ci.yml's top-level env block: release binaries the workflow downloads (kyverno, kind, kubectl, gitleaks, kubeconform, shellcheck), trivy, helm and kustomize through their setup actions, and the renovate package from npm. HELM_VERSION and KUSTOMIZE_VERSION are repeated in the env blocks of chart-provenance.yml and diff.yml, which render with the same tools, so this manager reads all three workflows and one bump moves every copy. None is a GitHub Action, so the built-in managers do not see them and they age silently otherwise. Each pin this manager reads carries a `# renovate:` comment naming its datasource and package. A pin with a `*_SHA256` beside it fails that checksum on a bump until a human confirms the new one, so it never auto-merges blind. KIND_NODE_IMAGE carries no annotation, for the reason the kubectl and kind rule gives.",
       "managerFilePatterns": [
-        "/^\\.github/workflows/ci\\.ya?ml$/"
+        "/^\\.github/workflows/(ci|chart-provenance|diff)\\.ya?ml$/"
       ],
       "matchStrings": [
         "#\\s*renovate:\\s*datasource=(?<datasource>[a-z-]+)\\s+depName=(?<depName>[^\\s]+)\\s*\\n\\s*[A-Z0-9_]+:\\s*\"?(?<currentValue>[^\"\\s]+)\"?"
@@ -138,12 +138,24 @@
         "gitleaks/gitleaks",
         "yannh/kubeconform",
         "koalaman/shellcheck",
-        "aquasecurity/trivy"
+        "aquasecurity/trivy",
+        "helm/helm",
+        "kubernetes-sigs/kustomize"
       ],
       "labels": [
         "dependencies",
         "ci"
       ]
+    },
+    {
+      "description": "kubernetes-sigs/kustomize is a monorepo whose releases are tagged per module (api/v…, kyaml/v…, cmd/config/v…, kustomize/v…). KUSTOMIZE_VERSION pins the CLI, which is the kustomize/v… series alone, and setup-kustomize takes it without the prefix.",
+      "matchDatasources": [
+        "github-releases"
+      ],
+      "matchPackageNames": [
+        "kubernetes-sigs/kustomize"
+      ],
+      "extractVersion": "^kustomize/v(?<version>.+)$"
     },
     {
       "description": [
