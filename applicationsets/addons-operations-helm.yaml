@@ -34,7 +34,7 @@ spec:
                   namespace: goldilocks
                   chartRepo: https://charts.fairwinds.com/stable
                   chart: goldilocks
-                  chartVersion: 10.5.0
+                  chartVersion: 11.2.0
                   path: addons/operations/goldilocks
                   syncWave: "42"
                 - appName: descheduler
