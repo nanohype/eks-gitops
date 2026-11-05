@@ -60,7 +60,6 @@ advisories:
       - natsio/prometheus-nats-exporter
       - quay.io/argoproj/argo-events
       - registry.k8s.io/metrics-server/metrics-server
-      - us-docker.pkg.dev/fairwinds-ops/oss/goldilocks
 
   - id: CVE-2024-24790
     package: stdlib
@@ -162,11 +161,11 @@ advisories:
   - id: CVE-2026-31789
     package: libcrypto3
     reason: >-
-      OpenSSL in the goldilocks image's Alpine base, fixed in 3.5.6-r0. A base
-      layer this catalog does not build; it moves with the goldilocks chart pin.
+      OpenSSL in the node-collector image's Alpine base, fixed in 3.5.6-r0. A
+      base layer this catalog does not build; it moves with the chart pin that
+      renders node-collector.
     images:
       - ghcr.io/aquasecurity/node-collector
-      - us-docker.pkg.dev/fairwinds-ops/oss/goldilocks
 
   - id: CVE-2026-31789
     package: libssl3
@@ -175,7 +174,6 @@ advisories:
       layer, cleared by the same chart bump as the libcrypto3 entry.
     images:
       - ghcr.io/aquasecurity/node-collector
-      - us-docker.pkg.dev/fairwinds-ops/oss/goldilocks
 
   - id: CVE-2026-111497
     package: brotli-libs
