@@ -3,12 +3,12 @@
   "sources": {
     "argo-workflows-crds": {
       "repoURL": "https://github.com/argoproj/argo-helm",
-      "targetRevision": "argo-workflows-1.0.23",
+      "targetRevision": "argo-workflows-1.1.1",
       "path": "charts/argo-workflows/files/crds/full",
       "recurse": false,
       "include": "",
       "exclude": "",
-      "bytes": 11102482,
+      "bytes": 11979619,
       "files": 8
     },
     "gateway-api-crds": {
