@@ -41,9 +41,9 @@ SKIP="${KUBECONFORM_SKIP-$DEFAULT_SKIP}"
 # this scan against it. Each `# renovate:` line is read by the git-refs
 # customManager in renovate.json, which owns the ref on the line below it.
 # renovate: datasource=git-refs depName=yannh/kubernetes-json-schema packageName=https://github.com/yannh/kubernetes-json-schema branch=master
-K8S_SCHEMA_REF="89a35a5e9a1412a692a2603d79c3786f602238a4"
+K8S_SCHEMA_REF="86d045595d3f93b703bbf439cf9eb4bd6830d58f"
 # renovate: datasource=git-refs depName=datreeio/CRDs-catalog packageName=https://github.com/datreeio/CRDs-catalog branch=main
-CRD_CATALOG_REF="3eb90d47aba8d61919d4419dd38301536e32a94b"
+CRD_CATALOG_REF="6ab3493622cd387923a2d0da5234f53e80e1bd28"
 
 # kubeconform's `default` schema location, with the branch replaced by the pin.
 K8S_SCHEMAS="https://raw.githubusercontent.com/yannh/kubernetes-json-schema/${K8S_SCHEMA_REF}/{{ .NormalizedKubernetesVersion }}-standalone{{ .StrictSuffix }}/{{ .ResourceKind }}{{ .KindSuffix }}.json"
