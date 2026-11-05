@@ -49,7 +49,7 @@ spec:
       sources:
         - repoURL: https://kubernetes-sigs.github.io/external-dns/
           chart: external-dns
-          targetRevision: "1.21.1"
+          targetRevision: "1.23.0"
           helm:
             releaseName: external-dns
             # Per-cluster ownership + zone scoping (see the file header). Owner id

@@ -46,7 +46,7 @@ spec:
         # it. This is the OSS lineage, continuous from the fork point.
         - repoURL: https://grafana-community.github.io/helm-charts
           chart: loki
-          targetRevision: 18.7.5
+          targetRevision: 18.17.1
           helm:
             releaseName: loki
             # S3 log storage, injected only on clusters carrying the observability/loki-bucket

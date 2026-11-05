@@ -84,7 +84,7 @@ spec:
         # Upstream, pinned to the same version as the chart in
         # applicationsets/addons-argo-workflows.yaml. Move both together.
         repoURL: https://github.com/argoproj/argo-helm
-        targetRevision: argo-workflows-1.0.23
+        targetRevision: argo-workflows-1.1.1
         path: charts/argo-workflows/files/crds/full
       destination:
         server: https://kubernetes.default.svc
