@@ -31,7 +31,7 @@ spec:
                   namespace: envoy-gateway-system
                   chartRepo: oci://docker.io/envoyproxy/ai-gateway-crds-helm
                   chart: ai-gateway-crds-helm
-                  chartVersion: "1.0.0"
+                  chartVersion: "1.2.1"
                   path: addons/ai-platform/envoy-ai-gateway-crds
                   syncWave: "40"
                 # envoy-gateway before envoy-ai-gateway: the AI layer registers a
@@ -40,14 +40,14 @@ spec:
                   namespace: envoy-gateway-system
                   chartRepo: oci://docker.io/envoyproxy/gateway-helm
                   chart: gateway-helm
-                  chartVersion: "1.8.3"
+                  chartVersion: "1.10.0"
                   path: addons/ai-platform/envoy-gateway
                   syncWave: "41"
                 - appName: envoy-ai-gateway
                   namespace: envoy-gateway-system
                   chartRepo: oci://docker.io/envoyproxy/ai-gateway-helm
                   chart: ai-gateway-helm
-                  chartVersion: "1.0.0"
+                  chartVersion: "1.2.1"
                   path: addons/ai-platform/envoy-ai-gateway
                   syncWave: "42"
   template:

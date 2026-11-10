@@ -34,7 +34,7 @@ spec:
                   namespace: kube-system
                   chartRepo: https://aws.github.io/eks-charts
                   chart: aws-load-balancer-controller
-                  chartVersion: "3.5.0"
+                  chartVersion: "3.6.2"
                   path: addons/networking/aws-load-balancer-controller
                   syncWave: "1"
   template:
