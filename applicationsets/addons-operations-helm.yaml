@@ -27,7 +27,7 @@ spec:
                   namespace: vpa
                   chartRepo: https://charts.fairwinds.com/stable
                   chart: vpa
-                  chartVersion: "4.12.5"
+                  chartVersion: "5.2.0"
                   path: addons/operations/vpa
                   syncWave: "41"
                 - appName: goldilocks

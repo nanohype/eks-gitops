@@ -176,22 +176,21 @@ advisories:
   - id: CVE-2026-111497
     package: brotli-libs
     reason: >-
-      The Brotli decoder in the Alpine base of three images, at 1.2.0-r1 and
+      The Brotli decoder in the Alpine base of two images, at 1.2.0-r1 and
       fixed in 1.2.1-r0: a crafted Brotli stream overflows a decoder buffer. In
-      each image the decoder is linked by curl and libcurl, and in the two nginx
-      images also by freetype, which the fontconfig tools link and nginx reaches
-      only through its image_filter module. Nothing this catalog starts loads
-      any of them. vpa's helm test pods run kubectl and a busybox sh script in
-      alpine/kubectl. The loki gateway runs nginx under the nginx.conf the loki
-      chart mounts over /etc/nginx, and opencost-ui under the image's own
-      nginx.conf with the server block the opencost chart mounts; neither has a
-      load_module line, neither entrypoint calls curl or a fontconfig tool, and
-      the probes on both containers are httpGet requests the kubelet sends.
-      Clears when the vpa, loki and opencost chart pins reach images built on
-      brotli 1.2.1-r0.
+      each image the decoder is linked by curl and libcurl, and also by
+      freetype, which the fontconfig tools link and nginx reaches only through
+      its image_filter module. Nothing this catalog starts loads any of them.
+      The loki gateway runs nginx under the nginx.conf the loki chart mounts
+      over /etc/nginx, and opencost-ui under the image's own nginx.conf with
+      the server block the opencost chart mounts; neither has a load_module
+      line, neither entrypoint calls curl or a fontconfig tool, and the probes
+      on both containers are httpGet requests the kubelet sends. Clears when
+      the loki and opencost chart pins reach images built on brotli 1.2.1-r0.
+      (vpa's alpine/kubectl test image left this entry when vpa 5 moved it
+      onto brotli 1.2.1-r0.)
     review_by: 2027-01-31
     images:
-      - alpine/kubectl
       - docker.io/nginxinc/nginx-unprivileged
       - ghcr.io/opencost/opencost-ui
 
