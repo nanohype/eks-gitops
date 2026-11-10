@@ -53,25 +53,40 @@ const NODE_VERSION_FILE = join(ROOT, ".node-version");
 const ENGINE_FLOOR = /^(?<op>\^|>=)\s*(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$/;
 const VERSION = /^v?(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)/;
 
-const parseFloor = (range) => {
-  const m = ENGINE_FLOOR.exec((range ?? "").trim());
+// A disjunction (`^24.11.0 || ^26.13.0`) is read as its alternatives, each of
+// which must itself be one of the forms above: a version satisfies the range
+// when it satisfies any alternative. One alternative this cannot read refuses
+// the whole range, for the same reason a lone unreadable form does.
+const parseAlternative = (range) => {
+  const m = ENGINE_FLOOR.exec(range.trim());
   if (!m) return null;
   return {
     caret: m.groups.op === "^",
     major: +m.groups.major,
     minor: +m.groups.minor,
     patch: +m.groups.patch,
-    text: range.trim(),
   };
+};
+
+const parseFloor = (range) => {
+  const text = (range ?? "").trim();
+  if (!text) return null;
+  const alternatives = text.split("||").map(parseAlternative);
+  if (alternatives.some((a) => a === null)) return null;
+  return { alternatives, text };
+};
+
+const satisfiesAlternative = (major, minor, patch, floor) => {
+  if (major !== floor.major) return floor.caret ? false : major > floor.major;
+  if (minor !== floor.minor) return minor > floor.minor;
+  return patch >= floor.patch;
 };
 
 const satisfies = (version, floor) => {
   const m = VERSION.exec((version ?? "").trim());
   if (!m) return false;
   const [major, minor, patch] = [+m.groups.major, +m.groups.minor, +m.groups.patch];
-  if (major !== floor.major) return floor.caret ? false : major > floor.major;
-  if (minor !== floor.minor) return minor > floor.minor;
-  return patch >= floor.patch;
+  return floor.alternatives.some((a) => satisfiesAlternative(major, minor, patch, a));
 };
 
 const write = process.argv.includes("--write");

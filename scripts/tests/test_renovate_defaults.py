@@ -187,6 +187,28 @@ class TheDriftCheckAgainstAPackageFixture(unittest.TestCase):
                                         node_version=f"{major + 1}.0.0"))
         self.assertEqual(rc, 0, out)
 
+    def test_a_disjunction_admits_a_pin_in_its_later_alternative(self):
+        """`^24.11.0 || ^26.13.0` is how the package declares two supported
+        majors. A pin satisfying only the second alternative is supported."""
+        major = running_major()
+        rc, out = self.run_in(self.tree(engines=f"^{major - 2}.0.0 || ^{major}.0.0",
+                                        node_version=f"{major}.0.0"))
+        self.assertEqual(rc, 0, out)
+
+    def test_a_disjunction_rejects_a_pin_between_its_alternatives(self):
+        """The major between two caret alternatives satisfies neither; reading
+        the disjunction as a lower bound would pass it."""
+        major = running_major()
+        rc, out = self.run_in(self.tree(engines=f"^{major - 2}.0.0 || ^{major}.0.0",
+                                        node_version=f"{major - 1}.0.0"))
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f".node-version pins node {major - 1}.0.0", out)
+
+    def test_a_disjunction_the_runtime_satisfies_by_neither_cannot_run(self):
+        major = running_major()
+        rc, out = self.run_in(self.tree(engines=f"^{major - 2}.0.0 || ^{major + 2}.0.0"))
+        self.assertEqual(rc, 2, out)
+
     def test_an_absent_node_version_is_a_tree_defect(self):
         """Inherited from the runner, the floor is satisfied by luck rather than
         by a pin — which is the state this whole check exists to end."""
