@@ -108,6 +108,15 @@
       "allowedVersions": "!/^5\\.25\\.0$/"
     },
     {
+      "description": [
+        "Exclude kube-state-metrics 9.0.0, whose published archive does not match the digest prometheus-community's Helm index records for it.",
+        "The index at prometheus-community.github.io/helm-charts lists 9.0.0 with sha256 d187c0990b6e..., while the release asset at github.com/prometheus-community/helm-charts/releases/download/kube-state-metrics-9.0.0/kube-state-metrics-9.0.0.tgz hashes to 40a1bb2a2823...; 8.8.0 and earlier match. scripts/registry.py refuses the mismatch, so the 'Pinned chart archives' job failed on #267.",
+        "Excludes that one version, as for grafana-operator above; drop the rule once the two agree or a later release ships."
+      ],
+      "matchPackageNames": ["kube-state-metrics"],
+      "allowedVersions": "!/^9\\.0\\.0$/"
+    },
+    {
       "matchDatasources": [
         "helm",
         "docker"
