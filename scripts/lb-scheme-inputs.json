@@ -3,8 +3,8 @@
   "controller": {
     "chartRepo": "https://aws.github.io/eks-charts",
     "chart": "aws-load-balancer-controller",
-    "chartVersion": "3.5.0",
-    "sourceRef": "v3.5.0"
+    "chartVersion": "3.6.2",
+    "sourceRef": "v3.6.2"
   },
   "controllerConfig": {
     "args": {

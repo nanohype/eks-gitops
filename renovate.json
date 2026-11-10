@@ -99,6 +99,15 @@
   ],
   "packageRules": [
     {
+      "description": [
+        "Exclude grafana-operator 5.25.0, whose published archive does not match the digest grafana's Helm index records for it.",
+        "The index at grafana.github.io/helm-charts lists 5.25.0 with sha256 23fc876a6e41..., while the release asset at github.com/grafana/helm-charts/releases/download/grafana-operator-5.25.0/grafana-operator-5.25.0.tgz hashes to 4a5319f9796a.... scripts/registry.py refuses an archive that does not match its index, which is what the 'Pinned chart archives' job reported, so the bump could not render anywhere in CI.",
+        "allowedVersions excludes that one version rather than freezing the chart: the next grafana-operator release is proposed as usual, and this rule can go once the index and the asset agree or a later version ships."
+      ],
+      "matchPackageNames": ["grafana-operator"],
+      "allowedVersions": "!/^5\\.25\\.0$/"
+    },
+    {
       "matchDatasources": [
         "helm",
         "docker"
