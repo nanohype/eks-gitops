@@ -8,7 +8,7 @@
   ],
   "generated": {
     "by": "scripts/check-renovate-defaults.mjs --write",
-    "renovate": "44.65.0"
+    "renovate": "44.222.0"
   },
   "managers": {
     "argocd": [],
