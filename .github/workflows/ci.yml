@@ -41,8 +41,8 @@ env:
   # image for the same minor. scripts/check-digest-rewrite.sh reads it from here.
   KIND_NODE_IMAGE: kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed
   # renovate: datasource=github-releases depName=kubernetes/kubernetes
-  KUBECTL_VERSION: v1.36.4
-  KUBECTL_SHA256: 8b8f088da2dab964f853b38464033b1be15ede2839eca751482357c45abdd05a
+  KUBECTL_VERSION: v1.37.2
+  KUBECTL_SHA256: c04487523e7aa7d1493f7808174c899db93d7a9cf57531420cd76b9bd415f8f4
   # renovate: datasource=github-releases depName=gitleaks/gitleaks
   GITLEAKS_VERSION: 8.30.1
   GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
@@ -53,7 +53,7 @@ env:
   SHELLCHECK_VERSION: v0.11.0
   SHELLCHECK_SHA256: b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6
   # renovate: datasource=github-releases depName=aquasecurity/trivy
-  TRIVY_VERSION: v0.76.1
+  TRIVY_VERSION: v0.76.2
   # helm and kustomize through their setup actions, which read an empty or
   # absent version as "the latest release": unpinned, the render gates moved
   # with whatever upstream published last, between two runs of the same tree.
@@ -62,7 +62,7 @@ env:
   # renovate: datasource=github-releases depName=helm/helm
   HELM_VERSION: v4.3.1
   # renovate: datasource=github-releases depName=kubernetes-sigs/kustomize
-  KUSTOMIZE_VERSION: 5.8.1
+  KUSTOMIZE_VERSION: 5.8.3
   # renovate: datasource=npm depName=renovate
   RENOVATE_VERSION: 44.222.0
 
