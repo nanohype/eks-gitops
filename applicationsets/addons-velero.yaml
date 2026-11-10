@@ -50,7 +50,7 @@ spec:
       sources:
         - repoURL: https://vmware-tanzu.github.io/helm-charts
           chart: velero
-          targetRevision: 12.2.2
+          targetRevision: 12.2.3
           helm:
             releaseName: velero
             # Bucket from the per-cluster annotation, region from the per-cluster
