@@ -35,7 +35,7 @@ spec:
                   namespace: monitoring
                   chartRepo: https://prometheus-community.github.io/helm-charts
                   chart: prometheus-operator-crds
-                  chartVersion: "31.0.1"
+                  chartVersion: "33.0.1"
                   path: addons/bootstrap/prometheus-operator-crds
                   syncWave: "0"
                 - appName: metrics-server
