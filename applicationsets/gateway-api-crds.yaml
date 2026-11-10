@@ -70,7 +70,7 @@ spec:
         # Upstream, pinned. NOT this org's catalog — these are someone else's
         # artifacts, consumed at a pinned version, exactly like a Helm chart.
         repoURL: https://github.com/kubernetes-sigs/gateway-api
-        targetRevision: v1.6.1
+        targetRevision: v1.7.0
         path: config/crd/standard
       destination:
         server: https://kubernetes.default.svc

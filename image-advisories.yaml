@@ -59,7 +59,6 @@ advisories:
       - natsio/nats-server-config-reloader
       - natsio/prometheus-nats-exporter
       - quay.io/argoproj/argo-events
-      - registry.k8s.io/metrics-server/metrics-server
 
   - id: CVE-2024-24790
     package: stdlib
@@ -76,11 +75,10 @@ advisories:
   - id: CVE-2026-33186
     package: google.golang.org/grpc
     reason: >-
-      A transitive module in two upstream controllers, fixed in grpc-go 1.79.3.
-      Not separable from the binary; it moves when each project rebuilds.
+      A transitive module in an upstream controller, fixed in grpc-go 1.79.3.
+      Not separable from the binary; it moves when the project rebuilds.
     images:
       - quay.io/argoproj/argo-events
-      - registry.k8s.io/metrics-server/metrics-server
 
   - id: CVE-2026-33815
     package: github.com/jackc/pgx/v5

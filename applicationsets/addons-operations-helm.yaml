@@ -34,14 +34,14 @@ spec:
                   namespace: goldilocks
                   chartRepo: https://charts.fairwinds.com/stable
                   chart: goldilocks
-                  chartVersion: 11.2.0
+                  chartVersion: 11.2.1
                   path: addons/operations/goldilocks
                   syncWave: "42"
                 - appName: descheduler
                   namespace: kube-system
                   chartRepo: https://kubernetes-sigs.github.io/descheduler/
                   chart: descheduler
-                  chartVersion: "0.36.0"
+                  chartVersion: "0.37.0"
                   path: addons/operations/descheduler
                   syncWave: "43"
                 # karpenter deploys at wave 5 (before this appset's operations

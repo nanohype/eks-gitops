@@ -27,7 +27,7 @@ spec:
                   namespace: argo-rollouts
                   chartRepo: https://argoproj.github.io/argo-helm
                   chart: argo-rollouts
-                  chartVersion: "2.41.1"
+                  chartVersion: "2.43.9"
                   path: addons/argo-platform/argo-rollouts
                   syncWave: "50"
                 - appName: argo-events

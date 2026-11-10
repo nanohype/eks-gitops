@@ -13,12 +13,12 @@
     },
     "gateway-api-crds": {
       "repoURL": "https://github.com/kubernetes-sigs/gateway-api",
-      "targetRevision": "v1.6.1",
+      "targetRevision": "v1.7.0",
       "path": "config/crd/standard",
       "recurse": false,
       "include": "",
       "exclude": "",
-      "bytes": 1169515,
+      "bytes": 1186665,
       "files": 11
     },
     "portal-tenants": {
