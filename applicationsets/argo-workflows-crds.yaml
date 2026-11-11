@@ -11,34 +11,37 @@
 # tier is the visible casualty, but anything declaring an argoproj.io CR before
 # wave 52 has the same problem.
 #
-# FETCH-AT-SYNC. The chart does not ship its CRDs as manifests. At
+# FETCH-AT-SYNC. The chart does not ship its full CRDs as manifests. At
 # crds.full=true — the default, which this catalog took — templates/crds.yaml
 # renders NOTHING and templates/crds-install-job.yaml renders a
-# `helm.sh/hook: pre-install,pre-upgrade` Job that runs
+# `helm.sh/hook: pre-install,pre-upgrade` Job. Through chart 1.x that Job ran
+# `kubectl apply --server-side -f https://raw.githubusercontent.com/...` for each
+# of the eight CRDs; from chart 2.0 it runs the
+# quay.io/argoproj/argo-workflows-crdinstaller image, which carries the CRDs for
+# its own tag. Either way the control plane's CRDs arrive by a hook at wave 52,
+# fetched or pulled at sync time, rather than as manifests this catalog pins and
+# reviews — the thing gateway-api-crds.yaml declines to do, in the same words:
+# "rather than [...] fetching a release URL at sync time (which would make every
+# sync depend on a GitHub download and silently drift as the tag moves)".
+# addons/argo-platform/argo-workflows/values.yaml sets crds.install: false, so
+# that Job does not render and this Application is the single owner of the eight
+# objects.
 #
-#   kubectl apply --server-side -f https://raw.githubusercontent.com/argoproj/argo-helm/argo-workflows-<ver>/charts/argo-workflows/files/crds/full/<crd>.yaml
+# SOURCE: argoproj/argo-workflows at the tag of the controller the chart
+# installs — the chart's appVersion. Chart 2.0 deleted files/crds/full from
+# argo-helm (only `minimal` is left there), so the chart repository no longer
+# publishes the set its Job installs; the installer image is built from
+# manifests/base/crds/full in argo-workflows at the same tag, which is the path
+# below. That directory also holds a kustomization.yaml and a README, so the
+# source declares `directory` explicitly and includes only the CRD files:
+# without the block ArgoCD would classify the path as kustomize, and with it but
+# no include it would try to apply the Kustomization as an object.
 #
-# for each of the eight CRDs. That makes the cluster's control plane depend on
-# live egress to raw.githubusercontent.com from the argo-workflows namespace, at
-# sync time, forever — the exact thing gateway-api-crds.yaml declines to do, in
-# the same words: "rather than [...] fetching a release URL at sync time (which
-# would make every sync depend on a GitHub download and silently drift as the tag
-# moves)". addons/argo-platform/argo-workflows/values.yaml sets
-# crds.install: false, so that Job does not render and this Application is the
-# single owner of the eight objects.
-#
-# SOURCE: argoproj/argo-helm at the tag matching the chart pin, not
-# argoproj/argo-workflows at its appVersion. Both publish the same eight CRDs,
-# but this path is definitionally the set THIS chart version installs — it is the
-# directory the hook Job was pointed at — so there is one version string to move
-# rather than a chart pin and an app version that can skew. It is also a plain
-# manifest directory (no kustomization.yaml, no README), which is what ArgoCD
-# renders most predictably.
-#
-# This tag and the chart pin in addons-argo-workflows.yaml must stay equal, and
+# This tag and the chart's appVersion must stay equal, and
 # scripts/check-sync-waves.py asserts that rather than trusting two Renovate
-# managers to move in step. A Renovate PR bumping only the chart therefore lands
-# RED, naming the tag it needs — which is the point. Move both in one commit.
+# managers to move in step. It records the appVersion against the chart pin it
+# was read at, so a Renovate PR bumping only the chart lands RED, naming the pin
+# to re-read — which is the point. Move both in one commit.
 #
 # FULL, not minimal. The chart's own Job applies the `full` variants; `minimal`
 # strips the validation schemas. Server-side apply makes the size a non-issue.
@@ -81,11 +84,13 @@ spec:
     spec:
       project: platform
       source:
-        # Upstream, pinned to the same version as the chart in
+        # Upstream, pinned to the appVersion of the chart in
         # applicationsets/addons-argo-workflows.yaml. Move both together.
-        repoURL: https://github.com/argoproj/argo-helm
-        targetRevision: argo-workflows-1.1.1
-        path: charts/argo-workflows/files/crds/full
+        repoURL: https://github.com/argoproj/argo-workflows
+        targetRevision: v4.1.6
+        path: manifests/base/crds/full
+        directory:
+          include: 'argoproj.io_*.yaml'
       destination:
         server: https://kubernetes.default.svc
         namespace: kube-system
