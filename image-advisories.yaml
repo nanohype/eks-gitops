@@ -140,22 +140,6 @@ advisories:
     images:
       - quay.io/argoproj/argo-events
 
-  - id: GHSA-6q48-6c7w-9gw2
-    package: certifi
-    reason: >-
-      The CA bundle in the k8s-sidecar image the loki chart runs in the loki
-      StatefulSet to load rule ConfigMaps (container loki-sc-rules), fixed in
-      certifi 2026.10.18: it still trusts the emSign ECC root whose revoked
-      intermediates had compromised keys. The loki chart pins
-      kiwigrid/k8s-sidecar 2.14.1. The sidecar's one TLS peer in this render is
-      the Kubernetes API, which the Kubernetes Python client verifies against
-      the service account's ca.crt rather than certifi's bundle; the chart sets
-      no REQ_URL, so the sidecar calls nothing else. Clears when a loki chart
-      pins a k8s-sidecar built on certifi 2026.10.18 or later.
-    review_by: 2027-01-31
-    images:
-      - docker.io/kiwigrid/k8s-sidecar
-
   - id: CVE-2026-31789
     package: libcrypto3
     reason: >-

@@ -2,13 +2,13 @@
   "_README": "What each directory-source Application asks argocd-repo-server to combine, measured the way the repo-server measures it. A source over the ceiling in contracts/repo-server.json generates nothing and reports ComparisonError, which is quieter than OutOfSync. The sizes are a function of (repoURL, targetRevision, path): moving a pin makes this record stale, and a stale record fails the blocking gate, so a bump cannot land without the new size landing in the same diff. Re-measure with scripts/check-directory-manifest-size.py --sync.",
   "sources": {
     "argo-workflows-crds": {
-      "repoURL": "https://github.com/argoproj/argo-helm",
-      "targetRevision": "argo-workflows-1.1.1",
-      "path": "charts/argo-workflows/files/crds/full",
+      "repoURL": "https://github.com/argoproj/argo-workflows",
+      "targetRevision": "v4.1.6",
+      "path": "manifests/base/crds/full",
       "recurse": false,
-      "include": "",
+      "include": "argoproj.io_*.yaml",
       "exclude": "",
-      "bytes": 11979619,
+      "bytes": 11979595,
       "files": 8
     },
     "gateway-api-crds": {

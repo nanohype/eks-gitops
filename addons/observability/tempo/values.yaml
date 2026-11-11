@@ -14,8 +14,13 @@ tempo:
           endpoint: "0.0.0.0:14250"
         thrift_http:
           endpoint: "0.0.0.0:14268"
-  ingester:
-    trace_idle_period: 10s
+  # Tempo 3 runs a live-store where 2.x ran an ingester: it holds recent traces
+  # and cuts them into blocks. Chart 3.x dropped `tempo.ingester` without an
+  # error, so these are the same three limits under their live-store names
+  # (trace_idle_period became max_trace_idle). max_trace_idle has to stay at or
+  # below max_trace_live (30s by default), or Tempo refuses to start.
+  liveStore:
+    max_trace_idle: 10s
     max_block_bytes: 100000000  # 100MB
     max_block_duration: 5m
   retention: 168h  # 7 days default

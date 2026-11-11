@@ -137,15 +137,25 @@ CRD_PRECEDENCE: dict[str, dict[str, Any]] = {
             "addons-agent-operator.yaml":
                 "charts/operator renders a WorkflowTemplate (eks-agent-platform)",
         },
-        # These CRDs are sourced from the chart's own repo at the tag matching the
-        # chart pin, so the two must move together. Splitting the CRDs out of the
-        # chart created that coupling; this is what keeps it honest, because a
-        # Renovate bump to one and not the other would leave the controller
-        # running against a different CRD generation with nothing complaining.
+        # These CRDs are sourced from argoproj/argo-workflows at the tag of the
+        # controller the chart installs, so the two must move together.
+        # Splitting the CRDs out of the chart created that coupling; this is
+        # what keeps it honest, because a Renovate bump to one and not the other
+        # would leave the controller running against a different CRD generation
+        # with nothing complaining.
+        #
+        # The controller's tag is the chart's appVersion, which no file in this
+        # repository carries, and this gate reads no registry (the appsets job is
+        # offline by design). So the pair is recorded: `chart_version` is the pin
+        # it was read at, `app_version` what that chart's Chart.yaml declares.
+        # Moving the chart pin fails here until the pair is re-read
+        #     helm show chart argo-workflows --repo https://argoproj.github.io/argo-helm --version <pin>
+        # and the CRD source moved to the new appVersion with it.
         "version_lock": {
             "appset": "addons-argo-workflows.yaml",
             "chart": "argo-workflows",
-            "tag_prefix": "argo-workflows-",
+            "chart_version": "2.0.18",
+            "app_version": "v4.1.6",
         },
     },
     "gateway-api-crds.yaml": {
@@ -409,12 +419,23 @@ def main() -> int:
             )
             print(f"  MISSING   version lock  {lock['chart']} in {lock['appset']}")
             continue
-        want = f"{lock['tag_prefix']}{chart_ver}"
+        if chart_ver != lock["chart_version"]:
+            errors.append(
+                f"CRD version lock: {lock['appset']} pins chart {lock['chart']} "
+                f"{chart_ver}, but the lock records the appVersion of "
+                f"{lock['chart_version']} — read `helm show chart {lock['chart']} "
+                f"--version {chart_ver}`, record its appVersion here, and move "
+                f"{provider} to that tag in the same commit"
+            )
+            print(f"  STALE     version lock  records {lock['chart']} "
+                  f"{lock['chart_version']}, pin is {chart_ver}")
+            continue
+        want = lock["app_version"]
         if got != want:
             errors.append(
                 f"CRD version lock: {provider} is pinned to '{got}' but "
-                f"{lock['appset']} pins chart {lock['chart']} {chart_ver}, so the "
-                f"CRDs should come from '{want}' — the controller and its CRDs "
+                f"{lock['appset']} pins chart {lock['chart']} {chart_ver}, whose "
+                f"appVersion is '{want}' — the controller and its CRDs "
                 f"would be different generations"
             )
             print(f"  CONFLICT  version lock  {got} != {want}")
