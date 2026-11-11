@@ -43,7 +43,7 @@ spec:
         # in the same move and lives in the community repo too.
         - repoURL: https://grafana-community.github.io/helm-charts
           chart: tempo
-          targetRevision: 2.4.0
+          targetRevision: 3.2.1
           helm:
             releaseName: tempo
             # S3 trace storage, injected only on clusters carrying the observability/tempo-bucket
