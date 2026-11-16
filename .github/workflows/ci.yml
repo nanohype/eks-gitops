@@ -366,7 +366,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install helm
-        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+        uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5
         with:
           version: ${{ env.HELM_VERSION }} # zizmor: ignore[unpinned-tools]
       - name: Set up Python
@@ -393,7 +393,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install helm
-        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+        uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5
         with:
           version: ${{ env.HELM_VERSION }} # zizmor: ignore[unpinned-tools]
       - name: Set up Python
@@ -489,7 +489,7 @@ jobs:
         with:
           kustomize-version: ${{ env.KUSTOMIZE_VERSION }} # zizmor: ignore[unpinned-tools]
       - name: Install Helm
-        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+        uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5
         with:
           version: ${{ env.HELM_VERSION }} # zizmor: ignore[unpinned-tools]
       # Every other gate in this workflow checks a manifest. This one checks
@@ -844,7 +844,7 @@ jobs:
         with:
           kustomize-version: ${{ env.KUSTOMIZE_VERSION }} # zizmor: ignore[unpinned-tools]
       - name: Install Helm
-        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+        uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5
         with:
           version: ${{ env.HELM_VERSION }} # zizmor: ignore[unpinned-tools]
       - name: Each supply-chain overlay pins a tag and decides a foreign identity
@@ -915,7 +915,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Helm
-        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+        uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5
         with:
           version: ${{ env.HELM_VERSION }} # zizmor: ignore[unpinned-tools]
 
@@ -972,7 +972,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Helm
-        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+        uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5
         with:
           version: ${{ env.HELM_VERSION }} # zizmor: ignore[unpinned-tools]
 
@@ -1046,7 +1046,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Helm
-        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+        uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5
         with:
           version: ${{ env.HELM_VERSION }} # zizmor: ignore[unpinned-tools]
 
@@ -1246,7 +1246,7 @@ jobs:
           kustomize-version: ${{ env.KUSTOMIZE_VERSION }} # zizmor: ignore[unpinned-tools]
 
       - name: Install Helm
-        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+        uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5
         with:
           version: ${{ env.HELM_VERSION }} # zizmor: ignore[unpinned-tools]
 
