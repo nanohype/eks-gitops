@@ -11,7 +11,7 @@ observability chart set below security, an operations addon jumped ahead of the
 CNI — renders clean, schema-validates clean, and only surfaces as a stuck sync or
 a crash-loop on a real cluster. This gate catches it at PR time.
 
-Three assertions:
+Four assertions:
 
   A. CATEGORY ORDERING. The eight primary addon categories deploy in the
      documented sequence — bootstrap < networking < security < observability <
@@ -39,7 +39,11 @@ Three assertions:
 
      A controller that merely WATCHES a CRD is not a consumer — it starts, finds
      no such kind, and retries. Conflating the two produces false conflicts; see
-     the gateway-api entry, which has no consumers for exactly that reason.
+     the gateway-api entry, whose one consumer is the GatewayClass manifest and
+     not the controllers that create Gateways at runtime.
+
+  D. CHART LOCKS. A controller chart and the CRD-only chart its CRDs were split
+     into are one release, so CHART_LOCKS holds each pair to one version.
 """
 
 from __future__ import annotations
@@ -173,18 +177,49 @@ CRD_PRECEDENCE: dict[str, dict[str, Any]] = {
     },
     "gateway-api-crds.yaml": {
         "group": "gateway.networking.k8s.io",
-        "consumers": {},
-        "note": (
-            "No ApplicationSet renders a Gateway API manifest. gateway-helm and "
-            "ai-gateway-helm render none (checked); the operator chart names the "
-            "group only in an RBAC rule, which needs no CRD; agent-platform ships "
-            "nanohype.dev CRs only. Envoy Gateway and the ModelGateway controller "
-            "create Gateway/HTTPRoute at RUNTIME, so wave 30 is about controller "
-            "readiness, not sync ordering. Do not add consumers here without "
-            "rendering them first."
-        ),
+        "consumers": {
+            # `kustomize build addons/ai-platform/gateway-classes/overlays/<env>`
+            # renders kind: GatewayClass (gateway.networking.k8s.io/v1).
+            "addons-ai-platform-kustomize.yaml":
+                "addons/ai-platform/gateway-classes renders the envoy-ai-gateway "
+                "GatewayClass (gateway.networking.k8s.io/v1)",
+        },
+        # The other Gateway API users are controllers, not consumers in this
+        # sense: gateway-helm and ai-gateway-helm render no Gateway API object
+        # (checked), the operator chart names the group only in an RBAC rule,
+        # and Envoy Gateway and the ModelGateway controller create Gateway and
+        # HTTPRoute at RUNTIME. gateway-helm's bundled copy of these CRDs is
+        # turned off (crds.enabled: false) so this ApplicationSet is their only
+        # owner; render-addons.py fails a chart that installs one.
     },
 }
+
+# Pairs of charts that are one release split in two — a controller and the
+# CRD-only chart its CRDs moved into — and so must carry the same version. Each
+# pin is read from the appset that carries it; a Renovate bump to one without
+# the other would run a controller against CRDs from another generation, with
+# every render green.
+CHART_LOCKS: list[tuple[str, str, str]] = [
+    ("addons-ai-platform.yaml", "gateway-helm", "gateway-crds-helm"),
+    ("addons-ai-platform.yaml", "ai-gateway-helm", "ai-gateway-crds-helm"),
+]
+
+
+def chart_locks() -> list[str]:
+    """Every CHART_LOCKS pair whose two pins disagree, or cannot be read."""
+    problems = []
+    for appset, controller, crds in CHART_LOCKS:
+        got = {chart: _chart_version(APPSET_DIR / appset, chart)
+               for chart in (controller, crds)}
+        missing = [chart for chart, version in got.items() if version is None]
+        if missing:
+            problems.append(f"chart lock: {', '.join(missing)} not pinned in {appset} "
+                            f"— the lock cannot be evaluated")
+        elif got[controller] != got[crds]:
+            problems.append(f"chart lock: {appset} pins {controller} {got[controller]} "
+                            f"but {crds} {got[crds]} — the controller and its CRDs "
+                            f"move together")
+    return problems
 
 
 def _category(appset_file: str, path: str | None) -> str | None:
@@ -455,6 +490,13 @@ def main() -> int:
         else:
             print(f"  ok        version lock  {provider} @ {got} tracks "
                   f"{lock['chart']} {chart_ver}")
+
+    print("\nChart locks (a controller and its CRD chart at one version):")
+    lock_problems = chart_locks()
+    errors.extend(lock_problems)
+    for appset, controller, crds in CHART_LOCKS:
+        bad = any(controller in p and crds in p for p in lock_problems)
+        print(f"  {'CONFLICT' if bad else 'ok':9} {controller} = {crds}  ({appset})")
 
     if errors:
         print(f"\n{len(errors)} sync-wave conflict(s):", file=sys.stderr)

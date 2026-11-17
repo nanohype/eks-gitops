@@ -32,6 +32,30 @@ SOURCE OF TRUTH
     reproduced with synthetic values so the render matches what ArgoCD does at
     sync (e.g. aws-load-balancer-controller refuses to render without clusterName).
 
+CUSTOM RESOURCE DEFINITIONS
+    ArgoCD renders a Helm source with ``--include-crds`` unless the source sets
+    ``helm.skipCrds: true`` (argo-cd util/helm/cmd.go), so a chart's ``crds/``
+    directory, a subchart's included, is part of what that Application owns.
+    This gate renders the same way, and then asks the one question no
+    per-chart render can: does any CRD belong to two Applications? Two owners
+    of one CRD take turns overwriting it on every self-heal, at whatever
+    release and channel each one carries, and ArgoCD reports that as a
+    SharedResourceWarning on an Application that otherwise looks healthy.
+
+    The question is asked of every cluster-scoped object, not only CRDs
+    (CLUSTER_SCOPED_KINDS): gateway-helm's bundle carried a second copy of the
+    Gateway API safe-upgrades ValidatingAdmissionPolicy as well as the CRDs, and
+    a cluster-scoped object has one name per cluster whatever namespace each
+    Application targets. Namespaced objects are not compared — two Applications
+    syncing into different namespaces own different objects.
+
+    The directory sources that install CRDs (gateway-api-crds,
+    argo-workflows-crds) are not charts and are not rendered here, so what they
+    own is recorded in DIRECTORY_OWNERS against the exact (repoURL,
+    targetRevision, path) it was read from. A record whose source no longer
+    matches its ApplicationSet fails the gate, so moving a pin or a channel
+    cannot leave a stale record certifying the old contents.
+
 FETCHING
     Each chart is fetched through registry.py's client into the chart
     cache and rendered from that local archive, so helm never reaches a
@@ -56,6 +80,7 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
+from typing import Any
 
 import gatelib
 import registry
@@ -96,6 +121,67 @@ PARAM_SYNTH = {
     "vpcId": "vpc-00000000000000000",
 }
 
+# What a directory-source Application owns, recorded against the exact source it
+# was read from. Those sources are manifest directories in another repository,
+# read at a pinned tag, so no render here sees what they install; a chart that
+# installs the same object is a second owner all the same. A CRD is matched by
+# group where the directory owns the whole group: argoproj.io is shared by four
+# projects' charts, so argo-workflows-crds is matched by the CRDs it installs.
+#
+# `source` must equal the ApplicationSet's template source. A pin bump or a
+# channel change (config/crd/standard -> experimental adds the
+# gateway.networking.x-k8s.io group) makes it differ, and directory_owner_drift
+# fails the gate until the record is re-read from the new source.
+@dataclass(frozen=True)
+class DirectoryOwner:
+    appset: str
+    source: tuple[str, str, str]  # (repoURL, targetRevision, path)
+    crd_groups: tuple[str, ...] = ()
+    objects: tuple[str, ...] = ()  # object_key()s: "Kind/name"
+
+    @property
+    def label(self) -> str:
+        repo, rev, path = self.source
+        return f"{self.appset} ({repo.removeprefix('https://github.com/')} {rev} {path})"
+
+
+DIRECTORY_OWNERS = (
+    DirectoryOwner(
+        appset="gateway-api-crds.yaml",
+        source=("https://github.com/kubernetes-sigs/gateway-api", "v1.7.0",
+                "config/crd/standard"),
+        crd_groups=("gateway.networking.k8s.io",),
+        objects=("ValidatingAdmissionPolicy/safe-upgrades.gateway.networking.k8s.io",
+                 "ValidatingAdmissionPolicyBinding/safe-upgrades.gateway.networking.k8s.io"),
+    ),
+    DirectoryOwner(
+        appset="argo-workflows-crds.yaml",
+        source=("https://github.com/argoproj/argo-workflows", "v4.1.6",
+                "manifests/base/crds/full"),
+        objects=tuple(f"CustomResourceDefinition/{plural}.argoproj.io" for plural in (
+            "clusterworkflowtemplates", "cronworkflows", "workflowartifactgctasks",
+            "workfloweventbindings", "workflows", "workflowtaskresults",
+            "workflowtasksets", "workflowtemplates")),
+    ),
+)
+
+# Cluster-scoped kinds, by API group. One name per cluster, so two Applications
+# rendering one are two owners whatever their destination namespaces.
+CLUSTER_SCOPED_KINDS = {
+    "": {"Namespace"},
+    "apiextensions.k8s.io": {"CustomResourceDefinition"},
+    "admissionregistration.k8s.io": {
+        "ValidatingAdmissionPolicy", "ValidatingAdmissionPolicyBinding",
+        "MutatingAdmissionPolicy", "MutatingAdmissionPolicyBinding",
+        "ValidatingWebhookConfiguration", "MutatingWebhookConfiguration"},
+    "apiregistration.k8s.io": {"APIService"},
+    "rbac.authorization.k8s.io": {"ClusterRole", "ClusterRoleBinding"},
+    "scheduling.k8s.io": {"PriorityClass"},
+    "storage.k8s.io": {"StorageClass", "CSIDriver"},
+    "networking.k8s.io": {"IngressClass"},
+    "gateway.networking.k8s.io": {"GatewayClass"},
+}
+
 
 @dataclass
 class Unit:
@@ -106,6 +192,7 @@ class Unit:
     path: str  # addon dir relative to repo root, e.g. addons/operations/velero
     params: list[tuple[str, str]] = field(default_factory=list)
     namespace: str = ""  # ArgoCD destination namespace the addon syncs into
+    skip_crds: bool = False  # the source's helm.skipCrds — ArgoCD omits crds/ when set
 
     @property
     def is_oci(self) -> bool:
@@ -182,6 +269,7 @@ def discover() -> list[Unit]:
             continue  # kustomize / git-sourced / local-chart appset — not ours
         helm = chart_src.get("helm", {}) or {}
         params = _synth_params(helm)
+        skip_crds = helm.get("skipCrds") is True
         name = appset_file.name
 
         if _is_template(chart_src["chart"]):
@@ -198,6 +286,7 @@ def discover() -> list[Unit]:
                         path=str(el["path"]),
                         params=params,
                         namespace=str(el.get("namespace", "")),
+                        skip_crds=skip_crds,
                     )
                 )
         else:
@@ -215,12 +304,107 @@ def discover() -> list[Unit]:
                     path=path,
                     params=params,
                     namespace=str(dest.get("namespace", "")),
+                    skip_crds=skip_crds,
                 )
             )
     return units
 
 
-def render(unit: Unit, env: str | None) -> tuple[bool, str]:
+# The C loader where the platform has it: CRD-heavy charts render megabytes, and
+# a render is parsed once per chart per environment.
+_BaseLoader: Any = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
+
+class _ManifestLoader(_BaseLoader):
+    """A safe loader that reads what Kubernetes reads.
+
+    A plain `=` scalar resolves to YAML 1.1's value tag, which PyYAML's safe
+    loaders have no constructor for; the API server's YAML decoder reads it as
+    the string "=". prometheus-operator-crds renders one in an enum. A subclass,
+    so the module-wide SafeLoader is left as it was.
+    """
+
+
+def _value_scalar(loader: Any, node: Any) -> Any:
+    return loader.construct_scalar(node)
+
+
+_ManifestLoader.add_constructor("tag:yaml.org,2002:value", _value_scalar)
+
+
+def cluster_objects(manifest: str) -> set[str]:
+    """The key of every cluster-scoped object in a rendered manifest stream.
+
+    A key is "Kind/name": kinds in CLUSTER_SCOPED_KINDS are unique per API group,
+    and the group is checked before a kind counts.
+    """
+    keys = set()
+    for doc in yaml.load_all(manifest, Loader=_ManifestLoader):
+        if not isinstance(doc, dict):
+            continue
+        kind = doc.get("kind")
+        api_version = str(doc.get("apiVersion", ""))
+        group = api_version.partition("/")[0] if "/" in api_version else ""
+        if kind not in CLUSTER_SCOPED_KINDS.get(group, ()):
+            continue
+        name = (doc.get("metadata") or {}).get("name")
+        if name:
+            keys.add(f"{kind}/{name}")
+    return keys
+
+
+def object_ownership(owners: dict[str, set[str]],
+                     directory: tuple[DirectoryOwner, ...] = DIRECTORY_OWNERS) -> list[str]:
+    """Every cluster-scoped object more than one Application would install.
+
+    ``owners`` maps an object key to the render units that rendered it. A
+    directory source that owns the object — by CRD group or by key — is an
+    owner too.
+    """
+    problems = []
+    for key in sorted(owners):
+        holders = set(owners[key])
+        kind, _, name = key.partition("/")
+        group = name.split(".", 1)[1] if kind == "CustomResourceDefinition" and "." in name else None
+        for d in directory:
+            if key in d.objects or (group is not None and group in d.crd_groups):
+                holders.add(d.label)
+        if len(holders) > 1:
+            problems.append(f"{key} is installed by {len(holders)} Applications: "
+                            + ", ".join(sorted(holders)))
+    return problems
+
+
+def _template_source(appset_file: pathlib.Path) -> tuple[str, str, str] | None:
+    doc = yaml.safe_load(appset_file.read_text())
+    src = ((((doc or {}).get("spec") or {}).get("template") or {}).get("spec") or {}).get("source")
+    if not isinstance(src, dict):
+        return None
+    return (str(src.get("repoURL", "")), str(src.get("targetRevision", "")),
+            str(src.get("path", "")))
+
+
+def directory_owner_drift(directory: tuple[DirectoryOwner, ...] = DIRECTORY_OWNERS,
+                          appset_dir: pathlib.Path | None = None) -> list[str]:
+    """Every DIRECTORY_OWNERS record whose ApplicationSet no longer reads its source."""
+    appset_dir = appset_dir or APPSET_DIR
+    problems = []
+    for d in directory:
+        path = appset_dir / d.appset
+        if not path.is_file():
+            problems.append(f"{d.appset}: recorded as a directory owner, but there is no such "
+                            f"ApplicationSet")
+            continue
+        live = _template_source(path)
+        if live != d.source:
+            problems.append(f"{d.appset}: ownership recorded for {d.source}, but the "
+                            f"ApplicationSet reads {live}. Re-read what that source installs "
+                            f"and update DIRECTORY_OWNERS in scripts/render-addons.py")
+    return problems
+
+
+def render(unit: Unit, env: str | None,
+           objects: dict[str, set[str]] | None = None) -> tuple[bool, str]:
     # The directory is the discriminator, and it has to be checked first.
     #
     # "this addon has no delta for this environment" and "the ApplicationSet
@@ -256,6 +440,10 @@ def render(unit: Unit, env: str | None) -> tuple[bool, str]:
     cmd = ["helm", "template", unit.chart, str(archive)]
     if unit.namespace:
         cmd += ["--namespace", unit.namespace]
+    # What ArgoCD does with a Helm source (argo-cd util/helm/cmd.go): crds/ is
+    # rendered, and so applied and owned, unless the source opts out.
+    if not unit.skip_crds:
+        cmd.append("--include-crds")
     for name, value in unit.params:
         cmd += ["--set", f"{name}={value}"]
     for vf in value_files:
@@ -264,6 +452,13 @@ def render(unit: Unit, env: str | None) -> tuple[bool, str]:
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=RENDER_TIMEOUT)
     if proc.returncode != 0:
         return (False, proc.stderr.strip() or proc.stdout.strip())
+    if objects is not None:
+        try:
+            keys = cluster_objects(proc.stdout)
+        except yaml.YAMLError as e:
+            return (False, f"the render is not YAML ArgoCD could apply: {e}")
+        for key in keys:
+            objects.setdefault(key, set()).add(f"{unit.appset} {unit.path}")
     return (True, "rendered")
 
 
@@ -349,10 +544,11 @@ def main() -> int:
     envs = [args.env] if args.env else ENVIRONMENTS
 
     failures: list[str] = []
+    objects: dict[str, set[str]] = {}
     count = 0
     for u in rendered:
         for env in envs:
-            ok, msg = render(u, env)
+            ok, msg = render(u, env, objects)
             if msg == "no env delta":
                 continue
             count += 1
@@ -386,12 +582,31 @@ def main() -> int:
         print("reason has expired reads as a considered decision and covers nothing.")
         return 1
 
+    shared = object_ownership(objects)
+    drift = directory_owner_drift()
+    n_crds = sum(1 for k in objects if k.startswith("CustomResourceDefinition/"))
+    print(f"Rendered {len(objects)} cluster-scoped object(s), {n_crds} of them "
+          f"CustomResourceDefinitions; {len(shared)} with more than one owning Application.")
+    if shared:
+        print("\n" + "=" * 72)
+        print("\nA cluster-scoped object two Applications install is overwritten by each in")
+        print("turn, at whatever release and channel each carries, and pruned by whichever")
+        print("stops rendering it. Give it one owner: turn the chart's bundled copy off in")
+        print("its values, or set skipCrds on its source.\n")
+        for problem in shared:
+            print(f"  {problem}")
+    if drift:
+        print("\n" + "=" * 72)
+        print("\nA directory-source ownership record no longer describes its source:\n")
+        for problem in drift:
+            print(f"  {problem}")
+
     if failures:
         print("\n" + "=" * 72)
         for f in failures:
             print(f"\n{f}")
         return 1
-    return 0
+    return 1 if shared or drift else 0
 
 
 if __name__ == "__main__":

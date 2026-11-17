@@ -127,6 +127,29 @@
       ]
     },
     {
+      "description": [
+        "Each Envoy controller chart and the CRD-only chart its CRDs come from are one upstream release, so they move in one pull request at one version, majors included. scripts/check-sync-waves.py (CHART_LOCKS) fails a pair whose two pins disagree; this keeps Renovate from proposing one."
+      ],
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "docker.io/envoyproxy/gateway-helm",
+        "docker.io/envoyproxy/gateway-crds-helm"
+      ],
+      "groupName": "envoy-gateway"
+    },
+    {
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "docker.io/envoyproxy/ai-gateway-helm",
+        "docker.io/envoyproxy/ai-gateway-crds-helm"
+      ],
+      "groupName": "envoy-ai-gateway"
+    },
+    {
       "matchDatasources": [
         "github-releases"
       ],
