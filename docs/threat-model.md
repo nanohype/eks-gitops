@@ -162,7 +162,7 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
   ValidatingPolicies, one check each: `runAsNonRoot: true` (require-non-root.yaml:84-92),
   a CPU limit and a memory limit on every container (require-cpu-limit.yaml:87-98,
   require-memory-limit.yaml:87-98), readiness and liveness probes on every
-  long-running controller (require-readiness-probe.yaml:125-136,
+  long-running controller (require-readiness-probe.yaml:123-134,
   require-liveness-probe.yaml), and the five-label org tier —
   `app.kubernetes.io/name`, `managed-by`, `component`,
   `platform.nanohype.dev/environment`, `platform.nanohype.dev/team`
