@@ -61,11 +61,6 @@
       "description": "Falco",
       "deprecated": false
     },
-    "gateway-crds-helm": {
-      "repo": "oci://docker.io/envoyproxy/gateway-crds-helm",
-      "description": "A Helm chart for Envoy Gateway CRDs",
-      "deprecated": false
-    },
     "gateway-helm": {
       "repo": "oci://docker.io/envoyproxy/gateway-helm",
       "description": "The Helm chart for Envoy Gateway",

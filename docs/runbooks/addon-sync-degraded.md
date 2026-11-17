@@ -33,10 +33,9 @@ The `environment` label is mandatory — it resolves `values-{env}.yaml` paths a
 
 **OutOfSync with sync errors** — read `operationState`. The recurring shapes:
 
-- *CRD kind not found* — a CRD-dependent resource synced before its CRD chart. Sync waves order this: `prometheus-operator-crds` (bootstrap, wave 0-2) before anything shipping ServiceMonitors, `envoy-gateway-crds` and `envoy-ai-gateway-crds` before `envoy-gateway`/`envoy-ai-gateway`, `cert-manager` before any Certificate. Waves only order creation during a coordinated sync — on a fresh cluster, confirm the CRD app itself is Synced/Healthy before chasing the consumer.
+- *CRD kind not found* — a CRD-dependent resource synced before its CRD chart. Sync waves order this: `prometheus-operator-crds` (bootstrap, wave 0-2) before anything shipping ServiceMonitors, `envoy-ai-gateway-crds` before `envoy-gateway`/`envoy-ai-gateway`, `cert-manager` before any Certificate. Waves only order creation during a coordinated sync — on a fresh cluster, confirm the CRD app itself is Synced/Healthy before chasing the consumer.
 - *ComparisonError / values ref failure* — the `$values` multi-source ref points at this repo on `main`; a missing `values-{env}.yaml` for the cluster's environment breaks comparison. Every Helm addon needs `values.yaml` plus the env delta file.
 - *ServerSideApply field conflict* — another controller owns a field. Check `operationState.message` for the conflicting manager.
-- *SharedResourceWarning on a CRD* — two Applications install the same CRD and overwrite each other on every self-heal, each at its own release. The usual source is a chart bundling CRDs another Application owns (gateway-helm bundles the Gateway API CRDs; `gateway-api-crds` owns them). Turn the bundle off in the chart's values or set `skipCrds` on its source; `scripts/render-addons.py` renders charts with `--include-crds`, as ArgoCD does, and fails a CRD with two owners.
 
 **Healthy in git, Degraded in cluster** — look at the addon's own workloads (`kubectl -n <ns> get pods,events`). ExternalSecret-backed addons degrade when the `ClusterSecretStore` can't reach AWS Secrets Manager — check `kubectl get clustersecretstore aws-secrets-manager -o yaml` conditions first.
 

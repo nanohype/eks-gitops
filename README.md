@@ -74,7 +74,7 @@ repoURL: '{{ index .metadata.annotations "gitops/repo-url" }}'
 │  ├── addons-operations-helm (VPA, Goldilocks, Descheduler, KEDA)    │
 │  ├── addons-operations-kustomize (Karpenter Resources)              │
 │  ├── addons-velero (Velero)                                         │
-│  ├── addons-ai-platform (envoy-gateway, envoy-ai-gateway + CRDs)   │
+│  ├── addons-ai-platform (envoy-ai-gateway + CRDs)                  │
 │  ├── agent-platform (Tenant/Platform/Budget/ModelGateway CRs)       │
 │  ├── addons-argo-platform (Rollouts, Events, Workflows)             │
 │  └── dashboards (GrafanaDashboards)                                 │
@@ -113,7 +113,7 @@ eks-gitops/
 │   ├── operations/{velero,vpa,goldilocks,descheduler,karpenter,
 │   │               karpenter-resources,keda}/
 │   ├── argo-platform/{argo-rollouts,argo-events,argo-workflows}/
-│   └── ai-platform/{agent-platform,envoy-gateway,envoy-gateway-crds,
+│   └── ai-platform/{agent-platform,envoy-gateway,
 │                    envoy-ai-gateway,envoy-ai-gateway-crds,operator}/
 │
 ├── policies/                           # Kyverno policies (pure Kustomize)

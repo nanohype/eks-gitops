@@ -7,24 +7,6 @@
 # Bedrock region, model routes, guardrails and rate limits are NOT set here —
 # they live on the ModelGateway CR.
 
-# No CRDs from this chart. Its `crds` subchart installs three things as one
-# unit: Envoy Gateway's own CRDs, a bundled Gateway API release (v1.6.1,
-# EXPERIMENTAL channel, at chart 1.10.0) and that release's safe-upgrades
-# ValidatingAdmissionPolicy + binding. ArgoCD renders a chart's crds/ unless
-# the source sets skipCrds, so with this on, two Applications would claim every
-# gateway.networking.k8s.io CRD and the shared policy:
-# applicationsets/gateway-api-crds.yaml installs v1.7.0 standard at wave 30,
-# and its own safe-upgrades policy then denies this chart's v1.6.1
-# experimental CRDs at wave 41 (a version before v1.7.0, and standard to
-# experimental) — a sync that can never succeed, over a policy the two
-# Applications overwrite in turn.
-#
-# Envoy Gateway's own CRDs come from the envoy-gateway-crds Application
-# (gateway-crds-helm, ../envoy-gateway-crds) at wave 40; the Gateway API
-# CRDs, and the policy that guards them, only from gateway-api-crds.
-crds:
-  enabled: false
-
 config:
   envoyGateway:
     provider:

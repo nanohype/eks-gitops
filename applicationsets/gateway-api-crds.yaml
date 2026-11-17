@@ -28,24 +28,7 @@
 # opens a currency PR when a newer release ships; the deliberate-bump judgment above
 # governs whether that PR merges.
 #
-# CHANNEL: standard, not experimental. Nothing here needs an experimental kind,
-# and at v1.7.0 the standard channel already serves every kind Envoy Gateway
-# 1.10 watches (GatewayClass, Gateway, HTTPRoute, GRPCRoute, TLSRoute, TCPRoute,
-# UDPRoute, ListenerSet, ReferenceGrant, BackendTLSPolicy), all at the versions
-# it watches them at. It looks each optional kind up before watching it, so a
-# kind absent here is skipped rather than fatal.
-#
-# SOLE OWNER: this Application is the only thing that installs these CRDs, and
-# config/crd/standard's safe-upgrades ValidatingAdmissionPolicy with them —
-# which denies any later write of a gateway.networking.k8s.io CRD older than
-# v1.7.0, or moving one from standard to experimental. gateway-helm bundles its
-# own Gateway API release (v1.6.1, experimental, at chart 1.10.0) and its own
-# copy of that policy, and ArgoCD renders a chart's crds/ unless the source sets
-# skipCrds, so the bundle is turned off in
-# addons/ai-platform/envoy-gateway/values.yaml (crds.enabled: false); Envoy
-# Gateway's own CRDs come from the envoy-gateway-crds Application instead.
-# render-addons.py renders every chart the way ArgoCD does and fails one that
-# installs a CRD in this group.
+# CHANNEL: standard, not experimental. Nothing here needs TCPRoute/UDPRoute.
 #
 # SYNC WAVE 30: before the ai-platform CRDs (40) and controllers (41-42) — Envoy
 # Gateway and the operator both need these to exist before they start.

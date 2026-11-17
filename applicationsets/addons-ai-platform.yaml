@@ -26,7 +26,7 @@ spec:
                   eks-agent-platform/enabled: "true"
           - list:
               elements:
-                # CRDs first (wave 40), then the controllers (wave 41-42).
+                # CRDs first (wave 40), then the controllers (wave 42).
                 - appName: envoy-ai-gateway-crds
                   namespace: envoy-gateway-system
                   chartRepo: oci://docker.io/envoyproxy/ai-gateway-crds-helm
@@ -34,20 +34,7 @@ spec:
                   chartVersion: "1.2.1"
                   path: addons/ai-platform/envoy-ai-gateway-crds
                   syncWave: "40"
-                # Envoy Gateway's own CRDs (gateway.envoyproxy.io) and nothing
-                # else. gateway-helm would install them itself, but only
-                # together with a bundled Gateway API release that
-                # gateway-api-crds.yaml already owns, so that bundle is turned off
-                # there (crds.enabled: false) and the EG CRDs come from upstream's
-                # CRD-only chart instead. Keep chartVersion equal to gateway-helm's
-                # below: the controller and its CRDs are one generation.
-                - appName: envoy-gateway-crds
-                  namespace: envoy-gateway-system
-                  chartRepo: oci://docker.io/envoyproxy/gateway-crds-helm
-                  chart: gateway-crds-helm
-                  chartVersion: "1.10.0"
-                  path: addons/ai-platform/envoy-gateway-crds
-                  syncWave: "40"
+                  autoPrune: true
                 # envoy-gateway before envoy-ai-gateway: the AI layer registers a
                 # webhook against the control plane and reads its GatewayClass.
                 - appName: envoy-gateway
@@ -57,6 +44,29 @@ spec:
                   chartVersion: "1.10.0"
                   path: addons/ai-platform/envoy-gateway
                   syncWave: "41"
+                  # TRANSITION — automated prune off for this Application only.
+                  # gateway-helm's bundled `crds` subchart installs Gateway API
+                  # v1.6.1 (experimental) beside the v1.7.0 standard CRDs that
+                  # gateway-api-crds.yaml owns, so two Applications claim the
+                  # same CRDs. The fix moves Envoy Gateway's own 8 CRDs
+                  # (gateway.envoyproxy.io) to a CRD-only Application and turns
+                  # the bundle off here. That values change reaches this
+                  # Application through its $values source on the next refresh,
+                  # ahead of any ApplicationSet change, so with prune on it would
+                  # delete those CRDs — and every Envoy Gateway resource on the
+                  # cluster — before their new owner existed. Prune is turned off
+                  # first, in its own change, so the move cannot delete anything.
+                  # Turn it back on (autoPrune: true) only after the move has
+                  # synced everywhere and, on every opted-in cluster, the only
+                  # objects still carrying this Application's tracking id that
+                  # its manifest no longer renders are the three unused
+                  # gateway.networking.x-k8s.io CRDs (xbackends,
+                  # xbackendtrafficpolicies, xmeshes):
+                  #
+                  #   kubectl get crd,validatingadmissionpolicy,validatingadmissionpolicybinding -o json \
+                  #     | jq -r '.items[] | select((.metadata.annotations["argocd.argoproj.io/tracking-id"] // "")
+                  #         | startswith("envoy-gateway:")) | .kind + "/" + .metadata.name'
+                  autoPrune: false
                 - appName: envoy-ai-gateway
                   namespace: envoy-gateway-system
                   chartRepo: oci://docker.io/envoyproxy/ai-gateway-helm
@@ -64,6 +74,18 @@ spec:
                   chartVersion: "1.2.1"
                   path: addons/ai-platform/envoy-ai-gateway
                   syncWave: "42"
+                  autoPrune: true
+  # Per-element automated prune. The template below sets prune: true; this
+  # patch restates it from each element's autoPrune, so an element can turn it
+  # off without a second ApplicationSet. missingkey=error makes autoPrune
+  # required on every element — an element that omits it fails the whole render
+  # rather than silently inheriting either value. Rendered against every element
+  # by applicationsets/rendertest (task validate:appset-render).
+  templatePatch: |
+    spec:
+      syncPolicy:
+        automated:
+          prune: {{ .autoPrune }}
   template:
     metadata:
       name: '{{ .appName }}'

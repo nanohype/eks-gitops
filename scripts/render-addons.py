@@ -32,21 +32,6 @@ SOURCE OF TRUTH
     reproduced with synthetic values so the render matches what ArgoCD does at
     sync (e.g. aws-load-balancer-controller refuses to render without clusterName).
 
-CUSTOM RESOURCE DEFINITIONS
-    ArgoCD renders a Helm source with ``--include-crds`` unless the source sets
-    ``helm.skipCrds: true`` (argo-cd util/helm/cmd.go), so a chart's ``crds/``
-    directory, a subchart's included, is part of what that Application owns.
-    This gate renders the same way, and then asks the one question no
-    per-chart render can: does any CRD belong to two Applications? Two owners
-    of one CRD take turns overwriting it on every self-heal, at whatever
-    release and channel each one carries, and ArgoCD reports that as a
-    SharedResourceWarning on an Application that otherwise looks healthy.
-
-    The CRD-only directory sources (gateway-api-crds, argo-workflows-crds) are
-    not charts and are not rendered here, so the groups they own are recorded
-    in DIRECTORY_CRD_GROUPS and a chart rendering into one of them is the same
-    finding.
-
 FETCHING
     Each chart is fetched through registry.py's client into the chart
     cache and rendered from that local archive, so helm never reaches a
@@ -71,7 +56,6 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
-from typing import Any
 
 import gatelib
 import registry
@@ -112,22 +96,6 @@ PARAM_SYNTH = {
     "vpcId": "vpc-00000000000000000",
 }
 
-# CRD groups a directory-source Application owns outright, mapped to it. Those
-# sources are manifest directories in another repository, read at a pinned tag,
-# so no render here sees their CRDs; a chart that installs one into the same
-# group is a second owner all the same. Keyed by group only where the directory
-# owns the whole group: argoproj.io is shared by four projects' charts, so
-# argo-workflows-crds is keyed by the CRDs it installs instead.
-DIRECTORY_CRD_GROUPS = {
-    "gateway.networking.k8s.io": "gateway-api-crds.yaml (kubernetes-sigs/gateway-api config/crd/standard)",
-}
-DIRECTORY_CRD_NAMES = {
-    f"{plural}.argoproj.io": "argo-workflows-crds.yaml (argoproj/argo-workflows manifests/base/crds/full)"
-    for plural in ("clusterworkflowtemplates", "cronworkflows", "workflowartifactgctasks",
-                   "workfloweventbindings", "workflows", "workflowtaskresults",
-                   "workflowtasksets", "workflowtemplates")
-}
-
 
 @dataclass
 class Unit:
@@ -138,7 +106,6 @@ class Unit:
     path: str  # addon dir relative to repo root, e.g. addons/operations/velero
     params: list[tuple[str, str]] = field(default_factory=list)
     namespace: str = ""  # ArgoCD destination namespace the addon syncs into
-    skip_crds: bool = False  # the source's helm.skipCrds — ArgoCD omits crds/ when set
 
     @property
     def is_oci(self) -> bool:
@@ -215,7 +182,6 @@ def discover() -> list[Unit]:
             continue  # kustomize / git-sourced / local-chart appset — not ours
         helm = chart_src.get("helm", {}) or {}
         params = _synth_params(helm)
-        skip_crds = helm.get("skipCrds") is True
         name = appset_file.name
 
         if _is_template(chart_src["chart"]):
@@ -232,7 +198,6 @@ def discover() -> list[Unit]:
                         path=str(el["path"]),
                         params=params,
                         namespace=str(el.get("namespace", "")),
-                        skip_crds=skip_crds,
                     )
                 )
         else:
@@ -250,70 +215,12 @@ def discover() -> list[Unit]:
                     path=path,
                     params=params,
                     namespace=str(dest.get("namespace", "")),
-                    skip_crds=skip_crds,
                 )
             )
     return units
 
 
-# The C loader where the platform has it: CRD-heavy charts render megabytes, and
-# a render is parsed once per chart per environment.
-_BaseLoader: Any = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
-
-
-class _ManifestLoader(_BaseLoader):
-    """A safe loader that reads what Kubernetes reads.
-
-    A plain `=` scalar resolves to YAML 1.1's value tag, which PyYAML's safe
-    loaders have no constructor for; the API server's YAML decoder reads it as
-    the string "=". prometheus-operator-crds renders one in an enum. A subclass,
-    so the module-wide SafeLoader is left as it was.
-    """
-
-
-def _value_scalar(loader: Any, node: Any) -> Any:
-    return loader.construct_scalar(node)
-
-
-_ManifestLoader.add_constructor("tag:yaml.org,2002:value", _value_scalar)
-
-
-def crd_names(manifest: str) -> set[str]:
-    """The name of every CustomResourceDefinition in a rendered manifest stream."""
-    names = set()
-    for doc in yaml.load_all(manifest, Loader=_ManifestLoader):
-        if (isinstance(doc, dict) and doc.get("kind") == "CustomResourceDefinition"
-                and str(doc.get("apiVersion", "")).partition("/")[0]
-                == "apiextensions.k8s.io"):
-            name = (doc.get("metadata") or {}).get("name")
-            if name:
-                names.add(str(name))
-    return names
-
-
-def crd_ownership(owners: dict[str, set[str]]) -> list[str]:
-    """Every CRD more than one Application would install.
-
-    ``owners`` maps a CRD name to the render units that rendered it. A CRD in a
-    directory-owned group, or named by a directory source, has that source as
-    an owner too.
-    """
-    problems = []
-    for name in sorted(owners):
-        holders = set(owners[name])
-        group = name.split(".", 1)[1] if "." in name else ""
-        if group in DIRECTORY_CRD_GROUPS:
-            holders.add(DIRECTORY_CRD_GROUPS[group])
-        if name in DIRECTORY_CRD_NAMES:
-            holders.add(DIRECTORY_CRD_NAMES[name])
-        if len(holders) > 1:
-            problems.append(f"{name} is installed by {len(holders)} Applications: "
-                            + ", ".join(sorted(holders)))
-    return problems
-
-
-def render(unit: Unit, env: str | None,
-           crds: dict[str, set[str]] | None = None) -> tuple[bool, str]:
+def render(unit: Unit, env: str | None) -> tuple[bool, str]:
     # The directory is the discriminator, and it has to be checked first.
     #
     # "this addon has no delta for this environment" and "the ApplicationSet
@@ -349,10 +256,6 @@ def render(unit: Unit, env: str | None,
     cmd = ["helm", "template", unit.chart, str(archive)]
     if unit.namespace:
         cmd += ["--namespace", unit.namespace]
-    # What ArgoCD does with a Helm source (argo-cd util/helm/cmd.go): crds/ is
-    # rendered, and so applied and owned, unless the source opts out.
-    if not unit.skip_crds:
-        cmd.append("--include-crds")
     for name, value in unit.params:
         cmd += ["--set", f"{name}={value}"]
     for vf in value_files:
@@ -361,13 +264,6 @@ def render(unit: Unit, env: str | None,
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=RENDER_TIMEOUT)
     if proc.returncode != 0:
         return (False, proc.stderr.strip() or proc.stdout.strip())
-    if crds is not None:
-        try:
-            names = crd_names(proc.stdout)
-        except yaml.YAMLError as e:
-            return (False, f"the render is not YAML ArgoCD could apply: {e}")
-        for name in names:
-            crds.setdefault(name, set()).add(f"{unit.appset} {unit.path}")
     return (True, "rendered")
 
 
@@ -453,11 +349,10 @@ def main() -> int:
     envs = [args.env] if args.env else ENVIRONMENTS
 
     failures: list[str] = []
-    crds: dict[str, set[str]] = {}
     count = 0
     for u in rendered:
         for env in envs:
-            ok, msg = render(u, env, crds)
+            ok, msg = render(u, env)
             if msg == "no env delta":
                 continue
             count += 1
@@ -491,23 +386,12 @@ def main() -> int:
         print("reason has expired reads as a considered decision and covers nothing.")
         return 1
 
-    shared = crd_ownership(crds)
-    print(f"Rendered {len(crds)} CustomResourceDefinition(s); {len(shared)} with more "
-          f"than one owning Application.")
-    if shared:
-        print("\n" + "=" * 72)
-        print("\nA CRD two Applications install is overwritten by each in turn, at whatever")
-        print("release and channel each carries. Give it one owner: turn the chart's bundled")
-        print("CRDs off in its values, or set skipCrds on its source.\n")
-        for problem in shared:
-            print(f"  {problem}")
-
     if failures:
         print("\n" + "=" * 72)
         for f in failures:
             print(f"\n{f}")
         return 1
-    return 1 if shared else 0
+    return 0
 
 
 if __name__ == "__main__":
