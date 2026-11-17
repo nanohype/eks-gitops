@@ -24,7 +24,7 @@ Before rolling back, check the failure isn't environment-scoped: a bad `values-s
 
 ## Remediation
 
-**The durable rollback is a git revert.** Every generated Application runs `automated: {prune: true, selfHeal: true}`, and the ApplicationSet controller owns the Application spec — so `argocd app rollback` and `argocd app set` are both reverted within minutes. Anything that must stick goes through `main`:
+**The durable rollback is a git revert.** Every generated Application runs `automated: {prune: true, selfHeal: true}` (one exception: `envoy-gateway` runs with prune off while Envoy Gateway's CRDs move to their own Application — see its `autoPrune` element in `applicationsets/addons-ai-platform.yaml`), and the ApplicationSet controller owns the Application spec — so `argocd app rollback` and `argocd app set` are both reverted within minutes. Anything that must stick goes through `main`:
 
 1. Revert the offending commit (or just the pin/values hunk):
    ```bash
@@ -41,6 +41,7 @@ Before rolling back, check the failure isn't environment-scoped: a bad `values-s
 **Version-specific gotchas:**
 
 - Charts that manage CRDs (kyverno, prometheus-operator-crds, envoy-ai-gateway-crds): Helm chart-version reverts do not downgrade CRDs already applied. Verify the older chart tolerates the newer CRD schema; if not, this is a fix-forward, not a rollback.
+- Reverting a change that turned an Application's automated prune off (an `autoPrune: false` element, such as `envoy-gateway` in `addons-ai-platform.yaml`) turns pruning back on, and the next sync deletes everything that Application still tracks and no longer renders — CRDs included, and with a CRD every resource of its kind. Check what it tracks first (the command is beside the element) rather than reverting blind.
 - StatefulSet-backed addons (loki, tempo, druid): a revert that changes `volumeClaimTemplates` will not apply — those fields are immutable and deliberately covered by `ignoreDifferences`. Data-format downgrades (e.g. a store schema migrated on upgrade) may also need the component's own downgrade procedure first.
 
 ## Verification
