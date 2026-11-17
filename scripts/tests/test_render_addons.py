@@ -165,7 +165,8 @@ class WhatARenderIsHanded(unittest.TestCase):
     """
 
     def render(self, env_files=("values.yaml", "values-staging.yaml"), env="staging",
-               path="addons/x/y", returncode=0, stderr=""):
+               path="addons/x/y", returncode=0, stderr="", stdout="", skip_crds=False,
+               objects=None):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         root = pathlib.Path(tmp.name)
@@ -176,15 +177,15 @@ class WhatARenderIsHanded(unittest.TestCase):
         unit = gate.Unit(appset="a.yaml", chart="karpenter", version="1.15.1",
                          repo="oci://public.ecr.aws/karpenter/karpenter",
                          path=path, params=[("clusterName", "ci-cluster")],
-                         namespace="kube-system")
+                         namespace="kube-system", skip_crds=skip_crds)
         archive = root / "karpenter-1.15.1.tgz"
-        ran = mock.Mock(return_value=mock.Mock(returncode=returncode, stdout="",
+        ran = mock.Mock(return_value=mock.Mock(returncode=returncode, stdout=stdout,
                                                stderr=stderr))
         fetch = mock.Mock(return_value=archive)
         with mock.patch.object(gate, "REPO_ROOT", root), \
                 mock.patch.object(gate.gatelib, "chart_archive_or_exit", fetch), \
                 mock.patch.object(gate.subprocess, "run", ran):
-            result = gate.render(unit, env)
+            result = gate.render(unit, env, objects)
         return result, fetch, ran, archive, unit_dir
 
     def test_the_archive_is_fetched_from_the_unit_source_and_rendered(self):
@@ -196,7 +197,7 @@ class WhatARenderIsHanded(unittest.TestCase):
         self.assertEqual(cmd[:4], ["helm", "template", "karpenter", str(archive)])
         self.assertNotIn("--version", cmd)
         self.assertFalse(any(str(a).startswith("oci://") for a in cmd))
-        self.assertEqual(cmd[4:], ["--namespace", "kube-system",
+        self.assertEqual(cmd[4:], ["--namespace", "kube-system", "--include-crds",
                                    "--set", "clusterName=ci-cluster",
                                    "-f", str(unit_dir / "values.yaml"),
                                    "-f", str(unit_dir / "values-staging.yaml")])
@@ -220,6 +221,238 @@ class WhatARenderIsHanded(unittest.TestCase):
         result, _, _, _, _ = self.render(returncode=1,
                                          stderr="Error: values don't meet the schema\n")
         self.assertEqual(result, (False, "Error: values don't meet the schema"))
+
+    def test_a_source_that_skips_crds_is_rendered_without_them(self):
+        """skipCrds is the one way an ArgoCD Helm source leaves crds/ out."""
+        _, _, ran, _, _ = self.render(skip_crds=True)
+        self.assertNotIn("--include-crds", ran.call_args.args[0])
+
+    def test_the_cluster_scoped_objects_a_render_produces_are_recorded(self):
+        objects = {}
+        stdout = ("apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\n"
+                  "metadata:\n  name: nodepools.karpenter.sh\n---\n"
+                  "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\n")
+        result, _, _, _, _ = self.render(stdout=stdout, objects=objects)
+        self.assertEqual(result, (True, "rendered"))
+        self.assertEqual(objects, {"CustomResourceDefinition/nodepools.karpenter.sh":
+                                   {"a.yaml addons/x/y"}})
+
+    def test_a_render_that_is_not_yaml_fails_rather_than_counting_nothing(self):
+        result, _, _, _, _ = self.render(stdout="a: [unclosed\n", objects={})
+        self.assertFalse(result[0])
+        self.assertIn("not YAML", result[1])
+
+
+def discovered(source_helm):
+    """The units discover() reads out of one matrix appset."""
+    doc = appset(
+        [{"repoURL": "{{ .chartRepo }}", "chart": "{{ .chart }}",
+          "targetRevision": "{{ .chartVersion }}", "helm": source_helm}],
+        generators=[{"list": {"elements": [
+            {"chart": "gateway-helm", "chartVersion": "1.10.0",
+             "chartRepo": "oci://docker.io/envoyproxy/gateway-helm",
+             "path": "addons/x/eg", "namespace": "ns"}]}}])
+    with tempfile.TemporaryDirectory() as tmp:
+        (pathlib.Path(tmp) / "a.yaml").write_text(yaml.safe_dump(doc))
+        with mock.patch.object(gate, "APPSET_DIR", pathlib.Path(tmp)):
+            return gate.discover()
+
+
+class RenderingCRDsTheWayArgoCDDoes(unittest.TestCase):
+    """ArgoCD passes --include-crds unless the source sets skipCrds: true."""
+
+    def test_a_source_with_skip_crds_is_discovered_as_skipping_them(self):
+        self.assertTrue(discovered({"skipCrds": True})[0].skip_crds)
+
+    def test_a_source_without_it_includes_them(self):
+        self.assertFalse(discovered({})[0].skip_crds)
+        self.assertFalse(discovered({"skipCrds": "true"})[0].skip_crds,
+                         "only a boolean true is honoured, as ArgoCD's field is a bool")
+
+    def test_only_cluster_scoped_objects_are_keyed(self):
+        stream = "\n---\n".join([
+            "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\n"
+            "metadata:\n  name: a.example.io",
+            "apiVersion: example.io/v1\nkind: CustomResourceDefinition\n"
+            "metadata:\n  name: not-a-crd.example.io",
+            "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\n"
+            "metadata: {}",
+            "apiVersion: admissionregistration.k8s.io/v1\nkind: ValidatingAdmissionPolicy\n"
+            "metadata:\n  name: safe-upgrades.gateway.networking.k8s.io",
+            "apiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRole\n"
+            "metadata:\n  name: viewer",
+            "apiVersion: rbac.authorization.k8s.io/v1\nkind: Role\n"
+            "metadata:\n  name: namespaced",
+            "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: ns",
+            "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: b",
+            "",
+            "just a string",
+        ])
+        self.assertEqual(gate.cluster_objects(stream), {
+            "CustomResourceDefinition/a.example.io",
+            "ValidatingAdmissionPolicy/safe-upgrades.gateway.networking.k8s.io",
+            "ClusterRole/viewer",
+            "Namespace/ns",
+        })
+
+    def test_a_bare_equals_sign_reads_as_the_string_kubernetes_reads(self):
+        """prometheus-operator-crds renders `- =` in an enum: YAML 1.1's value tag."""
+        stream = ("apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\n"
+                  "metadata:\n  name: probes.monitoring.coreos.com\n"
+                  "spec:\n  enum:\n  - =\n  - '!='\n")
+        self.assertEqual(gate.cluster_objects(stream),
+                         {"CustomResourceDefinition/probes.monitoring.coreos.com"})
+        self.assertFalse(yaml.SafeLoader.yaml_constructors.get("tag:yaml.org,2002:value")
+                         is gate._value_scalar,
+                         "the module-wide SafeLoader is not this gate's to change")
+
+
+def crd(name):
+    return f"CustomResourceDefinition/{name}"
+
+
+class OneOwnerPerClusterScopedObject(unittest.TestCase):
+    """A cluster-scoped object two Applications install is overwritten by each in turn."""
+
+    def test_a_crd_one_unit_installs_is_fine(self):
+        self.assertEqual(gate.object_ownership(
+            {crd("backends.gateway.envoyproxy.io"): {"a.yaml addons/x/eg-crds"}}), [])
+
+    def test_a_crd_two_units_install_is_a_finding(self):
+        problems = gate.object_ownership(
+            {crd("backends.gateway.envoyproxy.io"): {"a.yaml addons/x/eg",
+                                                     "a.yaml addons/x/eg-crds"}})
+        self.assertEqual(len(problems), 1)
+        self.assertIn("backends.gateway.envoyproxy.io is installed by 2", problems[0])
+
+    def test_a_chart_rendering_into_the_gateway_api_group_has_a_second_owner(self):
+        """gateway-api-crds is a directory source no render here sees, so the
+        group is what names it — the shape gateway-helm's bundle took."""
+        problems = gate.object_ownership(
+            {crd("httproutes.gateway.networking.k8s.io"): {"a.yaml addons/x/eg"}})
+        self.assertEqual(len(problems), 1)
+        self.assertIn("gateway-api-crds.yaml", problems[0])
+
+    def test_a_chart_rendering_the_safe_upgrades_policy_has_a_second_owner(self):
+        """gateway-helm's bundle carried its own copy of the policy and binding,
+        which skipCrds alone would not have dropped (they are templates)."""
+        for kind in ("ValidatingAdmissionPolicy", "ValidatingAdmissionPolicyBinding"):
+            problems = gate.object_ownership(
+                {f"{kind}/safe-upgrades.gateway.networking.k8s.io": {"a.yaml addons/x/eg"}})
+            self.assertEqual(len(problems), 1, kind)
+            self.assertIn("gateway-api-crds.yaml", problems[0])
+
+    def test_a_cluster_role_two_charts_render_is_a_finding(self):
+        problems = gate.object_ownership(
+            {"ClusterRole/viewer": {"a.yaml addons/x/one", "b.yaml addons/y/two"}})
+        self.assertEqual(len(problems), 1)
+
+    def test_a_non_crd_named_like_a_gateway_api_crd_is_not_matched_by_group(self):
+        self.assertEqual(gate.object_ownership(
+            {"ClusterRole/httproutes.gateway.networking.k8s.io": {"a.yaml addons/x/one"}}), [])
+
+    def test_a_chart_rendering_an_argo_workflows_crd_has_a_second_owner(self):
+        problems = gate.object_ownership(
+            {crd("workflows.argoproj.io"): {"a.yaml addons/x/argo-workflows"}})
+        self.assertEqual(len(problems), 1)
+        self.assertIn("argo-workflows-crds.yaml", problems[0])
+
+    def test_another_argoproj_crd_is_not_owned_by_the_workflows_directory(self):
+        """argoproj.io is shared with argo-events and argo-rollouts, which install
+        their own kinds in it."""
+        self.assertEqual(gate.object_ownership(
+            {crd("rollouts.argoproj.io"): {"a.yaml addons/x/argo-rollouts"}}), [])
+
+
+class OwnersThatNeverShareACluster(unittest.TestCase):
+    """Two Applications whose selectors exclude each other are not two owners."""
+
+    TIERS = {"a.yaml addons/o/full": {"observability/tier": "full"},
+             "b.yaml addons/o/floor": {"observability/tier": "floor"}}
+
+    def test_mutually_exclusive_tiers_are_not_a_finding(self):
+        """otel-gateway's full and floor tiers render the same ClusterRole."""
+        self.assertEqual(gate.object_ownership(
+            {"ClusterRole/otel-gateway": set(self.TIERS)}, selectors=self.TIERS), [])
+
+    def test_a_third_owner_that_can_reach_either_tier_is_a_finding(self):
+        owners = {"ClusterRole/otel-gateway": {*self.TIERS, "c.yaml addons/x/any"}}
+        self.assertEqual(len(gate.object_ownership(owners, selectors=self.TIERS)), 1)
+
+    def test_a_directory_owner_reaches_every_cluster(self):
+        problems = gate.object_ownership(
+            {crd("httproutes.gateway.networking.k8s.io"): {"a.yaml addons/o/full"}},
+            selectors=self.TIERS)
+        self.assertEqual(len(problems), 1)
+
+    def test_selectors_conflict_only_on_a_shared_label(self):
+        self.assertTrue(gate.can_share_a_cluster({"a": "1"}, {"b": "2"}))
+        self.assertTrue(gate.can_share_a_cluster({"a": "1"}, {"a": "1", "b": "2"}))
+        self.assertFalse(gate.can_share_a_cluster({"a": "1"}, {"a": "2"}))
+
+    def test_discovery_reads_matchlabels_from_a_matrix_clusters_generator(self):
+        doc = appset(
+            [{"repoURL": "{{ .chartRepo }}", "chart": "{{ .chart }}",
+              "targetRevision": "{{ .chartVersion }}", "helm": {}}],
+            generators=[{"matrix": {"generators": [
+                {"clusters": {"selector": {
+                    "matchLabels": {"eks-agent-platform/enabled": "true"},
+                    "matchExpressions": [{"key": "environment", "operator": "In",
+                                          "values": ["staging"]}]}}},
+                {"list": {"elements": [
+                    {"chart": "gateway-helm", "chartVersion": "1.10.0",
+                     "chartRepo": "oci://docker.io/envoyproxy/gateway-helm",
+                     "path": "addons/x/eg"}]}}]}}])
+        with tempfile.TemporaryDirectory() as tmp:
+            (pathlib.Path(tmp) / "a.yaml").write_text(yaml.safe_dump(doc))
+            with mock.patch.object(gate, "APPSET_DIR", pathlib.Path(tmp)):
+                units = gate.discover()
+        self.assertEqual(units[0].cluster_labels, {"eks-agent-platform/enabled": "true"})
+        self.assertEqual(units[0].owner, "a.yaml addons/x/eg")
+
+
+class DirectoryOwnershipRecords(unittest.TestCase):
+    """A directory owner is recorded against the source it was read from."""
+
+    def write(self, tmp, name, source):
+        doc = {"spec": {"template": {"spec": {"source": source}}}}
+        (pathlib.Path(tmp) / name).write_text(yaml.safe_dump(doc))
+
+    def owner(self, **kw):
+        base = {"appset": "d.yaml", "source": ("https://github.com/o/r", "v1.0.0", "crds"),
+                "crd_groups": ("x.example.io",)}
+        base.update(kw)
+        return gate.DirectoryOwner(**base)
+
+    def test_the_committed_records_match_their_applicationsets(self):
+        self.assertEqual(gate.directory_owner_drift(), [])
+
+    def test_a_matching_record_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write(tmp, "d.yaml", {"repoURL": "https://github.com/o/r",
+                                       "targetRevision": "v1.0.0", "path": "crds"})
+            self.assertEqual(gate.directory_owner_drift((self.owner(),), pathlib.Path(tmp)), [])
+
+    def test_a_moved_pin_or_channel_is_a_finding(self):
+        for changed in ({"targetRevision": "v1.1.0"}, {"path": "crds-experimental"}):
+            src = {"repoURL": "https://github.com/o/r", "targetRevision": "v1.0.0",
+                   "path": "crds", **changed}
+            with tempfile.TemporaryDirectory() as tmp:
+                self.write(tmp, "d.yaml", src)
+                problems = gate.directory_owner_drift((self.owner(),), pathlib.Path(tmp))
+            self.assertEqual(len(problems), 1, changed)
+            self.assertIn("DIRECTORY_OWNERS", problems[0])
+
+    def test_a_missing_applicationset_is_a_finding(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            problems = gate.directory_owner_drift((self.owner(),), pathlib.Path(tmp))
+        self.assertIn("no such", problems[0])
+
+    def test_an_applicationset_without_a_single_source_is_a_finding(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (pathlib.Path(tmp) / "d.yaml").write_text("spec: {}\n")
+            problems = gate.directory_owner_drift((self.owner(),), pathlib.Path(tmp))
+        self.assertEqual(len(problems), 1)
 
 
 class FetchingTheChartCache(unittest.TestCase):
