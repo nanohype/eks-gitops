@@ -282,6 +282,16 @@ class RenderingCRDsTheWayArgoCDDoes(unittest.TestCase):
         ])
         self.assertEqual(gate.crd_names(stream), {"a.example.io"})
 
+    def test_a_bare_equals_sign_reads_as_the_string_kubernetes_reads(self):
+        """prometheus-operator-crds renders `- =` in an enum: YAML 1.1's value tag."""
+        stream = ("apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\n"
+                  "metadata:\n  name: probes.monitoring.coreos.com\n"
+                  "spec:\n  enum:\n  - =\n  - '!='\n")
+        self.assertEqual(gate.crd_names(stream), {"probes.monitoring.coreos.com"})
+        self.assertFalse(yaml.SafeLoader.yaml_constructors.get("tag:yaml.org,2002:value")
+                         is gate._value_scalar,
+                         "the module-wide SafeLoader is not this gate's to change")
+
 
 class OneOwnerPerCRD(unittest.TestCase):
     """A CRD two Applications install is overwritten by each in turn."""

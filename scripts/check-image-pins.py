@@ -333,6 +333,10 @@ NOT_A_CONTAINER = {
         "the same, the incubating tier",
     "falco-sandbox-rules":
         "the same, the sandbox tier",
+    "registry/image":
+        "placeholder prose in the EnvoyExtensionPolicy CRD's field description "
+        "(`registry/image:tag` or `registry/image@sha256:digest`), rendered by "
+        "gateway-crds-helm; a format example, not a reference anything pulls",
     "localhost":
         "a memcached address in a Loki config value; `localhost:11211` is a host "
         "and a port",

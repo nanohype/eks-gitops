@@ -71,6 +71,7 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
+from typing import Any
 
 import gatelib
 import registry
@@ -255,15 +256,35 @@ def discover() -> list[Unit]:
     return units
 
 
+# The C loader where the platform has it: CRD-heavy charts render megabytes, and
+# a render is parsed once per chart per environment.
+_BaseLoader: Any = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
+
+class _ManifestLoader(_BaseLoader):
+    """A safe loader that reads what Kubernetes reads.
+
+    A plain `=` scalar resolves to YAML 1.1's value tag, which PyYAML's safe
+    loaders have no constructor for; the API server's YAML decoder reads it as
+    the string "=". prometheus-operator-crds renders one in an enum. A subclass,
+    so the module-wide SafeLoader is left as it was.
+    """
+
+
+def _value_scalar(loader: Any, node: Any) -> Any:
+    return loader.construct_scalar(node)
+
+
+_ManifestLoader.add_constructor("tag:yaml.org,2002:value", _value_scalar)
+
+
 def crd_names(manifest: str) -> set[str]:
     """The name of every CustomResourceDefinition in a rendered manifest stream."""
     names = set()
-    # The C loader where the platform has it: CRD-heavy charts render megabytes,
-    # and this runs once per chart per environment.
-    loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
-    for doc in yaml.load_all(manifest, Loader=loader):
+    for doc in yaml.load_all(manifest, Loader=_ManifestLoader):
         if (isinstance(doc, dict) and doc.get("kind") == "CustomResourceDefinition"
-                and str(doc.get("apiVersion", "")).startswith("apiextensions.k8s.io/")):
+                and str(doc.get("apiVersion", "")).partition("/")[0]
+                == "apiextensions.k8s.io"):
             name = (doc.get("metadata") or {}).get("name")
             if name:
                 names.add(str(name))
