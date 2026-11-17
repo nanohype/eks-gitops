@@ -1,0 +1,108 @@
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: require-liveness-probe
+  annotations:
+    policies.kyverno.io/title: Require Liveness Probes
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Deployment, StatefulSet, DaemonSet, ReplicaSet, ReplicationController
+    policies.kyverno.io/description: >-
+      Liveness and readiness probes are essential for Kubernetes to manage
+      pod lifecycle correctly. This policy validates that every container in a
+      long-running workload controller defines a liveness probe; require-readiness-probe
+      checks the other. It deliberately does not match bare Pods — see the
+      comment on matchConstraints.
+spec:
+  # Base is Audit: development keeps it, so a violation lands in a PolicyReport
+  # without blocking. The staging and production overlays patch this to [Deny].
+  validationActions: [Audit]
+  failurePolicy: Fail
+  evaluation:
+    admission:
+      enabled: true
+    background:
+      enabled: true
+  # The policy matches controllers only, and autogen derives rules for a pod
+  # policy alone, so there is nothing to generate. Disabled to say so.
+  autogen:
+    podControllers:
+      enabled: false
+  # Matches controllers rather than Pod for the reason documented on
+  # require-readiness-probe.yaml. Keep the two resourceRules in step.
+  matchConstraints:
+    # Platform-managed namespaces — identical set across all six policies; see
+    # best-practices/base/require-labels.yaml for the full rationale and
+    # scripts/check-policy-admission.py for the drift + Deny-admission gate that
+    # keeps them in sync.
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values:
+            # Kubernetes + Argo control plane
+            - kube-system
+            - kube-public
+            - kube-node-lease
+            - argocd
+            # bootstrap / networking / security infrastructure
+            - cert-manager
+            - external-secrets
+            - external-dns
+            - reloader
+            - kyverno
+            - trivy-system
+            - falco
+            # observability
+            - monitoring
+            - grafana-operator
+            - opencost
+            - amazon-cloudwatch
+            # operations
+            - velero
+            - goldilocks
+            - vpa
+            - keda
+            - descheduler
+            # argo platform
+            - argo-rollouts
+            - argo-events
+            - argo-workflows
+            # ai platform
+            - envoy-gateway-system
+            - eks-agent-platform
+    resourceRules:
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["replicationcontrollers"]
+  # ── Existing violations ─────────────────────────────────────────────────
+  # The ClusterPolicy this replaces set validate.allowExistingViolations: an
+  # UPDATE to an object that ALREADY violated the rule was admitted, so turning
+  # Deny on never wedged a workload that predated it. ValidatingPolicy has no such
+  # field, so the validation carries it: `existingViolation` holds when the
+  # request has an old object (an UPDATE — on a CREATE, and in a background scan,
+  # oldObject is null or empty, and the guard is false either way) and that old
+  # object fails the same check. A CREATE is decided on the new object alone,
+  # and an UPDATE that turns a compliant object non-compliant is refused, exactly
+  # as before. Background scans report every current violation, as before.
+  variables:
+    # Every container sets a liveness probe with a positive period — what the
+    # legacy `periodSeconds: ">0"` pattern matched. The API server defaults
+    # periodSeconds to 10 on any probe before a webhook sees it.
+    - name: compliant
+      expression: >-
+        object.spec.template.spec.containers.all(c,
+          c.?livenessProbe.?periodSeconds.orValue(0) > 0)
+    - name: existingViolation
+      expression: >-
+        oldObject != null && has(oldObject.kind) &&
+        !oldObject.spec.template.spec.containers.all(c,
+          c.?livenessProbe.?periodSeconds.orValue(0) > 0)
+  validations:
+    - expression: variables.compliant || variables.existingViolation
+      message: "Liveness probe is required for all containers."

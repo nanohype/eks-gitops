@@ -1,7 +1,9 @@
-# Create-mode case (e) for inject-adopt-lb-subnets: on a create cluster neither an
-# Ingress nor a LoadBalancer Service gets a subnet annotation added — the
-# network_mode == adopt precondition fails, so the internal rules (the ones that
-# would fire in adopt mode) skip.
+# Create-mode cases for inject-adopt-lb-subnets: on a create cluster neither an
+# Ingress nor a LoadBalancer Service gets a subnet annotation added —
+# network_mode != adopt makes the policy's `inject` false. svc-create-nlb-class is
+# a Service the controller provisions, the shape that IS mutated in adopt mode, so
+# the mode check is what keeps it unchanged. Each row asserts the object comes out
+# exactly as it went in.
 apiVersion: cli.kyverno.io/v1alpha1
 kind: Test
 metadata:
@@ -10,15 +12,24 @@ policies:
   - ../../networking/base/inject-adopt-lb-subnets.yaml
 resources:
   - resources.yaml
-variables: values.yaml
+clusterResources:
+  - cluster-resources.yaml
 results:
   - policy: inject-adopt-lb-subnets
-    rule: ingress-internal-subnets
+    isMutatingPolicy: true
     kind: Ingress
     resources: [ing-create]
-    result: skip
+    patchedResources: patched/ing-create.yaml
+    result: pass
   - policy: inject-adopt-lb-subnets
-    rule: service-internal-subnets
+    isMutatingPolicy: true
     kind: Service
     resources: [svc-create]
-    result: skip
+    patchedResources: patched/svc-create.yaml
+    result: pass
+  - policy: inject-adopt-lb-subnets
+    isMutatingPolicy: true
+    kind: Service
+    resources: [svc-create-nlb-class]
+    patchedResources: patched/svc-create-nlb-class.yaml
+    result: pass

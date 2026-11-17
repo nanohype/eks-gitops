@@ -445,7 +445,7 @@ def m_catalog_revision(root):
 
 
 def m_policy_validity(root):
-    """A ClusterPolicy kyverno silently discards, while staying valid YAML.
+    """A ValidatingPolicy kyverno silently discards, while staying valid YAML.
 
     An apiVersion kyverno does not recognise: the document renders, kyverno
     drops it, and the run reports `error: 0` for a policy that will never be
@@ -458,8 +458,8 @@ def m_policy_validity(root):
     gate and no other.
     """
     return _sub(root, "policies/kyverno/best-practices/base/require-labels.yaml",
-                "apiVersion: kyverno.io/v1",
-                f"apiVersion: kyverno.io/v1{MARKER}",
+                "apiVersion: policies.kyverno.io/v1",
+                f"apiVersion: policies.kyverno.io/v1{MARKER}",
                 marker=MARKER)
 
 
@@ -642,7 +642,7 @@ CONTROLS = {
     "check-athena-panel-columns.py": ("a panel naming an undelivered CUR column", m_athena_columns),
     "check-image-verification.py": ("a signing identity nobody signs with", m_image_verification),
     "check-catalog-revision.py": ("a catalog source pinning a revision", m_catalog_revision),
-    "check-policy-validity.py": ("a structurally invalid ClusterPolicy", m_policy_validity),
+    "check-policy-validity.py": ("a structurally invalid ValidatingPolicy", m_policy_validity),
     "check-serviceaccount-bindings.py": ("a pod naming an absent ServiceAccount", m_serviceaccount_bindings),
     "check-alert-coverage.py": ("an alert on an unexported KSM field", m_alert_coverage),
     "check-alert-severity-routes.py": ("a severity label that routes nowhere",

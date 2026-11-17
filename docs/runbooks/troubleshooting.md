@@ -66,9 +66,9 @@ task kustomize:build:env ENVIRONMENT=development
 
 1. Check policy status:
    ```bash
-   kubectl get clusterpolicy
-   kubectl describe clusterpolicy <name>
-   kubectl get imagevalidatingpolicy
+   kubectl get validatingpolicy,mutatingpolicy,imagevalidatingpolicy
+   kubectl describe validatingpolicy <name>
+   kubectl describe mutatingpolicy inject-adopt-lb-subnets
    kubectl describe imagevalidatingpolicy verify-images
    ```
 
@@ -78,11 +78,13 @@ task kustomize:build:env ENVIRONMENT=development
    kubectl get clusterpolicyreport
    ```
 
-3. In development, policies are in Audit mode — violations generate reports but don't block. In staging/production, policies Enforce (`verify-images`: `validationActions: [Deny]`) — violations are rejected.
+3. In development, policies are in Audit mode (`validationActions: [Audit]`) — violations generate reports but don't block. In staging/production, the ValidatingPolicies and `verify-images` carry `validationActions: [Deny]` — violations are rejected. An UPDATE to an object that already violated a ValidatingPolicy is still admitted; only a CREATE, or an UPDATE that introduces the violation, is refused.
 
-4. A `ghcr.io/nanohype/*` pod denied by `verify-images` with "image is not signed by a nanohype release workflow" or "carries no SPDX SBOM attestation" was not signed and attested by a `release.yml`/`release.yaml` workflow on a tag push. Inspect the signer with `cosign tree <image>` and `cosign verify <image> --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-identity-regexp '.*'`. That `--certificate-identity-regexp '.*'` accepts a signature from any workflow, so its output names who signed and proves nothing about whether the policy would admit the image; never carry it into a verification step. An admitted pod's image carries `@sha256:` — admission pins the tag to the digest it verified.
+4. Kyverno 1.20 no longer executes the legacy `kyverno.io` kinds (`ClusterPolicy`, `Policy`, `CleanupPolicy`, `ClusterCleanupPolicy`, `PolicyException`) and refuses to create or update them. If `kubectl get clusterpolicies,policies.kyverno.io,cleanuppolicies,clustercleanuppolicies,policyexceptions.kyverno.io -A` returns anything, the `kyverno` chart's pre-upgrade hook (`kyverno-check-legacy-policies`) fails, and ArgoCD reports the `kyverno` Application's PreSync hook as failed. Delete the objects ArgoCD does not own (they can still be read, exported and deleted), then sync `kyverno` again. Do not set `upgrade.acknowledgeLegacyPoliciesNotEnforced` or turn `upgrade.legacyPolicyCheck` off: either would let the upgrade through with those objects silently unenforced.
 
-5. `verify-images` matches Pods, never their controllers, so a Deployment, StatefulSet, DaemonSet or Job naming an image that fails verification is admitted and its pods are refused. The denial shows up as `FailedCreate` events on the ReplicaSet or Job (`kubectl get events -n <namespace> --field-selector reason=FailedCreate`), and the controller's pod template keeps the tag git holds.
+5. A `ghcr.io/nanohype/*` pod denied by `verify-images` with "image is not signed by a nanohype release workflow" or "carries no SPDX SBOM attestation" was not signed and attested by a `release.yml`/`release.yaml` workflow on a tag push. Inspect the signer with `cosign tree <image>` and `cosign verify <image> --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-identity-regexp '.*'`. That `--certificate-identity-regexp '.*'` accepts a signature from any workflow, so its output names who signed and proves nothing about whether the policy would admit the image; never carry it into a verification step. An admitted pod's image carries `@sha256:` — admission pins the tag to the digest it verified.
+
+6. `verify-images` matches Pods, never their controllers, so a Deployment, StatefulSet, DaemonSet or Job naming an image that fails verification is admitted and its pods are refused. The denial shows up as `FailedCreate` events on the ReplicaSet or Job (`kubectl get events -n <namespace> --field-selector reason=FailedCreate`), and the controller's pod template keeps the tag git holds.
 
 ## Velero Backup Issues
 

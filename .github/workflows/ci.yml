@@ -31,8 +31,8 @@ permissions:
 # surfaces on the currency PR that raises the pin, where re-recording is the fix.
 env:
   # renovate: datasource=github-releases depName=kyverno/kyverno
-  KYVERNO_VERSION: v1.19.2
-  KYVERNO_SHA256: 357eaf1df8bc24ddd5a73979fadeaae6a032e8710f11af264229756e4956bf4a
+  KYVERNO_VERSION: v1.20.0
+  KYVERNO_SHA256: 06b8f3ca7b5626473be8fb4d343ad54ab84e317142766f72420e7d44b80942e2
   # renovate: datasource=github-releases depName=kubernetes-sigs/kind
   KIND_VERSION: v0.33.0
   KIND_SHA256: aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d
@@ -570,10 +570,12 @@ jobs:
           kustomize-version: ${{ env.KUSTOMIZE_VERSION }} # zizmor: ignore[unpinned-tools]
       # kyverno test proves what a policy DOES; this proves the API server
       # would accept it at all. Kyverno enforces semantic rules no schema
-      # encodes — on a ClusterPolicy verifyImages rule, mutateDigest:true under
-      # an Audit failure action is rejected outright — and an invalid overlay
-      # renders clean, passes kubeconform, passes kyverno test, and then fails
-      # to sync on every cluster.
+      # encodes — a CEL expression that does not compile, or (on the legacy
+      # ClusterPolicy verifyImages rule this catalog once carried) mutateDigest:
+      # true under an Audit failure action — and an invalid overlay renders
+      # clean, passes kubeconform, and then fails to sync on every cluster. It
+      # also refuses any legacy kyverno.io policy kind, which Kyverno 1.20 no
+      # longer runs.
       - name: Every rendered policy overlay is valid
         run: ./scripts/check-policy-validity.py
 

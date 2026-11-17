@@ -19,3 +19,16 @@ spec:
   type: LoadBalancer
   ports:
     - port: 80
+---
+# A Service the controller DOES provision (its own loadBalancerClass): the shape
+# that gets the private CSV in adopt mode. Here, in create mode, it stays as it is.
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-create-nlb-class
+  namespace: workloads
+spec:
+  type: LoadBalancer
+  loadBalancerClass: service.k8s.aws/nlb
+  ports:
+    - port: 80

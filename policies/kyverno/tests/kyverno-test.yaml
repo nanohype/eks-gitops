@@ -1,16 +1,29 @@
 # Unit tests for the Kyverno policies in this repo. Run with:
 #   kyverno test policies/kyverno/tests
-# Each rule is proven to PASS a compliant resource and FAIL a violating one, so
+# Each policy is proven to PASS a compliant resource and FAIL a violating one, so
 # a regression that weakens (or silently no-ops) a policy is caught in CI.
+#
+# Every validation policy is a ValidatingPolicy holding ONE validation. A
+# ValidatingPolicy reports a single result per resource, carrying the index of
+# the first validation that failed and nothing about the rest, so a policy with
+# two validations could never be shown to fail on its second — the readiness and
+# liveness checks, and the cpu and memory limits, are separate policies for that
+# reason. Results carry no rule name.
+#
+# The UPDATE rows proving an existing violation is grandfathered live in
+# existing-violations/, a test of their own: an explicit operation re-runs every
+# policy in the test under it, which here would verify every image twice.
 apiVersion: cli.kyverno.io/v1alpha1
 kind: Test
 metadata:
   name: nanohype-kyverno-policies
 policies:
   - ../best-practices/base/require-labels.yaml
-  - ../best-practices/base/require-probes.yaml
+  - ../best-practices/base/require-readiness-probe.yaml
+  - ../best-practices/base/require-liveness-probe.yaml
   - ../pod-security-standards/base/require-non-root.yaml
-  - ../pod-security-standards/base/require-resource-limits.yaml
+  - ../pod-security-standards/base/require-cpu-limit.yaml
+  - ../pod-security-standards/base/require-memory-limit.yaml
   - ../supply-chain/base/verify-images.yaml
 resources:
   - resources.yaml
@@ -20,75 +33,102 @@ results:
   # bad-deploy-missing-tier carries name but omits team, so it proves the tier is
   # enforced, not just the app.kubernetes.io/name label.
   - policy: require-labels
-    rule: require-standard-labels
+    isValidatingPolicy: true
     kind: Deployment
-    resources: [good-deploy]
+    resources: [good-deploy, good-deploy-probes]
     result: pass
   - policy: require-labels
-    rule: require-standard-labels
+    isValidatingPolicy: true
     kind: Deployment
-    resources: [bad-deploy]
-    result: fail
-  - policy: require-labels
-    rule: require-standard-labels
-    kind: Deployment
-    resources: [bad-deploy-missing-tier]
+    resources: [bad-deploy, bad-deploy-missing-tier]
     result: fail
 
-  # require-probes
-  - policy: require-probes
-    rule: require-readiness-probe
-    kind: Pod
-    resources: [good-pod]
+  # require-readiness-probe / require-liveness-probe — controllers, never Pods.
+  # Each bad fixture lacks exactly one probe, so it passes the other policy.
+  - policy: require-readiness-probe
+    isValidatingPolicy: true
+    kind: Deployment
+    resources: [good-deploy-probes, bad-deploy-no-liveness]
     result: pass
-  - policy: require-probes
-    rule: require-liveness-probe
-    kind: Pod
-    resources: [good-pod]
-    result: pass
-  - policy: require-probes
-    rule: require-readiness-probe
-    kind: Pod
-    resources: [bad-pod-no-probes]
+  - policy: require-readiness-probe
+    isValidatingPolicy: true
+    kind: Deployment
+    resources: [bad-deploy-no-readiness]
     result: fail
-  - policy: require-probes
-    rule: require-liveness-probe
-    kind: Pod
-    resources: [bad-pod-no-probes]
+  - policy: require-liveness-probe
+    isValidatingPolicy: true
+    kind: Deployment
+    resources: [good-deploy-probes, bad-deploy-no-readiness]
+    result: pass
+  - policy: require-liveness-probe
+    isValidatingPolicy: true
+    kind: Deployment
+    resources: [bad-deploy-no-liveness]
     result: fail
 
-  # require-run-as-non-root
+  # require-run-as-non-root — the Pod rule, then its autogen Deployment variant.
   - policy: require-run-as-non-root
-    rule: run-as-non-root
+    isValidatingPolicy: true
     kind: Pod
     resources: [good-pod]
     result: pass
   - policy: require-run-as-non-root
-    rule: run-as-non-root
+    isValidatingPolicy: true
     kind: Pod
     resources: [bad-pod-root]
     result: fail
-
-  # require-resource-limits
-  - policy: require-resource-limits
-    rule: require-cpu-limit
-    kind: Pod
-    resources: [good-pod]
+  - policy: require-run-as-non-root
+    isValidatingPolicy: true
+    kind: Deployment
+    resources: [good-deploy-probes]
     result: pass
-  - policy: require-resource-limits
-    rule: require-memory-limit
-    kind: Pod
-    resources: [good-pod]
-    result: pass
-  - policy: require-resource-limits
-    rule: require-cpu-limit
-    kind: Pod
-    resources: [bad-pod-no-limits]
+  - policy: require-run-as-non-root
+    isValidatingPolicy: true
+    kind: Deployment
+    resources: [bad-deploy-pod-security]
     result: fail
-  - policy: require-resource-limits
-    rule: require-memory-limit
+
+  # require-cpu-limit / require-memory-limit — each bad fixture lacks exactly one
+  # limit, so it passes the other policy; bad-pod-no-limits fails both.
+  - policy: require-cpu-limit
+    isValidatingPolicy: true
     kind: Pod
-    resources: [bad-pod-no-limits]
+    resources: [good-pod, bad-pod-no-memory-limit]
+    result: pass
+  - policy: require-cpu-limit
+    isValidatingPolicy: true
+    kind: Pod
+    resources: [bad-pod-no-limits, bad-pod-no-cpu-limit]
+    result: fail
+  - policy: require-memory-limit
+    isValidatingPolicy: true
+    kind: Pod
+    resources: [good-pod, bad-pod-no-cpu-limit]
+    result: pass
+  - policy: require-memory-limit
+    isValidatingPolicy: true
+    kind: Pod
+    resources: [bad-pod-no-limits, bad-pod-no-memory-limit]
+    result: fail
+  - policy: require-cpu-limit
+    isValidatingPolicy: true
+    kind: Deployment
+    resources: [good-deploy-probes]
+    result: pass
+  - policy: require-cpu-limit
+    isValidatingPolicy: true
+    kind: Deployment
+    resources: [bad-deploy-pod-security]
+    result: fail
+  - policy: require-memory-limit
+    isValidatingPolicy: true
+    kind: Deployment
+    resources: [good-deploy-probes]
+    result: pass
+  - policy: require-memory-limit
+    isValidatingPolicy: true
+    kind: Deployment
+    resources: [bad-deploy-pod-security]
     result: fail
 
   # verify-images — an ImageValidatingPolicy, evaluated against the registry and

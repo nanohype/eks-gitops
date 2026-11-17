@@ -1,0 +1,98 @@
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: require-cpu-limit
+  annotations:
+    policies.kyverno.io/title: Require CPU Limits
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      As application workloads share cluster resources, it is important to limit
+      resources requested and consumed by each Pod. This policy validates that all
+      containers have a cpu limit specified; require-memory-limit checks the other.
+spec:
+  # Base is Audit: development keeps it, so a violation lands in a PolicyReport
+  # without blocking. The staging and production overlays patch this to [Deny].
+  validationActions: [Audit]
+  failurePolicy: Fail
+  evaluation:
+    admission:
+      enabled: true
+    background:
+      enabled: true
+  # Autogen is left at its default: Kyverno derives the same validation for every
+  # pod controller (Deployment, StatefulSet, DaemonSet, ReplicaSet,
+  # ReplicationController, Job, CronJob), rewriting object.spec and oldObject.spec
+  # to the controller's pod template, as the ClusterPolicy's autogen rules did.
+  matchConstraints:
+    # Platform-managed namespaces — identical set across all six policies; see
+    # best-practices/base/require-labels.yaml for the full rationale and
+    # scripts/check-policy-admission.py for the drift + Deny-admission gate that
+    # keeps them in sync.
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values:
+            # Kubernetes + Argo control plane
+            - kube-system
+            - kube-public
+            - kube-node-lease
+            - argocd
+            # bootstrap / networking / security infrastructure
+            - cert-manager
+            - external-secrets
+            - external-dns
+            - reloader
+            - kyverno
+            - trivy-system
+            - falco
+            # observability
+            - monitoring
+            - grafana-operator
+            - opencost
+            - amazon-cloudwatch
+            # operations
+            - velero
+            - goldilocks
+            - vpa
+            - keda
+            - descheduler
+            # argo platform
+            - argo-rollouts
+            - argo-events
+            - argo-workflows
+            # ai platform
+            - envoy-gateway-system
+            - eks-agent-platform
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+  # ── Existing violations ─────────────────────────────────────────────────
+  # The ClusterPolicy this replaces set validate.allowExistingViolations: an
+  # UPDATE to an object that ALREADY violated the rule was admitted, so turning
+  # Deny on never wedged a workload that predated it. ValidatingPolicy has no such
+  # field, so the validation carries it: `existingViolation` holds when the
+  # request has an old object (an UPDATE — on a CREATE, and in a background scan,
+  # oldObject is null or empty, and the guard is false either way) and that old
+  # object fails the same check. A CREATE is decided on the new object alone,
+  # and an UPDATE that turns a compliant object non-compliant is refused, exactly
+  # as before. Background scans report every current violation, as before.
+  variables:
+    # Every container sets a non-empty cpu limit — what the legacy "?*" pattern
+    # matched.
+    - name: compliant
+      expression: >-
+        object.spec.containers.all(c,
+          string(c.?resources.?limits[?'cpu'].orValue('')) != '')
+    - name: existingViolation
+      expression: >-
+        oldObject != null && has(oldObject.kind) &&
+        !oldObject.spec.containers.all(c,
+          string(c.?resources.?limits[?'cpu'].orValue('')) != '')
+  validations:
+    - expression: variables.compliant || variables.existingViolation
+      message: "CPU limit is required for all containers."

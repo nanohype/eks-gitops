@@ -1,6 +1,7 @@
 # Adopt-mode cases for inject-adopt-lb-subnets. Run (with every other test in this
 # tree) by `kyverno test policies/kyverno/tests`. The kube-system/network-config
-# ConfigMap state is supplied via values.yaml.
+# ConfigMap is supplied as a cluster resource (cluster-resources.yaml), which is
+# what the policy's resource.get() reads offline.
 #
 # The matrix is the AWS Load Balancer Controller's own decision procedure: first
 # whether the object is one it provisions a load balancer for, then which scheme
@@ -21,6 +22,15 @@
 #   Service the controller does not claim
 #     (k) plain type=LoadBalancer   → untouched, the in-tree provider's Classic LB
 #     (l) ClusterIP                 → untouched
+#
+# A MutatingPolicy reports one result per object, with no rule name, and `pass`
+# whether or not its mutation changed anything. So every row asserts the patched
+# object: the injected annotation where one is expected, and the object byte-for-
+# byte unchanged where none is — (c), (d) and (k). That is a stronger claim than
+# the `skip` the four-rule ClusterPolicy reported, which a policy that injected
+# the wrong CSV would also have satisfied. (l) never reaches the policy body: the
+# matchCondition admits only Ingresses and type=LoadBalancer Services, so it is
+# the one row that skips.
 apiVersion: cli.kyverno.io/v1alpha1
 kind: Test
 metadata:
@@ -29,73 +39,77 @@ policies:
   - ../../networking/base/inject-adopt-lb-subnets.yaml
 resources:
   - resources.yaml
-variables: values.yaml
+clusterResources:
+  - cluster-resources.yaml
 results:
   - policy: inject-adopt-lb-subnets
-    rule: ingress-internal-subnets
+    isMutatingPolicy: true
     kind: Ingress
     resources: [ing-plain]
     patchedResources: patched/ing-plain.yaml
     result: pass
   - policy: inject-adopt-lb-subnets
-    rule: ingress-internet-facing-subnets
+    isMutatingPolicy: true
     kind: Ingress
     resources: [ing-internet]
     patchedResources: patched/ing-internet.yaml
     result: pass
   - policy: inject-adopt-lb-subnets
-    rule: ingress-internal-subnets
+    isMutatingPolicy: true
     kind: Ingress
     resources: [ing-explicit]
-    result: skip
+    patchedResources: patched/ing-explicit.yaml
+    result: pass
   - policy: inject-adopt-lb-subnets
-    rule: ingress-internal-subnets
+    isMutatingPolicy: true
     kind: Ingress
     resources: [ing-grouped]
-    result: skip
+    patchedResources: patched/ing-grouped.yaml
+    result: pass
   - policy: inject-adopt-lb-subnets
-    rule: service-internal-subnets
+    isMutatingPolicy: true
     kind: Service
     resources: [svc-nlb-class]
     patchedResources: patched/svc-nlb-class.yaml
     result: pass
   - policy: inject-adopt-lb-subnets
-    rule: service-internal-subnets
+    isMutatingPolicy: true
     kind: Service
     resources: [svc-external-instance]
     patchedResources: patched/svc-external-instance.yaml
     result: pass
   - policy: inject-adopt-lb-subnets
-    rule: service-internet-facing-subnets
+    isMutatingPolicy: true
     kind: Service
     resources: [svc-internet]
     patchedResources: patched/svc-internet.yaml
     result: pass
   - policy: inject-adopt-lb-subnets
-    rule: service-internet-facing-subnets
+    isMutatingPolicy: true
     kind: Service
     resources: [svc-legacy-internal-false]
     patchedResources: patched/svc-legacy-internal-false.yaml
     result: pass
   - policy: inject-adopt-lb-subnets
-    rule: service-internal-subnets
+    isMutatingPolicy: true
     kind: Service
     resources: [svc-legacy-internal-true]
     patchedResources: patched/svc-legacy-internal-true.yaml
     result: pass
   - policy: inject-adopt-lb-subnets
-    rule: service-internal-subnets
+    isMutatingPolicy: true
     kind: Service
     resources: [svc-scheme-beats-legacy]
     patchedResources: patched/svc-scheme-beats-legacy.yaml
     result: pass
   - policy: inject-adopt-lb-subnets
-    rule: service-internal-subnets
+    isMutatingPolicy: true
     kind: Service
     resources: [svc-plain]
-    result: skip
+    patchedResources: patched/svc-plain.yaml
+    result: pass
   - policy: inject-adopt-lb-subnets
-    rule: service-internal-subnets
+    isMutatingPolicy: true
     kind: Service
     resources: [svc-clusterip]
     result: skip

@@ -3,4 +3,5 @@ kind: Kustomization
 
 resources:
   - require-labels.yaml
-  - require-probes.yaml
+  - require-readiness-probe.yaml
+  - require-liveness-probe.yaml

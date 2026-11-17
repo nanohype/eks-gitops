@@ -1,5 +1,5 @@
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
 metadata:
   name: require-labels
   annotations:
@@ -14,79 +14,99 @@ metadata:
       (app.kubernetes.io/managed-by, app.kubernetes.io/component,
       platform.nanohype.dev/environment, platform.nanohype.dev/team).
 spec:
-  admission: true
-  emitWarning: false
-  validationFailureAction: Audit
-  background: true
-  rules:
-    - name: require-standard-labels
-      skipBackgroundRequests: true
-      match:
-        any:
-          - resources:
-              kinds:
-                - Deployment
-                - StatefulSet
-                - DaemonSet
-      exclude:
-        any:
-          - resources:
-              # Platform-managed namespaces — control plane, addons, and system
-              # infrastructure. These best-practice / pod-security policies govern
-              # TENANT workloads. The addon fleet cannot satisfy them and should
-              # not have to: upstream charts never carry the org
-              # platform.nanohype.dev/* label tier, device plugins and security
-              # agents need root / host access, and batch jobs have no
-              # service-style probes. All four policies (require-labels,
-              # require-probes, require-run-as-non-root, require-resource-limits)
-              # exclude the SAME set so the lists cannot silently drift apart —
-              # scripts/check-policy-admission.py asserts that equality AND renders
-              # the whole fleet through these policies in Enforce mode, so an addon
-              # landing in a non-excluded namespace fails CI instead of being
-              # denied at admission on a vended enforce-tier cluster.
-              namespaces:
-                # Kubernetes + Argo control plane
-                - kube-system
-                - kube-public
-                - kube-node-lease
-                - argocd
-                # bootstrap / networking / security infrastructure
-                - cert-manager
-                - external-secrets
-                - external-dns
-                - reloader
-                - kyverno
-                - trivy-system
-                - falco
-                # observability
-                - monitoring
-                - grafana-operator
-                - opencost
-                - amazon-cloudwatch
-                # operations
-                - velero
-                - goldilocks
-                - vpa
-                - keda
-                - descheduler
-                # argo platform
-                - argo-rollouts
-                - argo-events
-                - argo-workflows
-                # ai platform
-                - envoy-gateway-system
-                - eks-agent-platform
-      validate:
-        allowExistingViolations: true
-        message: >-
-          Workloads must set the required label tier: app.kubernetes.io/name,
-          app.kubernetes.io/managed-by, app.kubernetes.io/component,
-          platform.nanohype.dev/environment, and platform.nanohype.dev/team.
-        pattern:
-          metadata:
-            labels:
-              app.kubernetes.io/name: "?*"
-              app.kubernetes.io/managed-by: "?*"
-              app.kubernetes.io/component: "?*"
-              platform.nanohype.dev/environment: "?*"
-              platform.nanohype.dev/team: "?*"
+  # Base is Audit: development keeps it, so a violation lands in a PolicyReport
+  # without blocking. The staging and production overlays patch this to [Deny].
+  validationActions: [Audit]
+  failurePolicy: Fail
+  evaluation:
+    admission:
+      enabled: true
+    background:
+      enabled: true
+  matchConstraints:
+    # Platform-managed namespaces — control plane, addons, and system
+    # infrastructure. These best-practice / pod-security policies govern TENANT
+    # workloads. The addon fleet cannot satisfy them and should not have to:
+    # upstream charts never carry the org platform.nanohype.dev/* label tier,
+    # device plugins and security agents need root / host access, and batch jobs
+    # have no service-style probes. All six policies (require-labels,
+    # require-readiness-probe, require-liveness-probe, require-run-as-non-root,
+    # require-cpu-limit, require-memory-limit) exclude the SAME set so the lists
+    # cannot silently drift apart — scripts/check-policy-admission.py asserts that
+    # equality AND renders the whole fleet through these policies at Deny, so an
+    # addon landing in a non-excluded namespace fails CI instead of being denied
+    # at admission on a vended enforce-tier cluster.
+    #
+    # kubernetes.io/metadata.name is the label the API server stamps on every
+    # Namespace with its own name, so NotIn on it is a namespace-name exclusion.
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values:
+            # Kubernetes + Argo control plane
+            - kube-system
+            - kube-public
+            - kube-node-lease
+            - argocd
+            # bootstrap / networking / security infrastructure
+            - cert-manager
+            - external-secrets
+            - external-dns
+            - reloader
+            - kyverno
+            - trivy-system
+            - falco
+            # observability
+            - monitoring
+            - grafana-operator
+            - opencost
+            - amazon-cloudwatch
+            # operations
+            - velero
+            - goldilocks
+            - vpa
+            - keda
+            - descheduler
+            # argo platform
+            - argo-rollouts
+            - argo-events
+            - argo-workflows
+            # ai platform
+            - envoy-gateway-system
+            - eks-agent-platform
+    resourceRules:
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["deployments", "statefulsets", "daemonsets"]
+  # ── Existing violations ─────────────────────────────────────────────────
+  # The ClusterPolicy this replaces set validate.allowExistingViolations: an
+  # UPDATE to an object that ALREADY violated the rule was admitted, so turning
+  # Deny on never wedged a workload that predated it. ValidatingPolicy has no such
+  # field, so the validation carries it: `existingViolation` holds when the
+  # request has an old object (an UPDATE — on a CREATE, and in a background scan,
+  # oldObject is null or empty, and the guard is false either way) and that old
+  # object fails the same check. A CREATE is decided on the new object alone,
+  # and an UPDATE that turns a compliant object non-compliant is refused, exactly
+  # as before. Background scans report every current violation, as before.
+  variables:
+    # A required label is present and non-empty — what the legacy "?*" pattern
+    # matched.
+    - name: compliant
+      expression: >-
+        ['app.kubernetes.io/name', 'app.kubernetes.io/managed-by', 'app.kubernetes.io/component', 'platform.nanohype.dev/environment', 'platform.nanohype.dev/team'].all(k,
+          k in object.metadata.?labels.orValue({}) &&
+          object.metadata.labels[k] != '')
+    - name: existingViolation
+      expression: >-
+        oldObject != null && has(oldObject.kind) &&
+        !['app.kubernetes.io/name', 'app.kubernetes.io/managed-by', 'app.kubernetes.io/component', 'platform.nanohype.dev/environment', 'platform.nanohype.dev/team'].all(k,
+          k in oldObject.metadata.?labels.orValue({}) &&
+          oldObject.metadata.labels[k] != '')
+  validations:
+    - expression: variables.compliant || variables.existingViolation
+      message: >-
+        Workloads must set the required label tier: app.kubernetes.io/name,
+        app.kubernetes.io/managed-by, app.kubernetes.io/component,
+        platform.nanohype.dev/environment, and platform.nanohype.dev/team.

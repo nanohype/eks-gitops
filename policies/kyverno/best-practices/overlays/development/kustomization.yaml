@@ -4,11 +4,12 @@ kind: Kustomization
 resources:
   - ../../base
 
-# Development: Audit mode (warn but don't block)
+# Development: Audit — a violation lands in a PolicyReport and is admitted.
 patches:
   - patch: |-
       - op: replace
-        path: /spec/validationFailureAction
-        value: Audit
+        path: /spec/validationActions
+        value: [Audit]
     target:
-      kind: ClusterPolicy
+      group: policies.kyverno.io
+      kind: ValidatingPolicy

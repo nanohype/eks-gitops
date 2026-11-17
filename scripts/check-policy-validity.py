@@ -2,21 +2,24 @@
 """Every rendered policy overlay is a policy Kyverno will actually accept.
 
 The other Kyverno gates in this repo check what a policy DOES. `kyverno test`
-proves each rule passes a compliant resource and fails a violating one, and
-check-policy-admission.py proves the fleet is admissible against the Enforce
+proves each policy passes a compliant resource and fails a violating one, and
+check-policy-admission.py proves the fleet is admissible against the Deny
 tier. Neither asks the prior question: will the API server accept this
 policy at all?
 
 Kyverno enforces semantic rules that no JSON schema encodes and no behavioural
-test reaches. One example, on a ClusterPolicy verifyImages rule:
+test reaches. One example, from the legacy ClusterPolicy verifyImages rule this
+catalog once carried:
 
     spec.rules[0].verifyImages[0].mutateDigest: Invalid value: true:
     mutateDigest must be set to false for 'Audit' failure action
 
-A policy carrying that combination renders clean through kustomize, passes
-kubeconform (the schema permits both fields independently), and passes
+A policy carrying that combination rendered clean through kustomize, passed
+kubeconform (the schema permits both fields independently), and passed
 `kyverno test` — which loads the policy in a context that does not run this
-validation. It then fails to apply on every cluster whose overlay is Audit. A
+validation. It then failed to apply on every cluster whose overlay was Audit. A
+CEL expression that does not compile is the same class of defect for the
+policy kinds the catalog ships now. A
 policy Kyverno cannot load at all fails the same way and is quieter still:
 `kyverno apply` drops it and reports `error: 0`. The policy-admission gate
 renders only the groups in its POLICY_GROUPS, so an invalid overlay of any
@@ -25,6 +28,11 @@ other group never reaches it.
 So this renders EVERY policy overlay — every group, every environment — and runs
 each through Kyverno's own validation. An overlay the API server would reject
 fails the build instead of the sync.
+
+A legacy kyverno.io policy kind is refused outright. Kyverno 1.20 no longer
+executes one and its API server refuses to create or update one, so an overlay
+that renders one installs nothing, or blocks the chart upgrade; the CLI's own
+refusal is not relied on, so the check holds offline.
 
 It also asserts what Kyverno itself will not: every rendered
 ImageValidatingPolicy, in every environment, pins the digest it verified
@@ -72,6 +80,19 @@ spec:
 
 failures: list[str] = []
 
+# The kyverno.io kinds Kyverno 1.20 removed execution of. Their API is still
+# served for read, list, export and delete, so they remain parseable and
+# removable, but a create or update is refused.
+LEGACY_KINDS = {
+    "ClusterPolicy", "Policy", "CleanupPolicy", "ClusterCleanupPolicy",
+    "PolicyException",
+}
+
+# The strings Kyverno prints when it refuses a policy. kyverno apply exits 0
+# over each. "failed to compile policy" is a CEL expression that does not
+# compile; it happens to carry "Invalid value" today, which is not a contract.
+REJECTIONS = ("policy validation error", "Invalid value", "failed to compile policy")
+
 
 # Kinds Kyverno reports as one "policy rule" each in `kyverno apply`'s load
 # count, because they carry no `rules` list of their own.
@@ -113,8 +134,8 @@ def _check_pins_digest(rel, rendered: str) -> None:
 def rules_in(rendered: str) -> int:
     """Policy rules in a rendered overlay, counted the way `kyverno apply` does.
 
-    A ClusterPolicy or Policy contributes its `rules`; a CEL policy kind, which
-    has none, contributes one.
+    Each CEL policy kind contributes one. A legacy kind contributes nothing —
+    Kyverno 1.20 will not load one — and is refused by legacy_policies instead.
 
     Parsed, not matched. Counting `- name:` by indentation returned 0 against
     the real render — the depth differs from the source files — so the guard
@@ -126,11 +147,21 @@ def rules_in(rendered: str) -> int:
     for doc in yaml.safe_load_all(rendered):
         if not isinstance(doc, dict):
             continue
-        if doc.get("kind") in ("ClusterPolicy", "Policy"):
-            total += len((doc.get("spec") or {}).get("rules") or [])
-        elif doc.get("kind") in CEL_POLICY_KINDS:
+        if doc.get("kind") in CEL_POLICY_KINDS:
             total += 1
     return total
+
+
+def legacy_policies(rendered: str) -> list[str]:
+    """`Kind/name` of every legacy kyverno.io policy kind in a render."""
+    found = []
+    for doc in yaml.safe_load_all(rendered):
+        if not isinstance(doc, dict) or doc.get("kind") not in LEGACY_KINDS:
+            continue
+        if not str(doc.get("apiVersion", "")).startswith("kyverno.io/"):
+            continue
+        found.append(f"{doc['kind']}/{(doc.get('metadata') or {}).get('name', '?')}")
+    return found
 
 
 def main() -> int:
@@ -168,6 +199,16 @@ def main() -> int:
             if not build.stdout.strip():
                 failures.append(f"{rel}: rendered to nothing — an empty overlay cannot be validated, "
                                 f"and would silently install no policy.")
+                continue
+
+            legacy = legacy_policies(build.stdout)
+            if legacy:
+                failures.append(
+                    f"{rel}: renders legacy kyverno.io policy kind(s) {', '.join(legacy)}. "
+                    f"Kyverno v1.20 removed execution of legacy kyverno.io policy types "
+                    f"and no longer accepts create or update requests for them — migrate "
+                    f"to ValidatingPolicy, MutatingPolicy, GeneratingPolicy or "
+                    f"ImageValidatingPolicy (policies.kyverno.io).")
                 continue
 
             rendered = pathlib.Path(td) / f"{overlay.parent.parent.name}-{overlay.name}.yaml"
@@ -211,10 +252,10 @@ def main() -> int:
             # kyverno apply exits 0 even when a policy fails validation; the
             # signal is the error count in the summary and the validation
             # message on stderr. Read both rather than trusting the exit code.
-            if "policy validation error" in combined or "Invalid value" in combined:
+            if any(s in combined for s in REJECTIONS):
                 detail = next(
                     (ln.strip() for ln in combined.splitlines()
-                     if "Invalid value" in ln or "policy validation error" in ln),
+                     if any(s in ln for s in REJECTIONS)),
                     "(no detail)",
                 )
                 failures.append(f"{rel}: Kyverno rejects this policy:\n      {detail[:400]}")

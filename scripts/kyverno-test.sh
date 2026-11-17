@@ -11,7 +11,7 @@ TESTS="${1:-policies/kyverno/tests}"
 
 # A floor on tests EXECUTED. Set under what the suite holds, so it catches
 # "matched almost nothing" rather than one case being retired.
-MIN_TESTS=24
+MIN_TESTS=48
 
 # Runs of the suite a transport failure may cost before the run is reported as
 # one that could not verify, and the seconds the Nth repeat waits (N * PAUSE).
@@ -133,6 +133,40 @@ if [ "$invalid" -gt 0 ]; then
   echo "FAIL  kyverno reported $invalid result(s) against a policy it will not accept."
   echo "      A rejected policy skips every rule, which satisfies every expected"
   echo "      skip in the suite — the run below passed without evaluating anything."
+  exit 1
+fi
+
+# A row whose resource the policy does not match prints as Pass with the reason
+# "Excluded", and the CLI counts it as a pass whatever result the row expected.
+# So a fixture the policy cannot see passes a `fail` row exactly as it passes a
+# `pass` one: that is how the require-probes rows, written against Pods for a
+# policy that matches controllers, asserted nothing for as long as they existed.
+# An autogen expectation prints one Excluded row for the Pod rule beside the
+# controller's real one, so the check is per (test, policy, resource): a pair
+# whose every row is Excluded was never evaluated.
+if ! unseen="$(printf '%s\n' "$out" | python3 -c '
+import sys
+test, seen = "", {}
+for line in sys.stdin:
+    if line.startswith("Loading test "):
+        test = line.split("(")[0][len("Loading test "):].strip()
+        continue
+    cells = [c.strip() for c in line.strip().strip("│").split("│")]
+    if len(cells) < 7 or not cells[0].isdigit():
+        continue
+    key = (test, cells[1], cells[3])
+    seen[key] = seen.get(key, True) and cells[5] == "Excluded"
+for (test, policy, resource), excluded in sorted(seen.items()):
+    if excluded:
+        print(f"      {test}: {policy} never evaluated {resource}")
+')"; then
+  echo "Cannot run: the excluded-row scan did not complete."
+  exit 2
+fi
+if [ -n "$unseen" ]; then
+  echo "FAIL  a row asserted a result against a resource its policy does not match."
+  echo "      The CLI reports those as passes whatever they expected:"
+  printf '%s\n' "$unseen"
   exit 1
 fi
 

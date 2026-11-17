@@ -1,0 +1,33 @@
+# The policy fails open. With no kube-system/network-config ConfigMap at all — a
+# cluster cluster-bootstrap has not reached yet — every field it reads resolves
+# to '' and nothing is mutated; the policy does not error. On a cluster an error
+# would also admit the object (failurePolicy: Ignore), but a clean no-op is what
+# these rows hold it to. The fixtures are the create-mode ones, and no cluster
+# resource is supplied.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: inject-adopt-lb-subnets-no-configmap
+policies:
+  - ../../networking/base/inject-adopt-lb-subnets.yaml
+resources:
+  - ../networking-create/resources.yaml
+results:
+  - policy: inject-adopt-lb-subnets
+    isMutatingPolicy: true
+    kind: Ingress
+    resources: [ing-create]
+    patchedResources: patched/ing-create.yaml
+    result: pass
+  - policy: inject-adopt-lb-subnets
+    isMutatingPolicy: true
+    kind: Service
+    resources: [svc-create]
+    patchedResources: patched/svc-create.yaml
+    result: pass
+  - policy: inject-adopt-lb-subnets
+    isMutatingPolicy: true
+    kind: Service
+    resources: [svc-create-nlb-class]
+    patchedResources: patched/svc-create-nlb-class.yaml
+    result: pass

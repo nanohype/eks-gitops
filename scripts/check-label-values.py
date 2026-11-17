@@ -59,13 +59,6 @@ TEMPLATE = re.compile(r"\{\{[^}]*\}\}")
 
 SKIP_DIRS = {".git", "node_modules", "rendered", "__pycache__", ".task"}
 
-# Inside a Kyverno policy, `spec.rules[].validate.pattern.metadata.labels` is a
-# MATCHER over other resources' labels, not labels being applied — `?*` there
-# means "any non-empty value" and is correct. The policy's own top-level
-# metadata.labels are real labels and are still checked.
-KYVERNO_KINDS = {"ClusterPolicy", "Policy", "ClusterCleanupPolicy", "CleanupPolicy"}
-
-
 def label_blocks(node, path="") -> list[tuple[str, dict]]:
     """Yield every (jsonpath, labels-map) pair reachable in a parsed document."""
     found = []
@@ -82,10 +75,13 @@ def label_blocks(node, path="") -> list[tuple[str, dict]]:
 
 
 def blocks_for(doc) -> list[tuple[str, dict]]:
-    """Label blocks worth checking in one document."""
-    if isinstance(doc, dict) and doc.get("kind") in KYVERNO_KINDS:
-        own = doc.get("metadata", {}).get("labels")
-        return [(".metadata.labels", own)] if isinstance(own, dict) else []
+    """Label blocks worth checking in one document.
+
+    Every metadata.labels map is a label set being applied. The legacy Kyverno
+    policy kinds once carried label MATCHERS in the same shape (`?*` meaning
+    "any non-empty value") and were exempted here; the CEL policy kinds that
+    replaced them state their checks in expressions, so no document is exempt.
+    """
     return label_blocks(doc)
 
 

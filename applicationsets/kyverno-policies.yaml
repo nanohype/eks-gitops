@@ -60,26 +60,12 @@ spec:
       destination:
         server: https://kubernetes.default.svc
         namespace: kyverno
-      # Kyverno defaults three fields onto its own ClusterPolicies at admission. None
-      # are in git, so without these ignores the policy sits permanently OutOfSync
-      # while Healthy. Re-derive the set by diffing `kustomize build
-      # overlays/development` against the live object:
-      #
-      #   .spec.admission                                                = true
-      #   .spec.emitWarning                                              = false
-      #   .spec.rules[].skipBackgroundRequests                           = true
-      #
-      # Each path is a Kyverno-owned default, so the ignores stay narrow: a genuine
-      # change to a rule's match/exclude in git is still drift. The supply-chain
-      # ImageValidatingPolicy is stored as written, so it needs no entry here and
-      # any difference in its attestor identity is drift.
-      ignoreDifferences:
-        - group: kyverno.io
-          kind: ClusterPolicy
-          jqPathExpressions:
-            - .spec.admission
-            - .spec.emitWarning
-            - .spec.rules[].skipBackgroundRequests
+      # No ignoreDifferences. The legacy ClusterPolicies needed three, for fields
+      # Kyverno's own webhook wrote onto them at admission. Every policy here is a
+      # policies.kyverno.io kind, which Kyverno stores as written; the only
+      # defaults their CRDs apply are under spec.evaluation, and the migrated
+      # policies write those out. Any difference — a validation, a match
+      # constraint, an attestor identity — is drift.
       syncPolicy:
         automated:
           prune: true

@@ -1,0 +1,136 @@
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: require-readiness-probe
+  annotations:
+    policies.kyverno.io/title: Require Readiness Probes
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Deployment, StatefulSet, DaemonSet, ReplicaSet, ReplicationController
+    policies.kyverno.io/description: >-
+      Liveness and readiness probes are essential for Kubernetes to manage
+      pod lifecycle correctly. This policy validates that every container in a
+      long-running workload controller defines a readiness probe; require-liveness-probe
+      checks the other. It deliberately does not match bare Pods — see the
+      comment on matchConstraints.
+spec:
+  # Base is Audit: development keeps it, so a violation lands in a PolicyReport
+  # without blocking. The staging and production overlays patch this to [Deny].
+  validationActions: [Audit]
+  failurePolicy: Fail
+  evaluation:
+    admission:
+      enabled: true
+    background:
+      enabled: true
+  # The policy matches controllers only, and autogen derives rules for a pod
+  # policy alone, so there is nothing to generate. Disabled to say so.
+  autogen:
+    podControllers:
+      enabled: false
+  # ── Why this matches controllers and not Pod ──────────────────────────
+  # A readiness probe gates traffic to a Service; a liveness probe restarts
+  # a process that is supposed to stay up. Neither means anything to a pod
+  # whose success condition is exiting 0. Matching `Pod` sweeps those in:
+  # Argo Workflows creates its step pods at RUNTIME, in their own namespace,
+  # so eval-runner pods would meet this policy at Deny and be refused — a
+  # whole tier that could never start, invisible to every gate because no
+  # rendered manifest carries those pods.
+  #
+  # Matching the long-running controller kinds directly is the narrowest fix
+  # that keeps everything else. Two alternatives were tried and rejected,
+  # both by rendering rather than by reading:
+  #
+  #   * an exclusion on the Argo workflow label — on the legacy ClusterPolicy
+  #     this made Kyverno skip autogen for the rule, so the controller
+  #     variants vanished and the policy silently stopped protecting the
+  #     fleet.
+  #   * a precondition reading the request's labels — evaluated at admission
+  #     but NOT under `kyverno apply`, so every pod skipped and
+  #     scripts/check-policy-admission.py would have reported a compliant
+  #     fleet while enforcing nothing.
+  #
+  # Adding eval-runner to the shared namespace exclusion was rejected too:
+  # the six lists are pinned identical, so it would have exempted those pods
+  # from require-labels, require-run-as-non-root and the limit policies as
+  # well — policies they already satisfy.
+  #
+  # The cost of this shape is that a bare long-running Pod is not matched.
+  # Nothing in the fleet or the tenant charts deploys one; every workload
+  # arrives as a controller.
+  matchConstraints:
+    # Platform-managed namespaces — identical set across all six policies; see
+    # best-practices/base/require-labels.yaml for the full rationale and
+    # scripts/check-policy-admission.py for the drift + Deny-admission gate that
+    # keeps them in sync.
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values:
+            # Kubernetes + Argo control plane
+            - kube-system
+            - kube-public
+            - kube-node-lease
+            - argocd
+            # bootstrap / networking / security infrastructure
+            - cert-manager
+            - external-secrets
+            - external-dns
+            - reloader
+            - kyverno
+            - trivy-system
+            - falco
+            # observability
+            - monitoring
+            - grafana-operator
+            - opencost
+            - amazon-cloudwatch
+            # operations
+            - velero
+            - goldilocks
+            - vpa
+            - keda
+            - descheduler
+            # argo platform
+            - argo-rollouts
+            - argo-events
+            - argo-workflows
+            # ai platform
+            - envoy-gateway-system
+            - eks-agent-platform
+    resourceRules:
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["replicationcontrollers"]
+  # ── Existing violations ─────────────────────────────────────────────────
+  # The ClusterPolicy this replaces set validate.allowExistingViolations: an
+  # UPDATE to an object that ALREADY violated the rule was admitted, so turning
+  # Deny on never wedged a workload that predated it. ValidatingPolicy has no such
+  # field, so the validation carries it: `existingViolation` holds when the
+  # request has an old object (an UPDATE — on a CREATE, and in a background scan,
+  # oldObject is null or empty, and the guard is false either way) and that old
+  # object fails the same check. A CREATE is decided on the new object alone,
+  # and an UPDATE that turns a compliant object non-compliant is refused, exactly
+  # as before. Background scans report every current violation, as before.
+  variables:
+    # Every container sets a readiness probe with a positive period — what the
+    # legacy `periodSeconds: ">0"` pattern matched. The API server defaults
+    # periodSeconds to 10 on any probe before a webhook sees it.
+    - name: compliant
+      expression: >-
+        object.spec.template.spec.containers.all(c,
+          c.?readinessProbe.?periodSeconds.orValue(0) > 0)
+    - name: existingViolation
+      expression: >-
+        oldObject != null && has(oldObject.kind) &&
+        !oldObject.spec.template.spec.containers.all(c,
+          c.?readinessProbe.?periodSeconds.orValue(0) > 0)
+  validations:
+    - expression: variables.compliant || variables.existingViolation
+      message: "Readiness probe is required for all containers."

@@ -85,8 +85,8 @@ def row(n: int, resource: str, result: str, reason: str, message: str) -> str:
 IDENTITY = identity_message()
 MISMATCH = verifier_line("failed to verify cosign signatures: no matching signatures: none of "
                          "the expected identities matched what was in the certificate")
-SUMMARY_OK = "Test Summary: 33 tests passed and 0 tests failed"
-SUMMARY_FAILED = "Test Summary: 31 tests passed and 2 tests failed"
+SUMMARY_OK = "Test Summary: 70 tests passed and 0 tests failed"
+SUMMARY_FAILED = "Test Summary: 68 tests passed and 2 tests failed"
 
 CLEAN = ("\n".join([row(15, "vi-signed", "Pass", "Ok", "success"),
                     row(18, "vi-branch-signed", "Pass", "Ok", IDENTITY),
@@ -374,6 +374,46 @@ class WhatTheTableMustCarry(KyvernoTestScript):
         rc, said = self.run_script(kyverno=False)
         self.assertEqual(rc, 2, said)
         self.assertIn("kyverno is not on PATH", said)
+
+
+def vrow(n: int, policy: str, rule: str, resource: str, reason: str) -> str:
+    """A ValidatingPolicy row as `kyverno test --detailed-results` prints it."""
+    return f"│ {n:<3}│ {policy} │ {rule} │ {resource} │ Pass │ {reason} │ {reason} │"
+
+
+class RowsTheirPolicyNeverSaw(KyvernoTestScript):
+    """An Excluded row passes whatever it expected, so it must not stand alone."""
+
+    def test_a_pair_with_only_excluded_rows_fails(self):
+        out, _ = CLEAN
+        table = "\n".join(["Loading test suite ( tests/kyverno-test.yaml ) ...",
+                           vrow(1, "require-readiness-probe", "", "v1/Pod/workloads/good-pod",
+                                "Excluded"), out])
+        rc, said = self.run_script((table, 0))
+        self.assertEqual(rc, 1, said)
+        self.assertIn("require-readiness-probe never evaluated v1/Pod/workloads/good-pod", said)
+
+    def test_an_autogen_pair_with_an_evaluated_row_passes(self):
+        """The Pod rule prints Excluded beside the controller variant that ran."""
+        out, _ = CLEAN
+        res = "apps/v1/Deployment/workloads/good-deploy"
+        table = "\n".join(["Loading test suite ( tests/kyverno-test.yaml ) ...",
+                           vrow(1, "require-cpu-limit", "", res, "Excluded"),
+                           vrow(2, "require-cpu-limit", "validation", res, "Ok"), out])
+        rc, said = self.run_script((table, 0))
+        self.assertEqual(rc, 0, said)
+
+    def test_a_pair_evaluated_only_in_another_test_still_fails(self):
+        """Each test file stands on its own rows."""
+        out, _ = CLEAN
+        res = "v1/Pod/workloads/good-pod"
+        table = "\n".join(["Loading test one ( one/kyverno-test.yaml ) ...",
+                           vrow(1, "require-cpu-limit", "validation", res, "Ok"),
+                           "Loading test two ( two/kyverno-test.yaml ) ...",
+                           vrow(1, "require-cpu-limit", "", res, "Excluded"), out])
+        rc, said = self.run_script((table, 0))
+        self.assertEqual(rc, 1, said)
+        self.assertIn("two: require-cpu-limit never evaluated", said)
 
 
 class WhatDecidesARun(KyvernoTestScript):

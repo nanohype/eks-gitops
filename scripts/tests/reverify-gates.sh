@@ -528,8 +528,8 @@ F=policies/kyverno/networking/base/inject-adopt-lb-subnets.yaml; mut $F
 python3 - "$F" <<'PYQ'
 import pathlib,sys
 p=pathlib.Path(sys.argv[1]); s=p.read_text()
-m=s.replace("|| (internalannotation == 'false' && 'internet-facing' || 'internal')",
-            "|| 'internal'")
+m=s.replace("(!variables.isIngress && variables.internalannotation == 'false') ? 'internet-facing' :\n        ",
+            "")
 assert m!=s, "mutation did not land"
 p.write_text(m)
 print("   dropped the legacy spelling from the scheme the policy computes")
@@ -538,16 +538,15 @@ run nonzero "kyverno: a Service the controller calls internet-facing takes priva
   ./scripts/kyverno-test.sh
 res $F
 
-# A policy the engine refuses is not a policy that passed. Every row expecting a
-# rule to skip is satisfied by the rule never running, and the CLI counts those
-# as passes.
+# A policy the engine refuses is not a policy that passed. A row expecting a
+# skip is satisfied by the policy never running, and the CLI counts those as
+# passes.
 F=policies/kyverno/networking/base/inject-adopt-lb-subnets.yaml; mut $F
 python3 - "$F" <<'PYQ'
 import pathlib,sys
 p=pathlib.Path(sys.argv[1]); s=p.read_text()
-m=s.replace("{{ lbclass == 'service.k8s.aws/nlb' || lbtype == 'nlb-ip' || "
-            "(lbtype == 'external' && (nlbtargettype == 'ip' || nlbtargettype == 'instance')) }}",
-            "{{ 'yes' == 'yes' }}")
+m=s.replace("variables.lbclass == 'service.k8s.aws/nlb' || variables.lbtype == 'nlb-ip' ||",
+            "variables.undeclared ||")
 assert m!=s, "mutation did not land"
 p.write_text(m)
 print("   made the policy one Kyverno will not accept")
@@ -595,7 +594,7 @@ F=policies/kyverno/best-practices/base/require-labels.yaml; mut $F
 python3 - "$F" <<'PY'
 import pathlib,sys
 p=pathlib.Path(sys.argv[1]); s=p.read_text()
-m=s.replace("apiVersion: kyverno.io/v1","apiVersion: kyverno.io/vBOGUS",1)
+m=s.replace("apiVersion: policies.kyverno.io/v1","apiVersion: policies.kyverno.io/vBOGUS",1)
 assert m!=s, "mutation did not land"
 p.write_text(m)
 PY
