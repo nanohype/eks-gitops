@@ -403,6 +403,22 @@ class RowsTheirPolicyNeverSaw(KyvernoTestScript):
         rc, said = self.run_script((table, 0))
         self.assertEqual(rc, 0, said)
 
+    def test_excluded_rows_do_not_count_toward_the_floor(self):
+        """The summary counts an Excluded row as a pass; the floor does not."""
+        res = "apps/v1/Deployment/workloads/good-deploy"
+        floor = setting(SCRIPT, "MIN_TESTS")
+        rows = ["Loading test suite ( tests/kyverno-test.yaml ) ..."]
+        for n in range(3):
+            rows += [vrow(2 * n + 1, f"policy-{n}", "", res, "Excluded"),
+                     vrow(2 * n + 2, f"policy-{n}", "validation", res, "Ok")]
+        # Every pair evaluated, so the scan passes; the summary reaches the floor
+        # only by counting the three Excluded rows.
+        rows.append(f"Test Summary: {floor + 2} tests passed and 0 tests failed")
+        rc, said = self.run_script(("\n".join(rows), 0))
+        self.assertEqual(rc, 2, said)
+        self.assertIn(f"{floor - 1} Kyverno test(s) evaluated a resource", said)
+        self.assertIn("3 of them Excluded", said)
+
     def test_a_pair_evaluated_only_in_another_test_still_fails(self):
         """Each test file stands on its own rows."""
         out, _ = CLEAN

@@ -159,14 +159,14 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
 ## 4. Admission / pod security  (`policies/kyverno/{best-practices,pod-security-standards}/`)
 
 - **Elevation of privilege** — a root or unconstrained pod. Mitigated by Kyverno
-  ValidatingPolicies, one check each: `runAsNonRoot: true` (require-non-root.yaml:84-92),
-  a CPU limit and a memory limit on every container (require-cpu-limit.yaml:87-98,
-  require-memory-limit.yaml:87-98), readiness and liveness probes on every
-  long-running controller (require-readiness-probe.yaml:123-134,
+  ValidatingPolicies, one check each: `runAsNonRoot: true` (require-non-root.yaml:101-109),
+  a CPU limit and a memory limit on every container (require-cpu-limit.yaml:104-115,
+  require-memory-limit.yaml:104-115), readiness and liveness probes on every
+  long-running controller (require-readiness-probe.yaml:136-147,
   require-liveness-probe.yaml), and the five-label org tier —
   `app.kubernetes.io/name`, `managed-by`, `component`,
   `platform.nanohype.dev/environment`, `platform.nanohype.dev/team`
-  (require-labels.yaml:96-112).
+  (require-labels.yaml:109-125).
   Base is `[Audit]`; each group's **production overlay patches every
   ValidatingPolicy to `validationActions: [Deny]`** — both
   `best-practices/overlays/production/kustomization.yaml:8-15` (require-labels and
@@ -182,15 +182,20 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
   fails at PR time instead of being denied at admission on a vended Deny cluster;
   it also asserts all six exclusion lists stay identical, that every namespace the
   fleet lands a workload in is on that list, that each overlay carries its tier's
-  `validationActions`, and — via a deliberately non-compliant canary every
+  `validationActions`, validation expression, `failurePolicy: Fail` and admission
+  evaluation, and — via a deliberately non-compliant canary every
   validation must deny — that the run evaluated anything at all.
 - **Residual** — the policies carry a fixed exclude list of platform/system
-  namespaces (argocd, kyverno, cert-manager, monitoring, …) and admit an UPDATE
-  to an object that already violated them (the legacy
+  namespaces (argocd, kyverno, cert-manager, monitoring, …) and, on the Deny
+  tier, admit an UPDATE to an object that already violated them (the legacy
   `allowExistingViolations: true`, carried into each validation as an
-  `oldObject` check), so pre-existing violators and every excluded namespace are
-  unenforced. Non-production overlays stay `[Audit]`. A fork tightening posture
-  should shrink the exclude list and promote `[Deny]` earlier.
+  `oldObject` check that the policy-admission gate holds to its derived form),
+  so pre-existing violators and every excluded namespace are unenforced.
+  The pod-level policies no longer match a ReplicationController object —
+  Kyverno 1.20's CEL autogen derives no RC variant — so a non-compliant RC is
+  admitted and its Pods are refused at creation instead. Development stays
+  `[Audit]`. A fork tightening posture should shrink the exclude list and
+  promote `[Deny]` earlier.
 
 ## 5. Secrets  (`addons/bootstrap/secret-stores/`, `catalog/druid/chart/templates/externalsecret.yaml`)
 

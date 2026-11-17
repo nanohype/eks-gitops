@@ -20,10 +20,14 @@ spec:
       enabled: true
     background:
       enabled: true
-  # Autogen is left at its default: Kyverno derives the same validation for every
-  # pod controller (Deployment, StatefulSet, DaemonSet, ReplicaSet,
-  # ReplicationController, Job, CronJob), rewriting object.spec and oldObject.spec
-  # to the controller's pod template, as the ClusterPolicy's autogen rules did.
+  # Autogen is left at its default: Kyverno derives the same validation for
+  # Deployment, StatefulSet, DaemonSet, ReplicaSet, Job and CronJob, rewriting
+  # object.spec and oldObject.spec to the controller's pod template. That is the
+  # ClusterPolicy's autogen set less ReplicationController: Kyverno 1.20's CEL
+  # autogen has no ReplicationController target, and spec.autogen cannot name a
+  # core-group controller, so an RC object is no longer refused at admission.
+  # The Pods it creates still are, by the Pod rule — a non-compliant RC is
+  # admitted and then reports FailedCreate rather than being refused up front.
   matchConstraints:
     # Platform-managed namespaces — identical set across all six policies; see
     # best-practices/base/require-labels.yaml for the full rationale and
@@ -80,13 +84,26 @@ spec:
   # object fails the same check. A CREATE is decided on the new object alone,
   # and an UPDATE that turns a compliant object non-compliant is refused, exactly
   # as before. Background scans report every current violation, as before.
+  #
+  # `existingViolation` is `compliant` read off oldObject and negated, behind
+  # the UPDATE guard, written in exactly that form: scripts/check-policy-admission.py
+  # derives it from `compliant` and fails on any other, because a term that
+  # admitted more than the old object's violation would let a compliant workload
+  # be updated into violation on the Deny tier with every test still green.
+  #
+  # The legacy engine applied allowExistingViolations under Enforce only; in
+  # Audit it judged the new object alone and reported the UPDATE as a fail. So
+  # the development overlay (Audit) patches the validation to
+  # `variables.compliant`, and only the staging and production overlays (Deny)
+  # keep this base expression. Where the legacy engine reported a grandfathered
+  # UPDATE as skip, this reports it as pass.
   variables:
     - name: compliant
       expression: object.spec.?securityContext.?runAsNonRoot.orValue(false) == true
     - name: existingViolation
       expression: >-
         oldObject != null && has(oldObject.kind) &&
-        oldObject.spec.?securityContext.?runAsNonRoot.orValue(false) != true
+        !(oldObject.spec.?securityContext.?runAsNonRoot.orValue(false) == true)
   validations:
     - expression: variables.compliant || variables.existingViolation
       message: "Running as root is not allowed. Set spec.securityContext.runAsNonRoot to true."

@@ -70,10 +70,17 @@ spec:
         automated:
           prune: true
           selfHeal: true
+        # PruneLast: ArgoCD otherwise prunes a wave's removed objects BEFORE it
+        # applies that wave's new ones, so replacing a policy with one of a
+        # different kind or name (the kyverno.io ClusterPolicies → their
+        # policies.kyverno.io successors) would delete the old policy first and
+        # leave a window with neither enforcing. Pruning last applies the new
+        # policies, then removes the old: a brief overlap, never a gap.
         syncOptions:
           - CreateNamespace=true
           - ServerSideApply=true
           - RespectIgnoreDifferences=true
+          - PruneLast=true
         retry:
           limit: 5
           backoff:

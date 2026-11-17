@@ -62,10 +62,12 @@ spec:
     - name: compliant
       expression: <CEL over object>
     # An UPDATE to an object that already violated the check is admitted — what
-    # the legacy allowExistingViolations did. Write the same check over
-    # oldObject; on a CREATE oldObject is empty and has() is false.
+    # the legacy allowExistingViolations did. Write it in exactly this form, the
+    # `compliant` expression with object. read as oldObject.: an exclusion-bearing
+    # policy is held to it by scripts/check-policy-admission.py. On a CREATE
+    # oldObject is null or empty and the guard is false.
     - name: existingViolation
-      expression: has(oldObject.kind) && !(<the same CEL over oldObject>)
+      expression: oldObject != null && has(oldObject.kind) && !(<the same CEL over oldObject>)
   validations:
     - expression: variables.compliant || variables.existingViolation
       message: "<validation failure message>"
@@ -98,11 +100,19 @@ resources:
   - ../../base
 
 # Development: Audit — a violation lands in a PolicyReport and is admitted.
+# The legacy engine applied allowExistingViolations under Enforce only, so the
+# Audit tier judges the new object alone.
 patches:
   - patch: |-
       - op: replace
         path: /spec/validationActions
         value: [Audit]
+      - op: test
+        path: /spec/validations/0/expression
+        value: variables.compliant || variables.existingViolation
+      - op: replace
+        path: /spec/validations/0/expression
+        value: variables.compliant
     target:
       group: policies.kyverno.io
       kind: ValidatingPolicy

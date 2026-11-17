@@ -68,6 +68,13 @@ def runtime_pod(verdict="pass", policy="require-run-as-non-root"):
                   namespace=gate.RUNTIME_POD_NAMESPACE, name=gate.RUNTIME_POD_NAME)
 
 
+# A check and its existing-violation term in the form the gate derives.
+COMPLIANT = "object.spec.template.spec.containers.all(c,\n  c.?livenessProbe.?periodSeconds.orValue(0) > 0)"
+EXISTING = ("oldObject != null && has(oldObject.kind) &&\n"
+            "!(oldObject.spec.template.spec.containers.all(c,\n"
+            "  c.?livenessProbe.?periodSeconds.orValue(0) > 0))")
+
+
 def validating_policy(name, namespaces=("monitoring", "kyverno"), validations=1,
                       **narrowing):
     """A ValidatingPolicy shaped like the exclusion-bearing ones.
@@ -89,8 +96,12 @@ def validating_policy(name, namespaces=("monitoring", "kyverno"), validations=1,
     for field in ("objectSelector", "excludeResourceRules"):
         if field in narrowing:
             mc[field] = narrowing.pop(field)
-    spec = {"validationActions": ["Audit"], "matchConstraints": mc,
-            "validations": [{"expression": "true", "message": "m"}] * validations}
+    spec = {"validationActions": ["Audit"], "failurePolicy": "Fail",
+            "evaluation": {"admission": {"enabled": True}, "background": {"enabled": True}},
+            "matchConstraints": mc,
+            "variables": [{"name": "compliant", "expression": COMPLIANT},
+                          {"name": "existingViolation", "expression": EXISTING}],
+            "validations": [{"expression": gate.GRANDFATHERED, "message": "m"}] * validations}
     spec.update(narrowing)
     return {"apiVersion": "policies.kyverno.io/v1", "kind": "ValidatingPolicy",
             "metadata": {"name": name}, "spec": spec}
@@ -473,6 +484,87 @@ class ExclusionListParity(unittest.TestCase):
         self.assertIn("is a ClusterPolicy, not a ValidatingPolicy", out)
 
 
+class TheExistingViolationTermIsDerived(unittest.TestCase):
+    """An UPDATE turning a compliant object non-compliant must stay refused.
+
+    No run can show it: `kyverno test` hands an UPDATE the same object twice,
+    and `kyverno apply` evaluates as a background scan with no old object. So a
+    term that admitted every UPDATE passes every row, and the gate holds the
+    term to the one form that admits only the old object's own violation.
+    """
+
+    def parity_with_first(self, mutate):
+        parity = ExclusionListParity()
+        docs = dict(parity.agreeing())
+        key = gate.EXCLUSION_POLICIES[0]
+        doc = validating_policy(key[1].removesuffix(".yaml"))
+        mutate(doc["spec"])
+        docs[key] = doc
+        return parity.parity(docs)
+
+    def set_variable(self, name, expression):
+        def mutate(spec):
+            for v in spec["variables"]:
+                if v["name"] == name:
+                    v["expression"] = expression
+        return mutate
+
+    def test_the_derived_form_passes_whatever_its_line_breaks(self):
+        (ok, _, _), out = self.parity_with_first(self.set_variable(
+            "existingViolation", " ".join(EXISTING.split())))
+        self.assertTrue(ok, out)
+
+    def test_a_term_that_admits_every_update_is_refused(self):
+        """The reviewer's mutation: the old-object re-check dropped."""
+        (ok, _, _), out = self.parity_with_first(self.set_variable(
+            "existingViolation", "oldObject != null && has(oldObject.kind)"))
+        self.assertFalse(ok)
+        self.assertIn("existingViolation is not `compliant` read off oldObject", out)
+
+    def test_a_term_that_reads_the_new_object_is_refused(self):
+        (ok, _, _), out = self.parity_with_first(self.set_variable(
+            "existingViolation", EXISTING.replace("!(oldObject.spec", "!(object.spec")))
+        self.assertFalse(ok)
+        self.assertIn("existingViolation is not", out)
+
+    def test_a_term_without_the_update_guard_is_refused(self):
+        (ok, _, _), out = self.parity_with_first(self.set_variable(
+            "existingViolation", EXISTING.split("&&\n", 2)[-1]))
+        self.assertFalse(ok)
+        self.assertIn("existingViolation is not", out)
+
+    def test_a_compliant_change_carried_into_the_term_passes(self):
+        """The term follows the check, so changing both together is not drift."""
+        def mutate(spec):
+            spec["variables"] = [
+                {"name": "compliant", "expression": "object.spec.replicas > 0"},
+                {"name": "existingViolation", "expression":
+                    "oldObject != null && has(oldObject.kind) && !(oldObject.spec.replicas > 0)"}]
+        (ok, _, _), out = self.parity_with_first(mutate)
+        self.assertTrue(ok, out)
+
+    def test_a_compliant_change_not_carried_into_the_term_is_refused(self):
+        (ok, _, _), out = self.parity_with_first(self.set_variable(
+            "compliant", "object.spec.replicas > 0"))
+        self.assertFalse(ok)
+        self.assertIn("!(oldObject.spec.replicas > 0)", out)
+
+    def test_missing_variables_are_refused(self):
+        def mutate(spec):
+            del spec["variables"]
+        (ok, _, _), out = self.parity_with_first(mutate)
+        self.assertFalse(ok)
+        self.assertIn("declares no `compliant` and `existingViolation`", out)
+
+    def test_a_base_validation_other_than_the_two_ored_is_refused(self):
+        def mutate(spec):
+            spec["validations"] = [{"expression": "variables.existingViolation || true",
+                                    "message": "m"}]
+        (ok, _, _), out = self.parity_with_first(mutate)
+        self.assertFalse(ok)
+        self.assertIn("the base validation is not", out)
+
+
 class AnythingElseNarrowingTheMatchIsRefused(unittest.TestCase):
     """The exclusion is one NotIn on the namespace name, and only that.
 
@@ -549,21 +641,60 @@ class TheTierSplitIsReadOffTheRender(unittest.TestCase):
         self.addCleanup(pathlib.Path(tmp.name).unlink)
         return [tmp.name]
 
-    def overlay(self, actions, count=None):
+    def overlay(self, actions, count=None, expression=gate.GRANDFATHERED, **spec):
         docs = []
         for _, f in gate.EXCLUSION_POLICIES[:count]:
             doc = validating_policy(f.removesuffix(".yaml"))
             doc["spec"]["validationActions"] = actions
+            doc["spec"]["validations"][0]["expression"] = expression
+            doc["spec"].update(spec)
             docs.append(doc)
         docs.append({"apiVersion": "policies.kyverno.io/v1", "kind": "MutatingPolicy",
                      "metadata": {"name": "m"}, "spec": {}})
         return self.write(docs)
 
+    def right(self, mode, **spec):
+        return self.overlay(gate.EXPECTED_ACTIONS[mode],
+                            expression=gate.EXPECTED_EXPRESSION[mode], **spec)
+
     def test_each_tier_carrying_its_actions_passes(self):
-        for mode, want in gate.EXPECTED_ACTIONS.items():
+        for mode in gate.EXPECTED_ACTIONS:
             with self.subTest(mode=mode):
-                ok, out = quietly(gate.check_validation_actions, mode, self.overlay(want))
+                ok, out = quietly(gate.check_validation_actions, mode, self.right(mode))
                 self.assertTrue(ok, out)
+
+    def test_admission_switched_off_is_refused_on_every_tier(self):
+        """Deny with admission evaluation off denies nothing, and every run is a
+        background scan, so only the rendered policy shows it."""
+        for mode in gate.EXPECTED_ACTIONS:
+            with self.subTest(mode=mode):
+                ok, out = quietly(gate.check_validation_actions, mode, self.right(
+                    mode, evaluation={"admission": {"enabled": False}}))
+                self.assertFalse(ok)
+                self.assertIn("evaluation.admission.enabled false", out)
+
+    def test_admission_left_at_its_default_passes(self):
+        ok, out = quietly(gate.check_validation_actions, "production",
+                          self.right("production", evaluation={}))
+        self.assertTrue(ok, out)
+
+    def test_a_failure_policy_of_ignore_is_refused(self):
+        ok, out = quietly(gate.check_validation_actions, "staging",
+                          self.right("staging", failurePolicy="Ignore"))
+        self.assertFalse(ok)
+        self.assertIn("failurePolicy Ignore, want Fail", out)
+
+    def test_each_tier_carries_its_own_expression(self):
+        """Audit judges the new object alone, as the legacy engine did; Deny
+        admits an existing violation."""
+        ok, out = quietly(gate.check_validation_actions, "development", self.overlay(
+            ["Audit"], expression=gate.GRANDFATHERED))
+        self.assertFalse(ok)
+        self.assertIn("want ['variables.compliant']", out)
+        ok, out = quietly(gate.check_validation_actions, "production", self.overlay(
+            ["Deny"], expression="variables.compliant"))
+        self.assertFalse(ok)
+        self.assertIn(f"want ['{gate.GRANDFATHERED}']", out)
 
     def test_development_never_denies_and_production_never_only_audits(self):
         ok, out = quietly(gate.check_validation_actions, "development",

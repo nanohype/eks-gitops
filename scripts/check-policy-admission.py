@@ -27,7 +27,10 @@ WHAT IT DOES
        every policy's namespace exclusion list is IDENTICAL, and that nothing
        else narrows what a policy matches. The lists diverging is itself the bug
        class (a namespace excluded from five policies but not the sixth), so they
-       are pinned equal here.
+       are pinned equal here. It also derives each policy's existing-violation
+       term from its `compliant` term and requires the two to agree (see
+       existing_violation_problems): no `kyverno` run can show an UPDATE that
+       turns a compliant object non-compliant, so the term is held to its form.
     2. FUNCTIONAL — discovers every Helm addon from the ApplicationSets (the same
        discovery scripts/render-addons.py uses — the single source of truth),
        renders each into its real ArgoCD destination namespace with base + each
@@ -38,7 +41,9 @@ WHAT IT DOES
        runs the Audit overlay (development) to prove it matches the same
        validations, and asserts structurally that each overlay sets the
        validationActions its environment is meant to have — [Audit] on dev,
-       [Deny] on staging/prod. (`kyverno apply` reports a ValidatingPolicy
+       [Deny] on staging/prod — along with failurePolicy Fail, admission
+       evaluation left on, and the validation expression that tier carries.
+       (`kyverno apply` reports a ValidatingPolicy
        violation as `fail` under either action; its --audit-warn does nothing for
        ValidatingPolicy in 1.20, so the action cannot be read off the report.)
     3. CANARY — the functional half is rendered alongside a deliberately
@@ -108,6 +113,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -172,6 +178,20 @@ EXPECTED_ACTIONS = {
     "production": ["Deny"],
 }
 
+# The validation expression each overlay renders on every exclusion-bearing
+# ValidatingPolicy. The base admits an UPDATE to an object that already violated
+# (`existingViolation`, the legacy allowExistingViolations); the legacy engine
+# applied that under Enforce only, so the Audit tier judges the new object alone.
+GRANDFATHERED = "variables.compliant || variables.existingViolation"
+EXPECTED_EXPRESSION = {
+    "development": "variables.compliant",
+    "staging": GRANDFATHERED,
+    "production": GRANDFATHERED,
+}
+
+# Matches `object.` where it is not the tail of `oldObject.` or another name.
+OBJECT_REF = re.compile(r"(?<![\w.])object\.")
+
 # The two policy groups that carry the exclusion-bearing validation policies and
 # ship both an Audit (development) and Deny (staging/production) overlay.
 POLICY_GROUPS = ["best-practices", "pod-security-standards"]
@@ -187,7 +207,10 @@ MIN_RENDERED = 40
 # Kinds Kyverno's workload policies (and their autogen pod-controller variants)
 # evaluate. Namespace-scoped, so they must carry metadata.namespace for the
 # exclusion match to fire — helm -n stamps it on most charts; this backfills any
-# the chart left unqualified so the gate never under-reports.
+# the chart left unqualified so the gate never under-reports. ReplicationController
+# stays although Kyverno 1.20's CEL autogen derives no RC variant, so no policy
+# matches the RC object itself: the Pods it creates are matched by the Pod rules,
+# so the namespace it lands in must still be covered.
 WORKLOAD_KINDS = {
     "Pod", "Deployment", "StatefulSet", "DaemonSet",
     "ReplicaSet", "ReplicationController", "Job", "CronJob",
@@ -371,6 +394,42 @@ def exclusion_of(doc: dict) -> tuple[list[str] | None, list[str]]:
     return sorted(set(expr.get("values") or [])), problems
 
 
+def _normalise(expression: str) -> str:
+    return " ".join(str(expression).split())
+
+
+def existing_violation_problems(doc: dict) -> list[str]:
+    """What is wrong with a policy's emulation of allowExistingViolations.
+
+    The term may admit an UPDATE only when the OLD object fails the same check
+    the new one is held to. Its other direction — an UPDATE that turns a
+    compliant object non-compliant is refused — has no test: `kyverno test` sets
+    object and oldObject to the same resource for an UPDATE, and `kyverno apply`
+    evaluates as a background scan with no old object. A term that admitted
+    every UPDATE would pass every row and every run. So it is held to its form:
+    `existingViolation` must be exactly `compliant` read off oldObject, negated,
+    behind the UPDATE guard, and the base validation must be the two OR'd.
+    """
+    spec = doc.get("spec") or {}
+    variables = {v.get("name"): v.get("expression")
+                 for v in spec.get("variables") or [] if isinstance(v, dict)}
+    problems: list[str] = []
+    compliant = variables.get("compliant")
+    existing = variables.get("existingViolation")
+    if compliant is None or existing is None:
+        return ["declares no `compliant` and `existingViolation` variables to derive "
+                "the existing-violation term from"]
+    want = _normalise("oldObject != null && has(oldObject.kind) && !("
+                      + OBJECT_REF.sub("oldObject.", str(compliant)) + ")")
+    if _normalise(existing) != want:
+        problems.append(f"existingViolation is not `compliant` read off oldObject and "
+                        f"negated behind the UPDATE guard — want `{want}`")
+    validations = spec.get("validations") or []
+    if validations and _normalise(validations[0].get("expression", "")) != GRANDFATHERED:
+        problems.append(f"the base validation is not `{GRANDFATHERED}`")
+    return problems
+
+
 def check_exclusion_parity() -> tuple[bool, set[str], set[str]]:
     """Assert every exclusion-bearing policy shares one identical namespace set.
 
@@ -407,6 +466,9 @@ def check_exclusion_parity() -> tuple[bool, set[str], set[str]]:
             print(f"  FAIL  {name} holds {len(validations)} validations, not one — a "
                   f"ValidatingPolicy reports only the first that fails")
         keys.update(f"{name}/{i}" for i in range(len(validations)))
+        for problem in existing_violation_problems(doc):
+            ok = False
+            print(f"  FAIL  {name}: {problem}")
         if names is not None:
             lists[name] = names
 
@@ -436,15 +498,20 @@ def check_exclusion_parity() -> tuple[bool, set[str], set[str]]:
 
 
 def check_validation_actions(mode: str, policy_files: list[str]) -> bool:
-    """Every ValidatingPolicy an overlay renders sets that tier's validationActions.
+    """Every ValidatingPolicy an overlay renders is set up for that tier.
 
     `kyverno apply` reports a violation as `fail` whether the policy would Audit
-    or Deny it, so the run cannot prove the overlays differ. This does, on the
-    rendered objects, and also refuses an overlay that rendered fewer
-    ValidatingPolicies than the exclusion-bearing set, which would satisfy the
-    comparison vacuously.
+    or Deny it, and it evaluates as a background scan, so the run cannot prove
+    the overlays differ or that admission evaluates at all. This does, on the
+    rendered objects: the tier's validationActions, failurePolicy Fail (an
+    Ignore lets a request through whenever Kyverno cannot answer), admission
+    evaluation not switched off (which turns the Deny tier into nothing while
+    every run still reports the canary), and the tier's validation expression.
+    It also refuses an overlay that rendered fewer ValidatingPolicies than the
+    exclusion-bearing set, which would satisfy the comparison vacuously.
     """
     want = EXPECTED_ACTIONS[mode]
+    want_expression = EXPECTED_EXPRESSION[mode]
     seen = 0
     ok = True
     for path in policy_files:
@@ -452,17 +519,34 @@ def check_validation_actions(mode: str, policy_files: list[str]) -> bool:
             if not isinstance(doc, dict) or doc.get("kind") != "ValidatingPolicy":
                 continue
             seen += 1
-            got = (doc.get("spec") or {}).get("validationActions")
+            name = doc["metadata"]["name"]
+            spec = doc.get("spec") or {}
+            got = spec.get("validationActions")
             if got != want:
                 ok = False
-                print(f"  FAIL  {mode}: {doc['metadata']['name']} has validationActions "
-                      f"{got}, want {want}")
+                print(f"  FAIL  {mode}: {name} has validationActions {got}, want {want}")
+            if spec.get("failurePolicy") != "Fail":
+                ok = False
+                print(f"  FAIL  {mode}: {name} has failurePolicy "
+                      f"{spec.get('failurePolicy')}, want Fail")
+            admission = ((spec.get("evaluation") or {}).get("admission") or {})
+            if admission.get("enabled") is False:
+                ok = False
+                print(f"  FAIL  {mode}: {name} sets evaluation.admission.enabled false, "
+                      f"so it evaluates nothing at admission")
+            expressions = [_normalise(v.get("expression", ""))
+                           for v in spec.get("validations") or []]
+            if expressions != [want_expression]:
+                ok = False
+                print(f"  FAIL  {mode}: {name} validates {expressions}, "
+                      f"want ['{want_expression}']")
     if seen < len(EXCLUSION_POLICIES):
         print(f"  FAIL  {mode}: rendered {seen} ValidatingPolicies, expected at least "
               f"{len(EXCLUSION_POLICIES)}")
         return False
     if ok:
-        print(f"  ok    {mode}: all {seen} ValidatingPolicies set validationActions {want}")
+        print(f"  ok    {mode}: all {seen} ValidatingPolicies set validationActions {want}, "
+              f"failurePolicy Fail, admission on, validating `{want_expression}`")
     return ok
 
 

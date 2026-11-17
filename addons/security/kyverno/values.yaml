@@ -2,13 +2,19 @@
 
 admissionController:
   replicas: 3
-  resources:
-    requests:
-      cpu: 100m
-      memory: 256Mi
-    limits:
-      cpu: 500m
-      memory: 512Mi
+  # The admission controller reads its container's resources from
+  # admissionController.container.resources; a bare admissionController.resources
+  # is read by no template, and left the pod on the chart default (384Mi limit,
+  # no CPU limit) while this file said otherwise. The other controllers read
+  # <controller>.resources directly, as below.
+  container:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
   tolerations:
     - key: CriticalAddonsOnly
       operator: Exists
@@ -74,24 +80,9 @@ webhooksCleanup:
   image:
     tag: v1.20.0
 
-# Override the kubectl image the report-cleanup jobs run. The chart default is a
-# Bitnami image, whose free public catalog Broadcom archived; pin the maintained
-# upstream image the Kubernetes project publishes, matched to the cluster's minor
-# version.
-cleanupJobs:
-  admissionReports:
-    image:
-      registry: registry.k8s.io
-      repository: kubectl
-      tag: v1.36.3
-  clusterAdmissionReports:
-    image:
-      registry: registry.k8s.io
-      repository: kubectl
-      tag: v1.36.3
-
 # The chart's test hook runs the same readiness-checker image. Pinned alongside
-# the cleanup hook above, for the same reason.
+# the cleanup hook above, for the same reason. (No cleanupJobs block: no template
+# in chart 3.9 or 3.10 reads one, so its kubectl image pins installed nothing.)
 test:
   image:
     tag: v1.20.0

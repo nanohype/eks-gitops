@@ -90,6 +90,19 @@ spec:
   # object fails the same check. A CREATE is decided on the new object alone,
   # and an UPDATE that turns a compliant object non-compliant is refused, exactly
   # as before. Background scans report every current violation, as before.
+  #
+  # `existingViolation` is `compliant` read off oldObject and negated, behind
+  # the UPDATE guard, written in exactly that form: scripts/check-policy-admission.py
+  # derives it from `compliant` and fails on any other, because a term that
+  # admitted more than the old object's violation would let a compliant workload
+  # be updated into violation on the Deny tier with every test still green.
+  #
+  # The legacy engine applied allowExistingViolations under Enforce only; in
+  # Audit it judged the new object alone and reported the UPDATE as a fail. So
+  # the development overlay (Audit) patches the validation to
+  # `variables.compliant`, and only the staging and production overlays (Deny)
+  # keep this base expression. Where the legacy engine reported a grandfathered
+  # UPDATE as skip, this reports it as pass.
   variables:
     # A required label is present and non-empty — what the legacy "?*" pattern
     # matched.
@@ -101,9 +114,9 @@ spec:
     - name: existingViolation
       expression: >-
         oldObject != null && has(oldObject.kind) &&
-        !['app.kubernetes.io/name', 'app.kubernetes.io/managed-by', 'app.kubernetes.io/component', 'platform.nanohype.dev/environment', 'platform.nanohype.dev/team'].all(k,
+        !(['app.kubernetes.io/name', 'app.kubernetes.io/managed-by', 'app.kubernetes.io/component', 'platform.nanohype.dev/environment', 'platform.nanohype.dev/team'].all(k,
           k in oldObject.metadata.?labels.orValue({}) &&
-          oldObject.metadata.labels[k] != '')
+          oldObject.metadata.labels[k] != ''))
   validations:
     - expression: variables.compliant || variables.existingViolation
       message: >-

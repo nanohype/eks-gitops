@@ -5,11 +5,25 @@ resources:
   - ../../base
 
 # Development: Audit — a violation lands in a PolicyReport and is admitted.
+#
+# The validation is also cut back to `variables.compliant`. The base admits an
+# UPDATE to an object that already violated (the legacy allowExistingViolations),
+# which the legacy engine applied under Enforce only: in Audit it judged the new
+# object alone and reported the UPDATE as a fail. Without this, a development
+# admission report would record a still-violating workload as passing until the
+# next background scan. scripts/check-policy-admission.py asserts the rendered
+# expression per tier.
 patches:
   - patch: |-
       - op: replace
         path: /spec/validationActions
         value: [Audit]
+      - op: test
+        path: /spec/validations/0/expression
+        value: variables.compliant || variables.existingViolation
+      - op: replace
+        path: /spec/validations/0/expression
+        value: variables.compliant
     target:
       group: policies.kyverno.io
       kind: ValidatingPolicy
