@@ -1,0 +1,12 @@
+# envoy-gateway-crds — Envoy Gateway's own CRDs (gateway.envoyproxy.io), from
+# upstream's CRD-only chart.
+#
+# Both halves of this chart default off. Only the Envoy Gateway half is turned
+# on: the Gateway API CRDs (gateway.networking.k8s.io) belong to
+# applicationsets/gateway-api-crds.yaml, at one release and one channel, and a
+# second Application installing them here would fight it for every one of them.
+crds:
+  gatewayAPI:
+    enabled: false
+  envoyGateway:
+    enabled: true

@@ -26,13 +26,27 @@ spec:
                   eks-agent-platform/enabled: "true"
           - list:
               elements:
-                # CRDs first (wave 40), then the controllers (wave 42).
+                # CRDs first (wave 40), then the controllers (wave 41-42).
                 - appName: envoy-ai-gateway-crds
                   namespace: envoy-gateway-system
                   chartRepo: oci://docker.io/envoyproxy/ai-gateway-crds-helm
                   chart: ai-gateway-crds-helm
                   chartVersion: "1.2.1"
                   path: addons/ai-platform/envoy-ai-gateway-crds
+                  syncWave: "40"
+                # Envoy Gateway's own CRDs (gateway.envoyproxy.io) and nothing
+                # else. gateway-helm would install them itself, but only
+                # together with a bundled Gateway API release that
+                # gateway-api-crds.yaml already owns, so that bundle is turned off
+                # there (crds.enabled: false) and the EG CRDs come from upstream's
+                # CRD-only chart instead. Keep chartVersion equal to gateway-helm's
+                # below: the controller and its CRDs are one generation.
+                - appName: envoy-gateway-crds
+                  namespace: envoy-gateway-system
+                  chartRepo: oci://docker.io/envoyproxy/gateway-crds-helm
+                  chart: gateway-crds-helm
+                  chartVersion: "1.10.0"
+                  path: addons/ai-platform/envoy-gateway-crds
                   syncWave: "40"
                 # envoy-gateway before envoy-ai-gateway: the AI layer registers a
                 # webhook against the control plane and reads its GatewayClass.
