@@ -364,6 +364,53 @@ class OneOwnerPerClusterScopedObject(unittest.TestCase):
             {crd("rollouts.argoproj.io"): {"a.yaml addons/x/argo-rollouts"}}), [])
 
 
+class OwnersThatNeverShareACluster(unittest.TestCase):
+    """Two Applications whose selectors exclude each other are not two owners."""
+
+    TIERS = {"a.yaml addons/o/full": {"observability/tier": "full"},
+             "b.yaml addons/o/floor": {"observability/tier": "floor"}}
+
+    def test_mutually_exclusive_tiers_are_not_a_finding(self):
+        """otel-gateway's full and floor tiers render the same ClusterRole."""
+        self.assertEqual(gate.object_ownership(
+            {"ClusterRole/otel-gateway": set(self.TIERS)}, selectors=self.TIERS), [])
+
+    def test_a_third_owner_that_can_reach_either_tier_is_a_finding(self):
+        owners = {"ClusterRole/otel-gateway": {*self.TIERS, "c.yaml addons/x/any"}}
+        self.assertEqual(len(gate.object_ownership(owners, selectors=self.TIERS)), 1)
+
+    def test_a_directory_owner_reaches_every_cluster(self):
+        problems = gate.object_ownership(
+            {crd("httproutes.gateway.networking.k8s.io"): {"a.yaml addons/o/full"}},
+            selectors=self.TIERS)
+        self.assertEqual(len(problems), 1)
+
+    def test_selectors_conflict_only_on_a_shared_label(self):
+        self.assertTrue(gate.can_share_a_cluster({"a": "1"}, {"b": "2"}))
+        self.assertTrue(gate.can_share_a_cluster({"a": "1"}, {"a": "1", "b": "2"}))
+        self.assertFalse(gate.can_share_a_cluster({"a": "1"}, {"a": "2"}))
+
+    def test_discovery_reads_matchlabels_from_a_matrix_clusters_generator(self):
+        doc = appset(
+            [{"repoURL": "{{ .chartRepo }}", "chart": "{{ .chart }}",
+              "targetRevision": "{{ .chartVersion }}", "helm": {}}],
+            generators=[{"matrix": {"generators": [
+                {"clusters": {"selector": {
+                    "matchLabels": {"eks-agent-platform/enabled": "true"},
+                    "matchExpressions": [{"key": "environment", "operator": "In",
+                                          "values": ["staging"]}]}}},
+                {"list": {"elements": [
+                    {"chart": "gateway-helm", "chartVersion": "1.10.0",
+                     "chartRepo": "oci://docker.io/envoyproxy/gateway-helm",
+                     "path": "addons/x/eg"}]}}]}}])
+        with tempfile.TemporaryDirectory() as tmp:
+            (pathlib.Path(tmp) / "a.yaml").write_text(yaml.safe_dump(doc))
+            with mock.patch.object(gate, "APPSET_DIR", pathlib.Path(tmp)):
+                units = gate.discover()
+        self.assertEqual(units[0].cluster_labels, {"eks-agent-platform/enabled": "true"})
+        self.assertEqual(units[0].owner, "a.yaml addons/x/eg")
+
+
 class DirectoryOwnershipRecords(unittest.TestCase):
     """A directory owner is recorded against the source it was read from."""
 

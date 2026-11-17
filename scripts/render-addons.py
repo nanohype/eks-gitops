@@ -47,7 +47,9 @@ CUSTOM RESOURCE DEFINITIONS
     Gateway API safe-upgrades ValidatingAdmissionPolicy as well as the CRDs, and
     a cluster-scoped object has one name per cluster whatever namespace each
     Application targets. Namespaced objects are not compared — two Applications
-    syncing into different namespaces own different objects.
+    syncing into different namespaces own different objects. Nor are two
+    Applications whose cluster selectors require different values of one label
+    (otel-gateway's full and floor tiers): they never land on the same cluster.
 
     The directory sources that install CRDs (gateway-api-crds,
     argo-workflows-crds) are not charts and are not rendered here, so what they
@@ -193,6 +195,13 @@ class Unit:
     params: list[tuple[str, str]] = field(default_factory=list)
     namespace: str = ""  # ArgoCD destination namespace the addon syncs into
     skip_crds: bool = False  # the source's helm.skipCrds — ArgoCD omits crds/ when set
+    # The clusters generator's matchLabels: which clusters the Application lands on.
+    cluster_labels: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def owner(self) -> str:
+        """How this unit is named as the owner of a rendered object."""
+        return f"{self.appset} {self.path}"
 
     @property
     def is_oci(self) -> bool:
@@ -256,6 +265,26 @@ def _list_elements(spec: dict) -> list[dict]:
     return gatelib.list_elements({"spec": spec})
 
 
+def _cluster_labels(doc: dict) -> dict[str, str]:
+    """Every matchLabels entry of the ApplicationSet's clusters generators.
+
+    matchExpressions are not read: they can only narrow where an Application
+    lands, so leaving them out can only make two Applications look able to
+    share a cluster, never hide that they can.
+    """
+    labels: dict[str, str] = {}
+    for gen in gatelib.matrix_generators(doc):
+        if "clusters" in gen:
+            sel = (gen.get("clusters") or {}).get("selector") or {}
+            labels.update({str(k): str(v) for k, v in (sel.get("matchLabels") or {}).items()})
+    return labels
+
+
+def can_share_a_cluster(a: dict[str, str], b: dict[str, str]) -> bool:
+    """False only when two selectors require different values of one label."""
+    return all(b[k] == v for k, v in a.items() if k in b)
+
+
 def discover() -> list[Unit]:
     units: list[Unit] = []
     for appset_file in sorted(APPSET_DIR.glob("*.yaml")):
@@ -270,6 +299,7 @@ def discover() -> list[Unit]:
         helm = chart_src.get("helm", {}) or {}
         params = _synth_params(helm)
         skip_crds = helm.get("skipCrds") is True
+        cluster_labels = _cluster_labels(doc)
         name = appset_file.name
 
         if _is_template(chart_src["chart"]):
@@ -287,6 +317,7 @@ def discover() -> list[Unit]:
                         params=params,
                         namespace=str(el.get("namespace", "")),
                         skip_crds=skip_crds,
+                        cluster_labels=cluster_labels,
                     )
                 )
         else:
@@ -305,6 +336,7 @@ def discover() -> list[Unit]:
                     params=params,
                     namespace=str(dest.get("namespace", "")),
                     skip_crds=skip_crds,
+                    cluster_labels=cluster_labels,
                 )
             )
     return units
@@ -354,13 +386,19 @@ def cluster_objects(manifest: str) -> set[str]:
 
 
 def object_ownership(owners: dict[str, set[str]],
-                     directory: tuple[DirectoryOwner, ...] = DIRECTORY_OWNERS) -> list[str]:
-    """Every cluster-scoped object more than one Application would install.
+                     directory: tuple[DirectoryOwner, ...] = DIRECTORY_OWNERS,
+                     selectors: dict[str, dict[str, str]] | None = None) -> list[str]:
+    """Every cluster-scoped object more than one Application would install on one cluster.
 
     ``owners`` maps an object key to the render units that rendered it. A
     directory source that owns the object — by CRD group or by key — is an
-    owner too.
+    owner too. ``selectors`` maps an owner to its cluster selector's
+    matchLabels; two owners whose selectors require different values of one
+    label never land on the same cluster (otel-gateway's full and floor tiers),
+    so they are not two owners of anything. An owner with no recorded selector
+    is taken to reach every cluster.
     """
+    selectors = selectors or {}
     problems = []
     for key in sorted(owners):
         holders = set(owners[key])
@@ -369,7 +407,9 @@ def object_ownership(owners: dict[str, set[str]],
         for d in directory:
             if key in d.objects or (group is not None and group in d.crd_groups):
                 holders.add(d.label)
-        if len(holders) > 1:
+        ordered = sorted(holders)
+        if any(can_share_a_cluster(selectors.get(a, {}), selectors.get(b, {}))
+               for i, a in enumerate(ordered) for b in ordered[i + 1:]):
             problems.append(f"{key} is installed by {len(holders)} Applications: "
                             + ", ".join(sorted(holders)))
     return problems
@@ -458,7 +498,7 @@ def render(unit: Unit, env: str | None,
         except yaml.YAMLError as e:
             return (False, f"the render is not YAML ArgoCD could apply: {e}")
         for key in keys:
-            objects.setdefault(key, set()).add(f"{unit.appset} {unit.path}")
+            objects.setdefault(key, set()).add(unit.owner)
     return (True, "rendered")
 
 
@@ -582,7 +622,7 @@ def main() -> int:
         print("reason has expired reads as a considered decision and covers nothing.")
         return 1
 
-    shared = object_ownership(objects)
+    shared = object_ownership(objects, selectors={u.owner: u.cluster_labels for u in rendered})
     drift = directory_owner_drift()
     n_crds = sum(1 for k in objects if k.startswith("CustomResourceDefinition/"))
     print(f"Rendered {len(objects)} cluster-scoped object(s), {n_crds} of them "
