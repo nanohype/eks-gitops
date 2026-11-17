@@ -195,7 +195,7 @@ tasks:
       - ./scripts/check-label-values.py
 
   validate:appset-render:
-    desc: "Appset render gate — render the Karpenter EC2NodeClass patch template against fixture cluster Secrets"
+    desc: "Appset render gate — render the appset template strings (Karpenter patch, argo-workflows/loki/tempo buckets, ai-platform prune templatePatch)"
     dir: applicationsets/rendertest
     cmds:
       - go test ./...

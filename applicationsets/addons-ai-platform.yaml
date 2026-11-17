@@ -66,8 +66,10 @@ spec:
                   # owner existed. With it back on, a cluster that ran the old
                   # bundle prunes the three gateway.networking.x-k8s.io CRDs
                   # (xbackends, xbackendtrafficpolicies, xmeshes) that only this
-                  # Application ever installed; a cluster bootstrapped since has
-                  # none to prune. The lever stays for the next ownership move —
+                  # Application ever installed, once gateway-api-crds and
+                  # envoy-gateway-crds have synced there and taken over every
+                  # other object the bundle installed; a cluster bootstrapped
+                  # since has none to prune. The lever stays for the next ownership move —
                   # docs/runbooks/rollback.md has the procedure.
                   autoPrune: true
                 - appName: envoy-ai-gateway
