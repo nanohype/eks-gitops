@@ -32,7 +32,7 @@ permissions:
 # block pins it.
 env:
   # renovate: datasource=github-releases depName=helm/helm
-  HELM_VERSION: v4.3.1
+  HELM_VERSION: v4.3.2
 
 # The jobs that read through scripts/registry.py's client set a timeout above
 # registry.CALL_BOUND_SECONDS, one client call's deadline plus the socket read a
