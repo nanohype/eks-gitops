@@ -23,11 +23,9 @@ spec:
       enabled: true
     background:
       enabled: true
-  # The policy matches controllers only, and autogen derives rules for a pod
-  # policy alone, so there is nothing to generate. Disabled to say so.
-  autogen:
-    podControllers:
-      enabled: false
+  # No autogen block: Kyverno derives controller variants only for a policy that
+  # matches Pods alone, and this one matches the controllers themselves, so
+  # there is nothing to generate.
   # ── Why this matches controllers and not Pod ──────────────────────────
   # A readiness probe gates traffic to a Service; a liveness probe restarts
   # a process that is supposed to stay up. Neither means anything to a pod

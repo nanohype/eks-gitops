@@ -83,6 +83,7 @@ failures: list[str] = []
 # The kyverno.io kinds Kyverno 1.20 removed execution of. Their API is still
 # served for read, list, export and delete, so they remain parseable and
 # removable, but a create or update is refused.
+LEGACY_GROUP = "kyverno.io"
 LEGACY_KINDS = {
     "ClusterPolicy", "Policy", "CleanupPolicy", "ClusterCleanupPolicy",
     "PolicyException",
@@ -158,7 +159,8 @@ def legacy_policies(rendered: str) -> list[str]:
     for doc in yaml.safe_load_all(rendered):
         if not isinstance(doc, dict) or doc.get("kind") not in LEGACY_KINDS:
             continue
-        if not str(doc.get("apiVersion", "")).startswith("kyverno.io/"):
+        group, _, _ = str(doc.get("apiVersion", "")).rpartition("/")
+        if group != LEGACY_GROUP:
             continue
         found.append(f"{doc['kind']}/{(doc.get('metadata') or {}).get('name', '?')}")
     return found
