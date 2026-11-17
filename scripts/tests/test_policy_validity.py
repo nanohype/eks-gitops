@@ -30,6 +30,11 @@ gate = load("check-policy-validity")
 IVPOL = {"apiVersion": "policies.kyverno.io/v1", "kind": "ImageValidatingPolicy",
          "metadata": {"name": "verify-images"},
          "spec": {"validationConfigurations": {"mutateDigest": True, "verifyDigest": True}}}
+VPOL = {"apiVersion": "policies.kyverno.io/v1", "kind": "ValidatingPolicy",
+        "metadata": {"name": "require-labels"},
+        "spec": {"validations": [{"expression": "true"}]}}
+MPOL = {"apiVersion": "policies.kyverno.io/v1", "kind": "MutatingPolicy",
+        "metadata": {"name": "inject"}, "spec": {}}
 CPOL = {"apiVersion": "kyverno.io/v1", "kind": "ClusterPolicy",
         "metadata": {"name": "require-labels"},
         "spec": {"rules": [{"name": "a"}, {"name": "b"}]}}
@@ -50,7 +55,7 @@ class Tools:
     """Stands in for subprocess.run, answering by the command's first word."""
 
     def __init__(self, kustomize=None, kyverno=None) -> None:
-        self.kustomize = kustomize or completed(stdout=render(CPOL, IVPOL))
+        self.kustomize = kustomize or completed(stdout=render(VPOL, MPOL, IVPOL))
         self.kyverno = kyverno or completed(stdout=APPLIED)
 
     def __call__(self, cmd, **_):
@@ -67,7 +72,7 @@ class TheDigestPin(unittest.TestCase):
         gate.failures.clear()
 
     def test_both_fields_true_pass(self):
-        gate._check_pins_digest("o", render(CPOL, IVPOL, None))
+        gate._check_pins_digest("o", render(VPOL, IVPOL, None))
         self.assertEqual(gate.failures, [])
 
     def test_an_absent_field_reads_as_the_crd_default(self):
@@ -89,11 +94,27 @@ class TheDigestPin(unittest.TestCase):
 class CountingRules(unittest.TestCase):
     """The count Kyverno's load line is compared against."""
 
-    def test_a_clusterpolicy_counts_its_rules_and_a_cel_policy_counts_one(self):
-        self.assertEqual(gate.rules_in(render(CPOL, IVPOL, {"kind": "ConfigMap"}, None)), 3)
+    def test_each_cel_policy_counts_one_and_nothing_else_counts(self):
+        self.assertEqual(gate.rules_in(render(VPOL, MPOL, IVPOL, {"kind": "ConfigMap"},
+                                              None)), 3)
 
-    def test_a_policy_with_no_rules_counts_none(self):
-        self.assertEqual(gate.rules_in(render({"kind": "Policy", "spec": {}})), 0)
+    def test_a_legacy_policy_counts_nothing(self):
+        """Kyverno 1.20 loads none of its rules."""
+        self.assertEqual(gate.rules_in(render(CPOL)), 0)
+
+
+class LegacyKinds(unittest.TestCase):
+    """Refused offline, whatever the CLI in use would say about them."""
+
+    def test_every_legacy_kind_is_found(self):
+        docs = [{"apiVersion": "kyverno.io/v2", "kind": k, "metadata": {"name": "x"}}
+                for k in sorted(gate.LEGACY_KINDS)]
+        self.assertEqual(gate.legacy_policies(render(*docs)),
+                         [f"{k}/x" for k in sorted(gate.LEGACY_KINDS)])
+
+    def test_a_cel_kind_or_a_same_named_kind_elsewhere_is_not_legacy(self):
+        other = {"apiVersion": "example.io/v1", "kind": "Policy", "metadata": {"name": "y"}}
+        self.assertEqual(gate.legacy_policies(render(VPOL, MPOL, IVPOL, other, None)), [])
 
     def test_a_scalar_document_is_not_a_policy(self):
         self.assertEqual(gate.rules_in("--- just a string\n"), 0)
@@ -191,10 +212,19 @@ class TheRun(unittest.TestCase):
         self.failing("kyverno reported errors: Applying 3",
                      kyverno=completed(stdout="Applying 3 policy rule(s) to 1 resource(s)\n"))
 
+    def test_a_legacy_policy_in_a_render(self):
+        self.failing("renders legacy kyverno.io policy kind(s) ClusterPolicy/require-labels",
+                     kustomize=completed(stdout=render(CPOL, IVPOL)))
+
+    def test_a_cel_expression_that_does_not_compile(self):
+        self.failing("Kyverno rejects this policy",
+                     kyverno=completed(stdout=APPLIED,
+                                       stderr="failed to compile policy: ERROR: <input>:1:5\n"))
+
     def test_an_imagevalidatingpolicy_that_stops_pinning(self):
         unpinned = {**IVPOL, "spec": {"validationConfigurations": {"mutateDigest": False}}}
         self.failing("sets mutateDigest False",
-                     kustomize=completed(stdout=render(CPOL, unpinned)))
+                     kustomize=completed(stdout=render(VPOL, MPOL, unpinned)))
 
 
 if __name__ == "__main__":

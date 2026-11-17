@@ -130,6 +130,19 @@ FILE_CATEGORY = {
 # and a `note` if it has none — so adding a CRD Application without thinking about
 # who depends on it fails rather than passing silently.
 CRD_PRECEDENCE: dict[str, dict[str, Any]] = {
+    # Not a `*-crds.yaml` ApplicationSet: the kyverno chart installs the
+    # policies.kyverno.io CRDs with its controllers, so the provider is the
+    # security ApplicationSet that carries the chart.
+    "addons-security.yaml": {
+        "group": "policies.kyverno.io",
+        "consumers": {
+            # `kustomize build` of every policies/kyverno overlay renders
+            # ValidatingPolicy, MutatingPolicy and ImageValidatingPolicy.
+            "kyverno-policies.yaml":
+                "policies/kyverno renders ValidatingPolicy, MutatingPolicy and "
+                "ImageValidatingPolicy (policies.kyverno.io/v1)",
+        },
+    },
     "argo-workflows-crds.yaml": {
         "group": "argoproj.io",
         "consumers": {

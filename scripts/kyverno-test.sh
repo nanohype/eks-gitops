@@ -9,9 +9,11 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TESTS="${1:-policies/kyverno/tests}"
 
-# A floor on tests EXECUTED. Set under what the suite holds, so it catches
-# "matched almost nothing" rather than one case being retired.
-MIN_TESTS=24
+# A floor on tests that EVALUATED a resource: the summary's count less the rows
+# printed as Excluded, which the CLI counts as passes. Set under what the suite
+# holds, so it catches "matched almost nothing" rather than one case being
+# retired.
+MIN_TESTS=48
 
 # Runs of the suite a transport failure may cost before the run is reported as
 # one that could not verify, and the seconds the Nth repeat waits (N * PAUSE).
@@ -136,14 +138,59 @@ if [ "$invalid" -gt 0 ]; then
   exit 1
 fi
 
+# A row whose resource the policy does not match prints as Pass with the reason
+# "Excluded", and the CLI counts it as a pass whatever result the row expected.
+# So a fixture the policy cannot see passes a `fail` row exactly as it passes a
+# `pass` one: that is how the require-probes rows, written against Pods for a
+# policy that matches controllers, asserted nothing for as long as they existed.
+# An autogen expectation prints one Excluded row for the Pod rule beside the
+# controller's real one, so the check is per (test, policy, resource): a pair
+# whose every row is Excluded was never evaluated.
+if ! scan="$(printf '%s\n' "$out" | python3 -c '
+import sys
+test, seen, rows = "", {}, 0
+for line in sys.stdin:
+    if line.startswith("Loading test "):
+        test = line.split("(")[0][len("Loading test "):].strip()
+        continue
+    cells = [c.strip() for c in line.strip().strip("│").split("│")]
+    if len(cells) < 7 or not cells[0].isdigit():
+        continue
+    key = (test, cells[1], cells[3])
+    seen[key] = seen.get(key, True) and cells[5] == "Excluded"
+    rows += cells[5] == "Excluded"
+print(rows)
+for (test, policy, resource), excluded in sorted(seen.items()):
+    if excluded:
+        print(f"      {test}: {policy} never evaluated {resource}")
+')"; then
+  echo "Cannot run: the excluded-row scan did not complete."
+  exit 2
+fi
+# The scan prints the number of Excluded rows first, then any unseen pair.
+excluded_rows="$(printf '%s\n' "$scan" | head -1)"
+require_count "the excluded-row scan" "$excluded_rows"
+unseen="$(printf '%s\n' "$scan" | sed -n '2,$p')"
+if [ -n "$unseen" ]; then
+  echo "FAIL  a row asserted a result against a resource its policy does not match."
+  echo "      The CLI reports those as passes whatever they expected:"
+  printf '%s\n' "$unseen"
+  exit 1
+fi
+
 ran="$(printf '%s' "$out" | sed -n 's/^Test Summary: \([0-9][0-9]*\) tests passed.*/\1/p' | head -1)"
 if [ -z "$ran" ]; then
   echo "Cannot run: kyverno printed no test summary, so how many tests ran is"
   echo "unknown. A pass here would report the same thing as a passing suite."
   exit 2
 fi
-if [ "$ran" -lt "$MIN_TESTS" ]; then
-  echo "FAIL  $ran Kyverno test(s) ran under $TESTS, below the floor of $MIN_TESTS."
+# The summary counts every Excluded row as a pass, and an autogen expectation
+# prints one beside the controller row that evaluated, so those rows are taken
+# off before the floor: it counts rows that evaluated something.
+evaluated=$((ran - excluded_rows))
+if [ "$evaluated" -lt "$MIN_TESTS" ]; then
+  echo "FAIL  $evaluated Kyverno test(s) evaluated a resource under $TESTS ($ran ran,"
+  echo "      $excluded_rows of them Excluded), below the floor of $MIN_TESTS."
   echo "      Almost nothing was tested, which is not the same as every policy"
   echo "      behaving. Check the path — a renamed directory reports exactly this."
   exit 2

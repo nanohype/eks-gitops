@@ -116,6 +116,16 @@ class DatasourceReferencesInAPanel(unittest.TestCase):
         self.assertEqual(
             self.refs({"datasource": {"type": "prometheus", "uid": "amp"}}), ["amp"])
 
+    def test_grafanas_builtin_datasource_is_not_a_reference(self):
+        """The default "Annotations & Alerts" entry names Grafana's own datasource."""
+        self.assertEqual(
+            self.refs({"datasource": {"type": "datasource", "uid": "grafana"}}), [])
+
+    def test_a_uid_of_grafana_on_another_type_is_still_collected(self):
+        self.assertEqual(
+            self.refs({"datasource": {"type": "prometheus", "uid": "grafana"}}), ["grafana"])
+        self.assertEqual(self.refs({"datasource": "grafana"}), ["grafana"])
+
     def test_a_datasource_object_with_no_uid_yields_nothing(self):
         self.assertEqual(self.refs({"datasource": {"type": "prometheus"}}), [])
 

@@ -201,7 +201,7 @@ tasks:
       - go test ./...
 
   validate:policy-admission:
-    desc: "Policy-admission gate — render the fleet and prove no addon is denied by the Enforce-tier Kyverno policies (+ exclusion-list parity)"
+    desc: "Policy-admission gate — render the fleet and prove no addon is denied by the Deny-tier Kyverno policies (+ exclusion-list parity)"
     cmds:
       - ./scripts/check-policy-admission.py
 

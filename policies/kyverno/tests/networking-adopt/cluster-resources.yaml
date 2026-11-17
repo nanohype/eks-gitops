@@ -1,0 +1,20 @@
+# The kube-system/network-config ConfigMap in adopt mode, as cluster-bootstrap
+# writes it. Offline, the CLI cannot reach a cluster, so the object the policy's
+# resource.get() reads is supplied here. On a live cluster cluster-bootstrap writes
+# this ConfigMap and Kyverno reads it directly (the admission controller already
+# carries cluster-wide configmap get/list/watch in the chart's core ClusterRole).
+apiVersion: cli.kyverno.io/v1alpha1
+kind: ClusterResource
+metadata:
+  name: network-config-adopt
+spec:
+  resources:
+    - apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: network-config
+        namespace: kube-system
+      data:
+        network_mode: adopt
+        private_subnet_ids: subnet-priv-a,subnet-priv-b
+        public_subnet_ids: subnet-pub-a,subnet-pub-b

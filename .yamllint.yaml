@@ -13,6 +13,8 @@ ignore: |
   dashboards/base/platform/agent-*.yaml
   dashboards/base/platform/portal.yaml
   dashboards/base/platform/fleet-vend.yaml
+  # The kyverno chart's own dashboard, inlined verbatim (see the file's header).
+  dashboards/base/addons/kyverno.yaml
   # Alert rule groups carry long PromQL exprs in their query model.
   dashboards/base/alerting/portal.yaml
   dashboards/base/alerting/agent-operator.yaml

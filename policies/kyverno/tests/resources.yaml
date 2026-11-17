@@ -1,7 +1,8 @@
 # Fixtures for the Kyverno policy unit tests. All live in a non-excluded
 # namespace (workloads) so the policies actually evaluate them. Each "bad-*"
-# resource violates exactly one policy and stays compliant with the others, so
-# a failure points at a single rule.
+# resource is built to violate what its name says and stays compliant with the
+# other policies its rows are asserted against, so a failure points at a single
+# policy.
 ---
 # Compliant Deployment: carries the full required label tier.
 apiVersion: apps/v1
@@ -75,7 +76,8 @@ spec:
         - name: app
           image: registry.k8s.io/pause:3.10
 ---
-# Compliant Pod: non-root, both probes, cpu + memory limits.
+# Compliant Pod: non-root, cpu + memory limits (and probes, which no Pod-matching
+# policy reads).
 apiVersion: v1
 kind: Pod
 metadata:
@@ -99,25 +101,6 @@ spec:
           path: /healthz
           port: 8080
         periodSeconds: 10
-      resources:
-        limits:
-          cpu: "500m"
-          memory: "256Mi"
----
-# Violates require-probes only: no readiness/liveness probes.
-apiVersion: v1
-kind: Pod
-metadata:
-  name: bad-pod-no-probes
-  namespace: workloads
-  labels:
-    app.kubernetes.io/name: example
-spec:
-  securityContext:
-    runAsNonRoot: true
-  containers:
-    - name: app
-      image: registry.k8s.io/pause:3.10
       resources:
         limits:
           cpu: "500m"
@@ -150,7 +133,7 @@ spec:
           cpu: "500m"
           memory: "256Mi"
 ---
-# Violates require-resource-limits only: no cpu/memory limits.
+# Violates require-cpu-limit AND require-memory-limit: no limits at all.
 apiVersion: v1
 kind: Pod
 metadata:
@@ -174,6 +157,215 @@ spec:
           path: /healthz
           port: 8080
         periodSeconds: 10
+---
+# Violates require-cpu-limit only: a memory limit, no cpu limit.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: bad-pod-no-cpu-limit
+  namespace: workloads
+  labels:
+    app.kubernetes.io/name: example
+spec:
+  securityContext:
+    runAsNonRoot: true
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      readinessProbe:
+        httpGet:
+          path: /healthz
+          port: 8080
+        periodSeconds: 10
+      livenessProbe:
+        httpGet:
+          path: /healthz
+          port: 8080
+        periodSeconds: 10
+      resources:
+        limits:
+          memory: "256Mi"
+---
+# Violates require-memory-limit only: a cpu limit, no memory limit.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: bad-pod-no-memory-limit
+  namespace: workloads
+  labels:
+    app.kubernetes.io/name: example
+spec:
+  securityContext:
+    runAsNonRoot: true
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      readinessProbe:
+        httpGet:
+          path: /healthz
+          port: 8080
+        periodSeconds: 10
+      livenessProbe:
+        httpGet:
+          path: /healthz
+          port: 8080
+        periodSeconds: 10
+      resources:
+        limits:
+          cpu: "500m"
+---
+# Compliant with all six ValidatingPolicies: the label tier, both probes,
+# runAsNonRoot and both limits on the pod template. The probe policies match
+# controllers, not Pods, so their rows are Deployments; the pod-level policies
+# reach it through autogen.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: good-deploy-probes
+  namespace: workloads
+  labels:
+    app.kubernetes.io/name: example
+    app.kubernetes.io/managed-by: argocd
+    app.kubernetes.io/component: api
+    platform.nanohype.dev/environment: development
+    platform.nanohype.dev/team: platform-engineering
+spec:
+  selector:
+    matchLabels:
+      app: good-deploy-probes
+  template:
+    metadata:
+      labels:
+        app: good-deploy-probes
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+---
+# Violates require-readiness-probe only.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bad-deploy-no-readiness
+  namespace: workloads
+  labels:
+    app.kubernetes.io/name: example
+    app.kubernetes.io/managed-by: argocd
+    app.kubernetes.io/component: api
+    platform.nanohype.dev/environment: development
+    platform.nanohype.dev/team: platform-engineering
+spec:
+  selector:
+    matchLabels:
+      app: bad-deploy-no-readiness
+  template:
+    metadata:
+      labels:
+        app: bad-deploy-no-readiness
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+---
+# Violates require-liveness-probe only.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bad-deploy-no-liveness
+  namespace: workloads
+  labels:
+    app.kubernetes.io/name: example
+    app.kubernetes.io/managed-by: argocd
+    app.kubernetes.io/component: api
+    platform.nanohype.dev/environment: development
+    platform.nanohype.dev/team: platform-engineering
+spec:
+  selector:
+    matchLabels:
+      app: bad-deploy-no-liveness
+  template:
+    metadata:
+      labels:
+        app: bad-deploy-no-liveness
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+---
+# Violates the three pod-level policies through autogen and nothing else: no
+# runAsNonRoot, no limits on its template. Proves the generated controller
+# variants deny, not just the Pod rule.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bad-deploy-pod-security
+  namespace: workloads
+  labels:
+    app.kubernetes.io/name: example
+    app.kubernetes.io/managed-by: argocd
+    app.kubernetes.io/component: api
+    platform.nanohype.dev/environment: development
+    platform.nanohype.dev/team: platform-engineering
+spec:
+  selector:
+    matchLabels:
+      app: bad-deploy-pod-security
+  template:
+    metadata:
+      labels:
+        app: bad-deploy-pod-security
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 10
 ---
 # verify-images fixtures. Every nanohype reference is pinned by digest: the CLI
 # runs the validating path only, never the digest mutation admission runs first,

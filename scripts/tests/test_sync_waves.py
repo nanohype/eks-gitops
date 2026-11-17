@@ -5,8 +5,10 @@ None for something it should classify, that Application is silently unchecked â€
 the gate reports success having examined nothing about it.
 """
 
+import pathlib
 import unittest
 
+import yaml
 from gateloader import load
 
 sw = load("check-sync-waves")
@@ -43,6 +45,26 @@ class BandsAreCoherent(unittest.TestCase):
     def test_file_category_targets_are_real_bands(self):
         for f, category in sw.FILE_CATEGORY.items():
             self.assertIn(category, sw.BANDS, f"{f} maps to unbanded {category!r}")
+
+
+
+class PolicyCRDsPrecedeThePolicies(unittest.TestCase):
+    """Every kind the kyverno-policies Applications render comes from the
+    kyverno chart, so its group must be an edge the gate orders."""
+
+    def test_every_rendered_policy_group_is_an_ordered_edge(self):
+        root = pathlib.Path(__file__).resolve().parent.parent.parent / "policies" / "kyverno"
+        groups = set()
+        for path in root.glob("*/base/*.yaml"):
+            for doc in yaml.safe_load_all(path.read_text()):
+                if isinstance(doc, dict) and "/" in str(doc.get("apiVersion", "")):
+                    group = doc["apiVersion"].split("/")[0]
+                    if group != "kustomize.config.k8s.io":
+                        groups.add(group)
+        self.assertTrue(groups, "no policy manifest was read")
+        ordered = {edge["group"] for edge in sw.CRD_PRECEDENCE.values()
+                   if "kyverno-policies.yaml" in edge["consumers"]}
+        self.assertEqual(groups - ordered, set())
 
 
 if __name__ == "__main__":

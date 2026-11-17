@@ -4,11 +4,12 @@ kind: Kustomization
 resources:
   - ../../base
 
-# Staging: Enforce mode (block non-compliant resources)
+# Staging: Deny — a non-compliant resource is refused at admission.
 patches:
   - patch: |-
       - op: replace
-        path: /spec/validationFailureAction
-        value: Enforce
+        path: /spec/validationActions
+        value: [Deny]
     target:
-      kind: ClusterPolicy
+      group: policies.kyverno.io
+      kind: ValidatingPolicy

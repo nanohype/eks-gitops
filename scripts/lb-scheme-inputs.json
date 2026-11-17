@@ -29,7 +29,7 @@
       "kind": "Ingress",
       "annotation": null,
       "status": "unread",
-      "note": "IngressClassParams.spec.scheme overrides the object's own annotation, and reaching it means resolving the Ingress class and then its parameters. Kyverno evaluates a rule's context before its preconditions, so those two lookups would run on every Ingress admission on every cluster in the fleet, adopt or not, and Kyverno's admission controller is granted neither resource. An Ingress whose class parameters set a scheme and whose object states none therefore takes the default here; the controller rejects the mismatch at provisioning, which is the same loud failure an adopt cluster had before any injection existed."
+      "note": "IngressClassParams.spec.scheme overrides the object's own annotation, and reaching it means resolving the Ingress class and then its parameters. The policy's matchCondition admits every Ingress, so those two lookups would run on every Ingress admission on every cluster in the fleet, adopt or not, and Kyverno's admission controller is granted neither resource. An Ingress whose class parameters set a scheme and whose object states none therefore takes the default here; the controller rejects the mismatch at provisioning, which is the same loud failure an adopt cluster had before any injection existed."
     },
     "Ingress.annotations.IngressSuffixScheme": {
       "decides": "scheme",
@@ -84,14 +84,14 @@
       "kind": "Service",
       "annotation": null,
       "status": "read",
-      "evidence": "request.object.spec.loadBalancerClass"
+      "evidence": "object.spec.loadBalancerClass"
     },
     "Service.Spec.Type": {
       "decides": "ownership",
       "kind": "Service",
       "annotation": null,
       "status": "read",
-      "evidence": "request.object.spec.type"
+      "evidence": "object.spec.type"
     },
     "Service.annotations.SvcLBSuffixInternal": {
       "decides": "scheme",

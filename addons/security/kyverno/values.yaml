@@ -2,13 +2,19 @@
 
 admissionController:
   replicas: 3
-  resources:
-    requests:
-      cpu: 100m
-      memory: 256Mi
-    limits:
-      cpu: 500m
-      memory: 512Mi
+  # The admission controller reads its container's resources from
+  # admissionController.container.resources; a bare admissionController.resources
+  # is read by no template, and left the pod on the chart default (384Mi limit,
+  # no CPU limit) while this file said otherwise. The other controllers read
+  # <controller>.resources directly, as below.
+  container:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
   tolerations:
     - key: CriticalAddonsOnly
       operator: Exists
@@ -63,35 +69,20 @@ features:
 
 # Webhook configuration.
 #
-# The chart leaves this image's tag unset, and its own values comment records
-# what that means: "Defaults to `latest` if omitted". A cluster would therefore
-# pull whatever ghcr.io/kyverno/readiness-checker points at on the day the hook
-# runs, while every other Kyverno image is pinned to the chart's appVersion.
-# Pinned here to that same appVersion so the hook moves with the chart bump that
-# is reviewed, not on its own schedule.
+# Pinned to the chart's appVersion. Chart releases before 3.10 left this tag
+# unset, and the chart's own values comment still records what that means:
+# "Defaults to `latest` if omitted" — a cluster would pull whatever
+# ghcr.io/kyverno/readiness-checker pointed at on the day the hook ran. 3.10 sets
+# it to its appVersion itself; the pin stays so the hook can never fall back to
+# `latest` on a chart that drops it again, and moves with the reviewed chart bump.
 webhooksCleanup:
   enabled: true
   image:
-    tag: v1.19.2
+    tag: v1.20.0
 
-# Override the kubectl image the report-cleanup jobs run. The chart default is a
-# Bitnami image, whose free public catalog Broadcom archived; pin the maintained
-# upstream image the Kubernetes project publishes, matched to the cluster's minor
-# version.
-cleanupJobs:
-  admissionReports:
-    image:
-      registry: registry.k8s.io
-      repository: kubectl
-      tag: v1.36.3
-  clusterAdmissionReports:
-    image:
-      registry: registry.k8s.io
-      repository: kubectl
-      tag: v1.36.3
-
-# The chart's test hook runs the same readiness-checker image and leaves its tag
-# unset for the same reason. Pinned alongside the cleanup hook above.
+# The chart's test hook runs the same readiness-checker image. Pinned alongside
+# the cleanup hook above, for the same reason. (No cleanupJobs block: no template
+# in chart 3.9 or 3.10 reads one, so its kubectl image pins installed nothing.)
 test:
   image:
-    tag: v1.19.2
+    tag: v1.20.0

@@ -182,9 +182,17 @@ GRAFANA_BUILTINS = frozenset(
         "__org",
         "__user",
         "__timezone",
+        "__all",
         "timeFilter",
     }
 )
+
+# Grafana's own built-in datasource, which every dashboard's default
+# "Annotations & Alerts" entry names: `{"type": "datasource", "uid": "grafana"}`.
+# Grafana provides it in every instance, so it is never wired and is not a
+# reference to nothing. Matched on both fields, so a panel naming a datasource
+# whose uid merely happens to be "grafana" is still checked.
+BUILTIN_DATASOURCE = {"type": "datasource", "uid": "grafana"}
 
 
 def template_vars(text: str) -> set[str]:
@@ -254,7 +262,8 @@ def walk_datasources(node, out: list[str]) -> None:
         ds = node.get("datasource")
         if isinstance(ds, str):
             out.append(ds)
-        elif isinstance(ds, dict) and isinstance(ds.get("uid"), str):
+        elif (isinstance(ds, dict) and isinstance(ds.get("uid"), str)
+              and {k: ds.get(k) for k in BUILTIN_DATASOURCE} != BUILTIN_DATASOURCE):
             out.append(ds["uid"])
         for v in node.values():
             walk_datasources(v, out)

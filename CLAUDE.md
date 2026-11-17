@@ -19,7 +19,7 @@ addons/                → Addon configurations
     base/                  → Kustomization + resource manifests
     overlays/{development,staging,production}[,hub]/
                            → Environment-specific kustomization.yaml
-policies/              → Kyverno policies: ClusterPolicies plus the supply-chain ImageValidatingPolicy (pure Kustomize, base/overlays)
+policies/              → Kyverno CEL policies (policies.kyverno.io/v1): ValidatingPolicies, a MutatingPolicy and the supply-chain ImageValidatingPolicy (pure Kustomize, base/overlays)
 catalog/               → Platform-specific workloads (Druid)
 ```
 
@@ -51,7 +51,7 @@ Which style an addon uses follows from what it delivers, not from a list. An
 addon that configures an upstream Helm chart carries flat values; an addon that
 ships manifests this repo authors carries `base/` plus per-environment overlays,
 each with its own `kustomization.yaml`. Kyverno policies take the same shape
-(resources plus JSON patches for enforcement mode).
+(resources plus JSON patches setting `validationActions`).
 
 To see which addons are on the Kustomize side:
 
@@ -78,7 +78,7 @@ See `docs/configuration/adding-addons.md` for full guide.
 ### Adding a new policy
 1. Create policy YAML in `policies/kyverno/<group>/base/`
 2. Add to base kustomization.yaml resources list
-3. Overlay patches control enforcement mode per environment
+3. Overlay patches set `validationActions` per environment (`[Audit]` development, `[Deny]` staging/production)
 
 ## Validation Commands
 
@@ -98,7 +98,7 @@ task validate:appset-schema        # kubeconform over applicationsets/
 task validate:appset-render        # Render the Karpenter EC2NodeClass patch template against fixture cluster Secrets
 task validate:sync-waves           # Assert the documented sync-wave category ordering
 task validate:label-values         # Every k8s label value satisfies the API server's grammar
-task validate:policy-admission     # Prove no addon is denied by the Enforce-tier Kyverno policies (+ exclusion-list parity)
+task validate:policy-admission     # Prove no addon is denied by the Deny-tier Kyverno policies (+ exclusion-list parity)
 task validate:externalsecret-keys  # Each ExternalSecret names its remote secret once, and the delivering appset patches it
 task validate:secret-store-refs    # Every secret-store reference names the one store this catalog declares, and the published contract states it
 task validate:directory-manifest-size # Every directory-source Application fits the repo-server's combined-manifest ceiling
@@ -277,7 +277,7 @@ documents: `task validate` runs it report-only, CI runs it `--blocking`.
 
 - PR and push to main trigger `.github/workflows/ci.yml` (lint → validate per environment → PR summary)
 - The validate job renders every kustomize root plus the druid catalog chart, then gates the rendered output: render-assert (no unfilled sentinels), kubeconform strict (native schemas + datreeio CRDs-catalog, each read at a commit the shared `scripts/kubeconform-scan.sh` pins, no ignore-missing-schemas), and `trivy config` (misconfiguration scan, MEDIUM+ hard-fails; scoped justified exceptions live in `.trivyignore.yaml`)
-- Standalone jobs on every PR: `helm-render` (templates every addon against its appset-pinned chart with base + each env's values — an unknown key fails here, not fleet-wide at sync), `policy-admission` (renders the whole fleet into its real destination namespaces and runs `kyverno apply` against the Enforce-tier best-practice/pod-security policies, so an addon landing in a namespace the policies don't exclude fails here instead of being denied at admission on a vended enforce cluster — also asserts all four exclusion lists stay identical, that every namespace the fleet lands a workload in is on that list, and that a deliberately non-compliant canary is denied by every rule, which is what proves the run evaluated anything), `appsets` (ApplicationSet schema + documented sync-wave ordering), `appset-render` (renders the Karpenter EC2NodeClass patch template the way the ArgoCD ApplicationSet controller does — Go text/template + sprig, `missingkey=error` — against fixture create/adopt/legacy cluster Secrets, so a control-flow edit that breaks the per-cluster render fails here instead of at sync), `secrets` (gitleaks over the working tree), plus the dashboard, fork-safety, and Kyverno policy gates
+- Standalone jobs on every PR: `helm-render` (templates every addon against its appset-pinned chart with base + each env's values — an unknown key fails here, not fleet-wide at sync), `policy-admission` (renders the whole fleet into its real destination namespaces and runs `kyverno apply` against the Deny-tier best-practice/pod-security policies, so an addon landing in a namespace the policies don't exclude fails here instead of being denied at admission on a vended enforce cluster — also asserts all six exclusion lists stay identical, that every namespace the fleet lands a workload in is on that list, that each overlay carries its tier's `validationActions`, and that a deliberately non-compliant canary is denied by every validation, which is what proves the run evaluated anything), `appsets` (ApplicationSet schema + documented sync-wave ordering), `appset-render` (renders the Karpenter EC2NodeClass patch template the way the ArgoCD ApplicationSet controller does — Go text/template + sprig, `missingkey=error` — against fixture create/adopt/legacy cluster Secrets, so a control-flow edit that breaks the per-cluster render fails here instead of at sync), `secrets` (gitleaks over the working tree), plus the dashboard, fork-safety, and Kyverno policy gates
 - `charts` (Pinned chart archives) runs `scripts/render-addons.py --fetch` and keeps every pinned chart archive, each beside a `.sha256` record of the digest it was verified against, in an Actions cache of `~/.cache/eks-gitops/charts` keyed on `applicationsets/*.yaml` and `scripts/registry.py`. The cache is restored and saved as separate steps, and the save runs whatever the fetch did: a complete set goes under that key, and a set a failed fetch left incomplete under a `charts-partial-` key carrying the same pins hash, the run and its attempt. No incomplete set's key begins with the key the rendering jobs restore, so the prefix match a restore falls back to cannot hand one a partial set; the `charts` job's own restore-keys take the newest partial set for the same pins first. Requests to `public.ecr.aws` are spaced by `REQUEST_SPACING_SECONDS` in `scripts/registry.py`, above ECR Public's one-pull-a-second anonymous quota. `charts` and `image-vulnerabilities`, the two jobs that read `public.ecr.aws` in bulk, first assume the role the `ECR_PUBLIC_PULL_ROLE_ARN` repo variable names over GitHub OIDC and log in to `public.ecr.aws`, so ECR Public meters their pulls by that role's AWS account rather than by the runner's shared address; a run for a pull request from a fork, or with the variable unset, skips the login and reads anonymously. trivy reads the login from the docker config, and `scripts/registry.py` sends it to a token realm only when the realm and the registry being read are both the host it was stored for, and reads a registry that refuses it anonymously, saying so once on stderr. These two are the only jobs granted `id-token`, each at job level. Every job that renders a pinned chart waits on it (`needs: charts`) and restores that cache, so a registry is read once per pin set; `scripts/registry.py` hands out a cached archive only while it still hashes to its record. A chart read exits 1 when the registry answered and ruled the pin out, and 2 when the registry could not be read. Each of these jobs, and each scheduled job in `chart-provenance.yml` that reads upstream through the client, sets a `timeout-minutes` above `CALL_BOUND_SECONDS` in `scripts/registry.py`: the deadline one client call runs to, its token request included, plus the one socket read a body still arriving at that deadline can have under way. `docs/runbooks/render-gate-failures.md` covers a red run
 - Chart pins in `applicationsets/`, the Go module, the CI tool downloads, the schema catalog refs in `scripts/kubeconform-scan.sh` and the GitHub Actions are all watched by Renovate (`renovate.json`, extending the org preset at `nanohype/.github`)
 - A scheduled workflow, `.github/workflows/chart-provenance.yml`, runs weekly (Mondays)
@@ -299,7 +299,7 @@ documents: `task validate` runs it report-only, CI runs it `--blocking`.
 ### Commands
 - `/validate` — Run `task validate` (lint + kustomize build all environments), diagnose failures
 - `/add-addon` — Scaffold a new addon (Helm flat values or Kustomize base/overlays)
-- `/add-policy` — Scaffold a new Kyverno ClusterPolicy (base + 3 overlays + ApplicationSet entry)
+- `/add-policy` — Scaffold a new Kyverno ValidatingPolicy (base + 3 overlays + ApplicationSet entry)
 - `/render` — Render manifests for an environment via `task render`
 - `/diff-envs` — Compare rendered output between two environments
 - `/chart-versions` — Audit Helm chart versions across all ApplicationSets, flag drift

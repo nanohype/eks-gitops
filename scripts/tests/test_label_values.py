@@ -65,9 +65,7 @@ if __name__ == "__main__":
 
 
 class WhichLabelsAreChecked(unittest.TestCase):
-    """Labels applied to a resource are checked wherever its metadata sits; the
-    labels in a Kyverno pattern are matchers over other resources, where `?*` is
-    correct, and only the policy's own are checked."""
+    """Labels applied to a resource are checked wherever its metadata sits."""
 
     def test_every_metadata_labels_map_is_found_with_its_path(self):
         doc = {"metadata": {"labels": {"a": "1"}},
@@ -84,15 +82,12 @@ class WhichLabelsAreChecked(unittest.TestCase):
         doc = {"spec": {"selector": {"labels": {"a": "?*"}}}}
         self.assertEqual(lv.blocks_for(doc), [])
 
-    def test_a_kyverno_pattern_is_a_matcher(self):
-        pattern = {"validate": {"pattern": {"metadata": {"labels": {"env": "?*"}}}}}
-        for kind in sorted(lv.KYVERNO_KINDS):
-            with self.subTest(kind=kind):
-                doc = {"kind": kind, "metadata": {"labels": {"team": "platform"}},
-                       "spec": {"rules": [pattern]}}
-                self.assertEqual(lv.blocks_for(doc), [(".metadata.labels", {"team": "platform"})])
-                doc["metadata"] = {"name": "x"}
-                self.assertEqual(lv.blocks_for(doc), [])
+    def test_a_policy_document_has_no_exemption(self):
+        """A labels map under any metadata is checked, in a policy as anywhere."""
+        doc = {"kind": "ValidatingPolicy", "metadata": {"labels": {"team": "platform"}},
+               "spec": {"x": {"metadata": {"labels": {"env": "?*"}}}}}
+        self.assertEqual(lv.blocks_for(doc), [(".metadata.labels", {"team": "platform"}),
+                                              (".spec.x.metadata.labels", {"env": "?*"})])
 
 
 class UnconditionalFloor(unittest.TestCase):

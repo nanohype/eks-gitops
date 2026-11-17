@@ -1,7 +1,7 @@
 """Unit tests for the policy-admission gate's verdict.
 
 This gate answers the question the fleet cannot answer anywhere else: would any
-addon be DENIED at admission on a cluster running the Enforce-tier policies? It
+addon be DENIED at admission on a cluster running the Deny-tier policies? It
 reaches a chart registry, so the positive-control sweep exempts it — which left
 the whole verdict resting on nobody having read it.
 
@@ -42,25 +42,69 @@ def quietly(fn, *args, **kwargs):
     return result, buf.getvalue()
 
 
-def result(policy="best-practices", rule="require-probes", verdict="fail",
+def result(policy="require-readiness-probe", index="0", verdict="fail",
            namespace="workloads", name="app", kind="Deployment"):
-    """One entry as kyverno writes it into a policy report."""
+    """One ValidatingPolicy entry as kyverno writes it into a policy report.
+
+    The rule is always `validation`; which validation is in the properties.
+    """
     return {
+        "source": "KyvernoValidatingPolicy",
         "policy": policy,
-        "rule": rule,
+        "rule": "validation",
         "result": verdict,
         "resources": [{"kind": kind, "namespace": namespace, "name": name}],
+        "properties": {"cel.validationIndex": index},
     }
 
 
-def canary(rule="require-probes", verdict="fail"):
-    return result(rule=rule, verdict=verdict,
+def canary(policy="require-readiness-probe", verdict="fail"):
+    return result(policy=policy, verdict=verdict,
                   namespace=gate.CANARY_NAMESPACE, name=gate.CANARY_NAME)
 
 
-def runtime_pod(verdict="pass", rule="require-probes"):
-    return result(rule=rule, verdict=verdict, kind="Pod",
+def runtime_pod(verdict="pass", policy="require-run-as-non-root"):
+    return result(policy=policy, verdict=verdict, kind="Pod",
                   namespace=gate.RUNTIME_POD_NAMESPACE, name=gate.RUNTIME_POD_NAME)
+
+
+# A check and its existing-violation term in the form the gate derives.
+COMPLIANT = "object.spec.template.spec.containers.all(c,\n  c.?livenessProbe.?periodSeconds.orValue(0) > 0)"
+EXISTING = ("oldObject != null && has(oldObject.kind) &&\n"
+            "!(oldObject.spec.template.spec.containers.all(c,\n"
+            "  c.?livenessProbe.?periodSeconds.orValue(0) > 0))")
+
+
+def validating_policy(name, namespaces=("monitoring", "kyverno"), validations=1,
+                      **narrowing):
+    """A ValidatingPolicy shaped like the exclusion-bearing ones.
+
+    `narrowing` adds spec fields (or, for objectSelector / excludeResourceRules /
+    extra_expressions / matchLabels, matchConstraints fields) that narrow what
+    the policy matches beyond the shared namespace exclusion.
+    """
+    exprs = [{"key": "kubernetes.io/metadata.name", "operator": "NotIn",
+              "values": list(namespaces)}]
+    exprs += narrowing.pop("extra_expressions", [])
+    selector: dict = {"matchExpressions": exprs}
+    if "matchLabels" in narrowing:
+        selector["matchLabels"] = narrowing.pop("matchLabels")
+    mc: dict = {"namespaceSelector": selector,
+                "resourceRules": [{"apiGroups": ["apps"], "apiVersions": ["v1"],
+                                   "operations": ["CREATE", "UPDATE"],
+                                   "resources": ["deployments"]}]}
+    for field in ("objectSelector", "excludeResourceRules"):
+        if field in narrowing:
+            mc[field] = narrowing.pop(field)
+    spec = {"validationActions": ["Audit"], "failurePolicy": "Fail",
+            "evaluation": {"admission": {"enabled": True}, "background": {"enabled": True}},
+            "matchConstraints": mc,
+            "variables": [{"name": "compliant", "expression": COMPLIANT},
+                          {"name": "existingViolation", "expression": EXISTING}],
+            "validations": [{"expression": gate.GRANDFATHERED, "message": "m"}] * validations}
+    spec.update(narrowing)
+    return {"apiVersion": "policies.kyverno.io/v1", "kind": "ValidatingPolicy",
+            "metadata": {"name": name}, "spec": spec}
 
 
 def completed(returncode=0, stdout="", stderr=""):
@@ -136,34 +180,25 @@ class NormalisingARender(unittest.TestCase):
                 self.assertEqual(landed, {"monitoring"})
 
 
-class RuleNamesFromAReport(unittest.TestCase):
-    """Kyverno never names a rule the way the policy file does.
+class ValidationKeysFromAReport(unittest.TestCase):
+    """A ValidatingPolicy result names no rule; its validation index does.
 
-    The canary is checked against the rule set read off the policy YAML, so a
-    prefix left on turns every autogen variant into an unexercised rule and the
-    run fails for a reason that is not true.
+    The canary is checked against `policy/<index>` keys read off the policy
+    YAML, so the key has to come from the property, not from the `rule` field,
+    which reads `validation` for every policy and every validation.
     """
 
-    def test_a_plain_rule_is_unchanged(self):
-        self.assertEqual(gate._rule_key(result(rule="require-probes")),
-                         "best-practices/require-probes")
+    def test_the_key_is_the_policy_and_its_validation_index(self):
+        self.assertEqual(gate._rule_key(result(policy="require-labels", index="0")),
+                         "require-labels/0")
 
-    def test_the_pod_controller_prefix_is_stripped(self):
-        self.assertEqual(gate._rule_key(result(rule="autogen-require-probes")),
-                         "best-practices/require-probes")
+    def test_a_second_validation_keys_apart_from_the_first(self):
+        self.assertEqual(gate._rule_key(result(policy="p", index="1")), "p/1")
 
-    def test_the_cronjob_prefix_is_stripped_whole(self):
-        """`autogen-cronjob-` must be tried before `autogen-`.
-
-        Stripping the shorter prefix first leaves `cronjob-require-probes`, which
-        matches no rule in any policy file.
-        """
-        self.assertEqual(gate._rule_key(result(rule="autogen-cronjob-require-probes")),
-                         "best-practices/require-probes")
-
-    def test_a_rule_whose_name_begins_with_autogen_text_is_not_truncated(self):
-        self.assertEqual(gate._rule_key(result(rule="autogenerate-labels")),
-                         "best-practices/autogenerate-labels")
+    def test_a_result_with_no_index_matches_no_validation(self):
+        """A key no policy can produce, so it never counts as exercised."""
+        bare = {"policy": "require-labels", "rule": "validation", "result": "fail"}
+        self.assertEqual(gate._rule_key(bare), "require-labels/?")
 
 
 class IdentifyingTheProbes(unittest.TestCase):
@@ -223,12 +258,12 @@ class TheRuntimePodVerdictIsTwoSided(unittest.TestCase):
 class TheRunVerdict(unittest.TestCase):
     """`judge` fails on both sides: what was denied, and what was never evaluated."""
 
-    RULES = {"best-practices/require-probes", "best-practices/require-labels"}
+    RULES = {"require-readiness-probe/0", "require-labels/0"}
 
     def clean_report(self, canary_result="fail"):
         return {
             "summary": {"pass": 1, "fail": 2},
-            "results": [canary("require-probes", canary_result),
+            "results": [canary("require-readiness-probe", canary_result),
                         canary("require-labels", canary_result),
                         runtime_pod("pass")],
         }
@@ -240,7 +275,7 @@ class TheRunVerdict(unittest.TestCase):
     def test_a_run_that_exercised_every_rule_and_flagged_nothing_passes(self):
         verdict, out = self.judge(self.clean_report())
         self.assertTrue(verdict)
-        self.assertIn("canary failed by all 2 rules", out)
+        self.assertIn("canary failed by all 2 validations", out)
         self.assertIn("no addon flagged", out)
 
     def test_an_empty_report_at_exit_zero_is_named_as_matching_nothing(self):
@@ -261,14 +296,14 @@ class TheRunVerdict(unittest.TestCase):
     def test_a_rule_that_never_reported_the_canary_fails_the_run(self):
         report = self.clean_report()
         report["results"] = [r for r in report["results"]
-                             if r["rule"] != "require-labels"]
+                             if r["policy"] != "require-labels"]
         verdict, out = self.judge(report)
         self.assertFalse(verdict)
         self.assertIn("require-labels", out)
         self.assertIn("did not evaluate", out)
 
     def test_a_canary_reported_at_the_wrong_result_does_not_count_as_exercised(self):
-        """An Enforce run that only warns has not enforced anything."""
+        """A run that only warns has not refused anything."""
         verdict, out = self.judge(self.clean_report(canary_result="warn"),
                                   canary_result="fail")
         self.assertFalse(verdict)
@@ -285,7 +320,7 @@ class TheRunVerdict(unittest.TestCase):
     def test_the_runtime_pod_is_not_counted_among_flagged_addons(self):
         """Its verdict is judged separately and names what actually broke."""
         report = self.clean_report()
-        report["results"].append(runtime_pod("fail", "require-non-root"))
+        report["results"].append(runtime_pod("fail", "require-cpu-limit"))
         verdict, out = self.judge(report)
         self.assertFalse(verdict)
         self.assertIn("no addon flagged", out)
@@ -332,87 +367,90 @@ class ExclusionCoverage(unittest.TestCase):
 
     def test_an_exclusion_list_wider_than_the_fleet_is_not_this_check(self):
         """Breadth is not a failure here: a namespace excluded before its addon
-        arrives is normal. Whether the four lists agree with each other is
+        arrives is normal. Whether the six lists agree with each other is
         check_exclusion_parity's question, planted against in ExclusionListParity."""
         verdict, _ = quietly(gate.check_namespace_coverage, set(), {"monitoring"})
         self.assertTrue(verdict)
 
 
 class ExclusionListParity(unittest.TestCase):
-    """The four lists must agree, against a policy tree carrying a divergence.
+    """The six lists must agree, against a policy tree carrying a divergence.
 
     The exclusion list is what makes the fleet admissible at all, and it is
-    hand-maintained across four files. A divergence is invisible to every other
+    hand-maintained across six files. A divergence is invisible to every other
     gate: each policy is individually valid, renders, and passes kyverno's own
-    unit tests. It surfaces on a vended Enforce cluster, as one workload denied
-    where its three siblings were admitted.
+    unit tests. It surfaces on a vended Deny cluster, as one workload denied
+    where its siblings were admitted.
 
     So the divergence is planted rather than the agreement asserted. `ok` is a
     bool, and a function that returns True unconditionally satisfies every
     assertion a healthy tree can make about it.
     """
 
-    def policies(self, lists):
-        """A POLICY_DIR holding the four exclusion-bearing policies.
+    def policies(self, docs):
+        """A POLICY_DIR holding the exclusion-bearing policies.
 
-        `lists` maps each (group, filename) pair to the namespaces its single
-        rule excludes, so a caller states the divergence directly.
+        `docs` maps each (group, filename) pair to the policy document written
+        there, so a caller states the divergence directly.
         """
         root = pathlib.Path(tempfile.mkdtemp())
-        for (group, fname), namespaces in lists.items():
+        for (group, fname), doc in docs.items():
             base = root / group / "base"
             base.mkdir(parents=True, exist_ok=True)
-            (base / fname).write_text(yaml.safe_dump({
-                "apiVersion": "kyverno.io/v1",
-                "kind": "ClusterPolicy",
-                "metadata": {"name": fname.removesuffix(".yaml")},
-                "spec": {"rules": [{
-                    "name": "rule",
-                    "exclude": {"any": [
-                        {"resources": {"namespaces": list(namespaces)}}]},
-                }]},
-            }))
+            (base / fname).write_text(yaml.safe_dump(doc))
         return root
 
-    def parity(self, lists):
+    def parity(self, docs):
         original = gate.POLICY_DIR
-        gate.POLICY_DIR = self.policies(lists)
+        gate.POLICY_DIR = self.policies(docs)
         try:
             return quietly(gate.check_exclusion_parity)
         finally:
             gate.POLICY_DIR = original
 
     def agreeing(self, namespaces=("monitoring", "kyverno")):
-        return dict.fromkeys(gate.EXCLUSION_POLICIES, namespaces)
+        return {(g, f): validating_policy(f.removesuffix(".yaml"), namespaces)
+                for g, f in gate.EXCLUSION_POLICIES}
 
-    def test_four_identical_lists_agree(self):
-        (ok, excluded, keys), _ = self.parity(self.agreeing())
-        self.assertTrue(ok)
+    def with_first(self, docs, **kwargs):
+        """`docs` with the first policy rebuilt from `kwargs`."""
+        key = gate.EXCLUSION_POLICIES[0]
+        docs = dict(docs)
+        docs[key] = validating_policy(key[1].removesuffix(".yaml"), **kwargs)
+        return docs
+
+    def test_six_identical_lists_agree(self):
+        (ok, excluded, keys), out = self.parity(self.agreeing())
+        self.assertTrue(ok, out)
         self.assertEqual(excluded, {"monitoring", "kyverno"})
         self.assertEqual(len(keys), len(gate.EXCLUSION_POLICIES))
 
     def test_one_list_missing_a_namespace_is_a_mismatch(self):
-        """The shape that admits three workloads and denies the fourth."""
-        lists = dict(self.agreeing())
-        lists[gate.EXCLUSION_POLICIES[2]] = ("monitoring",)
-        (ok, _, _), out = self.parity(lists)
+        """The shape that admits five workloads and denies the sixth."""
+        docs = dict(self.agreeing())
+        key = gate.EXCLUSION_POLICIES[2]
+        docs[key] = validating_policy(key[1].removesuffix(".yaml"), ("monitoring",))
+        (ok, _, _), out = self.parity(docs)
         self.assertFalse(ok)
         self.assertIn("MISMATCH", out)
         self.assertIn("missing: ['kyverno']", out)
         self.assertIn("exclusion lists diverge", out)
 
     def test_one_list_carrying_an_extra_namespace_is_a_mismatch(self):
-        lists = dict(self.agreeing())
-        lists[gate.EXCLUSION_POLICIES[1]] = ("monitoring", "kyverno", "falco")
-        (ok, _, _), out = self.parity(lists)
+        docs = dict(self.agreeing())
+        key = gate.EXCLUSION_POLICIES[1]
+        docs[key] = validating_policy(key[1].removesuffix(".yaml"),
+                                      ("monitoring", "kyverno", "falco"))
+        (ok, _, _), out = self.parity(docs)
         self.assertFalse(ok)
         self.assertIn("extra:   ['falco']", out)
 
     def test_order_alone_is_not_a_divergence(self):
-        """Kyverno ORs the entries; the lists are sets, not sequences."""
-        lists = dict(self.agreeing())
-        lists[gate.EXCLUSION_POLICIES[3]] = ("kyverno", "monitoring")
-        (ok, _, _), _ = self.parity(lists)
+        """NotIn takes a set of values, not a sequence."""
+        docs = dict(self.agreeing())
+        key = gate.EXCLUSION_POLICIES[3]
+        docs[key] = validating_policy(key[1].removesuffix(".yaml"), ("kyverno", "monitoring"))
+        (ok, _, _), _ = self.parity(docs)
         self.assertTrue(ok)
 
     def test_the_namespaces_returned_are_the_shared_baseline(self):
@@ -421,50 +459,267 @@ class ExclusionListParity(unittest.TestCase):
         (_, excluded, _), _ = self.parity(self.agreeing(("a", "b", "c")))
         self.assertEqual(excluded, {"a", "b", "c"})
 
-    def test_a_rule_key_is_returned_per_rule(self):
+    def test_a_key_is_returned_per_validation(self):
         """The canary must trip every key, read off the policies rather than
-        restated — so a rule added without extending the canary fails."""
+        restated — so a validation added without extending the canary fails."""
         (_, _, keys), _ = self.parity(self.agreeing())
-        self.assertIn("require-probes/rule", keys)
+        self.assertIn("require-readiness-probe/0", keys)
+
+    def test_a_policy_holding_two_validations_is_refused(self):
+        """Only the first failing validation is reported, so the canary could
+        never prove the second fires."""
+        (ok, _, keys), out = self.parity(self.with_first(self.agreeing(), validations=2))
+        self.assertFalse(ok)
+        self.assertIn("holds 2 validations, not one", out)
+        self.assertIn("require-labels/1", keys,
+                      "the second key is still expected, so the canary run fails too")
+
+    def test_a_legacy_kind_is_refused(self):
+        docs = dict(self.agreeing())
+        key = gate.EXCLUSION_POLICIES[0]
+        docs[key] = {"apiVersion": "kyverno.io/v1", "kind": "ClusterPolicy",
+                     "metadata": {"name": "require-labels"}, "spec": {"rules": []}}
+        (ok, _, _), out = self.parity(docs)
+        self.assertFalse(ok)
+        self.assertIn("is a ClusterPolicy, not a ValidatingPolicy", out)
 
 
-class ASecondExcludeEntryIsPartOfTheList(unittest.TestCase):
-    """Kyverno ORs every `exclude.any` entry, so reading any[0] drops the rest."""
+class TheExistingViolationTermIsDerived(unittest.TestCase):
+    """An UPDATE turning a compliant object non-compliant must stay refused.
 
-    def policy_with_two_entries(self, first, second):
-        root = pathlib.Path(tempfile.mkdtemp())
-        for group, fname in gate.EXCLUSION_POLICIES:
-            base = root / group / "base"
-            base.mkdir(parents=True, exist_ok=True)
-            entries = [{"resources": {"namespaces": list(first)}}]
-            if fname == gate.EXCLUSION_POLICIES[0][1]:
-                entries.append({"resources": {"namespaces": list(second)}})
-            (base / fname).write_text(yaml.safe_dump({
-                "apiVersion": "kyverno.io/v1",
-                "kind": "ClusterPolicy",
-                "metadata": {"name": fname.removesuffix(".yaml")},
-                "spec": {"rules": [{"name": "rule",
-                                    "exclude": {"any": entries}}]},
-            }))
-        return root
+    No run can show it: `kyverno test` hands an UPDATE the same object twice,
+    and `kyverno apply` evaluates as a background scan with no old object. So a
+    term that admitted every UPDATE passes every row, and the gate holds the
+    term to the one form that admits only the old object's own violation.
+    """
 
-    def test_the_union_of_both_entries_is_the_list(self):
-        original = gate.POLICY_DIR
-        gate.POLICY_DIR = self.policy_with_two_entries(("monitoring",), ("falco",))
-        try:
-            (ok, _, _), out = quietly(gate.check_exclusion_parity)
-        finally:
-            gate.POLICY_DIR = original
-        # The first policy excludes {monitoring, falco}; the other three exclude
-        # {monitoring}. Reading only any[0] would make all four agree.
-        self.assertFalse(ok, "a second exclude.any entry was dropped from the "
-                             "parity comparison, so four lists that differ were "
-                             "reported as identical")
-        self.assertIn("falco", out)
+    def parity_with_first(self, mutate):
+        parity = ExclusionListParity()
+        docs = dict(parity.agreeing())
+        key = gate.EXCLUSION_POLICIES[0]
+        doc = validating_policy(key[1].removesuffix(".yaml"))
+        mutate(doc["spec"])
+        docs[key] = doc
+        return parity.parity(docs)
+
+    def set_variable(self, name, expression):
+        def mutate(spec):
+            for v in spec["variables"]:
+                if v["name"] == name:
+                    v["expression"] = expression
+        return mutate
+
+    def test_the_derived_form_passes_whatever_its_line_breaks(self):
+        (ok, _, _), out = self.parity_with_first(self.set_variable(
+            "existingViolation", " ".join(EXISTING.split())))
+        self.assertTrue(ok, out)
+
+    def test_a_term_that_admits_every_update_is_refused(self):
+        """The reviewer's mutation: the old-object re-check dropped."""
+        (ok, _, _), out = self.parity_with_first(self.set_variable(
+            "existingViolation", "oldObject != null && has(oldObject.kind)"))
+        self.assertFalse(ok)
+        self.assertIn("existingViolation is not `compliant` read off oldObject", out)
+
+    def test_a_term_that_reads_the_new_object_is_refused(self):
+        (ok, _, _), out = self.parity_with_first(self.set_variable(
+            "existingViolation", EXISTING.replace("!(oldObject.spec", "!(object.spec")))
+        self.assertFalse(ok)
+        self.assertIn("existingViolation is not", out)
+
+    def test_a_term_without_the_update_guard_is_refused(self):
+        (ok, _, _), out = self.parity_with_first(self.set_variable(
+            "existingViolation", EXISTING.split("&&\n", 2)[-1]))
+        self.assertFalse(ok)
+        self.assertIn("existingViolation is not", out)
+
+    def test_a_compliant_change_carried_into_the_term_passes(self):
+        """The term follows the check, so changing both together is not drift."""
+        def mutate(spec):
+            spec["variables"] = [
+                {"name": "compliant", "expression": "object.spec.replicas > 0"},
+                {"name": "existingViolation", "expression":
+                    "oldObject != null && has(oldObject.kind) && !(oldObject.spec.replicas > 0)"}]
+        (ok, _, _), out = self.parity_with_first(mutate)
+        self.assertTrue(ok, out)
+
+    def test_a_compliant_change_not_carried_into_the_term_is_refused(self):
+        (ok, _, _), out = self.parity_with_first(self.set_variable(
+            "compliant", "object.spec.replicas > 0"))
+        self.assertFalse(ok)
+        self.assertIn("!(oldObject.spec.replicas > 0)", out)
+
+    def test_missing_variables_are_refused(self):
+        def mutate(spec):
+            del spec["variables"]
+        (ok, _, _), out = self.parity_with_first(mutate)
+        self.assertFalse(ok)
+        self.assertIn("declares no `compliant` and `existingViolation`", out)
+
+    def test_a_base_validation_other_than_the_two_ored_is_refused(self):
+        def mutate(spec):
+            spec["validations"] = [{"expression": "variables.existingViolation || true",
+                                    "message": "m"}]
+        (ok, _, _), out = self.parity_with_first(mutate)
+        self.assertFalse(ok)
+        self.assertIn("the base validation is not", out)
+
+
+class AnythingElseNarrowingTheMatchIsRefused(unittest.TestCase):
+    """The exclusion is one NotIn on the namespace name, and only that.
+
+    Each other way of narrowing a ValidatingPolicy exempts objects the namespace
+    comparison cannot see, so a tree whose lists all agree could still exempt a
+    namespace — or a label, or a kind — from one policy and not the others.
+    """
+
+    def parity_with(self, **narrowing):
+        parity = ExclusionListParity()
+        docs = parity.with_first(parity.agreeing(), **narrowing)
+        return parity.parity(docs)
+
+    def test_a_second_namespace_expression(self):
+        (ok, _, _), out = self.parity_with(extra_expressions=[
+            {"key": "team", "operator": "NotIn", "values": ["x"]}])
+        self.assertFalse(ok)
+        self.assertIn("2 matchExpressions, not one", out)
+
+    def test_an_expression_on_another_key_or_operator(self):
+        parity = ExclusionListParity()
+        docs = dict(parity.agreeing())
+        key = gate.EXCLUSION_POLICIES[0]
+        doc = validating_policy("require-labels")
+        expr = doc["spec"]["matchConstraints"]["namespaceSelector"]["matchExpressions"][0]
+        expr["operator"] = "In"
+        docs[key] = doc
+        (ok, _, _), out = parity.parity(docs)
+        self.assertFalse(ok)
+        self.assertIn("not kubernetes.io/metadata.name NotIn", out)
+
+    def test_no_namespace_selector_at_all(self):
+        parity = ExclusionListParity()
+        docs = dict(parity.agreeing())
+        key = gate.EXCLUSION_POLICIES[0]
+        doc = validating_policy("require-labels")
+        del doc["spec"]["matchConstraints"]["namespaceSelector"]
+        docs[key] = doc
+        (ok, _, _), out = parity.parity(docs)
+        self.assertFalse(ok)
+        self.assertIn("0 matchExpressions, not one", out)
+
+    def test_each_other_narrowing_field(self):
+        for field, value, said in (
+                ("objectSelector", {"matchLabels": {"a": "b"}}, "objectSelector"),
+                ("excludeResourceRules", [{"resources": ["pods"]}], "excludeResourceRules"),
+                ("matchConditions", [{"name": "x", "expression": "true"}], "matchConditions"),
+                ("matchLabels", {"a": "b"}, "matchLabels")):
+            with self.subTest(field=field):
+                (ok, _, _), out = self.parity_with(**{field: value})
+                self.assertFalse(ok)
+                self.assertIn(said, out)
+
+    def test_no_readable_list_anywhere(self):
+        parity = ExclusionListParity()
+        docs = {}
+        for g, f in gate.EXCLUSION_POLICIES:
+            doc = validating_policy(f.removesuffix(".yaml"))
+            del doc["spec"]["matchConstraints"]["namespaceSelector"]
+            docs[(g, f)] = doc
+        (ok, excluded, _), out = parity.parity(docs)
+        self.assertFalse(ok)
+        self.assertEqual(excluded, set())
+        self.assertIn("no policy carries a readable exclusion list", out)
+
+
+class TheTierSplitIsReadOffTheRender(unittest.TestCase):
+    """`kyverno apply` reports `fail` under Audit and Deny alike, so the split
+    between development and staging/production is asserted on the policies."""
+
+    def write(self, docs):
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as tmp:
+            tmp.write("\n---\n".join(yaml.safe_dump(d) for d in docs))
+        self.addCleanup(pathlib.Path(tmp.name).unlink)
+        return [tmp.name]
+
+    def overlay(self, actions, count=None, expression=gate.GRANDFATHERED, **spec):
+        docs = []
+        for _, f in gate.EXCLUSION_POLICIES[:count]:
+            doc = validating_policy(f.removesuffix(".yaml"))
+            doc["spec"]["validationActions"] = actions
+            doc["spec"]["validations"][0]["expression"] = expression
+            doc["spec"].update(spec)
+            docs.append(doc)
+        docs.append({"apiVersion": "policies.kyverno.io/v1", "kind": "MutatingPolicy",
+                     "metadata": {"name": "m"}, "spec": {}})
+        return self.write(docs)
+
+    def right(self, mode, **spec):
+        return self.overlay(gate.EXPECTED_ACTIONS[mode],
+                            expression=gate.EXPECTED_EXPRESSION[mode], **spec)
+
+    def test_each_tier_carrying_its_actions_passes(self):
+        for mode in gate.EXPECTED_ACTIONS:
+            with self.subTest(mode=mode):
+                ok, out = quietly(gate.check_validation_actions, mode, self.right(mode))
+                self.assertTrue(ok, out)
+
+    def test_admission_switched_off_is_refused_on_every_tier(self):
+        """Deny with admission evaluation off denies nothing, and every run is a
+        background scan, so only the rendered policy shows it."""
+        for mode in gate.EXPECTED_ACTIONS:
+            with self.subTest(mode=mode):
+                ok, out = quietly(gate.check_validation_actions, mode, self.right(
+                    mode, evaluation={"admission": {"enabled": False}}))
+                self.assertFalse(ok)
+                self.assertIn("evaluation.admission.enabled false", out)
+
+    def test_admission_left_at_its_default_passes(self):
+        ok, out = quietly(gate.check_validation_actions, "production",
+                          self.right("production", evaluation={}))
+        self.assertTrue(ok, out)
+
+    def test_a_failure_policy_of_ignore_is_refused(self):
+        ok, out = quietly(gate.check_validation_actions, "staging",
+                          self.right("staging", failurePolicy="Ignore"))
+        self.assertFalse(ok)
+        self.assertIn("failurePolicy Ignore, want Fail", out)
+
+    def test_each_tier_carries_its_own_expression(self):
+        """Audit judges the new object alone, as the legacy engine did; Deny
+        admits an existing violation."""
+        ok, out = quietly(gate.check_validation_actions, "development", self.overlay(
+            ["Audit"], expression=gate.GRANDFATHERED))
+        self.assertFalse(ok)
+        self.assertIn("want ['variables.compliant']", out)
+        ok, out = quietly(gate.check_validation_actions, "production", self.overlay(
+            ["Deny"], expression="variables.compliant"))
+        self.assertFalse(ok)
+        self.assertIn(f"want ['{gate.GRANDFATHERED}']", out)
+
+    def test_development_never_denies_and_production_never_only_audits(self):
+        ok, out = quietly(gate.check_validation_actions, "development",
+                          self.overlay(["Deny"]))
+        self.assertFalse(ok)
+        self.assertIn("want ['Audit']", out)
+        ok, out = quietly(gate.check_validation_actions, "production",
+                          self.overlay(["Audit"]))
+        self.assertFalse(ok)
+        self.assertIn("want ['Deny']", out)
+
+    def test_an_added_warn_is_a_different_action_set(self):
+        ok, _ = quietly(gate.check_validation_actions, "staging",
+                        self.overlay(["Deny", "Warn"]))
+        self.assertFalse(ok)
+
+    def test_an_overlay_rendering_too_few_policies_is_not_vacuously_right(self):
+        ok, out = quietly(gate.check_validation_actions, "production",
+                          self.overlay(["Deny"], count=2))
+        self.assertFalse(ok)
+        self.assertIn("rendered 2 ValidatingPolicies", out)
 
 
 class TheExclusionCorpusIsReal(unittest.TestCase):
-    """The four policies the parity check compares must exist to be compared."""
+    """The six policies the parity check compares must exist to be compared."""
 
     def test_each_named_exclusion_policy_is_a_file_in_the_tree(self):
         for group, name in gate.EXCLUSION_POLICIES:
@@ -473,13 +728,13 @@ class TheExclusionCorpusIsReal(unittest.TestCase):
                 self.assertTrue(path.exists(),
                                 f"{path} is named as an exclusion-bearing policy "
                                 f"but does not exist, so the parity check compares "
-                                f"three lists and reports agreement")
+                                f"fewer lists and reports agreement")
 
     def test_the_shipped_policies_agree(self):
-        (ok, excluded, keys), _ = quietly(gate.check_exclusion_parity)
-        self.assertTrue(ok)
+        (ok, excluded, keys), out = quietly(gate.check_exclusion_parity)
+        self.assertTrue(ok, out)
         self.assertTrue(excluded)
-        self.assertTrue(keys)
+        self.assertEqual(len(keys), len(gate.EXCLUSION_POLICIES))
 
 
 def deployment(name="app", namespace="workloads", replicas=1):
@@ -523,10 +778,10 @@ class WhatReachesKyverno(unittest.TestCase):
 
 
 class TheReportOnStdout(unittest.TestCase):
-    """`kyverno apply` prints deprecation lines on stdout ahead of the report."""
+    """`kyverno apply` can print notice lines on stdout ahead of the report."""
 
     def test_the_report_after_warning_lines_is_read(self):
-        out = ("Warning: a.yaml: kyverno.io/v1 ClusterPolicy is deprecated\n"
+        out = ("Warning: a.yaml: some notice the CLI printed first\n"
                '{"results": [], "summary": {"pass": 1}}\n')
         self.assertEqual(gate.report_json(out), {"results": [], "summary": {"pass": 1}})
 
@@ -700,19 +955,18 @@ class BuildingAndApplyingThePolicies(unittest.TestCase):
             quietly(gate.build_policies, "production", self.out)
         self.assertEqual(raised.exception.code, 2)
 
-    def test_apply_asks_for_a_json_report_and_warns_only_in_audit(self):
+    def test_apply_asks_for_a_json_report_and_nothing_else(self):
+        """No --audit-warn: it has no effect on ValidatingPolicy."""
         report = '{"results": [], "summary": {}}'
-        for audit_warn in (False, True):
-            with self.subTest(audit_warn=audit_warn):
-                tools = Tools(kyverno=completed(stdout=report))
-                with mock.patch.object(gate, "_run", tools):
-                    parsed, proc = gate.kyverno_apply(["p.yaml"], pathlib.Path("r"), audit_warn)
-                self.assertEqual(parsed, {"results": [], "summary": {}})
-                self.assertEqual(proc.stdout, report)
-                cmd = tools.calls[0]
-                self.assertEqual(cmd[:3], ["kyverno", "apply", "p.yaml"])
-                self.assertIn("--policy-report", cmd)
-                self.assertEqual("--audit-warn" in cmd, audit_warn)
+        tools = Tools(kyverno=completed(stdout=report))
+        with mock.patch.object(gate, "_run", tools):
+            parsed, proc = gate.kyverno_apply(["p.yaml"], pathlib.Path("r"))
+        self.assertEqual(parsed, {"results": [], "summary": {}})
+        self.assertEqual(proc.stdout, report)
+        cmd = tools.calls[0]
+        self.assertEqual(cmd[:3], ["kyverno", "apply", "p.yaml"])
+        self.assertIn("--policy-report", cmd)
+        self.assertNotIn("--audit-warn", cmd)
 
     def test_a_child_process_runs_under_a_deadline(self):
         proc = gate._run([sys.executable, "-c", "print('ran')"])
@@ -723,19 +977,22 @@ class BuildingAndApplyingThePolicies(unittest.TestCase):
 
 
 class TheWholeRun(unittest.TestCase):
-    """`main` passes only when parity, coverage and both kyverno runs all hold."""
+    """`main` passes only when parity, coverage, the tier split and both kyverno
+    runs all hold."""
 
-    RULES = {"best-practices/require-probes"}
+    RULES = {"require-readiness-probe/0"}
 
     def run_main(self, count=gate.MIN_RENDERED, parity=True, coverage=True,
-                 verdicts=(True, True)):
+                 verdicts=(True, True), actions=True):
         judged = iter(verdicts)
         with mock.patch.object(gate.gatelib, "require"), \
              mock.patch.object(gate, "check_exclusion_parity",
                                return_value=(parity, {"monitoring"}, self.RULES)), \
              mock.patch.object(gate, "render_fleet", return_value=(count, {"monitoring"})), \
              mock.patch.object(gate, "check_namespace_coverage", return_value=coverage), \
-             mock.patch.object(gate, "build_policies", return_value=["p.yaml"]), \
+             mock.patch.object(gate, "build_policies",
+                               side_effect=lambda mode, _: [f"{mode}.yaml"]), \
+             mock.patch.object(gate, "check_validation_actions", return_value=actions), \
              mock.patch.object(gate, "kyverno_apply",
                                return_value=({"results": []}, completed())) as apply, \
              mock.patch.object(gate, "judge", side_effect=lambda *a, **k: next(judged)):
@@ -746,11 +1003,12 @@ class TheWholeRun(unittest.TestCase):
         code, out, apply = self.run_main()
         self.assertEqual(code, 0)
         self.assertIn("Policy-admission gate PASSED", out)
-        self.assertEqual([c.kwargs["audit_warn"] for c in apply.call_args_list],
-                         [False, True], "Enforce first, then Audit with --audit-warn")
+        self.assertEqual([c.args[0] for c in apply.call_args_list],
+                         [["production.yaml"], ["development.yaml"]],
+                         "the Deny overlay first, then the Audit overlay")
 
     def test_any_one_failing_fails_the_run(self):
-        for case in ({"parity": False}, {"coverage": False},
+        for case in ({"parity": False}, {"coverage": False}, {"actions": False},
                      {"verdicts": (False, True)}, {"verdicts": (True, False)}):
             with self.subTest(**{k: str(v) for k, v in case.items()}):
                 code, out, _ = self.run_main(**case)

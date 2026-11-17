@@ -119,7 +119,7 @@ tolerations:
 #
 # Note this is an engineering choice, not admission compliance: kube-system is
 # on the exclusion list of policies/kyverno/pod-security-standards (see
-# require-resource-limits.yaml), so nothing here is required to carry a CPU
+# require-cpu-limit.yaml), so nothing here is required to carry a CPU
 # limit. Do not "fix" the missing CPU limits below to satisfy that policy.
 
 # cilium-agent — one per node, and every pod's networking depends on it.

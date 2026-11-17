@@ -1,0 +1,10 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ing-grouped
+  namespace: workloads
+  annotations:
+    alb.ingress.kubernetes.io/group.name: shared
+spec:
+  rules:
+    - host: d.example.com

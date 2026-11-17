@@ -4,14 +4,16 @@ this repo's own Kyverno policies on an Enforce-tier cluster.
 
 WHY THIS EXISTS
     The catalog's core promise is that a vended cluster works. On staging and
-    production the Kyverno policies run in Enforce mode (the overlays flip
-    validationFailureAction to Enforce), so a workload that violates a policy is
-    DENIED at admission — a first CREATE has no old object, and
-    allowExistingViolations only grandfathers objects that already exist.
+    production the Kyverno ValidatingPolicies run at Deny (the overlays set
+    validationActions to [Deny]), so a workload that violates a policy is DENIED
+    at admission — a first CREATE has no old object, and the existing-violation
+    allowance each validation carries only grandfathers objects that already
+    exist.
 
     require-labels (Deployment/StatefulSet/DaemonSet must carry the 5-label org
-    tier), require-probes, require-run-as-non-root, and require-resource-limits
-    all carry a hand-maintained namespace exclusion list. The addon fleet cannot
+    tier), require-readiness-probe, require-liveness-probe,
+    require-run-as-non-root, require-cpu-limit and require-memory-limit all carry
+    a hand-maintained namespace exclusion list. The addon fleet cannot
     satisfy these policies: upstream charts never stamp the org
     platform.nanohype.dev/* labels, security agents need root/host access, and batch jobs have no service-style probes. If an addon
     lands in a namespace that is NOT on the exclusion list, its Deployment/
@@ -21,23 +23,33 @@ WHY THIS EXISTS
     Enforce cluster.
 
 WHAT IT DOES
-    1. STRUCTURAL — parses the four exclusion-bearing base policies and asserts
-       every rule's namespace exclusion list is IDENTICAL. The lists diverging is
-       itself the bug class (a namespace excluded from three policies but not the
-       fourth), so they are pinned equal here.
+    1. STRUCTURAL — parses the six exclusion-bearing base policies and asserts
+       every policy's namespace exclusion list is IDENTICAL, and that nothing
+       else narrows what a policy matches. The lists diverging is itself the bug
+       class (a namespace excluded from five policies but not the sixth), so they
+       are pinned equal here. It also derives each policy's existing-violation
+       term from its `compliant` term and requires the two to agree (see
+       existing_violation_problems): no `kyverno` run can show an UPDATE that
+       turns a compliant object non-compliant, so the term is held to its form.
     2. FUNCTIONAL — discovers every Helm addon from the ApplicationSets (the same
        discovery scripts/render-addons.py uses — the single source of truth),
        renders each into its real ArgoCD destination namespace with base + each
        Enforce environment's values, adds the Kustomize-sourced workload that
        lands pods (the grafana dashboards' token rotator), then runs
-       `kyverno apply` against the Enforce overlay of the
+       `kyverno apply` against the Deny overlay of the
        best-practices + pod-security policies. Any denial fails the build. It also
-       runs the Audit overlay (development) to prove the Audit variant matches the
-       same rules and downgrades them — a warn on dev, a deny on staging/prod.
+       runs the Audit overlay (development) to prove it matches the same
+       validations, and asserts structurally that each overlay sets the
+       validationActions its environment is meant to have — [Audit] on dev,
+       [Deny] on staging/prod — along with failurePolicy Fail, admission
+       evaluation left on, and the validation expression that tier carries.
+       (`kyverno apply` reports a ValidatingPolicy
+       violation as `fail` under either action; its --audit-warn does nothing for
+       ValidatingPolicy in 1.20, so the action cannot be read off the report.)
     3. CANARY — the functional half is rendered alongside a deliberately
        non-compliant workload in a namespace on no exclusion list, and the run is
-       required to report exactly that one resource failing exactly the rules the
-       structural half found. See "WHY THE CANARY" below.
+       required to report exactly that one resource failing exactly the
+       validations the structural half found. See "WHY THE CANARY" below.
     4. COVERAGE — asserts every namespace the fleet lands a workload kind in is on
        the exclusion list, so a new addon in a new namespace is reported here as
        uncovered rather than evaluated for real on a vended cluster.
@@ -72,8 +84,9 @@ WHY THE RUNTIME POD
     render only ever produces what a chart or kustomize root emits — and a
     controller that creates pods at runtime emits nothing at render time.
 
-    require-probes matched `Pod` and denied every Argo Workflows step pod at
-    Enforce. The eval tier could not start on staging or production, and no gate
+    require-probes (now require-readiness-probe and require-liveness-probe)
+    matched `Pod` and denied every Argo Workflows step pod at Enforce. The eval
+    tier could not start on staging or production, and no gate
     in this repo could see it: eval-runner receives no rendered workload, so it
     was never on the exclusion list and never showed up as uncovered either. The
     coverage check reports namespaces the fleet RENDERS into; this reports what
@@ -100,6 +113,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -141,19 +155,48 @@ discover = render_addons.discover
 
 POLICY_DIR = REPO_ROOT / "policies" / "kyverno"
 
-# The four policies whose exclusion lists must agree, as (group, file) pairs.
+# The six policies whose exclusion lists must agree, as (group, file) pairs.
 EXCLUSION_POLICIES = [
     ("best-practices", "require-labels.yaml"),
-    ("best-practices", "require-probes.yaml"),
+    ("best-practices", "require-readiness-probe.yaml"),
+    ("best-practices", "require-liveness-probe.yaml"),
     ("pod-security-standards", "require-non-root.yaml"),
-    ("pod-security-standards", "require-resource-limits.yaml"),
+    ("pod-security-standards", "require-cpu-limit.yaml"),
+    ("pod-security-standards", "require-memory-limit.yaml"),
 ]
 
+# The label the API server stamps on every Namespace with its own name: a NotIn
+# on it is the namespace-name exclusion the policies share.
+NAMESPACE_NAME_LABEL = "kubernetes.io/metadata.name"
+
+# The validationActions each overlay must set on every ValidatingPolicy it
+# renders. `kyverno apply` cannot tell Audit from Deny (see main), so the split
+# between the tiers is asserted here, on the rendered policies themselves.
+EXPECTED_ACTIONS = {
+    "development": ["Audit"],
+    "staging": ["Deny"],
+    "production": ["Deny"],
+}
+
+# The validation expression each overlay renders on every exclusion-bearing
+# ValidatingPolicy. The base admits an UPDATE to an object that already violated
+# (`existingViolation`, the legacy allowExistingViolations); the legacy engine
+# applied that under Enforce only, so the Audit tier judges the new object alone.
+GRANDFATHERED = "variables.compliant || variables.existingViolation"
+EXPECTED_EXPRESSION = {
+    "development": "variables.compliant",
+    "staging": GRANDFATHERED,
+    "production": GRANDFATHERED,
+}
+
+# Matches `object.` where it is not the tail of `oldObject.` or another name.
+OBJECT_REF = re.compile(r"(?<![\w.])object\.")
+
 # The two policy groups that carry the exclusion-bearing validation policies and
-# ship both an Audit (development) and Enforce (staging/production) overlay.
+# ship both an Audit (development) and Deny (staging/production) overlay.
 POLICY_GROUPS = ["best-practices", "pod-security-standards"]
 
-# Enforce runs on staging + production; both flip the base policies to Enforce.
+# Deny runs on staging + production; both set the base policies to [Deny].
 ENFORCE_ENVS = ["staging", "production"]
 
 # A floor on addon×env manifests rendered. Set well under what the catalog
@@ -164,7 +207,10 @@ MIN_RENDERED = 40
 # Kinds Kyverno's workload policies (and their autogen pod-controller variants)
 # evaluate. Namespace-scoped, so they must carry metadata.namespace for the
 # exclusion match to fire — helm -n stamps it on most charts; this backfills any
-# the chart left unqualified so the gate never under-reports.
+# the chart left unqualified so the gate never under-reports. ReplicationController
+# stays although Kyverno 1.20's CEL autogen derives no RC variant, so no policy
+# matches the RC object itself: the Pods it creates are matched by the Pod rules,
+# so the namespace it lands in must still be covered.
 WORKLOAD_KINDS = {
     "Pod", "Deployment", "StatefulSet", "DaemonSet",
     "ReplicaSet", "ReplicationController", "Job", "CronJob",
@@ -179,14 +225,19 @@ KUSTOMIZE_WORKLOADS = [
 
 # ── The canary ──────────────────────────────────────────────────────────
 # The gate's proof that it evaluated anything. A Deployment in a namespace on NO
-# exclusion list, violating every exclusion-bearing rule at once: no org label
-# tier, no probes, no resource limits, root user. Every rule the structural half
-# finds must report it, in both overlays.
+# exclusion list, violating every exclusion-bearing validation at once: no org
+# label tier, no probes, no resource limits, root user. Every validation the
+# structural half finds must report it, in both overlays.
 #
-# A Deployment (not a bare Pod) because the four policies match pod CONTROLLERS
-# and Kyverno evaluates them through its autogen rules — a Pod canary would prove
-# the base rules fire while leaving the autogen variants, which are what actually
-# meet the fleet, unexercised.
+# A Deployment (not a bare Pod) because the policies match pod CONTROLLERS —
+# directly, or through the autogen variants Kyverno derives from a Pod policy —
+# and a Pod canary would prove the Pod validations fire while leaving the
+# controller variants, which are what actually meet the fleet, unexercised.
+#
+# A ValidatingPolicy reports only the FIRST validation that fails. A policy with
+# two would let the canary reach the first and never the second, so every
+# exclusion-bearing policy holds exactly one, and the structural half refuses
+# more (see check_exclusion_parity).
 CANARY_NAMESPACE = "policy-gate-canary"
 CANARY_NAME = "policy-gate-canary"
 CANARY_MANIFEST = f"""apiVersion: apps/v1
@@ -219,7 +270,8 @@ spec:
 # meet the policies for the first time on a live Enforce cluster, and are denied
 # where no CI run can observe it.
 #
-# That is exactly how require-probes came to deny the whole eval tier. Argo
+# That is exactly how require-probes (now the two probe policies) came to deny
+# the whole eval tier. Argo
 # Workflows creates a step pod per template — `init`, `wait` and `main`
 # containers, none of which carry probes, none of which can — in the eval-runner
 # namespace, which is on no exclusion list because the operator's chart renders
@@ -309,32 +361,122 @@ def _run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True, **kw)
 
 
-def check_exclusion_parity() -> tuple[bool, set[str], set[str]]:
-    """Assert every exclusion-bearing rule shares one identical namespace set.
+def exclusion_of(doc: dict) -> tuple[list[str] | None, list[str]]:
+    """The namespace names a ValidatingPolicy excludes, and what else narrows it.
 
-    Returns (ok, excluded_namespaces, rule_keys). The two extra returns are what
-    the functional half checks itself against: the namespace set is the coverage
-    baseline, and the rule keys are the set the canary must trip in full — read
-    off the policies rather than restated here, so adding a rule to a policy
-    without extending the canary fails instead of quietly going unexercised.
+    The shared exclusion is ONE matchExpression on the namespace-name label with
+    operator NotIn. Anything else that narrows what the policy matches — another
+    expression, an objectSelector, a matchCondition, excludeResourceRules, a
+    namespace matchLabels — is reported as a problem rather than folded in:
+    each of those exempts objects the parity comparison cannot see, which is the
+    drift this check exists to stop. Returns (names or None, problems).
+    """
+    spec = doc.get("spec") or {}
+    mc = spec.get("matchConstraints") or {}
+    problems: list[str] = []
+    for field in ("objectSelector", "excludeResourceRules"):
+        if mc.get(field):
+            problems.append(f"matchConstraints.{field} narrows the match")
+    if spec.get("matchConditions"):
+        problems.append("matchConditions narrow the match")
+    selector = mc.get("namespaceSelector") or {}
+    if selector.get("matchLabels"):
+        problems.append("namespaceSelector.matchLabels narrows the match")
+    exprs = selector.get("matchExpressions") or []
+    if len(exprs) != 1:
+        problems.append(f"namespaceSelector carries {len(exprs)} matchExpressions, not one")
+        return None, problems
+    expr = exprs[0]
+    if expr.get("key") != NAMESPACE_NAME_LABEL or expr.get("operator") != "NotIn":
+        problems.append(f"the namespaceSelector expression is {expr.get('key')} "
+                        f"{expr.get('operator')}, not {NAMESPACE_NAME_LABEL} NotIn")
+        return None, problems
+    return sorted(set(expr.get("values") or [])), problems
+
+
+def _normalise(expression: str) -> str:
+    return " ".join(str(expression).split())
+
+
+def existing_violation_problems(doc: dict) -> list[str]:
+    """What is wrong with a policy's emulation of allowExistingViolations.
+
+    The term may admit an UPDATE only when the OLD object fails the same check
+    the new one is held to. Its other direction — an UPDATE that turns a
+    compliant object non-compliant is refused — has no test: `kyverno test` sets
+    object and oldObject to the same resource for an UPDATE, and `kyverno apply`
+    evaluates as a background scan with no old object. A term that admitted
+    every UPDATE would pass every row and every run. So it is held to its form:
+    `existingViolation` must be exactly `compliant` read off oldObject, negated,
+    behind the UPDATE guard, and the base validation must be the two OR'd.
+    """
+    spec = doc.get("spec") or {}
+    variables = {v.get("name"): v.get("expression")
+                 for v in spec.get("variables") or [] if isinstance(v, dict)}
+    problems: list[str] = []
+    compliant = variables.get("compliant")
+    existing = variables.get("existingViolation")
+    if compliant is None or existing is None:
+        return ["declares no `compliant` and `existingViolation` variables to derive "
+                "the existing-violation term from"]
+    want = _normalise("oldObject != null && has(oldObject.kind) && !("
+                      + OBJECT_REF.sub("oldObject.", str(compliant)) + ")")
+    if _normalise(existing) != want:
+        problems.append(f"existingViolation is not `compliant` read off oldObject and "
+                        f"negated behind the UPDATE guard — want `{want}`")
+    validations = spec.get("validations") or []
+    if validations and _normalise(validations[0].get("expression", "")) != GRANDFATHERED:
+        problems.append(f"the base validation is not `{GRANDFATHERED}`")
+    return problems
+
+
+def check_exclusion_parity() -> tuple[bool, set[str], set[str]]:
+    """Assert every exclusion-bearing policy shares one identical namespace set.
+
+    Returns (ok, excluded_namespaces, validation_keys). The two extra returns are
+    what the functional half checks itself against: the namespace set is the
+    coverage baseline, and the keys (`policy/<validation index>`) are the set the
+    canary must trip in full — read off the policies rather than restated here,
+    so adding a validation without extending the canary fails instead of quietly
+    going unexercised.
+
+    A policy must hold exactly one validation. A ValidatingPolicy reports only the
+    first that fails, so the canary could never reach a second, and the key for
+    it would be one no run can report: the gate would fail on every run, which is
+    the right outcome but the wrong diagnostic, so it is named here instead.
     """
     print("── Exclusion-list parity ──────────────────────────────────────────")
     lists: dict[str, list[str]] = {}
+    keys: set[str] = set()
+    ok = True
     for group, fname in EXCLUSION_POLICIES:
         doc = gatelib.read_yaml(POLICY_DIR / group / "base" / fname)
-        for rule in doc["spec"]["rules"]:
-            key = f"{doc['metadata']['name']}/{rule['name']}"
-            # A rule's exclusion is the union of every `exclude.any` entry's
-            # namespaces (Kyverno ORs them), not just the first — reading only
-            # any[0] would silently drop a second entry's namespaces from the
-            # parity comparison.
-            excl: list[str] = []
-            for entry in rule["exclude"]["any"]:
-                excl.extend(entry.get("resources", {}).get("namespaces", []) or [])
-            lists[key] = sorted(set(excl))
+        name = (doc.get("metadata") or {}).get("name", fname)
+        if doc.get("kind") != "ValidatingPolicy":
+            ok = False
+            print(f"  FAIL  {group}/{fname} is a {doc.get('kind')}, not a ValidatingPolicy")
+            continue
+        names, problems = exclusion_of(doc)
+        for problem in problems:
+            ok = False
+            print(f"  FAIL  {name}: {problem}")
+        validations = (doc.get("spec") or {}).get("validations") or []
+        if len(validations) != 1:
+            ok = False
+            print(f"  FAIL  {name} holds {len(validations)} validations, not one — a "
+                  f"ValidatingPolicy reports only the first that fails")
+        keys.update(f"{name}/{i}" for i in range(len(validations)))
+        for problem in existing_violation_problems(doc):
+            ok = False
+            print(f"  FAIL  {name}: {problem}")
+        if names is not None:
+            lists[name] = names
 
+    if not lists:
+        print("  FAIL  no policy carries a readable exclusion list")
+        print()
+        return False, set(), keys
     baseline_key, baseline = next(iter(lists.items()))
-    ok = True
     for key, ns in lists.items():
         if ns != baseline:
             ok = False
@@ -346,12 +488,66 @@ def check_exclusion_parity() -> tuple[bool, set[str], set[str]]:
             if extra:
                 print(f"    extra:   {extra}")
     if ok:
-        print(f"  ok    {len(lists)} rules share one {len(baseline)}-namespace "
+        print(f"  ok    {len(lists)} policies share one {len(baseline)}-namespace "
               f"exclusion set")
     else:
-        print("  FAIL  exclusion lists diverge — reconcile all four policies")
+        print(f"  FAIL  exclusion lists diverge — reconcile all {len(EXCLUSION_POLICIES)} "
+              f"policies")
     print()
-    return ok, set(baseline), set(lists)
+    return ok, set(baseline), keys
+
+
+def check_validation_actions(mode: str, policy_files: list[str]) -> bool:
+    """Every ValidatingPolicy an overlay renders is set up for that tier.
+
+    `kyverno apply` reports a violation as `fail` whether the policy would Audit
+    or Deny it, and it evaluates as a background scan, so the run cannot prove
+    the overlays differ or that admission evaluates at all. This does, on the
+    rendered objects: the tier's validationActions, failurePolicy Fail (an
+    Ignore lets a request through whenever Kyverno cannot answer), admission
+    evaluation not switched off (which turns the Deny tier into nothing while
+    every run still reports the canary), and the tier's validation expression.
+    It also refuses an overlay that rendered fewer ValidatingPolicies than the
+    exclusion-bearing set, which would satisfy the comparison vacuously.
+    """
+    want = EXPECTED_ACTIONS[mode]
+    want_expression = EXPECTED_EXPRESSION[mode]
+    seen = 0
+    ok = True
+    for path in policy_files:
+        for doc in yaml.safe_load_all(pathlib.Path(path).read_text()):
+            if not isinstance(doc, dict) or doc.get("kind") != "ValidatingPolicy":
+                continue
+            seen += 1
+            name = doc["metadata"]["name"]
+            spec = doc.get("spec") or {}
+            got = spec.get("validationActions")
+            if got != want:
+                ok = False
+                print(f"  FAIL  {mode}: {name} has validationActions {got}, want {want}")
+            if spec.get("failurePolicy") != "Fail":
+                ok = False
+                print(f"  FAIL  {mode}: {name} has failurePolicy "
+                      f"{spec.get('failurePolicy')}, want Fail")
+            admission = ((spec.get("evaluation") or {}).get("admission") or {})
+            if admission.get("enabled") is False:
+                ok = False
+                print(f"  FAIL  {mode}: {name} sets evaluation.admission.enabled false, "
+                      f"so it evaluates nothing at admission")
+            expressions = [_normalise(v.get("expression", ""))
+                           for v in spec.get("validations") or []]
+            if expressions != [want_expression]:
+                ok = False
+                print(f"  FAIL  {mode}: {name} validates {expressions}, "
+                      f"want ['{want_expression}']")
+    if seen < len(EXCLUSION_POLICIES):
+        print(f"  FAIL  {mode}: rendered {seen} ValidatingPolicies, expected at least "
+              f"{len(EXCLUSION_POLICIES)}")
+        return False
+    if ok:
+        print(f"  ok    {mode}: all {seen} ValidatingPolicies set validationActions {want}, "
+              f"failurePolicy Fail, admission on, validating `{want_expression}`")
+    return ok
 
 
 def _prepare(rendered: str, namespace: str, landed: set[str]) -> str:
@@ -505,7 +701,8 @@ def render_fleet(dest: pathlib.Path) -> tuple[int, set[str]]:
 
 def build_policies(mode: str, dest: pathlib.Path) -> list[str]:
     """kustomize-build each policy group's overlay for `mode`; return file paths.
-    mode is an overlay name: 'development' (Audit) or 'production' (Enforce)."""
+    mode is an overlay name: 'development' (Audit), 'staging' or 'production'
+    (Deny)."""
     files = []
     for group in POLICY_GROUPS:
         overlay = POLICY_DIR / group / "overlays" / mode
@@ -519,8 +716,8 @@ def build_policies(mode: str, dest: pathlib.Path) -> list[str]:
     return files
 
 
-def kyverno_apply(policies: list[str], resources: pathlib.Path,
-                  audit_warn: bool) -> tuple[dict | None, subprocess.CompletedProcess]:
+def kyverno_apply(policies: list[str], resources: pathlib.Path
+                  ) -> tuple[dict | None, subprocess.CompletedProcess]:
     """Run kyverno and return its parsed policy report.
 
     The exit code is deliberately NOT the verdict — the canary makes it
@@ -530,8 +727,6 @@ def kyverno_apply(policies: list[str], resources: pathlib.Path,
     """
     cmd = ["kyverno", "apply", *policies, "--resource", str(resources),
            "--policy-report", "--output-format", "json"]
-    if audit_warn:
-        cmd.append("--audit-warn")
     proc = _run(cmd)
     return report_json(proc.stdout), proc
 
@@ -539,9 +734,8 @@ def kyverno_apply(policies: list[str], resources: pathlib.Path,
 def report_json(stdout: str) -> dict | None:
     """The JSON report out of `kyverno apply` stdout, or None if there is none.
 
-    The CLI prints a deprecation line for each legacy-kind policy it loads to
-    stdout, ahead of the report, so the report starts at the first line that
-    opens a JSON object. Anything after the object is ignored; anything that
+    The CLI can print notices to stdout ahead of the report, so the report starts
+    at the first line that opens a JSON object. Anything after the object is ignored; anything that
     does not decode to an object is no report.
     """
     lines = stdout.splitlines(keepends=True)
@@ -557,19 +751,16 @@ def report_json(stdout: str) -> dict | None:
 
 
 def _rule_key(result: dict) -> str:
-    """`policy/rule` for a report entry, with Kyverno's autogen prefix stripped.
+    """`policy/<validation index>` for a report entry.
 
-    Kyverno derives pod-controller variants of every pod rule and reports them
-    under a generated name (`autogen-<rule>`, `autogen-cronjob-<rule>`), so a
-    report never names a rule the way the policy file does. Normalising here is
-    what lets the canary be checked against the rule set read off the policies.
+    A ValidatingPolicy result names no rule (every one reads `validation`); which
+    validation failed is in its `cel.validationIndex` property, and an autogen
+    controller variant reports under the policy's own name. This is the key
+    check_exclusion_parity derives from each policy's validations. A result with
+    no index keys as `policy/?`, which matches no expected key.
     """
-    rule = result.get("rule", "")
-    for prefix in ("autogen-cronjob-", "autogen-"):
-        if rule.startswith(prefix):
-            rule = rule[len(prefix):]
-            break
-    return f"{result.get('policy', '')}/{rule}"
+    index = (result.get("properties") or {}).get("cel.validationIndex", "?")
+    return f"{result.get('policy', '')}/{index}"
 
 
 def _is_canary(result: dict) -> bool:
@@ -594,7 +785,7 @@ def judge_runtime_pod(results: list[dict]) -> bool:
 
     So the verdict is two-sided: at least one rule must report `pass` on it,
     which can only happen if it was loaded and matched, and no rule may report
-    fail/warn/error. Reverting require-probes to match `Pod` trips the second;
+    fail/warn/error. Reverting a probe policy to match `Pod` trips the second;
     dropping the pod from the render trips the first.
     """
     hits = [r for r in results if _is_runtime_pod(r)]
@@ -622,7 +813,7 @@ def judge_runtime_pod(results: list[dict]) -> bool:
 
 
 def judge(label: str, report: dict | None, proc: subprocess.CompletedProcess,
-          expected_rules: set[str], canary_result: str) -> bool:
+          expected_rules: set[str], canary_result: str = "fail") -> bool:
     """Verdict for one kyverno run, read out of the report rather than the exit code.
 
     Two independent things have to hold, and they fail for opposite reasons:
@@ -670,15 +861,15 @@ def judge(label: str, report: dict | None, proc: subprocess.CompletedProcess,
     if unexercised:
         ok = False
         print(f"  FAIL  the canary was not {canary_result}ed by {len(unexercised)} "
-              f"of {len(expected_rules)} rules — this run did not evaluate them:")
+              f"of {len(expected_rules)} validations — this run did not evaluate them:")
         for key in unexercised:
             print(f"          {key}")
-        print("        Either the policy build produced no such rule, the resources "
-              "failed to load,")
-        print("        or a new rule matches kinds the canary does not carry — "
+        print("        Either the policy build produced no such validation, the "
+              "resources failed to load,")
+        print("        or a new validation matches kinds the canary does not carry — "
               "extend the canary.")
     else:
-        print(f"  ok    canary {canary_result}ed by all {len(expected_rules)} rules "
+        print(f"  ok    canary {canary_result}ed by all {len(expected_rules)} validations "
               f"— the run evaluated every one")
 
     if foreign:
@@ -716,8 +907,8 @@ def check_namespace_coverage(landed: set[str], excluded: set[str]) -> bool:
               f"are on no exclusion list:")
         for ns in uncovered:
             print(f"          {ns}")
-        print("        Add them to all four policies, or confirm the workload is "
-              "meant to comply.")
+        print(f"        Add them to all {len(EXCLUSION_POLICIES)} policies, or confirm the "
+              "workload is meant to comply.")
         print()
         return False
     print(f"  ok    all {len(landed)} namespaces receiving fleet workloads are "
@@ -759,24 +950,35 @@ def main() -> int:
 
         coverage_ok = check_namespace_coverage(landed, excluded)
 
-        # Enforce (staging/production): the canary must be DENIED by every rule.
+        # The tier split, read off the rendered overlays (see
+        # check_validation_actions for why the runs below cannot show it).
+        print("── validationActions per overlay ──")
+        built = {mode: build_policies(mode, tmpdir) for mode in EXPECTED_ACTIONS}
+        # Every overlay is checked and reported before the verdict is taken, so
+        # one wrong tier does not hide another.
+        actions = {mode: check_validation_actions(mode, files)
+                   for mode, files in built.items()}
+        actions_ok = all(actions.values())
+        print()
+
+        # Deny (staging/production): the canary must be refused by every
+        # validation, and nothing else may be.
         enforce_ok = judge(
-            "Enforce-mode admission (staging/production overlay)",
-            *kyverno_apply(build_policies("production", tmpdir), resources,
-                           audit_warn=False),
-            expected_rules=expected_rules, canary_result="fail")
+            "Deny admission (production overlay)",
+            *kyverno_apply(built["production"], resources),
+            expected_rules=expected_rules)
 
-        # Audit (development), --audit-warn: the SAME rules must match the canary
-        # and downgrade it to a warning. Asserting the warn rather than just a
-        # clean exit is what proves the two overlays differ only in severity — an
-        # Audit overlay that had stopped matching would exit 0 either way.
+        # Audit (development): the SAME validations must match the canary.
+        # `kyverno apply` reports it `fail` here too — the CLI's --audit-warn has
+        # no effect on ValidatingPolicy — so what tells the tiers apart is the
+        # validationActions check above. This run proves the Audit overlay still
+        # matches: one that had stopped matching would report no canary result.
         audit_ok = judge(
-            "Audit-mode (development overlay, --audit-warn)",
-            *kyverno_apply(build_policies("development", tmpdir), resources,
-                           audit_warn=True),
-            expected_rules=expected_rules, canary_result="warn")
+            "Audit overlay (development)",
+            *kyverno_apply(built["development"], resources),
+            expected_rules=expected_rules)
 
-    if parity_ok and coverage_ok and enforce_ok and audit_ok:
+    if parity_ok and coverage_ok and actions_ok and enforce_ok and audit_ok:
         print("Policy-admission gate PASSED.")
         return 0
     print("Policy-admission gate FAILED.")

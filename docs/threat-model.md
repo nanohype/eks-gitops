@@ -159,32 +159,43 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
 ## 4. Admission / pod security  (`policies/kyverno/{best-practices,pod-security-standards}/`)
 
 - **Elevation of privilege** — a root or unconstrained pod. Mitigated by Kyverno
-  ClusterPolicies: `runAsNonRoot: true` (require-non-root.yaml), CPU + memory
-  limits (require-resource-limits.yaml), required probes and
-  limits (require-resource-limits.yaml:52-57,90-95), required probes and the
-  the five-label org tier — `app.kubernetes.io/name`, `managed-by`, `component`,
+  ValidatingPolicies, one check each: `runAsNonRoot: true` (require-non-root.yaml:101-109),
+  a CPU limit and a memory limit on every container (require-cpu-limit.yaml:104-115,
+  require-memory-limit.yaml:104-115), readiness and liveness probes on every
+  long-running controller (require-readiness-probe.yaml:136-147,
+  require-liveness-probe.yaml), and the five-label org tier —
+  `app.kubernetes.io/name`, `managed-by`, `component`,
   `platform.nanohype.dev/environment`, `platform.nanohype.dev/team`
-  (require-probes.yaml, require-labels.yaml:88-92).
-  Base is `Audit`; each group's **production overlay patches every ClusterPolicy to
-  `Enforce`** — both `best-practices/overlays/production/kustomization.yaml:8-14`
-  (require-labels, require-probes) and
-  `pod-security-standards/overlays/production/kustomization.yaml:8-14`
-  (require-non-root, require-resource-limits).
-  `kyverno test` proves each rule passes a compliant and fails a violating resource
-  (ci.yml:76-77), and `trivy config` MEDIUM+ backstops the rendered manifests. The
-  **policy-admission** gate (`ci.yml` job `policy-admission`,
+  (require-labels.yaml:109-125).
+  Base is `[Audit]`; each group's **production overlay patches every
+  ValidatingPolicy to `validationActions: [Deny]`** — both
+  `best-practices/overlays/production/kustomization.yaml:8-15` (require-labels and
+  the two probe policies) and
+  `pod-security-standards/overlays/production/kustomization.yaml:8-15`
+  (require-run-as-non-root and the two limit policies).
+  `kyverno test` proves each policy passes a compliant and fails a violating
+  resource (CI job `kyverno`), and `trivy config` MEDIUM+ backstops the rendered
+  manifests. The **policy-admission** gate (`ci.yml` job `policy-admission`,
   `scripts/check-policy-admission.py`) renders the whole addon fleet into its
-  real destination namespaces and runs `kyverno apply` against the Enforce overlay,
+  real destination namespaces and runs `kyverno apply` against the Deny overlay,
   so an addon landing in a namespace the policies neither exclude nor let it satisfy
-  fails at PR time instead of being denied at admission on a vended Enforce cluster;
-  it also asserts all four exclusion lists stay identical, that every namespace the
-  fleet lands a workload in is on that list, and — via a deliberately non-compliant
-  canary every rule must deny — that the run evaluated anything at all.
+  fails at PR time instead of being denied at admission on a vended Deny cluster;
+  it also asserts all six exclusion lists stay identical, that every namespace the
+  fleet lands a workload in is on that list, that each overlay carries its tier's
+  `validationActions`, validation expression, `failurePolicy: Fail` and admission
+  evaluation, and — via a deliberately non-compliant canary every
+  validation must deny — that the run evaluated anything at all.
 - **Residual** — the policies carry a fixed exclude list of platform/system
-  namespaces (argocd, kyverno, cert-manager, monitoring, …) and set
-  `allowExistingViolations: true`, so pre-existing violators and every excluded
-  namespace are unenforced. Non-production overlays stay `Audit`. A fork tightening
-  posture should shrink the exclude list and promote `Enforce` earlier.
+  namespaces (argocd, kyverno, cert-manager, monitoring, …) and, on the Deny
+  tier, admit an UPDATE to an object that already violated them (the legacy
+  `allowExistingViolations: true`, carried into each validation as an
+  `oldObject` check that the policy-admission gate holds to its derived form),
+  so pre-existing violators and every excluded namespace are unenforced.
+  The pod-level policies no longer match a ReplicationController object —
+  Kyverno 1.20's CEL autogen derives no RC variant — so a non-compliant RC is
+  admitted and its Pods are refused at creation instead. Development stays
+  `[Audit]`. A fork tightening posture should shrink the exclude list and
+  promote `[Deny]` earlier.
 
 ## 5. Secrets  (`addons/bootstrap/secret-stores/`, `catalog/druid/chart/templates/externalsecret.yaml`)
 
@@ -264,7 +275,7 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
 - **Denial of service** — a node drain or rolling upgrade taking a stateful role
   fully offline. Mitigated: one PodDisruptionBudget per long-running druid role
   (poddisruptionbudget.yaml:9-11) and soft topology spread across zones
-  (_helpers.tpl:481-492). The resource-limits ClusterPolicy (boundary 4) caps
+  (_helpers.tpl:481-492). The resource-limit ValidatingPolicies (boundary 4) cap
   noisy-neighbor consumption.
 - **Residual** — HA is per-role and single-cluster: PDBs self-gate on `replicas>1`,
   topology spread is `ScheduleAnyway` (advisory, not hard), and there is no

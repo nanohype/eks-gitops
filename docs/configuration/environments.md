@@ -23,8 +23,8 @@ selected.
 | Environment | Purpose | Typical cluster name | Kyverno Mode |
 |-------------|---------|----------------------|--------------|
 | development | Development and testing | development-platform | Audit |
-| staging | Pre-production validation | staging-platform | Enforce |
-| production | Live workloads | production-platform | Enforce |
+| staging | Pre-production validation | staging-platform | Deny |
+| production | Live workloads | production-platform | Deny |
 | hub | eks-fleet management plane (Crossplane + ArgoCD + portal). Bootstrap + observability only — excluded from the workload catalog. | hub-fleet | n/a |
 
 ## Environment differences
@@ -33,7 +33,7 @@ Per-env behaviour lives in **addon deltas**, not a central ConfigMap:
 
 - Helm addons: `addons/<category>/<addon>/values-<env>.yaml` (delta only)
 - Kustomize addons: `overlays/<env>/`
-- Kyverno: env overlays for Audit vs Enforce
+- Kyverno: env overlays setting `validationActions` to `[Audit]` or `[Deny]`
 
 ### Replica counts (indicative)
 
@@ -71,6 +71,6 @@ cluster-bootstrap publishes `velero/backup-bucket` on the Secret;
 2. For Helm addons: add `values-<name>.yaml` deltas under each addon that
    differs from base.
 3. For Kustomize addons: add `overlays/<name>/`.
-4. For policies: Audit vs Enforce overlay as appropriate.
+4. For policies: an overlay setting `validationActions` to `[Audit]` or `[Deny]` as appropriate.
 5. Confirm ApplicationSets select the new cluster
    (`kubectl get applications -n argocd` on the hub).

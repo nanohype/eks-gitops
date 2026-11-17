@@ -156,13 +156,15 @@ F=scripts/check-policy-admission.py
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('for prefix in ("autogen-cronjob-", "autogen-"):',
-              'for prefix in ("autogen-", "autogen-cronjob-"):', 1)
+m = s.replace('index = (result.get("properties") or {}).get("cel.validationIndex", "?")',
+              'index = result.get("rule", "?")', 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
-rejects "autogen: strip the shorter prefix first" test_policy_admission \
-  test_the_cronjob_prefix_is_stripped_whole
+rejects "report keys: read the rule field a ValidatingPolicy fills with one word" \
+  test_policy_admission \
+  test_the_key_is_the_policy_and_its_validation_index \
+  test_a_second_validation_keys_apart_from_the_first
 res $F
 
 edit $F <<'PY'
@@ -492,8 +494,8 @@ m = s.replace(line, line + "\n    return True, set(), set()", 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
-rejects "parity verdict: agree, whatever the four policies hold" test_policy_admission \
-  test_four_identical_lists_agree \
+rejects "parity verdict: agree, whatever the six policies hold" test_policy_admission \
+  test_six_identical_lists_agree \
   test_one_list_missing_a_namespace_is_a_mismatch \
   test_one_list_carrying_an_extra_namespace_is_a_mismatch \
   test_the_namespaces_returned_are_the_shared_baseline \
@@ -503,13 +505,69 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('for entry in rule["exclude"]["any"]:',
-              'for entry in rule["exclude"]["any"][:1]:', 1)
+m = s.replace("    if len(exprs) != 1:\n", "    if not exprs:\n", 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
-rejects "parity: read only the first exclude.any entry" test_policy_admission \
-  test_the_union_of_both_entries_is_the_list
+rejects "parity: read the first namespace expression and ignore the rest" \
+  test_policy_admission test_a_second_namespace_expression
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    if spec.get("matchConditions"):\n', "    if False:\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "parity: let a matchCondition narrow one policy unseen" test_policy_admission \
+  test_each_other_narrowing_field
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("        if len(validations) != 1:\n", "        if not validations:\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "parity: accept a policy whose second validation no canary reaches" \
+  test_policy_admission test_a_policy_holding_two_validations_is_refused
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("            if got != want:\n", "            if False:\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "tier split: accept any validationActions on any overlay" test_policy_admission \
+  test_development_never_denies_and_production_never_only_audits \
+  test_an_added_warn_is_a_different_action_set
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("    if seen < len(EXCLUSION_POLICIES):\n", "    if seen < 1:\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "tier split: judge an overlay that rendered almost nothing" test_policy_admission \
+  test_an_overlay_rendering_too_few_policies_is_not_vacuously_right
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("if parity_ok and coverage_ok and actions_ok and enforce_ok and audit_ok:",
+              "if parity_ok and coverage_ok and enforce_ok and audit_ok:", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "main: pass with the tier split broken" test_policy_admission \
+  test_any_one_failing_fails_the_run
 res $F
 
 F=scripts/registry.py
@@ -2379,6 +2437,28 @@ rejects "digest pin: read an absent field as false" test_policy_validity \
   test_an_absent_field_reads_as_the_crd_default
 res $F
 
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("            if legacy:\n", "            if False:\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "legacy kinds: hand a ClusterPolicy to a CLI that will not run it" test_policy_validity \
+  test_a_legacy_policy_in_a_render
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace(' "failed to compile policy")', ")", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "rejections: read a CEL compile failure as a clean load" test_policy_validity \
+  test_a_cel_expression_that_does_not_compile
+res $F
+
 # Every verdict on the image-verification path is decided in scripts/verdicts.py
 # and acted on by the shell gate that asked. A reverted verdict is named by the
 # unit test holding it and by the gate test whose run it changes; a reverted
@@ -2815,6 +2895,29 @@ res $F
 
 # What the Kyverno suite's runner does with each answer.
 F=scripts/kyverno-test.sh
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('if [ -n "$unseen" ]; then\n', "if false; then\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "excluded rows: count a row its policy never saw as a pass" test_kyverno_test \
+  test_a_pair_with_only_excluded_rows_fails \
+  test_a_pair_evaluated_only_in_another_test_still_fails
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("    key = (test, cells[1], cells[3])\n", '    key = ("", cells[1], cells[3])\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "excluded rows: let another test file's row stand in" test_kyverno_test \
+  test_a_pair_evaluated_only_in_another_test_still_fails
+res $F
 
 edit $F <<'PY'
 import pathlib, sys

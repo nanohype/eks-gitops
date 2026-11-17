@@ -1,5 +1,5 @@
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+apiVersion: policies.kyverno.io/v1
+kind: MutatingPolicy
 metadata:
   name: inject-adopt-lb-subnets
   annotations:
@@ -21,265 +21,155 @@ metadata:
       resolves it rather than from a single annotation. The subnet annotation is
       added only if absent, so a tenant that pins its own subnets is never
       overridden. A create-mode cluster owns its VPC and its own ELB role tags, so
-      the ConfigMap reports create, every rule's precondition fails, and nothing
-      is mutated.
+      the ConfigMap reports create, the policy's `inject` condition is false, and
+      nothing is mutated.
 spec:
-  admission: true
-  emitWarning: false
-  background: false
   # Fail open. This policy only ever ADDS a subnet annotation; it never rejects.
   # A subnet-injection mutation must not be able to block Ingress/Service
-  # admission fleet-wide — if Kyverno cannot evaluate it (an outage, a context it
-  # cannot read), the object is still admitted. The worst case is an adopt-mode
-  # load balancer that comes up without subnets and fails to provision — visible
-  # and debuggable on that one object — never a cluster-wide admission outage. On
-  # a create cluster the mutation is a no-op anyway (auto-discovery works there).
-  #
-  # Set under webhookConfiguration — the field GetFailurePolicy() consults first.
-  # The top-level spec.failurePolicy is deprecated, and when the webhookConfiguration
-  # path is unset the effective policy defaults to Fail: the exact fleet-wide
-  # Ingress/Service admission block this fail-open design must never become.
-  webhookConfiguration:
-    failurePolicy: Ignore
-  rules:
-    # ── Ingress, internal scheme → private subnets ────────────────────────────
-    - name: ingress-internal-subnets
-      skipBackgroundRequests: true
-      match:
-        any:
-          - resources:
-              kinds:
-                - Ingress
-      context:
-        - name: networkconfig
-          configMap:
-            name: network-config
-            namespace: kube-system
-        # An Ingress that names a group shares one load balancer, and its scheme
-        # -- one scheme for the whole group -- is decided across every member. No
-        # single object carries the answer, and a member that disagrees with the
-        # group is rejected by the controller rather than given its own subnets.
-        # Injecting from this object alone would be a guess about the others.
-        - name: groupname
-          variable:
-            jmesPath: 'request.object.metadata.annotations."alb.ingress.kubernetes.io/group.name"'
-            default: ""
-        - name: schemeannotation
-          variable:
-            jmesPath: 'request.object.metadata.annotations."alb.ingress.kubernetes.io/scheme"'
-            default: ""
-        # The controller's order for a single-member group: an IngressClassParams
-        # scheme, else this annotation, else its --default-load-balancer-scheme.
-        # IngressClassParams is not read here and that is a decision, not an
-        # oversight -- scripts/check-lb-scheme-inputs.py records which inputs are
-        # read and which are knowingly not, and fails when the controller grows
-        # one that is neither.
-        - name: scheme
-          variable:
-            value: "{{ schemeannotation || 'internal' }}"
-      preconditions:
-        all:
-          - key: "{{ networkconfig.data.network_mode }}"
-            operator: Equals
-            value: adopt
-          - key: "{{ groupname }}"
-            operator: Equals
-            value: ""
-          - key: "{{ scheme }}"
-            operator: Equals
-            value: internal
-          - key: "{{ networkconfig.data.private_subnet_ids }}"
-            operator: NotEquals
-            value: ""
-      mutate:
-        patchStrategicMerge:
-          metadata:
-            annotations:
-              # Add-if-absent anchor: never clobber a tenant's explicit subnets.
-              +(alb.ingress.kubernetes.io/subnets): "{{ networkconfig.data.private_subnet_ids }}"
-    # ── Ingress, internet-facing scheme → public subnets ──────────────────────
-    - name: ingress-internet-facing-subnets
-      skipBackgroundRequests: true
-      match:
-        any:
-          - resources:
-              kinds:
-                - Ingress
-      context:
-        - name: networkconfig
-          configMap:
-            name: network-config
-            namespace: kube-system
-        - name: groupname
-          variable:
-            jmesPath: 'request.object.metadata.annotations."alb.ingress.kubernetes.io/group.name"'
-            default: ""
-        - name: schemeannotation
-          variable:
-            jmesPath: 'request.object.metadata.annotations."alb.ingress.kubernetes.io/scheme"'
-            default: ""
-        - name: scheme
-          variable:
-            value: "{{ schemeannotation || 'internal' }}"
-      preconditions:
-        all:
-          - key: "{{ networkconfig.data.network_mode }}"
-            operator: Equals
-            value: adopt
-          - key: "{{ groupname }}"
-            operator: Equals
-            value: ""
-          - key: "{{ scheme }}"
-            operator: Equals
-            value: internet-facing
-          - key: "{{ networkconfig.data.public_subnet_ids }}"
-            operator: NotEquals
-            value: ""
-      mutate:
-        patchStrategicMerge:
-          metadata:
-            annotations:
-              +(alb.ingress.kubernetes.io/subnets): "{{ networkconfig.data.public_subnet_ids }}"
-    # ── Service the controller provisions, internal scheme → private subnets ──
-    - name: service-internal-subnets
-      skipBackgroundRequests: true
-      match:
-        any:
-          - resources:
-              kinds:
-                - Service
-      context:
-        - name: networkconfig
-          configMap:
-            name: network-config
-            namespace: kube-system
-        # WHICH SERVICES THE CONTROLLER PROVISIONS. A type=LoadBalancer Service is
-        # not automatically the AWS Load Balancer Controller's. It claims one whose
-        # spec.loadBalancerClass is its own class, or that carries
-        # aws-load-balancer-type: nlb-ip, or aws-load-balancer-type: external with
-        # an nlb-target-type. Every other type=LoadBalancer Service goes to the
-        # in-tree cloud provider, which builds a Classic Load Balancer and reads
-        # neither the scheme annotation nor the subnets annotation this policy
-        # writes. The chart sets enableServiceMutatorWebhook: false, so nothing
-        # stamps loadBalancerClass on a Service that does not ask for it, and the
-        # plain shape stays the in-tree provider's.
-        - name: lbclass
-          variable:
-            jmesPath: 'request.object.spec.loadBalancerClass'
-            default: ""
-        - name: lbtype
-          variable:
-            jmesPath: 'request.object.metadata.annotations."service.beta.kubernetes.io/aws-load-balancer-type"'
-            default: ""
-        - name: nlbtargettype
-          variable:
-            jmesPath: 'request.object.metadata.annotations."service.beta.kubernetes.io/aws-load-balancer-nlb-target-type"'
-            default: ""
-        - name: controllermanaged
-          variable:
-            value: "{{ lbclass == 'service.k8s.aws/nlb' || lbtype == 'nlb-ip' || (lbtype == 'external' && (nlbtargettype == 'ip' || nlbtargettype == 'instance')) }}"
-        - name: schemeannotation
-          variable:
-            jmesPath: 'request.object.metadata.annotations."service.beta.kubernetes.io/aws-load-balancer-scheme"'
-            default: ""
-        # The legacy spelling, still honoured and still ahead of the default.
-        # aws-load-balancer-internal: "false" means internet-facing; a Service
-        # setting it without the newer scheme annotation is internet-facing to the
-        # controller and was internal to this policy, which is the private-subnet
-        # CSV on a load balancer the controller wants on public ones.
-        - name: internalannotation
-          variable:
-            jmesPath: 'request.object.metadata.annotations."service.beta.kubernetes.io/aws-load-balancer-internal"'
-            default: ""
-        # The controller's order: the scheme annotation, else the legacy internal
-        # flag, else the scheme of a load balancer that already exists, else its
-        # --default-load-balancer-scheme. The existing load balancer is not
-        # readable from an admission request at all; the default is asserted
-        # against the rendered chart by scripts/check-lb-scheme-inputs.py rather
-        # than assumed here.
-        - name: scheme
-          variable:
-            value: "{{ schemeannotation || (internalannotation == 'false' && 'internet-facing' || 'internal') }}"
-      preconditions:
-        all:
-          - key: "{{ request.object.spec.type }}"
-            operator: Equals
-            value: LoadBalancer
-          - key: "{{ controllermanaged }}"
-            operator: Equals
-            value: true
-          - key: "{{ networkconfig.data.network_mode }}"
-            operator: Equals
-            value: adopt
-          - key: "{{ scheme }}"
-            operator: Equals
-            value: internal
-          - key: "{{ networkconfig.data.private_subnet_ids }}"
-            operator: NotEquals
-            value: ""
-      mutate:
-        patchStrategicMerge:
-          metadata:
-            annotations:
-              +(service.beta.kubernetes.io/aws-load-balancer-subnets): "{{ networkconfig.data.private_subnet_ids }}"
-    # ── Service the controller provisions, internet-facing → public subnets ───
-    - name: service-internet-facing-subnets
-      skipBackgroundRequests: true
-      match:
-        any:
-          - resources:
-              kinds:
-                - Service
-      context:
-        - name: networkconfig
-          configMap:
-            name: network-config
-            namespace: kube-system
-        - name: lbclass
-          variable:
-            jmesPath: 'request.object.spec.loadBalancerClass'
-            default: ""
-        - name: lbtype
-          variable:
-            jmesPath: 'request.object.metadata.annotations."service.beta.kubernetes.io/aws-load-balancer-type"'
-            default: ""
-        - name: nlbtargettype
-          variable:
-            jmesPath: 'request.object.metadata.annotations."service.beta.kubernetes.io/aws-load-balancer-nlb-target-type"'
-            default: ""
-        - name: controllermanaged
-          variable:
-            value: "{{ lbclass == 'service.k8s.aws/nlb' || lbtype == 'nlb-ip' || (lbtype == 'external' && (nlbtargettype == 'ip' || nlbtargettype == 'instance')) }}"
-        - name: schemeannotation
-          variable:
-            jmesPath: 'request.object.metadata.annotations."service.beta.kubernetes.io/aws-load-balancer-scheme"'
-            default: ""
-        - name: internalannotation
-          variable:
-            jmesPath: 'request.object.metadata.annotations."service.beta.kubernetes.io/aws-load-balancer-internal"'
-            default: ""
-        - name: scheme
-          variable:
-            value: "{{ schemeannotation || (internalannotation == 'false' && 'internet-facing' || 'internal') }}"
-      preconditions:
-        all:
-          - key: "{{ request.object.spec.type }}"
-            operator: Equals
-            value: LoadBalancer
-          - key: "{{ controllermanaged }}"
-            operator: Equals
-            value: true
-          - key: "{{ networkconfig.data.network_mode }}"
-            operator: Equals
-            value: adopt
-          - key: "{{ scheme }}"
-            operator: Equals
-            value: internet-facing
-          - key: "{{ networkconfig.data.public_subnet_ids }}"
-            operator: NotEquals
-            value: ""
-      mutate:
-        patchStrategicMerge:
-          metadata:
-            annotations:
-              +(service.beta.kubernetes.io/aws-load-balancer-subnets): "{{ networkconfig.data.public_subnet_ids }}"
+  # admission fleet-wide — if Kyverno cannot evaluate it (an outage, a ConfigMap
+  # it cannot read), the object is still admitted. The worst case is an
+  # adopt-mode load balancer that comes up without subnets and fails to
+  # provision — visible and debuggable on that one object — never a cluster-wide
+  # admission outage. On a create cluster the mutation is a no-op anyway
+  # (auto-discovery works there).
+  failurePolicy: Ignore
+  # The legacy ClusterPolicy's resource mutating webhook was registered with
+  # reinvocationPolicy IfNeeded; a MutatingPolicy defaults to Never, so the old
+  # behaviour is stated here: if a later mutating webhook changes the object,
+  # this one runs again and still adds the annotation only if absent.
+  reinvocationPolicy: IfNeeded
+  # Admission only. A background or mutate-existing pass would rewrite live
+  # Ingresses and Services, which the ClusterPolicy (background: false) never did.
+  # skipBackgroundRequests carries the ClusterPolicy rules' own setting: requests
+  # Kyverno's background controller makes are not mutated. Every field is written
+  # out, CRD defaults included, so the stored object matches git field for field.
+  evaluation:
+    admission:
+      enabled: true
+    background:
+      enabled: false
+    mutateExisting:
+      enabled: false
+    skipBackgroundRequests: true
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["networking.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["ingresses"]
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["services"]
+  # Narrows the ConfigMap read below to the objects that can be mutated at all:
+  # every Ingress, and a Service of type LoadBalancer. A ClusterIP or NodePort
+  # Service never reaches the policy body.
+  matchConditions:
+    - name: ingress-or-load-balancer-service
+      expression: >-
+        object.kind == 'Ingress' ||
+        (has(object.spec.type) && object.spec.type == 'LoadBalancer')
+  variables:
+    # The cluster-local network record. Every read below goes through `.?`, so a
+    # missing ConfigMap, or one with no data, resolves every field to '' and the
+    # policy injects nothing rather than erroring.
+    - name: networkconfig
+      expression: resource.get("v1", "configmaps", "kube-system", "network-config")
+    - name: networkdata
+      expression: variables.networkconfig.?data.orValue({})
+    - name: mode
+      expression: variables.networkdata[?'network_mode'].orValue('')
+    - name: annotations
+      expression: object.metadata.?annotations.orValue({})
+    - name: isIngress
+      expression: object.kind == 'Ingress'
+    - name: subnetskey
+      expression: >-
+        variables.isIngress ? 'alb.ingress.kubernetes.io/subnets'
+                            : 'service.beta.kubernetes.io/aws-load-balancer-subnets'
+    # ── Ingress ───────────────────────────────────────────────────────────────
+    # An Ingress that names a group shares one load balancer, and its scheme --
+    # one scheme for the whole group -- is decided across every member. No
+    # single object carries the answer, and a member that disagrees with the
+    # group is rejected by the controller rather than given its own subnets.
+    # Injecting from this object alone would be a guess about the others.
+    - name: groupname
+      expression: variables.annotations[?'alb.ingress.kubernetes.io/group.name'].orValue('')
+    # ── Service ───────────────────────────────────────────────────────────────
+    # WHICH SERVICES THE CONTROLLER PROVISIONS. A type=LoadBalancer Service is
+    # not automatically the AWS Load Balancer Controller's. It claims one whose
+    # spec.loadBalancerClass is its own class, or that carries
+    # aws-load-balancer-type: nlb-ip, or aws-load-balancer-type: external with
+    # an nlb-target-type. Every other type=LoadBalancer Service goes to the
+    # in-tree cloud provider, which builds a Classic Load Balancer and reads
+    # neither the scheme annotation nor the subnets annotation this policy
+    # writes. The chart sets enableServiceMutatorWebhook: false, so nothing
+    # stamps loadBalancerClass on a Service that does not ask for it, and the
+    # plain shape stays the in-tree provider's.
+    - name: lbclass
+      expression: "has(object.spec.loadBalancerClass) ? object.spec.loadBalancerClass : ''"
+    - name: lbtype
+      expression: variables.annotations[?'service.beta.kubernetes.io/aws-load-balancer-type'].orValue('')
+    - name: nlbtargettype
+      expression: variables.annotations[?'service.beta.kubernetes.io/aws-load-balancer-nlb-target-type'].orValue('')
+    - name: controllermanaged
+      expression: >-
+        variables.lbclass == 'service.k8s.aws/nlb' || variables.lbtype == 'nlb-ip' ||
+        (variables.lbtype == 'external' &&
+         (variables.nlbtargettype == 'ip' || variables.nlbtargettype == 'instance'))
+    # ── Scheme ────────────────────────────────────────────────────────────────
+    # Ingress: the controller's order for a single-member group is an
+    # IngressClassParams scheme, else the alb.ingress.kubernetes.io/scheme
+    # annotation, else its --default-load-balancer-scheme. IngressClassParams is
+    # not read here and that is a decision, not an oversight --
+    # scripts/check-lb-scheme-inputs.py records which inputs are read and which
+    # are knowingly not, and fails when the controller grows one that is neither.
+    #
+    # Service: the scheme annotation, else the legacy internal flag, else the
+    # scheme of a load balancer that already exists, else its
+    # --default-load-balancer-scheme. The existing load balancer is not readable
+    # from an admission request at all; the default is asserted against the
+    # rendered chart by scripts/check-lb-scheme-inputs.py rather than assumed
+    # here.
+    - name: schemeannotation
+      expression: >-
+        variables.isIngress
+          ? variables.annotations[?'alb.ingress.kubernetes.io/scheme'].orValue('')
+          : variables.annotations[?'service.beta.kubernetes.io/aws-load-balancer-scheme'].orValue('')
+    # The legacy spelling, still honoured and still ahead of the default.
+    # aws-load-balancer-internal: "false" means internet-facing; a Service
+    # setting it without the newer scheme annotation is internet-facing to the
+    # controller, and reading only the scheme annotation would put the
+    # private-subnet CSV on a load balancer the controller wants on public ones.
+    - name: internalannotation
+      expression: variables.annotations[?'service.beta.kubernetes.io/aws-load-balancer-internal'].orValue('')
+    # An empty scheme annotation counts as unset, as it did under the
+    # ClusterPolicy's JMESPath `||`.
+    - name: scheme
+      expression: >-
+        variables.schemeannotation != '' ? variables.schemeannotation :
+        (!variables.isIngress && variables.internalannotation == 'false') ? 'internet-facing' :
+        'internal'
+    # ── Decision ──────────────────────────────────────────────────────────────
+    # Adopt mode only; private subnets for internal, public for internet-facing,
+    # nothing for any other scheme value.
+    - name: subnets
+      expression: >-
+        variables.mode != 'adopt' ? '' :
+        variables.scheme == 'internal' ? variables.networkdata[?'private_subnet_ids'].orValue('') :
+        variables.scheme == 'internet-facing' ? variables.networkdata[?'public_subnet_ids'].orValue('') :
+        ''
+    # Add-if-absent: never clobber a tenant's explicit subnets. An Ingress must
+    # name no group; a Service must be one the controller provisions.
+    - name: inject
+      expression: >-
+        variables.subnets != '' &&
+        !(variables.subnetskey in variables.annotations) &&
+        (variables.isIngress ? variables.groupname == '' : variables.controllermanaged)
+  mutations:
+    - patchType: ApplyConfiguration
+      applyConfiguration:
+        expression: >-
+          variables.inject
+            ? Object{metadata: Object.metadata{annotations: {variables.subnetskey: variables.subnets}}}
+            : Object{}

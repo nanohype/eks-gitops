@@ -1,0 +1,79 @@
+# The six ValidatingPolicies carry the legacy validate.allowExistingViolations in
+# their validation: an UPDATE to an object that already violated the check is
+# admitted, so moving a tier to Deny never wedges a workload that predates it.
+#
+# For an explicit UPDATE the CLI sets object and oldObject to the same resource,
+# so each violating fixture here is an existing violation being updated and must
+# PASS. The same fixtures FAIL under the default CREATE in ../kyverno-test.yaml,
+# which is what shows the old object, and only the old object, is what admits
+# them. (An UPDATE that makes a compliant object non-compliant is refused — the
+# old object passes, so `existingViolation` is false — but the CLI cannot hand a
+# policy two different objects, so that case has no row.)
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: nanohype-kyverno-existing-violations
+policies:
+  - ../../best-practices/base/require-labels.yaml
+  - ../../best-practices/base/require-readiness-probe.yaml
+  - ../../best-practices/base/require-liveness-probe.yaml
+  - ../../pod-security-standards/base/require-non-root.yaml
+  - ../../pod-security-standards/base/require-cpu-limit.yaml
+  - ../../pod-security-standards/base/require-memory-limit.yaml
+resources:
+  - ../resources.yaml
+results:
+  - policy: require-labels
+    isValidatingPolicy: true
+    operation: UPDATE
+    kind: Deployment
+    resources: [bad-deploy, bad-deploy-missing-tier]
+    result: pass
+  - policy: require-readiness-probe
+    isValidatingPolicy: true
+    operation: UPDATE
+    kind: Deployment
+    resources: [bad-deploy-no-readiness]
+    result: pass
+  - policy: require-liveness-probe
+    isValidatingPolicy: true
+    operation: UPDATE
+    kind: Deployment
+    resources: [bad-deploy-no-liveness]
+    result: pass
+  - policy: require-run-as-non-root
+    isValidatingPolicy: true
+    operation: UPDATE
+    kind: Pod
+    resources: [bad-pod-root]
+    result: pass
+  - policy: require-run-as-non-root
+    isValidatingPolicy: true
+    operation: UPDATE
+    kind: Deployment
+    resources: [bad-deploy-pod-security]
+    result: pass
+  - policy: require-cpu-limit
+    isValidatingPolicy: true
+    operation: UPDATE
+    kind: Pod
+    resources: [bad-pod-no-cpu-limit]
+    result: pass
+  - policy: require-cpu-limit
+    isValidatingPolicy: true
+    operation: UPDATE
+    kind: Deployment
+    resources: [bad-deploy-pod-security]
+    result: pass
+  - policy: require-memory-limit
+    isValidatingPolicy: true
+    operation: UPDATE
+    kind: Pod
+    resources: [bad-pod-no-memory-limit]
+    result: pass
+  - policy: require-memory-limit
+    isValidatingPolicy: true
+    operation: UPDATE
+    kind: Deployment
+    resources: [bad-deploy-pod-security]
+    result: pass
