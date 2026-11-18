@@ -59,29 +59,19 @@ spec:
                   chartVersion: "1.10.0"
                   path: addons/ai-platform/envoy-gateway
                   syncWave: "41"
-                  # TRANSITION — automated prune off for this Application only.
-                  # gateway-helm's bundled `crds` subchart installs Gateway API
-                  # v1.6.1 (experimental) beside the v1.7.0 standard CRDs that
-                  # gateway-api-crds.yaml owns, so two Applications claim the
-                  # same CRDs. The fix moves Envoy Gateway's own 8 CRDs
-                  # (gateway.envoyproxy.io) to a CRD-only Application and turns
-                  # the bundle off here. That values change reaches this
-                  # Application through its $values source on the next refresh,
-                  # ahead of any ApplicationSet change, so with prune on it would
-                  # delete those CRDs — and every Envoy Gateway resource on the
-                  # cluster — before their new owner existed. Prune is turned off
-                  # first, in its own change, so the move cannot delete anything.
-                  # Turn it back on (autoPrune: true) only after the move has
-                  # synced everywhere and, on every opted-in cluster, the only
-                  # objects still carrying this Application's tracking id that
-                  # its manifest no longer renders are the three unused
-                  # gateway.networking.x-k8s.io CRDs (xbackends,
-                  # xbackendtrafficpolicies, xmeshes):
-                  #
-                  #   kubectl get crd,validatingadmissionpolicy,validatingadmissionpolicybinding -o json \
-                  #     | jq -r '.items[] | select((.metadata.annotations["argocd.argoproj.io/tracking-id"] // "")
-                  #         | startswith("envoy-gateway:")) | .kind + "/" + .metadata.name'
-                  autoPrune: false
+                  # Prune is on. It was off (autoPrune: false) while Envoy
+                  # Gateway's own CRDs moved out of this chart's bundled `crds`
+                  # subchart into envoy-gateway-crds, so the values change that
+                  # turned the bundle off could not delete them before their new
+                  # owner existed. With it back on, a cluster that ran the old
+                  # bundle prunes the three gateway.networking.x-k8s.io CRDs
+                  # (xbackends, xbackendtrafficpolicies, xmeshes) that only this
+                  # Application ever installed, once gateway-api-crds and
+                  # envoy-gateway-crds have synced there and taken over every
+                  # other object the bundle installed; a cluster bootstrapped
+                  # since has none to prune. The lever stays for the next ownership move —
+                  # docs/runbooks/rollback.md has the procedure.
+                  autoPrune: true
                 - appName: envoy-ai-gateway
                   namespace: envoy-gateway-system
                   chartRepo: oci://docker.io/envoyproxy/ai-gateway-helm

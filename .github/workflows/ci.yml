@@ -1177,9 +1177,13 @@ jobs:
   # produces. This job renders the committed template the way the ArgoCD
   # ApplicationSet controller does (Go text/template + sprig,
   # Option("missingkey=error")) against fixture create/adopt/legacy cluster
-  # Secrets and asserts the subnetSelectorTerms shape for each.
+  # Secrets and asserts the subnetSelectorTerms shape for each. The same
+  # package renders the other template strings an ApplicationSet carries: the
+  # argo-workflows/loki/tempo bucket injection (with- and without-bucket
+  # fixtures) and the addons-ai-platform.yaml prune templatePatch (every
+  # element, plus a synthetic element on each autoPrune arm).
   appset-render:
-    name: Appset render (Karpenter subnet selector)
+    name: Appset render (ApplicationSet template strings)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -1194,7 +1198,7 @@ jobs:
           go-version-file: applicationsets/rendertest/go.mod
           cache-dependency-path: applicationsets/rendertest/go.sum
 
-      - name: Render Karpenter patch template against fixture cluster Secrets
+      - name: Render ApplicationSet template strings against fixture cluster Secrets
         working-directory: applicationsets/rendertest
         run: go test ./...
 
@@ -1433,7 +1437,7 @@ jobs:
               'Rendered images carry no unacknowledged CRITICAL': '${{ needs.image-vulnerabilities.result }}',
               'Policy-admission (Enforce-tier Kyverno vs the fleet)': '${{ needs.policy-admission.result }}',
               'ApplicationSet schema + sync waves': '${{ needs.appsets.result }}',
-              'Appset render (Karpenter subnet selector)': '${{ needs.appset-render.result }}',
+              'Appset render (ApplicationSet template strings)': '${{ needs.appset-render.result }}',
               'Secret scan (gitleaks)': '${{ needs.secrets.result }}',
               'Render + assert + schema + misconfig (all environments)': '${{ needs.validate.result }}',
               'Renovate manager coverage': '${{ needs.renovate-coverage.result }}',

@@ -6,16 +6,21 @@
 //
 // Why it exists: the patch is a string, so the appset-schema gate sees only that
 // it is a string. It decides whether an Application may delete what it stops
-// rendering, and it is the one place envoy-gateway's prune is turned off while
-// Envoy Gateway's CRDs move to their own Application. An element that drops its
-// autoPrune field, spells it as a string, or a patch that renders anything but
-// spec.syncPolicy.automated.prune would otherwise validate clean and surface only
-// at sync — as an ApplicationSet that generates nothing, or as a prune nobody
-// meant to enable.
+// rendering, and it is the lever that turns one Application's prune off while
+// something it installs moves to another owner (envoy-gateway ran with it off
+// while Envoy Gateway's CRDs moved to envoy-gateway-crds). Every committed
+// element runs autoPrune: true today, so the false arm is rendered against a
+// synthetic element below; a lever proven only in the direction nobody is
+// pulling it would be found broken on the day it is needed. An element that
+// drops its autoPrune field, spells it as a string, or a patch that renders
+// anything but spec.syncPolicy.automated.prune would otherwise validate clean and
+// surface only at sync — as an ApplicationSet that generates nothing, or as a
+// prune nobody meant to enable.
 package rendertest
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -42,6 +47,17 @@ func TestAIPlatformPrunePatch(t *testing.T) {
 			got := renderPrune(t, patch, el, labels, annotations)
 			if got != want {
 				t.Fatalf("element %q: rendered prune = %v, autoPrune = %v", name, got, want)
+			}
+		})
+	}
+
+	// Both arms, whatever the committed elements happen to carry: the patch must
+	// turn prune off for an element that asks, not only leave it on.
+	for _, want := range []bool{true, false} {
+		t.Run(fmt.Sprintf("a synthetic element with autoPrune: %v", want), func(t *testing.T) {
+			el := map[string]interface{}{"appName": "synthetic", "autoPrune": want}
+			if got := renderPrune(t, patch, el, labels, annotations); got != want {
+				t.Fatalf("rendered prune = %v, autoPrune = %v", got, want)
 			}
 		})
 	}

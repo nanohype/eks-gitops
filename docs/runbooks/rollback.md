@@ -24,7 +24,7 @@ Before rolling back, check the failure isn't environment-scoped: a bad `values-s
 
 ## Remediation
 
-**The durable rollback is a git revert.** Every generated Application runs `automated: {prune: true, selfHeal: true}` (one exception: `envoy-gateway` runs with prune off while Envoy Gateway's CRDs move to their own Application — see its `autoPrune` element in `applicationsets/addons-ai-platform.yaml`), and the ApplicationSet controller owns the Application spec — so `argocd app rollback` and `argocd app set` are both reverted within minutes. Anything that must stick goes through `main`:
+**The durable rollback is a git revert.** Every generated Application runs `automated: {prune: true, selfHeal: true}`, and the ApplicationSet controller owns the Application spec — so `argocd app rollback` and `argocd app set` are both reverted within minutes. Anything that must stick goes through `main`:
 
 1. Revert the offending commit (or just the pin/values hunk):
    ```bash
@@ -42,7 +42,14 @@ Before rolling back, check the failure isn't environment-scoped: a bad `values-s
 
 - Charts that manage CRDs (kyverno, prometheus-operator-crds, envoy-gateway-crds, envoy-ai-gateway-crds): ArgoCD renders a chart's CRDs (`--include-crds`) and applies them like any other manifest, so a chart-version revert re-applies the older CRD rather than leaving the newer one in place. Verify the older schema still serves every version the cluster has stored and that the running controller tolerates it; if not, this is a fix-forward, not a rollback.
 - Never roll back by deleting an ApplicationSet element that owns CRDs (`envoy-gateway-crds`, `envoy-ai-gateway-crds`). No ApplicationSet here sets `preserveResourcesOnDeletion`, so the controller deletes the removed element's Application with cascade, and that deletes its CRDs and every resource of their kinds on every cluster it reached. That includes reverting the change that split Envoy Gateway's CRDs out of `gateway-helm`. Fix forward. If CRD ownership truly has to move back, do it the way it moved out: turn prune off on the Applications involved (`autoPrune: false`) and let that reach every cluster first.
-- Reverting a change that turned an Application's automated prune off (an `autoPrune: false` element, such as `envoy-gateway` in `addons-ai-platform.yaml`) turns pruning back on, and the next sync deletes everything that Application still tracks and no longer renders — CRDs included, and with a CRD every resource of its kind. Check what it tracks first (the command is beside the element) rather than reverting blind.
+- `addons-ai-platform.yaml` can turn one Application's automated prune off without a second ApplicationSet: every element carries `autoPrune`, and its `templatePatch` restates `prune` from it (`applicationsets/rendertest` renders the patch against every element). Every element runs `autoPrune: true` today. The lever is for moving ownership of something an Application installs: set `autoPrune: false` in its own change, let that reach every cluster, then make the move. Turning prune back on — setting `autoPrune: true` again, or reverting the change that set it false — means the next sync deletes everything that Application still tracks and no longer renders, CRDs included, and with a CRD every resource of its kind. Before it lands, list what each opted-in cluster's copy of the Application would prune, and confirm every entry is meant to go. The list is the live Application's current comparison, so it is only accurate while prune is still off and after a hard refresh against the manifest that stopped rendering the objects — run before the refresh, it can come back falsely empty:
+  ```bash
+  argocd app get <app> --hard-refresh >/dev/null
+  # or: kubectl -n argocd annotate application <app> argocd.argoproj.io/refresh=hard --overwrite
+  kubectl -n argocd get application <app> -o json \
+    | jq -r '.status.resources[]? | select(.requiresPruning) | .kind + "/" + .name'
+  ```
+  The last use was `envoy-gateway`, off while Envoy Gateway's CRDs moved to `envoy-gateway-crds`; with prune back on, a cluster that ran the old bundled `crds` subchart prunes the three `gateway.networking.x-k8s.io` CRDs (`xbackends`, `xbackendtrafficpolicies`, `xmeshes`) only that subchart installed, and a cluster bootstrapped since has none.
 - StatefulSet-backed addons (loki, tempo, druid): a revert that changes `volumeClaimTemplates` will not apply — those fields are immutable and deliberately covered by `ignoreDifferences`. Data-format downgrades (e.g. a store schema migrated on upgrade) may also need the component's own downgrade procedure first.
 
 ## Verification

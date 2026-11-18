@@ -23,11 +23,16 @@
 # (gateway-crds-helm, ../envoy-gateway-crds) at wave 40; the Gateway API
 # CRDs, and the policy that guards them, only from gateway-api-crds.
 #
-# Turning this off is safe only because this Application's automated prune is
-# off (autoPrune: false on its element in addons-ai-platform.yaml, merged ahead
-# of this change). This value reaches the Application on its next refresh,
-# possibly before envoy-gateway-crds exists; with prune on, it would delete the
-# CRDs it stops rendering, and every Envoy Gateway resource with them.
+# Do not turn this back on. In gateway-helm 1.10.0 this one switch carries
+# Envoy Gateway's own CRDs, the Gateway API CRDs and their safe-upgrades policy
+# together, so moving Envoy Gateway's CRDs back here is the same change as
+# reinstating the whole bundle. That makes this Application a second owner of
+# the Gateway API CRDs, which render-addons.py fails. And every Application
+# involved prunes (autoPrune: true in addons-ai-platform.yaml): if
+# envoy-gateway-crds then stopped rendering Envoy Gateway's CRDs, its prune —
+# not this Application's — would delete them and every Envoy Gateway resource
+# with them. A move of CRD ownership turns prune off on the Applications
+# involved first — docs/runbooks/rollback.md.
 crds:
   enabled: false
 
