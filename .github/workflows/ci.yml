@@ -166,18 +166,36 @@ jobs:
   # with an ECR Public authorization token is metered against the AWS account
   # that issued it instead, so this job and image-vulnerabilities, the two that
   # read public.ecr.aws in bulk, log in before they read. The role named by the
-  # ECR_PUBLIC_PULL_ROLE_ARN repo variable is trusted from this repo's
+  # ECR_PUBLIC_PULL_ROLE_ARN repository secret is trusted from this repo's
   # pull_request and main contexts and can do nothing but mint that token. The
   # two jobs grant id-token at job level, and no other job and no workflow
   # grants it, so no other job can mint the OIDC token the role is assumed
   # with.
   #
-  # The login is skipped, and the job reads anonymously, when the variable is
+  # The role ARN is a SECRET because this repository and its Actions logs are
+  # public and the ARN carries the account id that owns the role: a variable is
+  # printed unmasked in the env block of every step that receives it and among
+  # configure-aws-credentials' inputs, before any step can mask it. It is a
+  # REPOSITORY secret, not an environment one, because a job that declares an
+  # environment is issued an OIDC token whose subject names that environment,
+  # and the role trusts only this repo's pull_request and main subjects. The
+  # runner masks a secret only whole, so the first step that receives it runs
+  # scripts/mask-aws-ids.sh (vendored from landing-zone, recorded in
+  # scripts/vendored.json) as its first command, unconditionally: the account
+  # id and the ARN are masked from the next line on, for the rest of the job,
+  # including an ARN in an STS error. That step also fails the job while
+  # ECR_PUBLIC_PULL_ROLE_ARN still exists as a variable at any level, comparing
+  # it against '' so that only true or false is printed, and decides whether
+  # there is a role to assume. configure-aws-credentials then reads the secret
+  # whole and runs with mask-aws-account-id: true.
+  # scripts/check-workflow-id-masking.py holds every workflow to that shape.
+  #
+  # The login is skipped, and the job reads anonymously, when the secret is
   # unset and when the run is for a pull request from a fork, which GitHub
-  # issues no OIDC token to. Once the variable is set, a role that cannot be
-  # assumed fails the job on that step rather than falling back, so a
-  # misconfigured role is reported where it is, not as the throttling the login
-  # exists to prevent.
+  # passes no secrets and issues no OIDC token. Once the secret is set, a role
+  # that cannot be assumed fails the job on that step rather than falling back,
+  # so a misconfigured role is reported where it is, not as the throttling the
+  # login exists to prevent.
   #
   # The role's credentials reach the login step alone, as outputs of the step
   # that assumed the role, not as environment every later step inherits. The
@@ -193,10 +211,10 @@ jobs:
   # cannot read, or an entry it can send no credentials from, as one a
   # credential helper holds, is named once on its stderr, and so is a login a
   # registry refuses, after which that registry is read anonymously.
-  # scripts/tests/test_workflows.py evaluates both steps' conditions, runs the
-  # login against stand-ins for both CLIs, holds both steps to failing the job
-  # they run in, and holds the id-token grant to these two jobs, beside
-  # contents: read and nothing else.
+  # scripts/tests/test_workflows.py runs the mask step's script and evaluates
+  # the other two steps' conditions, runs the login against stand-ins for both
+  # CLIs, holds all three steps to failing the job they run in, and holds the
+  # id-token grant to these two jobs, beside contents: read and nothing else.
   charts:
     name: Pinned chart archives
     runs-on: ubuntu-latest
@@ -217,14 +235,52 @@ jobs:
       - name: Install Python dependencies
         run: pip install --require-hashes -r requirements.txt
 
+      - &ecr-public-role
+        name: Mask the ECR Public pull role and decide whether to log in
+        id: ecr-public-role
+        # A repository secret, not an environment one: the role trusts this
+        # repo's pull_request and main OIDC subjects, and an environment would
+        # change the subject (see the comment above the charts job). zizmor's
+        # secrets-outside-env is acknowledged here and on role-to-assume below.
+        env:
+          ECR_PUBLIC_PULL_ROLE_ARN: ${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }} # zizmor: ignore[secrets-outside-env]
+          ROLE_ARN_VARIABLE: ${{ vars.ECR_PUBLIC_PULL_ROLE_ARN != '' }}
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/mask-aws-ids.sh" --optional ECR_PUBLIC_PULL_ROLE_ARN
+          repo="$GITHUB_REPOSITORY"
+          if [ "$ROLE_ARN_VARIABLE" != "false" ]; then
+            msg="ECR_PUBLIC_PULL_ROLE_ARN is set as a variable on this repository or its organization."
+            msg+=" Variables are never masked, so its account id would reach the public Actions logs."
+            msg+=" Move it to a repository secret and delete the variable:"
+            msg+=" gh variable get ECR_PUBLIC_PULL_ROLE_ARN --repo $repo | gh secret set ECR_PUBLIC_PULL_ROLE_ARN --repo $repo,"
+            msg+=" then gh variable delete ECR_PUBLIC_PULL_ROLE_ARN --repo $repo."
+            msg+=" For an organization variable, narrow its repository access so this repository no longer sees it,"
+            msg+=" or gh variable delete ECR_PUBLIC_PULL_ROLE_ARN --org <org> if nothing else uses it"
+            msg+=" (see docs/runbooks/render-gate-failures.md)."
+            echo "::error title=ECR_PUBLIC_PULL_ROLE_ARN is still a variable::$msg"
+            exit 1
+          fi
+          if [ -z "${ECR_PUBLIC_PULL_ROLE_ARN//[[:space:]]/}" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "ECR_PUBLIC_PULL_ROLE_ARN is not set for this run (the secret is unset, or this is a pull request" \
+              "from a fork, which receives no secrets), so public.ecr.aws is read anonymously."
+          elif [[ "$ECR_PUBLIC_PULL_ROLE_ARN" =~ ^arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$ ]]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            msg="The ECR_PUBLIC_PULL_ROLE_ARN repository secret is not an IAM role ARN (arn:aws:iam::<account>:role/<name>)."
+            msg+=" Set it to landing-zone's ecr_public_pull_role_arn output (see docs/runbooks/render-gate-failures.md)."
+            echo "::error title=ECR_PUBLIC_PULL_ROLE_ARN is not a role ARN::$msg"
+            exit 1
+          fi
       - &ecr-public-credentials
         name: Assume the ECR Public pull role
         id: ecr-public
-        if: vars.ECR_PUBLIC_PULL_ROLE_ARN != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        if: steps.ecr-public-role.outputs.configured == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          role-to-assume: ${{ vars.ECR_PUBLIC_PULL_ROLE_ARN }}
+          role-to-assume: ${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }} # zizmor: ignore[secrets-outside-env]
           aws-region: &ecr-public-region us-east-1
+          mask-aws-account-id: true
           output-credentials: true
           output-env-credentials: false
       - &ecr-public-login
@@ -894,6 +950,39 @@ jobs:
       - name: No hardcoded catalog repoURL in applied ApplicationSets
         run: ./scripts/check-hardcoded-org.py --blocking
 
+  # ── Account ids in the public Actions logs ───────────────────────────
+  # This repository and its Actions logs are public, and the ECR Public pull
+  # role's ARN carries the account id that owns the role. The gate holds every
+  # workflow to reading such a value as a secret, whole, masked by
+  # scripts/mask-aws-ids.sh as the first command of the first step that receives
+  # it, and never from a variable, an input or a literal; it also holds the mask
+  # script to the bytes scripts/vendored.json records from landing-zone. Its
+  # self-test mutates copies of the workflows in each way the rules forbid and
+  # requires each rejected at the mutated line, and the mask script's own
+  # self-test runs it against synthetic ids. Offline and identical to
+  # `task validate:workflow-id-masking`.
+  workflow-id-masking:
+    name: Account ids are read as secrets and masked first
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: .python-version
+      - name: Install Python dependencies
+        run: pip install --require-hashes -r requirements.txt
+      - name: Every id a workflow reads is a secret, masked before anything prints
+        run: ./scripts/check-workflow-id-masking.py
+      - name: The gate rejects every shape it names
+        run: ./scripts/check-workflow-id-masking.py --self-test
+      - name: The vendored mask script passes its own self-test
+        run: bash scripts/mask-aws-ids.sh --self-test
+
   # ── Helm-render gate ─────────────────────────────────────────────────
   # Every addon is a base values.yaml plus per-env deltas, and nothing templates
   # the chart until an ArgoCD sync. A key the chart does not accept — several
@@ -1005,6 +1094,7 @@ jobs:
 
       - *restore-charts
       - *charts-missed
+      - *ecr-public-role
       - *ecr-public-credentials
       - *ecr-public-login
 
@@ -1399,6 +1489,7 @@ jobs:
         kyverno,
         digest-rewrite,
         fork-safety,
+        workflow-id-masking,
         helm-render,
         image-vulnerabilities,
         policy-admission,
@@ -1433,6 +1524,7 @@ jobs:
               'Kyverno policy tests (+ verify-images contract)': '${{ needs.kyverno.result }}',
               'Admission pins a verified tag to its digest (kind)': '${{ needs.digest-rewrite.result }}',
               'Fork-safety gate (no hardcoded org, blocking)': '${{ needs.fork-safety.result }}',
+              'Account ids read as secrets and masked first': '${{ needs.workflow-id-masking.result }}',
               'Helm-render (every addon × every env)': '${{ needs.helm-render.result }}',
               'Rendered images carry no unacknowledged CRITICAL': '${{ needs.image-vulnerabilities.result }}',
               'Policy-admission (Enforce-tier Kyverno vs the fleet)': '${{ needs.policy-admission.result }}',
@@ -1492,6 +1584,7 @@ jobs:
         kyverno,
         digest-rewrite,
         fork-safety,
+        workflow-id-masking,
         helm-render,
         image-vulnerabilities,
         policy-admission,

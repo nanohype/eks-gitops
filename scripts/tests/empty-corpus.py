@@ -90,6 +90,11 @@ COMMAND_GATES = {
 # whose stated subject is no longer part of the tree.
 OTHER_SUBJECT = {
     "check-workflows.sh": ".github/workflows",
+    "check-workflow-id-masking.py": ".github/workflows",
+    # Its subject is the environment variables a workflow names to it, and its
+    # one tree-shaped verdict is --self-test over its own synthetic cases, which
+    # live in the script itself.
+    "mask-aws-ids.sh": "scripts",
 }
 
 # Gates whose corpus is an argument, not a default. Run with no argv a gate like

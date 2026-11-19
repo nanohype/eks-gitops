@@ -12,9 +12,10 @@ key a set is kept under, and whether it is kept at all, is decided by step
 conditions over the outcome of the fetch, so KeepingTheChartCache evaluates
 those conditions for every outcome rather than reading them as text.
 
-The ECR Public login is the fourth, and LoggingInToEcrPublic evaluates its step
-conditions the same way, runs its script against stand-ins for the CLIs it
-calls, and holds the OIDC grant it needs to the jobs that log in.
+The ECR Public login is the fourth, and LoggingInToEcrPublic runs the step that
+masks the pull role's ARN and decides whether to log in, evaluates the other
+steps' conditions the same way, runs the login against stand-ins for the CLIs
+it calls, and holds the OIDC grant it needs to the jobs that log in.
 """
 
 from __future__ import annotations
@@ -316,7 +317,12 @@ class KeepingTheChartCache(unittest.TestCase):
 
 
 CREDENTIALS_ACTION = "aws-actions/configure-aws-credentials@"
-ROLE_VARIABLE = "vars.ECR_PUBLIC_PULL_ROLE_ARN"
+ROLE_NAME = "ECR_PUBLIC_PULL_ROLE_ARN"
+ROLE_SECRET = f"secrets.{ROLE_NAME}"
+MASK_COMMAND = f'bash "$GITHUB_WORKSPACE/scripts/mask-aws-ids.sh" --optional {ROLE_NAME}'
+# Synthetic: no account anyone holds.
+SYNTHETIC_ID = "222233334444"
+SYNTHETIC_ARN = f"arn:aws:iam::{SYNTHETIC_ID}:role/ecr-public-pull"
 
 
 def step_shell(doc: dict, job: dict, step: dict) -> list[str]:
@@ -342,11 +348,14 @@ class LoggingInToEcrPublic(unittest.TestCase):
     """The jobs that read public.ecr.aws in bulk log in before they read, when they can.
 
     A client logged in to ECR Public is metered by the AWS account its token
-    came from rather than by the runner's shared address. One step assumes the
-    pull role over OIDC and one hands the token it mints to `docker login`.
-    Which of them runs is decided by their conditions, so those are evaluated
-    for every event the workflow runs on, a configured role and an unset one,
-    and the login script is run against stand-ins for the aws and docker CLIs.
+    came from rather than by the runner's shared address. One step masks the
+    pull role's ARN, which is a repository secret carrying an account id, and
+    says whether there is one; one assumes the role over OIDC; and one hands the
+    token it mints to `docker login`. The first step's script is run for each
+    state the secret and a leftover variable can be in. Which of the other two
+    runs is decided by their conditions, so those are evaluated for every event
+    the workflow runs on, a configured role and an unset one, and the login
+    script is run against stand-ins for the aws and docker CLIs.
     """
 
     # Each job that logs in, and the step that reads public.ecr.aws in it.
@@ -359,15 +368,18 @@ class LoggingInToEcrPublic(unittest.TestCase):
     def setUp(self):
         self.doc = workflows()["ci.yml"]
         self.logins: dict[str, tuple[dict, list[dict], int, int]] = {}
+        self.masks: dict[str, int] = {}
         for name, job in jobs().items():
             steps = job.get("steps") or []
+            masks = [i for i, s in enumerate(steps) if ROLE_NAME in (s.get("env") or {})]
             creds = [i for i, s in enumerate(steps)
                      if str(s.get("uses", "")).startswith(CREDENTIALS_ACTION)]
             logins = [i for i, s in enumerate(steps) if "docker login" in str(s.get("run", ""))]
-            if creds or logins:
-                self.assertEqual((len(creds), len(logins)), (1, 1),
-                                 f"{name} assumes the role and logs in once each")
+            if masks or creds or logins:
+                self.assertEqual((len(masks), len(creds), len(logins)), (1, 1, 1),
+                                 f"{name} masks the role, assumes it and logs in once each")
                 self.logins[name] = (job, steps, creds[0], logins[0])
+                self.masks[name] = masks[0]
         self.assertEqual(sorted(self.logins), sorted(self.READERS))
 
     def condition(self, step: dict, context: dict[str, str], passing: bool = True) -> bool:
@@ -380,25 +392,120 @@ class LoggingInToEcrPublic(unittest.TestCase):
             reads = [i for i, s in enumerate(steps) if self.READERS[name] in str(s.get("run", ""))]
             with self.subTest(job=name):
                 self.assertEqual(len(reads), 1, f"{name} reads public.ecr.aws once")
+                self.assertLess(self.masks[name], creds)
                 self.assertLess(creds, login)
                 self.assertLess(login, reads[0])
                 self.assertEqual(steps[creds]["with"]["role-to-assume"],
-                                 f"${{{{ {ROLE_VARIABLE} }}}}")
+                                 f"${{{{ {ROLE_SECRET} }}}}")
+                self.assertIs(steps[creds]["with"].get("mask-aws-account-id"), True)
 
     def test_the_role_is_assumed_only_when_configured_and_never_for_a_fork(self):
-        """GitHub issues a fork's pull request no OIDC token, and an unset variable names no role."""
+        """GitHub issues a fork's pull request no OIDC token, and an unset secret names no role."""
         events = {"a push": ("push", ""),
                   "a pull request from this repo": ("pull_request", self.REPO),
                   "a pull request from a fork": ("pull_request", "fork/repo")}
         for name, (_, steps, creds, _) in self.logins.items():
-            for role in ("", "the-role"):
+            configured = f"steps.{steps[self.masks[name]]['id']}.outputs.configured"
+            for role in ("false", "true"):
                 for label, (event, head) in events.items():
-                    context = {ROLE_VARIABLE: role, "github.event_name": event,
+                    context = {configured: role, "github.event_name": event,
                                "github.event.pull_request.head.repo.full_name": head,
                                "github.repository": self.REPO}
-                    with self.subTest(job=name, role=role or "unset", event=label):
+                    with self.subTest(job=name, configured=role, event=label):
                         self.assertEqual(self.condition(steps[creds], context),
-                                         bool(role) and head != "fork/repo")
+                                         role == "true" and head != "fork/repo")
+
+    def run_mask_step(self, secret: str | None, variable: str = "false"
+                      ) -> dict[str, tuple[subprocess.CompletedProcess, str]]:
+        """Each job's mask step, run as the runner runs it, and what it wrote to
+        $GITHUB_OUTPUT, by job. `secret` None leaves the secret out of the
+        environment, as a fork's pull request receives it; `variable` is what the
+        guard expression renders to."""
+        runs = {}
+        for name, (job, steps, _, _) in self.logins.items():
+            step = steps[self.masks[name]]
+            with tempfile.TemporaryDirectory() as tmp:
+                script = pathlib.Path(tmp) / "step.sh"
+                script.write_text(str(step["run"]))
+                output = pathlib.Path(tmp) / "output"
+                output.write_text("")
+                env = {"PATH": f"/usr/bin{os.pathsep}/bin", "GITHUB_WORKSPACE": str(ROOT),
+                       "GITHUB_REPOSITORY": self.REPO,
+                       "GITHUB_OUTPUT": str(output), "ROLE_ARN_VARIABLE": variable}
+                if secret is not None:
+                    env[ROLE_NAME] = secret
+                done = subprocess.run([*step_shell(self.doc, job, step), str(script)],
+                                      env=env, capture_output=True, text=True, timeout=30,
+                                      check=False)
+                runs[name] = (done, output.read_text())
+        self.assertTrue(runs, "no mask step was run")
+        return runs
+
+    def test_the_mask_step_receives_the_secret_whole_and_the_guard_alone(self):
+        """The secret whole, so the runner masks it from the job's first line, and
+        the variable only as a comparison, so a normal run prints true or false."""
+        for name, (_, steps, _, _) in self.logins.items():
+            step = steps[self.masks[name]]
+            with self.subTest(job=name):
+                self.assertEqual(step.get("env"), {
+                    ROLE_NAME: f"${{{{ {ROLE_SECRET} }}}}",
+                    "ROLE_ARN_VARIABLE": f"${{{{ vars.{ROLE_NAME} != '' }}}}",
+                })
+                first = next(line.strip() for line in str(step["run"]).splitlines()
+                             if line.strip() and not line.strip().startswith("#"))
+                self.assertEqual(first, MASK_COMMAND)
+                self.assertNotIn("if", step)
+
+    def test_an_unset_secret_reads_anonymously(self):
+        """An unconfigured repository, and a fork's pull request, stay green."""
+        for secret in (None, "", "  \n"):
+            for name, (done, output) in self.run_mask_step(secret).items():
+                with self.subTest(job=name, secret=repr(secret)):
+                    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                    self.assertEqual(output, "configured=false\n")
+                    self.assertNotIn("::add-mask::", done.stdout)
+
+    def test_a_role_arn_is_masked_before_anything_else_prints(self):
+        for name, (done, output) in self.run_mask_step(SYNTHETIC_ARN).items():
+            with self.subTest(job=name):
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                self.assertEqual(output, "configured=true\n")
+                lines = done.stdout.splitlines()
+                self.assertEqual(sorted(lines[:2]), [f"::add-mask::{SYNTHETIC_ID}",
+                                                     f"::add-mask::{SYNTHETIC_ARN}"])
+                unmasked = [ln for ln in lines if not ln.startswith("::add-mask::")]
+                self.assertFalse([ln for ln in unmasked if SYNTHETIC_ID in ln], unmasked)
+
+    def test_a_leftover_variable_fails_the_job_naming_the_remedy(self):
+        """Anything but a rendered false fails, so a guard that renders empty
+        fails closed rather than passing."""
+        for variable in ("true", ""):
+            for secret in (None, SYNTHETIC_ARN):
+                for name, (done, output) in self.run_mask_step(secret, variable).items():
+                    with self.subTest(job=name, variable=variable, secret=bool(secret)):
+                        self.assertEqual(done.returncode, 1)
+                        self.assertEqual(output, "")
+                        self.assertIn("still a variable", done.stdout)
+                        self.assertIn(f"gh variable delete {ROLE_NAME} --repo {self.REPO}",
+                                      done.stdout)
+                        errors = [ln for ln in done.stdout.splitlines()
+                                  if ln.startswith("::error")]
+                        self.assertFalse([e for e in errors if SYNTHETIC_ID in e])
+
+    def test_a_secret_that_is_not_one_role_arn_fails_the_job_unprinted(self):
+        """A value that names no role, or spans lines, is refused after its ids
+        are masked, and its error carries none of it."""
+        cases = {"not an ARN": "SENTINEL-not-a-role",
+                 "a user, not a role": f"arn:aws:iam::{SYNTHETIC_ID}:user/someone",
+                 "two lines": f"{SYNTHETIC_ARN}\n{SYNTHETIC_ARN}"}
+        for label, secret in cases.items():
+            for name, (done, output) in self.run_mask_step(secret).items():
+                with self.subTest(job=name, case=label):
+                    self.assertEqual(done.returncode, 1)
+                    self.assertEqual(output, "")
+                    errors = [ln for ln in done.stdout.splitlines() if ln.startswith("::error")]
+                    self.assertTrue(errors, done.stdout)
+                    self.assertFalse([e for e in errors if SYNTHETIC_ID in e or "SENTINEL" in e])
 
     def test_the_login_runs_only_once_the_role_was_assumed(self):
         """Skipped with the role, so an unconfigured or fork run reads anonymously."""
@@ -443,7 +550,7 @@ class LoggingInToEcrPublic(unittest.TestCase):
         for name, (job, steps, creds, login) in self.logins.items():
             with self.subTest(job=name):
                 self.assertFalse(job.get("continue-on-error", False))
-                for step in (steps[creds], steps[login]):
+                for step in (steps[self.masks[name]], steps[creds], steps[login]):
                     self.assertFalse(step.get("continue-on-error", False), step.get("name"))
 
     def test_the_jobs_that_log_in_add_id_token_to_contents_read_and_nothing_else(self):

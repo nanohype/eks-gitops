@@ -1,0 +1,8 @@
+{
+  "scripts/mask-aws-ids.sh": {
+    "repo": "nanohype/landing-zone",
+    "path": "scripts/mask-aws-ids.sh",
+    "commit": "8c3c76c10e4cc3c3f5edd95c23714166bfbc00d9",
+    "sha256": "b3e987d77d2e930e6170d2608ac9e901f3d759ee92655504d68aec44a05d90c6"
+  }
+}
