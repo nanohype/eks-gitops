@@ -72,12 +72,6 @@
 # scripts/check-workflow-id-masking.py holds the other half: that every
 # workflow runs this as the first command of the first step, in each job, that
 # receives such a secret.
-#
-# drift.yml (until it is folded onto this script; see docs/threat-model.md)
-# runs scripts/mask-drift-role-map.sh, which does the same for its one map.
-# `mask-aws-ids.sh DRIFT_PLAN_ROLE_ARNS` is the drop-in replacement: required,
-# single-line, every id at every offset in keys and values, every role ARN
-# whole, ids masked before a refusal.
 set -euo pipefail
 
 # An IAM ARN, up to the first character no ARN resource carries (a quote, a
@@ -247,6 +241,32 @@ self_test() {
   expect_mask role-map "$arn2"
   expect_count role-map '^::add-mask::' 5
   expect_count role-map '^::error' 0
+
+  # A role map that is a JSON array rather than an object: still every id and
+  # every ARN in it. drift.yml refuses the shape after this step; the ids are
+  # masked whatever the shape.
+  run_case role-map-array 0 "DRIFT_PLAN_ROLE_ARNS=[\"$arn1\"]" -- DRIFT_PLAN_ROLE_ARNS
+  expect_mask role-map-array "$id1"
+  expect_mask role-map-array "$arn1"
+  expect_count role-map-array '^::add-mask::' 2
+  expect_count role-map-array '^::error' 0
+
+  # Entries drift.yml rejects (a user ARN, a bare id, a role ARN whose decoded
+  # form carries a line break) are still masked: an id in a malformed entry is
+  # still an id.
+  run_case role-map-malformed 0 'DRIFT_PLAN_ROLE_ARNS={"backup":"arn:aws:iam::123412341234:user/someone","x":"999988887777","y":"arn:aws:iam::121212121212:role/p\nq"}' -- DRIFT_PLAN_ROLE_ARNS
+  expect_mask role-map-malformed 123412341234
+  expect_mask role-map-malformed 999988887777
+  expect_mask role-map-malformed 121212121212
+  expect_mask role-map-malformed arn:aws:iam::123412341234:user/someone
+  expect_mask role-map-malformed arn:aws:iam::121212121212:role/p
+  expect_count role-map-malformed '^::error' 0
+
+  # An unset role map is refused, with nothing to mask: drift.yml cannot plan
+  # anything without it.
+  run_case role-map-unset 1 -- DRIFT_PLAN_ROLE_ARNS
+  expect_count role-map-unset '^::error' 1
+  expect_count role-map-unset '^::add-mask::' 0
 
   # An ARN written with JSON escapes is masked in its decoded form too, the form
   # configure-aws-credentials would print it in.
