@@ -51,7 +51,7 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
   (`permissions: contents: read`, ci.yml:9-10).
 - **Elevation of privilege through the CI OIDC token** — `charts` and
   `image-vulnerabilities` grant `id-token: write` so they can assume the ECR
-  Public pull role the `ECR_PUBLIC_PULL_ROLE_ARN` repo variable names.
+  Public pull role the `ECR_PUBLIC_PULL_ROLE_ARN` repository secret names.
   Mitigated: the grant is job-level, `scripts/tests/test_workflows.py` holds it
   to those two jobs, and `scripts/check-workflows.sh` fails a workflow-level
   grant. The role, provisioned by landing-zone, is trusted from this repo's pull
@@ -60,6 +60,29 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
   request from a fork is issued no OIDC token and skips the login, and the
   role's credentials reach the login step alone, as step outputs rather than job
   environment.
+- **Information disclosure of an AWS account id in the public Actions logs** —
+  the pull role's ARN carries the account id that owns it, and it was read from
+  a repository variable, which the runner prints unmasked in the env block of
+  every step that receives it and configure-aws-credentials prints among its
+  inputs. Mitigated: it is a repository secret (repository-level because the
+  role trusts this repo's `pull_request` and `ref:refs/heads/main` subjects),
+  the first step that receives it runs the vendored `scripts/mask-aws-ids.sh`
+  as its first command so the id and the ARN are masked for the rest of the
+  job, configure-aws-credentials runs with `mask-aws-account-id: true`, and the
+  step fails while the name still exists as a variable.
+  `scripts/check-workflow-id-masking.py` holds every workflow to that shape and
+  the mask script to the landing-zone bytes `scripts/vendored.json` records.
+- **Residual (account ids)** — with debug logging on, the runner traces the
+  value it reads for the leftover-variable guard before comparing it, unmasked,
+  so a re-run with debug logging while the variable exists prints it; the
+  `GITHUB_TOKEN` cannot list variables, so no check can catch that. The mask
+  script a pull request runs is that pull request's own copy: a same-repository
+  branch can edit it as it can edit the workflow, and the vendored-digest check
+  fails such an edit in the same run rather than preventing it, so review of
+  `scripts/` is the control (fork pull requests receive no secrets). An id that
+  is in no secret the job reads, such as one in an API response, is not masked.
+  Values already printed by earlier runs stay in those runs' logs until the
+  runs are deleted.
 - **Denial of service / drift** — ApplicationSet `syncPolicy` runs `selfHeal` +
   `prune` with a bounded retry/backoff (every default ApplicationSet's
   syncPolicy, e.g. addons-observability.yaml), so manual drift is reverted and a

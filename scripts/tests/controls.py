@@ -83,6 +83,9 @@ IDENTIFIES = {
     "check-policy-validity.py": "best-practices",
     "check-renovate-coverage.py": "customManager",
     "check-serviceaccount-bindings.py": "druid",
+    # The mask script's control weakens the script and runs its own --self-test,
+    # whose verdict names the cases that stopped holding, not a file.
+    "mask-aws-ids.sh": "mask-aws-ids self-test FAILED",
 }
 
 # Sentinel for a mutation that removes a file rather than editing one. Some
@@ -612,6 +615,33 @@ def m_workflows(root):
                 marker=MARKER)
 
 
+def m_workflow_id_masking(root):
+    """The ECR Public pull role assumed from a variable, which is never masked.
+
+    The exact defect the gate was ported for: configure-aws-credentials prints
+    `role-to-assume` among its inputs before any step can register a mask, so
+    the role ARN and the account id inside it reach the public log.
+    """
+    return _sub(root, ".github/workflows/ci.yml",
+                "role-to-assume: ${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }}",
+                "role-to-assume: ${{ vars.ECR_PUBLIC_PULL_ROLE_ARN }}",
+                marker="vars.ECR_PUBLIC_PULL_ROLE_ARN }}")
+
+
+def m_mask_aws_ids(root):
+    """Narrow the id pattern, so an account id is no longer masked.
+
+    The mask script's self-test is the only thing proving it masks every
+    twelve-digit window; a run of twelve digits slipping past `{13,}` is an
+    account id printed in the clear. The control runs the script's --self-test
+    (GATE_ARGS) and requires it to fail.
+    """
+    return _sub(root, "scripts/mask-aws-ids.sh",
+                "grep -oE '[0-9]{12,}'",
+                "grep -oE '[0-9]{13,}'",
+                marker="grep -oE '[0-9]{13,}'")
+
+
 def m_env_coverage(root):
     """Delete a hub delta from an addon whose appset reaches the hub.
 
@@ -628,6 +658,9 @@ def m_env_coverage(root):
 
 
 CONTROLS = {
+    "check-workflow-id-masking.py": ("a role ARN read from a variable", m_workflow_id_masking),
+    "mask-aws-ids.sh": ("a mask script that no longer masks a twelve-digit id",
+                        m_mask_aws_ids),
     "check-env-coverage.py": ("an addon selected for an environment it cannot render", m_env_coverage),
     "check-workflows.sh": ("a checkout persisting the job token", m_workflows),
     "check-ai-config.py": ("a route naming a model outside the allowlist", m_ai_config),
@@ -704,7 +737,10 @@ def copy_tree(dest: pathlib.Path) -> None:
 # Flags a gate needs to be invoked the way CI invokes it. check-hardcoded-org
 # reports and exits 0 without --blocking, so a control that omitted the flag
 # would be testing the report-only mode and could never see a rejection.
-GATE_ARGS = {"check-hardcoded-org.py": ["--blocking"]}
+GATE_ARGS = {"check-hardcoded-org.py": ["--blocking"],
+             # The mask script's verdict on itself; without it the script reads
+             # no variable names and exits on a usage error.
+             "mask-aws-ids.sh": ["--self-test"]}
 
 
 def run_gate(gate: str, cwd: pathlib.Path) -> subprocess.CompletedProcess:

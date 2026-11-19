@@ -142,6 +142,9 @@ EXPECTED = (
     # The ServiceAccounts a chart's pods run as and the ones it creates, held to
     # one set in both directions.
     "test_serviceaccount_bindings",
+    # Every AWS account id a workflow reads is a secret masked first, and the
+    # vendored mask script is the copy its record names.
+    "test_workflow_id_masking",
 )
 
 # A floor well under the real count. It catches "discovery found almost nothing",
@@ -243,6 +246,10 @@ PER_GATE_FLOORS: dict[str, tuple[int, int]] = {
     "scripts/check-lb-scheme-inputs.py": (69, 73),
     # Both verdicts over stubbed reads, --sync and --self-test.
     "scripts/check-chart-deprecation.py": (86, 80),
+    # The account-id gate, ported from landing-zone. Its --self-test runs under
+    # the suite and plants every rule; the uncovered remainder is the defensive
+    # branches of the expression reader over YAML shapes no workflow here has.
+    "scripts/check-workflow-id-masking.py": (93, 88),
 }
 
 

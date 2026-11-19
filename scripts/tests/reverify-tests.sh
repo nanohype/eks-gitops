@@ -75,7 +75,7 @@ ALL_MODULES=(test_policy_admission test_platform_crs test_dashboards
   test_policy_validity test_verdicts test_kyverno_test test_digest_rewrite
   test_workflows test_ai_config test_alert_coverage test_athena_panel_columns
   test_catalog_revision test_env_coverage test_externalsecret_keys
-  test_serviceaccount_bindings)
+  test_serviceaccount_bindings test_workflow_id_masking)
 
 # Bytecode caching keys on (mtime, size). A restore and the next mutation inside
 # the same second can hand the run the PREVIOUS mutant's module, and the suite
@@ -1611,8 +1611,8 @@ rejects "cache: key the set on the branch, so a pull request starts empty" test_
   test_the_key_names_the_pins_and_not_the_branch_or_the_run
 res $F
 
-# The ECR Public login: the role assumed only when a variable names it and
-# never for a fork, the login only once it was, the role's credentials handed
+# The ECR Public login: the role ARN masked first and a leftover variable
+# refused, the role assumed only when the secret names one and never for a fork, the login only once it was, the role's credentials handed
 # to the login step alone, the pipe failing on a token that could not be
 # fetched, and the OIDC grant held to the jobs that log in.
 edit $F <<'PY'
@@ -1630,12 +1630,37 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace("        if: vars.ECR_PUBLIC_PULL_ROLE_ARN != '' && (", "        if: (", 1)
+m = s.replace("        if: steps.ecr-public-role.outputs.configured == 'true' && (", "        if: (", 1)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
-rejects "ecr-public: assume a role no variable names" test_workflows \
+rejects "ecr-public: assume a role no secret names" test_workflows \
   test_the_role_is_assumed_only_when_configured_and_never_for_a_fork
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('          if [ "$ROLE_ARN_VARIABLE" != "false" ]; then\n',
+              '          if [ "$ROLE_ARN_VARIABLE" = "true" ]; then\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "ecr-public: pass a guard that rendered empty" test_workflows \
+  test_a_leftover_variable_fails_the_job_naming_the_remedy
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('          bash "$GITHUB_WORKSPACE/scripts/mask-aws-ids.sh" --optional ECR_PUBLIC_PULL_ROLE_ARN\n',
+              '', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "ecr-public: hand the role ARN on unmasked" test_workflows \
+  test_the_mask_step_receives_the_secret_whole_and_the_guard_alone \
+  test_a_role_arn_is_masked_before_anything_else_prints
 res $F
 
 edit $F <<'PY'
@@ -3666,6 +3691,31 @@ p.write_text(m)
 PY
 rejects "serviceaccount-bindings: let a pod name an account nothing creates" test_serviceaccount_bindings \
   test_a_pod_naming_an_account_the_chart_does_not_create_fails
+res $F
+
+F=scripts/check-workflow-id-masking.py
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("    res.findings.extend(vendored_findings(root))\n", "", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "workflow-id-masking: stop holding the mask script to its record" test_workflow_id_masking \
+  test_an_edited_script_is_refused_naming_the_source
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("    if res.workflows < MIN_WORKFLOWS or res.mask_steps < MIN_MASK_STEPS or unseen:\n",
+              "    if res.workflows < MIN_WORKFLOWS and res.mask_steps < MIN_MASK_STEPS and unseen:\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "workflow-id-masking: pass a tree that stopped reading the secret" test_workflow_id_masking \
+  test_a_tree_that_stopped_reading_the_secret_is_under_the_floor
 res $F
 
 echo
