@@ -245,6 +245,31 @@ class WhatAFindingQuotes(Tree):
         self.assertTrue(found)
         self.assertFalse(any("222233334444" in f[2] for f in found), found)
 
+    def test_a_parse_error_drops_the_parsers_excerpt(self):
+        # PyYAML cuts its excerpt around the column before redact() sees it;
+        # here the cut leaves the id's last ten digits, too few to redact.
+        ci = self.root / gate.WORKFLOWS_REL / "ci.yml"
+        ci.write_text("a:\n          OWNER: x 222233334444 qqqqqqqqqqqqqqqqqqqqq: y\n")
+        found = [f for f in self.findings() if f[0].endswith("ci.yml")]
+        self.assertEqual(len(found), 1, found)
+        self.assertNotIn("2233334444", found[0][2])
+        self.assertIn("(line 2, column 54)", found[0][2])
+
+    def test_parse_error_reads_every_part_of_the_error(self):
+        self.assertEqual(gate.parse_error(gate.yaml.MarkedYAMLError(problem="p", note="n")),
+                         "could not be parsed: p; n")
+        self.assertEqual(gate.parse_error(gate.yaml.MarkedYAMLError()),
+                         "could not be parsed: MarkedYAMLError")
+        self.assertEqual(gate.parse_error(OSError("gone 222233334444")),
+                         "could not be parsed: gone <account id>")
+
+    def test_a_planted_ids_head_or_tail_is_a_leak(self):
+        findings = [("f", 1, "cut at 22223333"), ("f", 2, "tail 334444"), ("f", 3, "clean")]
+        self.assertEqual([f[1] for f in gate.leaked_ids(findings, {"222233334444"})], [1, 2])
+        self.assertEqual(gate.leaked_ids([("f", 1, "x 999988887777 y")]),
+                         [("f", 1, "x 999988887777 y")])
+        self.assertEqual(gate.leaked_ids([("f", 1, "x 123456789012 y")]), [])
+
 
 class InputNames(Tree):
     """The runner reads an action's inputs upper-cased, so the gate reads them case-blind."""
@@ -268,6 +293,16 @@ class InputNames(Tree):
         self.assertEqual({t for t, _ in gate.strings_with_lines(doc, 1)}, {"a", "b", "c"})
         self.assertEqual({t for t, _ in gate.strings_with_lines(doc, 1, numbers=True)},
                          {"a", "222233334444", "7", "b", "c"})
+
+    def test_a_number_is_read_as_the_text_it_was_written_as(self):
+        # YAML 1.1 reads 0-7 digits behind a leading 0 as octal (1402433619).
+        doc = gate.yaml.load("a: 012345670123\n012345670123: b\nc: 222_233_334_444\nd: 1.5\n",
+                             Loader=gate.LineLoader)
+        self.assertEqual(doc["a"], 1402433619)
+        texts = {t for t, _ in gate.strings_with_lines(doc, 1, numbers=True)}
+        self.assertTrue({"012345670123", "222_233_334_444", "222233334444", "1.5"} <= texts,
+                        texts)
+        self.assertEqual(gate.number_texts(7), ["7"])
 
 
 if __name__ == "__main__":

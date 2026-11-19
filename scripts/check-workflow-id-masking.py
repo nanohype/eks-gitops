@@ -146,12 +146,17 @@ WHAT IT CHECKS, in every workflow under .github/workflows
   9. No string in a workflow other than a `uses:` reference carries a literal
      twelve-digit account id or an ARN with one, except the tree's synthetic
      placeholders (one digit repeated, or 123456789012). An unquoted number
-     counts: YAML reads it as an int, the runner prints it as text.
+     counts: YAML reads it as an int, the runner prints it as text. It is read
+     as the text it was written as, so an id YAML 1.1 takes for octal (digits
+     0-7 behind a leading 0) is still seen.
 
 No finding repeats an account id it quotes from a workflow: a run of twelve or
 more digits other than a placeholder is printed as <account id>, because a
-finding is an annotation that outlives the diff it came from. The self-test
-fails a mutation whose findings carry one.
+finding is an annotation that outlives the diff it came from. Quoted text is
+redacted before it is cut, and a YAML parse error is reported as the parser's
+problem, context, line and column, without the excerpt PyYAML has already cut
+to length before the redaction could see it. The self-test fails a mutation
+whose findings carry an id, or the head or tail of one it planted.
 
 Rules 4 and 8 check that the comparison exists, not what the shell does with
 it; the workflow's step fails on `true`, and its message names the `gh` command
@@ -174,7 +179,9 @@ USAGE
   check-workflow-id-masking.py --self-test  mutate copies of the workflows in
                                             ways the rules forbid and require
                                             each to be rejected, citing the file
-                                            and the mutated line
+                                            and the mutated line, with no
+                                            account id (nor the head or tail of
+                                            one it planted) in any finding
 
 Exit 0 = clean. Exit 1 = a violation. Exit 2 = a scan that could not see its
 inputs (CANNOT_RUN, as every gate in this repository reports it).
@@ -292,28 +299,70 @@ LineLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _mapp
 LineLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_SEQUENCE_TAG, _sequence)
 
 
+class LInt(int):
+    """An int that keeps the text YAML read it from, in `raw`."""
+    raw = ""
+
+
+class LFloat(float):
+    """A float that keeps the text YAML read it from, in `raw`."""
+    raw = ""
+
+
+def _int(loader, node):
+    v = LInt(loader.construct_yaml_int(node))
+    v.raw = node.value
+    return v
+
+
+def _float(loader, node):
+    v = LFloat(loader.construct_yaml_float(node))
+    v.raw = node.value
+    return v
+
+
+# The loader resolves YAML 1.1, where an unquoted run of digits 0-7 with a
+# leading 0 is octal: `012345670123` constructs as 1402433619, and its decimal
+# text no longer looks like an account id. Keeping the source text lets the
+# literal-id rule read what the file says.
+LineLoader.add_constructor("tag:yaml.org,2002:int", _int)
+LineLoader.add_constructor("tag:yaml.org,2002:float", _float)
+
+
 def _number(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def number_texts(value) -> list[str]:
+    """The text a number was written as, then its value's text where that differs.
+
+    The source text is what the public file carries (`012345670123`, octal to
+    YAML 1.1); the value's text covers a spelling the source text hides
+    (`222_233_334_444`, which YAML 1.1 reads as 222233334444)."""
+    return list(dict.fromkeys(t for t in (getattr(value, "raw", ""), str(value)) if t))
 
 
 def strings_with_lines(value, line: int, skip_keys: tuple = (), numbers: bool = False):
     """(string, line) for every string inside a parsed value, keys included.
 
-    numbers: also yield each integer and float scalar, as its text. An unquoted
+    numbers: also yield each integer and float scalar, and each such key, as
+    the text it was written as and as its value's text. An unquoted
     `OWNER: 222233334444` is an int to YAML and a string to the runner, which
     prints it in the env block like any other value, so the literal-id rule
     has to see it; the expression rules have nothing to read in a number."""
     if isinstance(value, str):
         yield value, line
     elif numbers and _number(value):
-        yield str(value), line
+        for t in number_texts(value):
+            yield t, line
     elif isinstance(value, LDict):
         for k, v in value.items():
             kl = value.key_lines.get(k, value.line)
             if isinstance(k, str):
                 yield k, kl
             elif numbers and _number(k):
-                yield str(k), kl
+                for t in number_texts(k):
+                    yield t, kl
             if k in skip_keys:
                 continue
             yield from strings_with_lines(v, value.value_lines.get(k, kl), skip_keys, numbers)
@@ -370,6 +419,27 @@ def quote(text, limit: int) -> str:
     Cutting first could leave the head of an account id under twelve digits,
     where the redaction no longer recognises it."""
     return repr(redact(str(text))[:limit])
+
+
+def parse_error(e) -> str:
+    """A YAML load failure as a finding: what the parser objected to and where.
+
+    Not str(e): PyYAML's message for a marked error quotes the offending line,
+    already cut to about 75 characters around the column with ` ... `. That
+    cut happens before redact() sees the text, so the head or tail of an id at
+    the cut is too short to recognise and is published. The problem, its
+    context and their line and column say everything the excerpt does; the
+    line itself is in the file."""
+    if isinstance(e, yaml.MarkedYAMLError):
+        parts = [what + (f" (line {mark.line + 1}, column {mark.column + 1})" if mark else "")
+                 for what, mark in ((e.context, e.context_mark), (e.problem, e.problem_mark))
+                 if what]
+        if e.note:
+            parts.append(e.note)
+        text = "; ".join(parts) or type(e).__name__
+    else:
+        text = str(e)
+    return redact(f"could not be parsed: {text}")
 
 
 def with_key(block, key: str):
@@ -687,8 +757,7 @@ def check(root: Path) -> Result:
         try:
             docs[p] = yaml.load(p.read_text(), Loader=LineLoader)
         except (OSError, yaml.YAMLError) as e:
-            res.findings.append((p.relative_to(root).as_posix(), 1,
-                                 redact(f"could not be parsed: {e}")))
+            res.findings.append((p.relative_to(root).as_posix(), 1, parse_error(e)))
     by_use = collect_ids_by_use(docs)
 
     def ident(name: str) -> bool:
@@ -1323,6 +1392,18 @@ MUTATIONS: list[tuple] = [
      CREDS_WITH + "          role-session-name: 222233334444\n", None, "as a literal"),
     ("a literal account id as a number in an env key", "ci.yml", FETCH_RUN,
      "        env:\n          222233334444: x\n" + FETCH_RUN, None, "as a literal"),
+    # Digits 0-7 behind a leading 0 are octal to YAML 1.1: the value is
+    # 1402433619, and only the source text still reads as an account id.
+    ("a literal account id YAML reads as octal", "ci.yml", FETCH_RUN,
+     "        env:\n          OWNER: 012345670123\n" + FETCH_RUN, None, "as a literal"),
+    ("a literal account id YAML reads as octal, as an env key", "ci.yml", FETCH_RUN,
+     "        env:\n          012345670123: x\n" + FETCH_RUN, None, "as a literal"),
+    # PyYAML cuts its excerpt to about 75 characters around the column; here
+    # the cut falls inside the id, leaving a tail too short to redact.
+    ("a workflow that does not parse, with an account id at the parser's excerpt cut",
+     "ci.yml", FETCH_RUN,
+     "        env:\n          OWNER: x 222233334444 qqqqqqqqqqqqqqqqqqqqq: y\n" + FETCH_RUN,
+     r"^", "could not be parsed"),
     ("a literal ARN in prose a step prints", "diff.yml", DIFF_STEP,
      "      - name: Early\n        run: echo arn:aws:iam::313131313131:role/x\n" + DIFF_STEP,
      None, "as a literal"),
@@ -1357,6 +1438,19 @@ def _wanted_lines(mutated: str, old, new, expect) -> set[int]:
     old_lines = set(old_text.splitlines())
     return {first + i for i, ln in enumerate(new_text.splitlines())
             if ln not in old_lines} or {first}
+
+
+def leaked_ids(findings, planted=frozenset()) -> list[tuple[str, int, str]]:
+    """The findings whose message carries an account id.
+
+    That is a non-placeholder run of twelve or more digits, or the first or
+    last six digits of an id the mutation planted: a quote or a parser excerpt
+    cut before it is redacted keeps a head or tail too short to look like an
+    id, and still publishes it."""
+    def leaks(msg: str) -> bool:
+        return any(not (len(run) == 12 and placeholder(run)) for run in ID_RUN.findall(msg)) \
+            or any(i[:6] in msg or i[-6:] in msg for i in planted)
+    return [f for f in findings if leaks(f[2])]
 
 
 def self_test(root: Path = ROOT) -> int:
@@ -1399,9 +1493,9 @@ def self_test(root: Path = ROOT) -> int:
                 res = check(base)
             finally:
                 target.write_text(text)
-            leaked = [f for f in res.findings
-                      if any(not (len(run) == 12 and placeholder(run))
-                             for run in ID_RUN.findall(f[2]))]
+            planted = {m.group(1) for m in ID_LITERAL.finditer(mutated)
+                       if not placeholder(m.group(1))} - set(ID_LITERAL.findall(text))
+            leaked = leaked_ids(res.findings, planted)
             if leaked:
                 # Not printed: the point is that the message carries an id.
                 print(f"FAIL [{name}]: {len(leaked)} finding(s) quote an account id, at "
