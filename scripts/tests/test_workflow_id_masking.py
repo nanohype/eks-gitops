@@ -88,7 +88,7 @@ class TheRealTree(unittest.TestCase):
                          hashlib.sha256((ROOT / gate.MASK_SCRIPT).read_bytes()).hexdigest())
 
     def test_the_repository_secret_is_the_one_the_workflows_read(self):
-        self.assertEqual(set(gate.REPOSITORY_SECRETS), gate.KNOWN_ID_READS)
+        self.assertEqual(set(gate.REPOSITORY_LEVEL_IDS), gate.KNOWN_ID_READS)
 
 
 class TheVendoredRecord(Tree):
@@ -221,6 +221,53 @@ class TheSelfTestRefuses(Tree):
             code, _, err = quiet(gate.self_test, self.root)
         self.assertEqual(code, 1)
         self.assertIn("not the mutated line", err)
+
+
+class WhatAFindingQuotes(Tree):
+    """A finding is an annotation that outlives the diff: it never repeats an id."""
+
+    def test_an_id_is_redacted_and_a_placeholder_kept(self):
+        self.assertEqual(gate.redact("arn:aws:iam::222233334444:role/x"),
+                         "arn:aws:iam::<account id>:role/x")
+        self.assertEqual(gate.redact("x2222333344445y"), "x<account id>y")
+        for kept in ("111111111111", "123456789012", "12345678901"):
+            self.assertEqual(gate.redact(kept), kept)
+
+    def test_a_quote_is_redacted_before_it_is_cut(self):
+        text = "a" * 55 + "222233334444"
+        self.assertNotRegex(gate.quote(text, 60), r"[0-9]{5}")
+        self.assertEqual(gate.quote(text, 60), repr(("a" * 55 + "<account id>")[:60]))
+
+    def test_a_parse_error_quoting_an_id_is_redacted(self):
+        ci = self.root / gate.WORKFLOWS_REL / "ci.yml"
+        ci.write_text("jobs: [222233334444\n")
+        found = [f for f in self.findings() if f[0].endswith("ci.yml")]
+        self.assertTrue(found)
+        self.assertFalse(any("222233334444" in f[2] for f in found), found)
+
+
+class InputNames(Tree):
+    """The runner reads an action's inputs upper-cased, so the gate reads them case-blind."""
+
+    def test_with_key_finds_any_spelling(self):
+        self.assertEqual(gate.with_key({"Role-To-Assume": "v"}, "role-to-assume"),
+                         ("Role-To-Assume", "v"))
+        self.assertIsNone(gate.with_key({"other": "v"}, "role-to-assume"))
+        self.assertIsNone(gate.with_key(None, "role-to-assume"))
+
+    def test_mask_aws_account_id_in_mixed_case_is_accepted(self):
+        ci = self.root / gate.WORKFLOWS_REL / "ci.yml"
+        text = ci.read_text()
+        self.assertEqual(text.count("          mask-aws-account-id: true\n"), 1)
+        ci.write_text(text.replace("          mask-aws-account-id: true\n",
+                                   "          Mask-AWS-Account-Id: true\n"))
+        self.assertEqual(self.findings(), [])
+
+    def test_numbers_are_read_only_when_asked(self):
+        doc = gate.yaml.load("a: 222233334444\n7: b\nc: true\n", Loader=gate.LineLoader)
+        self.assertEqual({t for t, _ in gate.strings_with_lines(doc, 1)}, {"a", "b", "c"})
+        self.assertEqual({t for t, _ in gate.strings_with_lines(doc, 1, numbers=True)},
+                         {"a", "222233334444", "7", "b", "c"})
 
 
 if __name__ == "__main__":
