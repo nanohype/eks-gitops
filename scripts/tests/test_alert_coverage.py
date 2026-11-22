@@ -25,17 +25,28 @@ from gateloader import load
 gate = load("check-alert-coverage")
 
 LAST_RUN = 'kube_customresource_status_field{customresource_kind="EvalSuite",field="lastRunAt"}'
-FIRED = ('kube_customresource_status_field{customresource_kind="BudgetPolicy",'
-         'field="killSwitchFiredAt"}')
+FIRED = (
+    'kube_customresource_status_field{customresource_kind="BudgetPolicy",field="killSwitchFiredAt"}'
+)
 
 
 def group(*rules: tuple[str, str], name: str = "g") -> dict:
     """A GrafanaAlertRuleGroup holding one Prometheus query per (title, expr)."""
-    return {"apiVersion": "grafana.integreatly.org/v1beta1", "kind": "GrafanaAlertRuleGroup",
-            "metadata": {"name": name},
-            "spec": {"rules": [{"uid": title.lower(), "title": title,
-                                "data": [{"refId": "A", "model": {"expr": expr}}]}
-                               for title, expr in rules]}}
+    return {
+        "apiVersion": "grafana.integreatly.org/v1beta1",
+        "kind": "GrafanaAlertRuleGroup",
+        "metadata": {"name": name},
+        "spec": {
+            "rules": [
+                {
+                    "uid": title.lower(),
+                    "title": title,
+                    "data": [{"refId": "A", "model": {"expr": expr}}],
+                }
+                for title, expr in rules
+            ]
+        },
+    }
 
 
 GUARDED = ("AgentEvalBelowThreshold", f"min(score) < 0.8 and {LAST_RUN} != 0")
@@ -120,8 +131,9 @@ class ZeroIsHealthy(AlertFiles):
         self.write("agent-platform.yaml", group(self.FIRED_RULE))
         rc, said = self.check()
         self.assertEqual(rc, 0, said)
-        self.assertIn("healthy   AgentKillSwitchFired: zero is the healthy state "
-                      "(killSwitchFiredAt)", said)
+        self.assertIn(
+            "healthy   AgentKillSwitchFired: zero is the healthy state (killSwitchFiredAt)", said
+        )
 
     def test_the_exemption_is_keyed_on_the_file(self):
         self.write("elsewhere.yaml", group(self.FIRED_RULE))
@@ -134,8 +146,9 @@ class ZeroIsHealthy(AlertFiles):
         rc, said = self.check()
         self.assertEqual(rc, 1, said)
         self.assertIn("STALE     exemption for missing rule AgentKillSwitchFired", said)
-        self.assertIn("ZERO_IS_HEALTHY exempts rule 'AgentKillSwitchFired', which no longer "
-                      "exists", said)
+        self.assertIn(
+            "ZERO_IS_HEALTHY exempts rule 'AgentKillSwitchFired', which no longer exists", said
+        )
 
     def test_every_exemption_says_why(self):
         for key, reason in gate.ZERO_IS_HEALTHY.items():
@@ -157,21 +170,36 @@ class TheCorpus(AlertFiles):
         self.assertIn("no `!= 0` guards found", said)
 
     def test_what_is_no_rule_group_is_not_read(self):
-        self.write("contact-points.yaml", {"kind": "GrafanaContactPoint", "metadata": {}},
-                   group(GUARDED, COVERED))
+        self.write(
+            "contact-points.yaml",
+            {"kind": "GrafanaContactPoint", "metadata": {}},
+            group(GUARDED, COVERED),
+        )
         rc, said = self.check()
         self.assertEqual(rc, 0, said)
 
     def test_a_group_with_no_query_is_skipped(self):
-        empty = {"kind": "GrafanaAlertRuleGroup", "spec": {"rules": [
-            {"title": "NoQuery", "data": [{"refId": "A", "model": {}}, {"refId": "B"}]}]}}
+        empty = {
+            "kind": "GrafanaAlertRuleGroup",
+            "spec": {
+                "rules": [
+                    {"title": "NoQuery", "data": [{"refId": "A", "model": {}}, {"refId": "B"}]}
+                ]
+            },
+        }
         self.write("evals.yaml", empty, group(GUARDED, COVERED))
         rc, said = self.check()
         self.assertEqual(rc, 0, said)
 
     def test_a_rule_without_a_title_is_named_by_its_uid(self):
-        rule_group = {"spec": {"rules": [{"uid": "u-1", "data": [{"model": {"expr": "up"}}]},
-                                         {"data": [{"model": {"expr": "down"}}]}]}}
+        rule_group = {
+            "spec": {
+                "rules": [
+                    {"uid": "u-1", "data": [{"model": {"expr": "up"}}]},
+                    {"data": [{"model": {"expr": "down"}}]},
+                ]
+            }
+        }
         self.assertEqual(gate.rule_exprs(rule_group), [("u-1", "up"), ("?", "down")])
 
 

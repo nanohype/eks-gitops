@@ -33,8 +33,7 @@ class TemplateVariableReferences(unittest.TestCase):
     """Grafana writes a variable reference four ways; all four must be seen."""
 
     def test_the_braced_form(self):
-        self.assertEqual(gate.template_vars("SELECT ${cost_database}.t"),
-                         {"cost_database"})
+        self.assertEqual(gate.template_vars("SELECT ${cost_database}.t"), {"cost_database"})
 
     def test_the_braced_form_with_a_format_suffix(self):
         self.assertEqual(gate.template_vars("${namespace:csv}"), {"namespace"})
@@ -43,8 +42,7 @@ class TemplateVariableReferences(unittest.TestCase):
         self.assertEqual(gate.template_vars('{namespace="$namespace"}'), {"namespace"})
 
     def test_the_bracket_form(self):
-        self.assertEqual(gate.template_vars("[[tenant]] and [[tenant:csv]]"),
-                         {"tenant"})
+        self.assertEqual(gate.template_vars("[[tenant]] and [[tenant:csv]]"), {"tenant"})
 
     def test_grafana_builtins_are_not_reported(self):
         text = "rate(x[$__rate_interval]) offset $__range and $__from to $__to"
@@ -52,8 +50,8 @@ class TemplateVariableReferences(unittest.TestCase):
 
     def test_a_builtin_beside_a_real_variable_leaves_the_real_one(self):
         self.assertEqual(
-            gate.template_vars('sum(rate(x{ns="$namespace"}[$__rate_interval]))'),
-            {"namespace"})
+            gate.template_vars('sum(rate(x{ns="$namespace"}[$__rate_interval]))'), {"namespace"}
+        )
 
     def test_every_builtin_in_the_allowlist_is_suppressed(self):
         for name in sorted(gate.GRAFANA_BUILTINS):
@@ -67,11 +65,12 @@ class ExtractingTheDashboardBody(unittest.TestCase):
     def manifest(self, body, indent=4):
         pad = " " * indent
         block = "\n".join(f"{pad}  {line}" for line in body.splitlines())
-        return (f"kind: GrafanaDashboard\nspec:\n{pad}json: |\n{block}\n")
+        return f"kind: GrafanaDashboard\nspec:\n{pad}json: |\n{block}\n"
 
     def test_a_well_formed_block_parses(self):
         dash, reason = gate.extract_dashboard_json(
-            self.manifest(json.dumps({"title": "T", "panels": []}, indent=1)))
+            self.manifest(json.dumps({"title": "T", "panels": []}, indent=1))
+        )
         self.assertIsNone(reason)
         self.assertEqual(dash["title"], "T")
 
@@ -94,8 +93,10 @@ class ExtractingTheDashboardBody(unittest.TestCase):
         self.assertGreater(line, 3)
 
     def test_content_after_the_block_is_not_swallowed(self):
-        text = (self.manifest(json.dumps({"title": "T"}))
-                + "  instanceSelector:\n    matchLabels:\n      app: grafana\n")
+        text = (
+            self.manifest(json.dumps({"title": "T"}))
+            + "  instanceSelector:\n    matchLabels:\n      app: grafana\n"
+        )
         dash, reason = gate.extract_dashboard_json(text)
         self.assertIsNone(reason)
         self.assertEqual(dash, {"title": "T"})
@@ -113,17 +114,16 @@ class DatasourceReferencesInAPanel(unittest.TestCase):
         self.assertEqual(self.refs({"datasource": "athena-cur"}), ["athena-cur"])
 
     def test_an_object_datasource_yields_its_uid(self):
-        self.assertEqual(
-            self.refs({"datasource": {"type": "prometheus", "uid": "amp"}}), ["amp"])
+        self.assertEqual(self.refs({"datasource": {"type": "prometheus", "uid": "amp"}}), ["amp"])
 
     def test_grafanas_builtin_datasource_is_not_a_reference(self):
         """The default "Annotations & Alerts" entry names Grafana's own datasource."""
-        self.assertEqual(
-            self.refs({"datasource": {"type": "datasource", "uid": "grafana"}}), [])
+        self.assertEqual(self.refs({"datasource": {"type": "datasource", "uid": "grafana"}}), [])
 
     def test_a_uid_of_grafana_on_another_type_is_still_collected(self):
         self.assertEqual(
-            self.refs({"datasource": {"type": "prometheus", "uid": "grafana"}}), ["grafana"])
+            self.refs({"datasource": {"type": "prometheus", "uid": "grafana"}}), ["grafana"]
+        )
         self.assertEqual(self.refs({"datasource": "grafana"}), ["grafana"])
 
     def test_a_datasource_object_with_no_uid_yields_nothing(self):
@@ -131,8 +131,16 @@ class DatasourceReferencesInAPanel(unittest.TestCase):
 
     def test_nested_panels_and_targets_are_reached(self):
         """A collapsed row is a panel whose children hang off a nested list."""
-        dash = {"panels": [{"collapsed": True, "panels": [
-            {"datasource": "loki", "targets": [{"datasource": {"uid": "tempo"}}]}]}]}
+        dash = {
+            "panels": [
+                {
+                    "collapsed": True,
+                    "panels": [
+                        {"datasource": "loki", "targets": [{"datasource": {"uid": "tempo"}}]}
+                    ],
+                }
+            ]
+        }
         self.assertEqual(self.refs(dash), ["loki", "tempo"])
 
 
@@ -159,21 +167,26 @@ class LegacyAlertPanels(unittest.TestCase):
         return out
 
     def test_a_top_level_alert_panel_is_found(self):
-        self.assertEqual(self.titles({"panels": [{"title": "CPU", "alert": {}}]}),
-                         ["CPU"])
+        self.assertEqual(self.titles({"panels": [{"title": "CPU", "alert": {}}]}), ["CPU"])
 
     def test_an_alert_inside_a_collapsed_row_is_found(self):
         """A flat scan misses every alert panel a collapsed row contains."""
-        dash = {"panels": [{"title": "row", "collapsed": True,
-                            "panels": [{"title": "Disk", "alert": {"x": 1}}]}]}
+        dash = {
+            "panels": [
+                {
+                    "title": "row",
+                    "collapsed": True,
+                    "panels": [{"title": "Disk", "alert": {"x": 1}}],
+                }
+            ]
+        }
         self.assertEqual(self.titles(dash), ["Disk"])
 
     def test_a_null_alert_key_is_not_an_alert(self):
         self.assertEqual(self.titles({"panels": [{"title": "CPU", "alert": None}]}), [])
 
     def test_an_untitled_alert_panel_is_still_reported(self):
-        self.assertEqual(self.titles({"panels": [{"alert": {}}]}),
-                         ["<untitled panel>"])
+        self.assertEqual(self.titles({"panels": [{"alert": {}}]}), ["<untitled panel>"])
 
 
 class WiredDatasources(unittest.TestCase):
@@ -199,12 +212,15 @@ class WiredDatasources(unittest.TestCase):
             resources:
               - datasources/loki.yaml
             """,
-            {"loki.yaml": """
+            {
+                "loki.yaml": """
              spec:
                datasource:
                  uid: managed-loki
                  name: Loki
-             """})
+             """
+            },
+        )
         self.assertEqual(gate.wired_datasource_refs(root), {"managed-loki", "Loki"})
 
     def test_a_datasource_file_absent_from_resources_is_not_wired(self):
@@ -213,13 +229,15 @@ class WiredDatasources(unittest.TestCase):
             resources:
               - datasources/loki.yaml
             """,
-            {"loki.yaml": "spec:\n  datasource:\n    uid: managed-loki\n",
-             "athena.yaml": "spec:\n  datasource:\n    uid: athena-cur\n"})
+            {
+                "loki.yaml": "spec:\n  datasource:\n    uid: managed-loki\n",
+                "athena.yaml": "spec:\n  datasource:\n    uid: athena-cur\n",
+            },
+        )
         self.assertEqual(gate.wired_datasource_refs(root), {"managed-loki"})
 
     def test_a_tree_with_no_kustomization_wires_nothing(self):
-        self.assertEqual(gate.wired_datasource_refs(pathlib.Path(tempfile.mkdtemp())),
-                         set())
+        self.assertEqual(gate.wired_datasource_refs(pathlib.Path(tempfile.mkdtemp())), set())
 
 
 class TheOfflineVerdict(unittest.TestCase):
@@ -242,10 +260,12 @@ class TheOfflineVerdict(unittest.TestCase):
         base = root / "dashboards" / "base"
         (base / "datasources").mkdir(parents=True)
         (base / "kustomization.yaml").write_text(
-            "resources:\n" + "".join(f"  - datasources/{u}.yaml\n" for u in wired))
+            "resources:\n" + "".join(f"  - datasources/{u}.yaml\n" for u in wired)
+        )
         for uid in wired:
             (base / "datasources" / f"{uid}.yaml").write_text(
-                f"spec:\n  datasource:\n    uid: {uid}\n")
+                f"spec:\n  datasource:\n    uid: {uid}\n"
+            )
         (root / "dashboards" / "platform").mkdir(parents=True)
         for name, body in dashboards.items():
             (root / "dashboards" / "platform" / name).write_text(body)
@@ -257,57 +277,92 @@ class TheOfflineVerdict(unittest.TestCase):
         if not block:
             # A quoted scalar: semantically identical YAML, invisible to the
             # block parser, and every check below silently stops applying.
-            return ("kind: GrafanaDashboard\nspec:\n  json: "
-                    + json.dumps(payload) + "\n")
+            return "kind: GrafanaDashboard\nspec:\n  json: " + json.dumps(payload) + "\n"
         indented = "\n".join("    " + line for line in payload.splitlines())
         return f"kind: GrafanaDashboard\nspec:\n  json: |\n{indented}\n"
 
     def test_a_healthy_tree_reports_nothing(self):
         """The control against false positives — necessary, and not evidence."""
-        root = self.tree({"ok.yaml": self.board({
-            "templating": {"list": [{"name": "ns"}]},
-            "panels": [{"datasource": "managed-loki",
-                        "targets": [{"expr": 'x{namespace="$ns"}'}]}]})})
+        root = self.tree(
+            {
+                "ok.yaml": self.board(
+                    {
+                        "templating": {"list": [{"name": "ns"}]},
+                        "panels": [
+                            {
+                                "datasource": "managed-loki",
+                                "targets": [{"expr": 'x{namespace="$ns"}'}],
+                            }
+                        ],
+                    }
+                )
+            }
+        )
         self.assertEqual(gate.check_local_dashboards(root), [])
 
     def test_a_panel_naming_an_unwired_datasource_is_reported(self):
         """A dashboard is data: the operator applies it and Grafana discovers the
         missing datasource at view time, in front of whoever opened the board."""
-        root = self.tree({"finance.yaml": self.board({
-            "panels": [{"datasource": "athena-cur"}]})})
+        root = self.tree({"finance.yaml": self.board({"panels": [{"datasource": "athena-cur"}]})})
         problems = gate.check_local_dashboards(root)
         self.assertEqual(len(problems), 1)
         self.assertIn("panel datasource 'athena-cur' is not wired", problems[0])
         self.assertIn("dashboards/platform/finance.yaml", problems[0])
 
     def test_a_datasource_chosen_by_a_template_variable_is_not_reported(self):
-        root = self.tree({"ok.yaml": self.board({
-            "templating": {"list": [{"name": "ds"}]},
-            "panels": [{"datasource": "$ds"}]})})
+        root = self.tree(
+            {
+                "ok.yaml": self.board(
+                    {"templating": {"list": [{"name": "ds"}]}, "panels": [{"datasource": "$ds"}]}
+                )
+            }
+        )
         self.assertEqual(gate.check_local_dashboards(root), [])
 
     def test_an_undeclared_template_variable_is_reported(self):
         """The interpolation expands to nothing and the query is malformed."""
-        root = self.tree({"finance.yaml": self.board({
-            "panels": [{"datasource": "managed-loki",
-                        "targets": [{"rawSql": "SELECT * FROM ${cost_database}.cur"}]}]})})
+        root = self.tree(
+            {
+                "finance.yaml": self.board(
+                    {
+                        "panels": [
+                            {
+                                "datasource": "managed-loki",
+                                "targets": [{"rawSql": "SELECT * FROM ${cost_database}.cur"}],
+                            }
+                        ]
+                    }
+                )
+            }
+        )
         problems = gate.check_local_dashboards(root)
         self.assertEqual(len(problems), 1)
-        self.assertIn("uses $cost_database but declares no such template variable",
-                      problems[0])
+        self.assertIn("uses $cost_database but declares no such template variable", problems[0])
 
     def test_a_declared_variable_is_not_reported(self):
-        root = self.tree({"ok.yaml": self.board({
-            "templating": {"list": [{"name": "cost_database"}]},
-            "panels": [{"datasource": "managed-loki",
-                        "targets": [{"rawSql": "SELECT * FROM ${cost_database}.cur"}]}]})})
+        root = self.tree(
+            {
+                "ok.yaml": self.board(
+                    {
+                        "templating": {"list": [{"name": "cost_database"}]},
+                        "panels": [
+                            {
+                                "datasource": "managed-loki",
+                                "targets": [{"rawSql": "SELECT * FROM ${cost_database}.cur"}],
+                            }
+                        ],
+                    }
+                )
+            }
+        )
         self.assertEqual(gate.check_local_dashboards(root), [])
 
     def test_a_locally_authored_board_whose_json_cannot_be_read_is_reported(self):
         """Skipping it quietly is how the check reports success having looked at
         nothing: a quoted scalar is identical YAML and invisible to every check."""
-        root = self.tree({"quoted.yaml": self.board(
-            {"panels": [{"datasource": "athena-cur"}]}, block=False)})
+        root = self.tree(
+            {"quoted.yaml": self.board({"panels": [{"datasource": "athena-cur"}]}, block=False)}
+        )
         problems = gate.check_local_dashboards(root)
         self.assertEqual(len(problems), 1)
         self.assertIn("dashboard JSON could not be read", problems[0])
@@ -315,16 +370,24 @@ class TheOfflineVerdict(unittest.TestCase):
 
     def test_a_grafana_com_board_carrying_no_inline_json_is_not_reported(self):
         """Its content is an id the network checks validate; there is nothing here."""
-        root = self.tree({"pulled.yaml":
-                          "kind: GrafanaDashboard\nspec:\n  grafanaCom:\n    id: 1860\n"})
+        root = self.tree(
+            {"pulled.yaml": "kind: GrafanaDashboard\nspec:\n  grafanaCom:\n    id: 1860\n"}
+        )
         self.assertEqual(gate.check_local_dashboards(root), [])
 
     def test_a_declared_variable_nothing_references_reports_a_broken_parser(self):
         """An empty `used` satisfies `used - declared` on every board, so a regex
         that stops matching turns the check above into a silent no-op."""
-        root = self.tree({"ok.yaml": self.board({
-            "templating": {"list": [{"name": "ns"}]},
-            "panels": [{"datasource": "managed-loki"}]})})
+        root = self.tree(
+            {
+                "ok.yaml": self.board(
+                    {
+                        "templating": {"list": [{"name": "ns"}]},
+                        "panels": [{"datasource": "managed-loki"}],
+                    }
+                )
+            }
+        )
         problems = gate.check_local_dashboards(root)
         self.assertEqual(len(problems), 1)
         self.assertIn("not one reference was found", problems[0])
@@ -332,19 +395,27 @@ class TheOfflineVerdict(unittest.TestCase):
 
     def test_every_detection_is_reported_from_one_pass(self):
         """A verdict that returns on the first problem hides the rest behind a fix."""
-        root = self.tree({
-            "quoted.yaml": self.board({"panels": []}, block=False),
-            "finance.yaml": self.board({
-                "panels": [{"datasource": "athena-cur",
-                            "targets": [{"rawSql": "FROM ${cost_database}.t"}]}]}),
-        })
+        root = self.tree(
+            {
+                "quoted.yaml": self.board({"panels": []}, block=False),
+                "finance.yaml": self.board(
+                    {
+                        "panels": [
+                            {
+                                "datasource": "athena-cur",
+                                "targets": [{"rawSql": "FROM ${cost_database}.t"}],
+                            }
+                        ]
+                    }
+                ),
+            }
+        )
         problems = gate.check_local_dashboards(root)
         self.assertEqual(len(problems), 3)
 
     def test_a_tree_with_no_dashboards_directory_reports_nothing(self):
         """Not a finding: the caller's floor is what refuses an absent corpus."""
-        self.assertEqual(
-            gate.check_local_dashboards(pathlib.Path(tempfile.mkdtemp())), [])
+        self.assertEqual(gate.check_local_dashboards(pathlib.Path(tempfile.mkdtemp())), [])
 
 
 class TheShippedDashboards(unittest.TestCase):

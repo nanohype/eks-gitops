@@ -35,17 +35,32 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 
 
 def source(**kw):
-    base = {"appset": "a", "file": "a.yaml", "repo_url": "https://example.invalid",
-            "target_revision": "v1", "path": "crds", "recurse": False,
-            "include": "", "exclude": "", "local": None}
+    base = {
+        "appset": "a",
+        "file": "a.yaml",
+        "repo_url": "https://example.invalid",
+        "target_revision": "v1",
+        "path": "crds",
+        "recurse": False,
+        "include": "",
+        "exclude": "",
+        "local": None,
+    }
     base.update(kw)
     return gate.Source(**base)
 
 
 def record(**kw):
-    base = {"repoURL": "https://example.invalid", "targetRevision": "v1",
-            "path": "crds", "recurse": False, "include": "", "exclude": "",
-            "bytes": 1000, "files": 2}
+    base = {
+        "repoURL": "https://example.invalid",
+        "targetRevision": "v1",
+        "path": "crds",
+        "recurse": False,
+        "include": "",
+        "exclude": "",
+        "bytes": 1000,
+        "files": 2,
+    }
     base.update(kw)
     return base
 
@@ -76,16 +91,24 @@ class TheQuantityGrammar(unittest.TestCase):
         self.assertEqual(gate.quantity("10Mi", "t"), 10_485_760)
 
     def test_every_suffix_the_api_accepts(self):
-        for text, want in (("512", 512), ("4k", 4_000), ("1G", 10**9),
-                           ("1Ki", 1024), ("2Gi", 2 * 2**30)):
+        for text, want in (
+            ("512", 512),
+            ("4k", 4_000),
+            ("1G", 10**9),
+            ("1Ki", 1024),
+            ("2Gi", 2 * 2**30),
+        ):
             self.assertEqual(gate.quantity(text, "t"), want, text)
 
     def test_something_the_repo_server_would_not_accept_cannot_run(self):
         # Not a finding: the gate has no ceiling, so every source would measure
         # as fitting. That is exit 2, and it must not be exit 0.
         for text in ("20MB", "20 M", "1.5M", "twenty", "", "-1M"):
-            with self.subTest(text=text), contextlib.redirect_stdout(io.StringIO()), \
-                    self.assertRaises(SystemExit) as raised:
+            with (
+                self.subTest(text=text),
+                contextlib.redirect_stdout(io.StringIO()),
+                self.assertRaises(SystemExit) as raised,
+            ):
                 gate.quantity(text, "t")
             self.assertEqual(raised.exception.code, gate.gatelib.CANNOT_RUN, text)
 
@@ -199,17 +222,23 @@ class TheByteAccounting(unittest.TestCase):
 
 class ExpandingATemplatedPath(unittest.TestCase):
     def doc(self, elements):
-        return {"spec": {"generators": [{"matrix": {"generators": [
-            {"list": {"elements": elements}}]}}]}}
+        return {
+            "spec": {"generators": [{"matrix": {"generators": [{"list": {"elements": elements}}]}}]}
+        }
 
     def test_the_element_path_and_the_environment_label(self):
-        got = gate.expansions('{{ .path }}/overlays/{{ index .metadata.labels "environment" }}',
-                              self.doc([{"path": "addons/x"}]), ["development", "hub"])
+        got = gate.expansions(
+            '{{ .path }}/overlays/{{ index .metadata.labels "environment" }}',
+            self.doc([{"path": "addons/x"}]),
+            ["development", "hub"],
+        )
         self.assertEqual(got, ["addons/x/overlays/development", "addons/x/overlays/hub"])
 
     def test_a_literal_path_expands_to_itself(self):
-        self.assertEqual(gate.expansions("config/crd/standard", self.doc([]), ["development"]),
-                         ["config/crd/standard"])
+        self.assertEqual(
+            gate.expansions("config/crd/standard", self.doc([]), ["development"]),
+            ["config/crd/standard"],
+        )
 
     def test_a_shape_it_cannot_expand_keeps_its_braces(self):
         # Which is the point: an unexpanded path is reported as one this
@@ -250,11 +279,13 @@ class TheVerdict(unittest.TestCase):
         self.assertIn("targetRevision", said)
 
     def test_every_coordinate_the_measurement_depends_on_is_compared(self):
-        for field, changed in (("repo_url", {"repo_url": "https://other.invalid"}),
-                               ("path", {"path": "crds/minimal"}),
-                               ("recurse", {"recurse": True}),
-                               ("include", {"include": "*.yaml"}),
-                               ("exclude", {"exclude": "*.json"})):
+        for field, changed in (
+            ("repo_url", {"repo_url": "https://other.invalid"}),
+            ("path", {"path": "crds/minimal"}),
+            ("recurse", {"recurse": True}),
+            ("include", {"include": "*.yaml"}),
+            ("exclude", {"exclude": "*.json"}),
+        ):
             with self.subTest(field=field):
                 rc, _ = verdict([source(**changed)], {"a": record()})
                 self.assertEqual(rc, 1)
@@ -266,12 +297,19 @@ class TheVerdict(unittest.TestCase):
 
     def test_an_unmeasurable_source_needs_a_stated_reason(self):
         templated = source(path="{{ .path.path }}")
-        rc, _ = verdict([templated],
-                        {"a": record(path="{{ .path.path }}", bytes=None, files=None)})
+        rc, _ = verdict([templated], {"a": record(path="{{ .path.path }}", bytes=None, files=None)})
         self.assertEqual(rc, 1)
-        rc, said = verdict([templated],
-                           {"a": record(path="{{ .path.path }}", bytes=None, files=None,
-                                        unbounded="bounded where it is written")})
+        rc, said = verdict(
+            [templated],
+            {
+                "a": record(
+                    path="{{ .path.path }}",
+                    bytes=None,
+                    files=None,
+                    unbounded="bounded where it is written",
+                )
+            },
+        )
         self.assertEqual(rc, 0, said)
         self.assertIn("bounded where it is written", said)
 
@@ -303,8 +341,7 @@ class TheVerdict(unittest.TestCase):
     def test_a_contract_declaring_no_ceiling_cannot_run(self):
         # Exit 2, not 0: with no ceiling every source measures as fitting, and a
         # gate that reports that has answered a question it never asked.
-        with contextlib.redirect_stdout(io.StringIO()), \
-                self.assertRaises(SystemExit) as raised:
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as raised:
             gate.check_offline([source()], {"a": record()}, {"argoCdDefault": "10M"})
         self.assertEqual(raised.exception.code, gate.gatelib.CANNOT_RUN)
 
@@ -339,11 +376,9 @@ class TheLiveVerdict(unittest.TestCase):
         self.assertIn("The pin did not move", said)
 
     def test_the_boundary_is_the_repo_servers_here_too(self):
-        rc, said = self.live((20_000_000, 2), [source()],
-                             {"a": record(bytes=20_000_000)})
+        rc, said = self.live((20_000_000, 2), [source()], {"a": record(bytes=20_000_000)})
         self.assertEqual(rc, 0, said)
-        rc, _ = self.live((20_000_001, 2), [source()],
-                          {"a": record(bytes=20_000_001)})
+        rc, _ = self.live((20_000_001, 2), [source()], {"a": record(bytes=20_000_001)})
         self.assertEqual(rc, 1)
 
     def test_a_source_resolving_to_no_manifest_file_is_rejected(self):
@@ -354,8 +389,7 @@ class TheLiveVerdict(unittest.TestCase):
         self.assertIn("generates nothing", said)
 
     def test_resolving_nothing_at_all_is_not_a_pass(self):
-        with contextlib.redirect_stdout(io.StringIO()), \
-                self.assertRaises(SystemExit) as raised:
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as raised:
             self.live((1, 1), [source(path="{{ .path.path }}")], {})
         self.assertEqual(raised.exception.code, 1)
 
@@ -365,8 +399,7 @@ class TheRecordKeys(unittest.TestCase):
         self.assertEqual(sorted(gate.keyed([source(appset="crds")])), ["crds"])
 
     def test_two_sources_in_one_appset_are_told_apart_by_path(self):
-        got = sorted(gate.keyed([source(appset="crds", path="a"),
-                                 source(appset="crds", path="b")]))
+        got = sorted(gate.keyed([source(appset="crds", path="a"), source(appset="crds", path="b")]))
         self.assertEqual(got, ["crds#a", "crds#b"])
 
 
@@ -390,8 +423,11 @@ class TheShippedCatalog(unittest.TestCase):
         # Every in-tree source this catalog ships carries a kustomization, so
         # anything under addons/ or policies/ appearing here means one stopped
         # being a kustomize root.
-        stray = [k for k, s in self.keyed.items()
-                 if s.local is not None and s.path.startswith(("addons/", "policies/"))]
+        stray = [
+            k
+            for k, s in self.keyed.items()
+            if s.local is not None and s.path.startswith(("addons/", "policies/"))
+        ]
         self.assertEqual(stray, [])
 
     def test_every_source_has_a_record_or_is_measured_in_tree(self):
@@ -407,8 +443,7 @@ class TheShippedCatalog(unittest.TestCase):
 
     def test_the_contract_declares_a_ceiling_the_repo_server_would_accept(self):
         contract = gate.load_contract()
-        self.assertGreater(
-            gate.quantity(contract["maxCombinedDirectoryManifestsSize"], "t"), 0)
+        self.assertGreater(gate.quantity(contract["maxCombinedDirectoryManifestsSize"], "t"), 0)
 
     def test_the_catalog_passes_its_own_gate(self):
         rc, said = verdict(self.sources, gate.load_records(), gate.load_contract())

@@ -108,9 +108,11 @@ def pinned_chart_version() -> str:
     the catalog's own git revision and must not be mistaken for it.
     """
     if not OPERATOR_APPSET.is_file():
-        print(f"Cannot run: {OPERATOR_APPSET.relative_to(ROOT)} does not exist, so the "
-              f"operator chart version this gate resolves its CRDs from is unknown. "
-              f"An unreadable pin is not the same as a catalog with no CRs in it.")
+        print(
+            f"Cannot run: {OPERATOR_APPSET.relative_to(ROOT)} does not exist, so the "
+            f"operator chart version this gate resolves its CRDs from is unknown. "
+            f"An unreadable pin is not the same as a catalog with no CRs in it."
+        )
         sys.exit(gatelib.CANNOT_RUN)
     text = OPERATOR_APPSET.read_text()
     m = re.search(
@@ -177,16 +179,11 @@ def list_identities(value, schema):
         if not keys:
             return None
         pairs = [
-            (i, tuple(v.get(k) for k in keys))
-            for i, v in enumerate(value)
-            if isinstance(v, dict)
+            (i, tuple(v.get(k) for k in keys)) for i, v in enumerate(value) if isinstance(v, dict)
         ]
         return "+".join(keys), pairs
     if kind_of_list == "set":
-        pairs = [
-            (i, v) for i, v in enumerate(value)
-            if isinstance(v, (str, int, float, bool))
-        ]
+        pairs = [(i, v) for i, v in enumerate(value) if isinstance(v, (str, int, float, bool))]
         return "value", pairs
     return None
 
@@ -213,7 +210,8 @@ def check_list_uniqueness(value, schema, path, kind, source, problems):
         if identity in seen:
             shown = (
                 "/".join("<unset>" if p is None else str(p) for p in identity)
-                if isinstance(identity, tuple) else str(identity)
+                if isinstance(identity, tuple)
+                else str(identity)
             )
             problems.append(
                 f"{source}: {kind} {path}[{i}] repeats {label}={shown}, already at "
@@ -404,7 +402,9 @@ def check(listing: bool, offline: bool) -> int:
             try:
                 docs = list(yaml.safe_load_all(f.read_text()))
             except yaml.YAMLError as exc:
-                first = str(exc).strip().splitlines()[0] if str(exc).strip() else exc.__class__.__name__
+                first = (
+                    str(exc).strip().splitlines()[0] if str(exc).strip() else exc.__class__.__name__
+                )
                 print(f"Cannot run: {f} is not parseable YAML — {first}")
                 print("It is not chart source, so this gate cannot skip it without")
                 print("shrinking the set of CRs it claims to have checked.")
@@ -417,8 +417,9 @@ def check(listing: bool, offline: bool) -> int:
                 rel = f.relative_to(ROOT)
                 name = (doc.get("metadata") or {}).get("name", "<unnamed>")
                 ident = f"{rel}: {kind}/{name}"
-                if (api.endswith("/" + CRD_VERSION)
-                        and api.split("/", 1)[0].endswith(OPERATOR_API_SUFFIX)):
+                if api.endswith("/" + CRD_VERSION) and api.split("/", 1)[0].endswith(
+                    OPERATOR_API_SUFFIX
+                ):
                     candidates.add(ident)
                 if kind not in schemas:
                     continue
@@ -427,11 +428,15 @@ def check(listing: bool, offline: bool) -> int:
                 reached.add(ident)
                 if listing:
                     print(f"  {ident}")
-                walk(doc.get("spec") or {}, schemas[kind], "spec", kind, f"{rel} ({name})", problems)
+                walk(
+                    doc.get("spec") or {}, schemas[kind], "spec", kind, f"{rel} ({name})", problems
+                )
                 walked += 1
 
     if problems:
-        print("\nthe catalog declares custom resources the API server will refuse:\n", file=sys.stderr)
+        print(
+            "\nthe catalog declares custom resources the API server will refuse:\n", file=sys.stderr
+        )
         for p in problems:
             print(f"  - {p}", file=sys.stderr)
         print(
@@ -449,16 +454,21 @@ def check(listing: bool, offline: bool) -> int:
     # empty corpus shows up as no candidates at all. A number picked here could
     # be wrong in either direction; this cannot.
     if len(candidates) < MIN_CRS:
-        print(f"\nFAIL  {len(candidates)} custom resource(s) carry an operator API "
-              f"group, below the floor of {MIN_CRS}. This gate walked almost nothing, "
-              f"which is not the same as the catalog's CRs being admissible.",
-              file=sys.stderr)
+        print(
+            f"\nFAIL  {len(candidates)} custom resource(s) carry an operator API "
+            f"group, below the floor of {MIN_CRS}. This gate walked almost nothing, "
+            f"which is not the same as the catalog's CRs being admissible.",
+            file=sys.stderr,
+        )
         return gatelib.CANNOT_RUN
     missed = sorted(candidates - reached)
     if missed:
-        print(f"\nFAIL  {len(missed)} custom resource(s) carry an operator API group "
-              f"and were not walked — the operator chart shipped no schema for their "
-              f"kind, so nothing checked them:", file=sys.stderr)
+        print(
+            f"\nFAIL  {len(missed)} custom resource(s) carry an operator API group "
+            f"and were not walked — the operator chart shipped no schema for their "
+            f"kind, so nothing checked them:",
+            file=sys.stderr,
+        )
         for item in missed:
             print(f"  - {item}", file=sys.stderr)
         return 1
@@ -516,7 +526,11 @@ def self_test() -> int:
         # is admitted. Without this the catalog's own Tenant reads as rejected.
         ("required but defaulted is not a rejection", {"defaulted": {}}, 0),
         ("required missing in an array element", {"agents": [{"name": "a"}]}, 1),
-        ("second element also checked", {"agents": [{"name": "a", "image": "i"}, {"name": "b"}]}, 1),
+        (
+            "second element also checked",
+            {"agents": [{"name": "a", "image": "i"}, {"name": "b"}]},
+            1,
+        ),
         ("excess property", {"agents": [{"name": "a", "image": "i", "tools": []}]}, 1),
         ("preserve-unknown-fields is left alone", {"free": {"anything": {"nested": 1}}}, 0),
         ("unknown top-level key", {"nope": 1}, 1),
@@ -528,12 +542,25 @@ def self_test() -> int:
         # Uniqueness is per listMapKeys, not per whole entry.
         (
             "duplicate on the key alone, not the whole entry",
-            {"datastores": [{"name": "main", "kind": "relational"}, {"name": "main", "kind": "cache"}]},
+            {
+                "datastores": [
+                    {"name": "main", "kind": "relational"},
+                    {"name": "main", "kind": "cache"},
+                ]
+            },
             1,
         ),
         # Composite keys collide only when every key matches.
-        ("composite key differing in one field", {"routes": [{"group": "g", "name": "a"}, {"group": "g", "name": "b"}]}, 0),
-        ("composite key matching in both", {"routes": [{"group": "g", "name": "a"}, {"group": "g", "name": "a"}]}, 1),
+        (
+            "composite key differing in one field",
+            {"routes": [{"group": "g", "name": "a"}, {"group": "g", "name": "b"}]},
+            0,
+        ),
+        (
+            "composite key matching in both",
+            {"routes": [{"group": "g", "name": "a"}, {"group": "g", "name": "a"}]},
+            1,
+        ),
         # An unset key is a value: two entries omitting it collide on <unset>.
         ("unset key participates in the identity", {"routes": [{"group": "g"}, {"group": "g"}]}, 1),
         ("duplicate set member", {"finalizers": ["a", "a"]}, 1),

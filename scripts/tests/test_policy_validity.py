@@ -27,17 +27,30 @@ from gateloader import load
 
 gate = load("check-policy-validity")
 
-IVPOL = {"apiVersion": "policies.kyverno.io/v1", "kind": "ImageValidatingPolicy",
-         "metadata": {"name": "verify-images"},
-         "spec": {"validationConfigurations": {"mutateDigest": True, "verifyDigest": True}}}
-VPOL = {"apiVersion": "policies.kyverno.io/v1", "kind": "ValidatingPolicy",
-        "metadata": {"name": "require-labels"},
-        "spec": {"validations": [{"expression": "true"}]}}
-MPOL = {"apiVersion": "policies.kyverno.io/v1", "kind": "MutatingPolicy",
-        "metadata": {"name": "inject"}, "spec": {}}
-CPOL = {"apiVersion": "kyverno.io/v1", "kind": "ClusterPolicy",
-        "metadata": {"name": "require-labels"},
-        "spec": {"rules": [{"name": "a"}, {"name": "b"}]}}
+IVPOL = {
+    "apiVersion": "policies.kyverno.io/v1",
+    "kind": "ImageValidatingPolicy",
+    "metadata": {"name": "verify-images"},
+    "spec": {"validationConfigurations": {"mutateDigest": True, "verifyDigest": True}},
+}
+VPOL = {
+    "apiVersion": "policies.kyverno.io/v1",
+    "kind": "ValidatingPolicy",
+    "metadata": {"name": "require-labels"},
+    "spec": {"validations": [{"expression": "true"}]},
+}
+MPOL = {
+    "apiVersion": "policies.kyverno.io/v1",
+    "kind": "MutatingPolicy",
+    "metadata": {"name": "inject"},
+    "spec": {},
+}
+CPOL = {
+    "apiVersion": "kyverno.io/v1",
+    "kind": "ClusterPolicy",
+    "metadata": {"name": "require-labels"},
+    "spec": {"rules": [{"name": "a"}, {"name": "b"}]},
+}
 
 
 def render(*docs) -> str:
@@ -48,7 +61,9 @@ def completed(returncode=0, stdout="", stderr=""):
     return subprocess.CompletedProcess(["tool"], returncode, stdout, stderr)
 
 
-APPLIED = "Applying 3 policy rule(s) to 1 resource(s)...\npass: 0, fail: 0, warn: 0, error: 0, skip: 3\n"
+APPLIED = (
+    "Applying 3 policy rule(s) to 1 resource(s)...\npass: 0, fail: 0, warn: 0, error: 0, skip: 3\n"
+)
 
 
 class Tools:
@@ -85,8 +100,9 @@ class TheDigestPin(unittest.TestCase):
             with self.subTest(field=field):
                 gate.failures.clear()
                 cfg = {"mutateDigest": True, "verifyDigest": True, field: False}
-                gate._check_pins_digest("o", render({**IVPOL, "spec": {
-                    "validationConfigurations": cfg}}))
+                gate._check_pins_digest(
+                    "o", render({**IVPOL, "spec": {"validationConfigurations": cfg}})
+                )
                 self.assertEqual(len(gate.failures), 1)
                 self.assertIn(f"sets {field} False", gate.failures[0])
 
@@ -95,8 +111,7 @@ class CountingRules(unittest.TestCase):
     """The count Kyverno's load line is compared against."""
 
     def test_each_cel_policy_counts_one_and_nothing_else_counts(self):
-        self.assertEqual(gate.rules_in(render(VPOL, MPOL, IVPOL, {"kind": "ConfigMap"},
-                                              None)), 3)
+        self.assertEqual(gate.rules_in(render(VPOL, MPOL, IVPOL, {"kind": "ConfigMap"}, None)), 3)
 
     def test_a_legacy_policy_counts_nothing(self):
         """Kyverno 1.20 loads none of its rules."""
@@ -107,10 +122,13 @@ class LegacyKinds(unittest.TestCase):
     """Refused offline, whatever the CLI in use would say about them."""
 
     def test_every_legacy_kind_is_found(self):
-        docs = [{"apiVersion": "kyverno.io/v2", "kind": k, "metadata": {"name": "x"}}
-                for k in sorted(gate.LEGACY_KINDS)]
-        self.assertEqual(gate.legacy_policies(render(*docs)),
-                         [f"{k}/x" for k in sorted(gate.LEGACY_KINDS)])
+        docs = [
+            {"apiVersion": "kyverno.io/v2", "kind": k, "metadata": {"name": "x"}}
+            for k in sorted(gate.LEGACY_KINDS)
+        ]
+        self.assertEqual(
+            gate.legacy_policies(render(*docs)), [f"{k}/x" for k in sorted(gate.LEGACY_KINDS)]
+        )
 
     def test_a_cel_kind_or_a_same_named_kind_elsewhere_is_not_legacy(self):
         other = {"apiVersion": "example.io/v1", "kind": "Policy", "metadata": {"name": "y"}}
@@ -142,11 +160,13 @@ class TheRun(unittest.TestCase):
 
     def run_main(self, tools=None):
         buf = io.StringIO()
-        with mock.patch.object(gate, "ROOT", self.root), \
-             mock.patch.object(gate, "POLICIES", self.policies), \
-             mock.patch.object(gate.gatelib, "require"), \
-             mock.patch.object(gate.subprocess, "run", tools or Tools()), \
-             contextlib.redirect_stdout(buf):
+        with (
+            mock.patch.object(gate, "ROOT", self.root),
+            mock.patch.object(gate, "POLICIES", self.policies),
+            mock.patch.object(gate.gatelib, "require"),
+            mock.patch.object(gate.subprocess, "run", tools or Tools()),
+            contextlib.redirect_stdout(buf),
+        ):
             code = gate.main()
         return code, buf.getvalue()
 
@@ -190,41 +210,58 @@ class TheRun(unittest.TestCase):
         self.failing("printed no rule count", kyverno=completed(stdout="error: 0\n"))
 
     def test_fewer_rules_loaded_than_rendered(self):
-        self.failing("loaded only 1",
-                     kyverno=completed(stdout="Applying 1 policy rule(s) to 1 resource(s)\n"))
+        self.failing(
+            "loaded only 1",
+            kyverno=completed(stdout="Applying 1 policy rule(s) to 1 resource(s)\n"),
+        )
 
     def test_zero_rules_loaded_from_a_render_carrying_none(self):
-        self.failing("loaded 0 policy rules",
-                     kustomize=completed(stdout=render({"kind": "ConfigMap"})),
-                     kyverno=completed(stdout="Applying 0 policy rule(s) to 1 resource(s)\n"))
+        self.failing(
+            "loaded 0 policy rules",
+            kustomize=completed(stdout=render({"kind": "ConfigMap"})),
+            kyverno=completed(stdout="Applying 0 policy rule(s) to 1 resource(s)\n"),
+        )
 
     def test_a_validation_message_on_stderr(self):
-        self.failing("Kyverno rejects this policy",
-                     kyverno=completed(stdout=APPLIED,
-                                       stderr="spec.x: Invalid value: true: not allowed\n"))
+        self.failing(
+            "Kyverno rejects this policy",
+            kyverno=completed(stdout=APPLIED, stderr="spec.x: Invalid value: true: not allowed\n"),
+        )
 
     def test_an_error_count_in_the_summary(self):
-        self.failing("kyverno reported errors: pass: 0, fail: 0, warn: 0, error: 1",
-                     kyverno=completed(stdout="Applying 3 policy rule(s) to 1 resource(s)\n"
-                                              "pass: 0, fail: 0, warn: 0, error: 1, skip: 3\n"))
+        self.failing(
+            "kyverno reported errors: pass: 0, fail: 0, warn: 0, error: 1",
+            kyverno=completed(
+                stdout="Applying 3 policy rule(s) to 1 resource(s)\n"
+                "pass: 0, fail: 0, warn: 0, error: 1, skip: 3\n"
+            ),
+        )
 
     def test_an_error_count_with_no_summary_line_reports_the_output(self):
-        self.failing("kyverno reported errors: Applying 3",
-                     kyverno=completed(stdout="Applying 3 policy rule(s) to 1 resource(s)\n"))
+        self.failing(
+            "kyverno reported errors: Applying 3",
+            kyverno=completed(stdout="Applying 3 policy rule(s) to 1 resource(s)\n"),
+        )
 
     def test_a_legacy_policy_in_a_render(self):
-        self.failing("renders legacy kyverno.io policy kind(s) ClusterPolicy/require-labels",
-                     kustomize=completed(stdout=render(CPOL, IVPOL)))
+        self.failing(
+            "renders legacy kyverno.io policy kind(s) ClusterPolicy/require-labels",
+            kustomize=completed(stdout=render(CPOL, IVPOL)),
+        )
 
     def test_a_cel_expression_that_does_not_compile(self):
-        self.failing("Kyverno rejects this policy",
-                     kyverno=completed(stdout=APPLIED,
-                                       stderr="failed to compile policy: ERROR: <input>:1:5\n"))
+        self.failing(
+            "Kyverno rejects this policy",
+            kyverno=completed(
+                stdout=APPLIED, stderr="failed to compile policy: ERROR: <input>:1:5\n"
+            ),
+        )
 
     def test_an_imagevalidatingpolicy_that_stops_pinning(self):
         unpinned = {**IVPOL, "spec": {"validationConfigurations": {"mutateDigest": False}}}
-        self.failing("sets mutateDigest False",
-                     kustomize=completed(stdout=render(VPOL, MPOL, unpinned)))
+        self.failing(
+            "sets mutateDigest False", kustomize=completed(stdout=render(VPOL, MPOL, unpinned))
+        )
 
 
 if __name__ == "__main__":

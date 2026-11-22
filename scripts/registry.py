@@ -127,8 +127,7 @@ HTTP_TIMEOUT = 60
 # what the deadline leaves the requests.
 CALL_DEADLINE_SECONDS = (
     RETRY_ATTEMPTS * HTTP_TIMEOUT
-    + (RETRY_ATTEMPTS - 1) * (1 + RETRY_JITTER)
-    * RETRY_MAX_WAIT_SECONDS
+    + (RETRY_ATTEMPTS - 1) * (1 + RETRY_JITTER) * RETRY_MAX_WAIT_SECONDS
 )
 
 # The longest one http_get call takes. urlopen's timeout bounds each wait on the
@@ -218,10 +217,15 @@ class Getter(Protocol):
     challenged call's deadline rather than starting one of its own.
     """
 
-    def __call__(self, url: str, headers: Mapping[str, str] | None = None,
-                 authorization: str | None = None, *,
-                 challenge: Callable[[str, float], str] | None = None,
-                 deadline: float | None = None) -> bytes:
+    def __call__(
+        self,
+        url: str,
+        headers: Mapping[str, str] | None = None,
+        authorization: str | None = None,
+        *,
+        challenge: Callable[[str, float], str] | None = None,
+        deadline: float | None = None,
+    ) -> bytes:
         """The body at `url`, or the failure http_get documents."""
 
 
@@ -263,7 +267,7 @@ def retry_after(value: str | None, now: float) -> float | None:
         return float(value)
     try:
         when = email.utils.parsedate_to_datetime(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
     if when.tzinfo is None:
         when = when.replace(tzinfo=datetime.UTC)
@@ -272,8 +276,9 @@ def retry_after(value: str | None, now: float) -> float | None:
 
 def _ran_out(host: str, where: str) -> RegistryError:
     """The RegistryError for a call whose deadline passed `where`, naming its host."""
-    return RegistryError(f"{host}: the {CALL_DEADLINE_SECONDS:.0f}s one call is allowed "
-                         f"ran out {where}")
+    return RegistryError(
+        f"{host}: the {CALL_DEADLINE_SECONDS:.0f}s one call is allowed ran out {where}"
+    )
 
 
 class _Paced(io.RawIOBase):
@@ -287,8 +292,14 @@ class _Paced(io.RawIOBase):
     request's timeout.
     """
 
-    def __init__(self, beneath: io.BufferedIOBase, deadline: float,
-                 timer: Callable[[], float], host: str, url: str) -> None:
+    def __init__(
+        self,
+        beneath: io.BufferedIOBase,
+        deadline: float,
+        timer: Callable[[], float],
+        host: str,
+        url: str,
+    ) -> None:
         super().__init__()
         self._beneath = beneath
         self._deadline = deadline
@@ -304,7 +315,7 @@ class _Paced(io.RawIOBase):
             raise _ran_out(self._host, f"while the body of {self._url} was arriving")
         view = memoryview(buffer)
         data = self._beneath.read1(len(view))
-        view[:len(data)] = data
+        view[: len(data)] = data
         return len(data)
 
     def close(self) -> None:
@@ -312,8 +323,14 @@ class _Paced(io.RawIOBase):
         super().close()
 
 
-def _space(host: str, last_sent: Mapping[str, float], deadline: float, where: str,
-           sleep: Callable[[float], None], timer: Callable[[], float]) -> None:
+def _space(
+    host: str,
+    last_sent: Mapping[str, float],
+    deadline: float,
+    where: str,
+    sleep: Callable[[float], None],
+    timer: Callable[[], float],
+) -> None:
     """Wait out what is left of the spacing REQUEST_SPACING_SECONDS holds `host` to.
 
     The spacing runs from the last request `last_sent` records for the host. A
@@ -330,16 +347,20 @@ def _space(host: str, last_sent: Mapping[str, float], deadline: float, where: st
     sleep(wait)
 
 
-def http_get(url: str, headers: Mapping[str, str] | None = None,
-             authorization: str | None = None, *,
-             challenge: Callable[[str, float], str] | None = None,
-             deadline: float | None = None,
-             urlopen: Callable[..., Any] = urllib.request.urlopen,
-             sleep: Callable[[float], None] = time.sleep,
-             clock: Callable[[], float] = time.time,
-             timer: Callable[[], float] = time.monotonic,
-             jitter: Callable[[], float] = random.random,
-             last_sent: dict[str, float] | None = None) -> bytes:
+def http_get(
+    url: str,
+    headers: Mapping[str, str] | None = None,
+    authorization: str | None = None,
+    *,
+    challenge: Callable[[str, float], str] | None = None,
+    deadline: float | None = None,
+    urlopen: Callable[..., Any] = urllib.request.urlopen,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.time,
+    timer: Callable[[], float] = time.monotonic,
+    jitter: Callable[[], float] = random.random,
+    last_sent: dict[str, float] | None = None,
+) -> bytes:
     """GET `url`, retrying RETRYABLE statuses within RETRY_ATTEMPTS requests.
 
     The call runs to `deadline`, a `timer` reading, or to CALL_DEADLINE_SECONDS
@@ -370,8 +391,7 @@ def http_get(url: str, headers: Mapping[str, str] | None = None,
         if left <= 0:
             raise _ran_out(host, where)
         last_sent[host] = timer()
-        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT,
-                                                   **dict(headers or {})})
+        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, **dict(headers or {})})
         if authorization:
             # Unredirected: a blob read redirects to object storage, which
             # rejects a request carrying the registry's bearer token.
@@ -394,8 +414,7 @@ def http_get(url: str, headers: Mapping[str, str] | None = None,
                 continue
             if err.code not in RETRYABLE:
                 raise
-            asked = retry_after(err.headers.get("Retry-After") if err.headers else None,
-                                clock())
+            asked = retry_after(err.headers.get("Retry-After") if err.headers else None, clock())
             err.close()
             if attempt == RETRY_ATTEMPTS:
                 raise RegistryError(
@@ -416,8 +435,11 @@ def http_get(url: str, headers: Mapping[str, str] | None = None,
                     f"call is allowed"
                 ) from err
             source = "Retry-After" if asked is not None else "backoff"
-            print(f"  {host}: request {attempt} of {RETRY_ATTEMPTS} answered HTTP {err.code}, "
-                  f"retrying in {wait:.0f}s ({source})", file=sys.stderr)
+            print(
+                f"  {host}: request {attempt} of {RETRY_ATTEMPTS} answered HTTP {err.code}, "
+                f"retrying in {wait:.0f}s ({source})",
+                file=sys.stderr,
+            )
             sleep(wait)
 
 
@@ -468,8 +490,10 @@ def docker_credentials(config_dir: str | os.PathLike[str] | None = None) -> dict
     except FileNotFoundError:
         return {}
     except (OSError, ValueError) as exc:
-        _say_once(f"  {path}: not readable as a docker config ({exc}), so every "
-                  f"registry is read anonymously")
+        _say_once(
+            f"  {path}: not readable as a docker config ({exc}), so every "
+            f"registry is read anonymously"
+        )
         return {}
     auths = doc.get("auths", {}) if isinstance(doc, dict) else None
     if not isinstance(auths, dict):
@@ -485,16 +509,20 @@ def docker_credentials(config_dir: str | os.PathLike[str] | None = None) -> dict
         elif host:
             unusable.append(host)
     if unusable:
-        _say_once(f"  {path}: stores no `auth` for {', '.join(sorted(unusable))}, as when "
-                  f"a credential helper holds it, so each is read anonymously")
+        _say_once(
+            f"  {path}: stores no `auth` for {', '.join(sorted(unusable))}, as when "
+            f"a credential helper holds it, so each is read anonymously"
+        )
     return found
 
 
 def _refuse_login(host: str, why: str) -> None:
     """Record that `host` refused the login stored for it, and say so once."""
     _REFUSED_LOGINS.add(host)
-    _say_once(f"  {host} refused the login `docker login` stored for it ({why}), so it "
-              f"is read anonymously")
+    _say_once(
+        f"  {host} refused the login `docker login` stored for it ({why}), so it "
+        f"is read anonymously"
+    )
 
 
 class PullToken(NamedTuple):
@@ -504,9 +532,14 @@ class PullToken(NamedTuple):
     logged_in: bool
 
 
-def pull_token(challenge: str, path: str, get: Getter = http_get, *,
-               registry: str | None = None,
-               credentials: Mapping[str, str] | None = None) -> PullToken:
+def pull_token(
+    challenge: str,
+    path: str,
+    get: Getter = http_get,
+    *,
+    registry: str | None = None,
+    credentials: Mapping[str, str] | None = None,
+) -> PullToken:
     """A pull token for `path` from the realm a registry's Bearer challenge names.
 
     The scope and service are added to whatever query the realm already carries.
@@ -537,8 +570,10 @@ def pull_token(challenge: str, path: str, get: Getter = http_get, *,
     """
     scheme, _, params = challenge.strip().partition(" ")
     if scheme.lower() != "bearer":
-        raise RegistryError(f"the registry asked for {scheme or 'no'} authentication, "
-                            f"and only a bearer token is supported")
+        raise RegistryError(
+            f"the registry asked for {scheme or 'no'} authentication, "
+            f"and only a bearer token is supported"
+        )
     fields = dict(_CHALLENGE_PARAM.findall(params))
     realm = fields.get("realm")
     if not realm:
@@ -557,8 +592,9 @@ def pull_token(challenge: str, path: str, get: Getter = http_get, *,
     except urllib.error.HTTPError as err:
         err.close()
         if not (basic and registry) or err.code not in LOGIN_REFUSED:
-            raise RegistryError(f"{realm} answered HTTP {err.code} to a token request for "
-                                f"repository:{path}:pull") from err
+            raise RegistryError(
+                f"{realm} answered HTTP {err.code} to a token request for repository:{path}:pull"
+            ) from err
         _refuse_login(registry, f"HTTP {err.code} from {realm}")
         basic = None
         try:
@@ -595,8 +631,9 @@ class OciRepository:
     propagates as it is, so a 404 still answers for the pin.
     """
 
-    def __init__(self, ref: str, get: Getter = http_get,
-                 credentials: Mapping[str, str] | None = None) -> None:
+    def __init__(
+        self, ref: str, get: Getter = http_get, credentials: Mapping[str, str] | None = None
+    ) -> None:
         registry, _, self.path = ref.removeprefix("oci://").partition("/")
         self.host = REGISTRY_API_HOSTS.get(registry, registry)
         self.base = f"https://{self.host}/v2/{self.path}"
@@ -637,9 +674,9 @@ class OciRepository:
     def _authorize(self, www_authenticate: str, deadline: float) -> str:
         """The Authorization a challenge asks for, fetched inside the challenged call's deadline."""
         get = functools.partial(self._get, deadline=deadline)
-        self.token, self.logged_in = pull_token(www_authenticate, self.path, get,
-                                                registry=self.host,
-                                                credentials=self._credentials)
+        self.token, self.logged_in = pull_token(
+            www_authenticate, self.path, get, registry=self.host, credentials=self._credentials
+        )
         return f"Bearer {self.token}"
 
     def manifest(self, reference: str, accept: str = OCI_MANIFEST) -> dict:
@@ -656,16 +693,19 @@ class OciRepository:
         """
         algorithm, _, expected = digest.partition(":")
         if algorithm != "sha256" or not expected:
-            raise RegistryError(f"{self.base}: {digest!r} is not a sha256 digest, so a "
-                                f"blob read by it could not be checked")
+            raise RegistryError(
+                f"{self.base}: {digest!r} is not a sha256 digest, so a "
+                f"blob read by it could not be checked"
+            )
         data = self.read(f"blobs/{digest}")
         if hashlib.sha256(data).hexdigest() != expected:
             raise RegistryError(f"{self.base}: the blob does not match its digest {digest}")
         return data
 
 
-def oci_chart_metadata(ref: str, version: str, get: Getter = http_get, *,
-                       credentials: Mapping[str, str] | None = None) -> dict:
+def oci_chart_metadata(
+    ref: str, version: str, get: Getter = http_get, *, credentials: Mapping[str, str] | None = None
+) -> dict:
     """The Chart.yaml metadata `helm push` stores as an OCI chart's config blob.
 
     Read through an OciRepository over `get` and `credentials`.
@@ -673,16 +713,19 @@ def oci_chart_metadata(ref: str, version: str, get: Getter = http_get, *,
     repo = OciRepository(ref, get, credentials)
     config = repo.manifest(version).get("config") or {}
     if config.get("mediaType") != HELM_CONFIG:
-        raise RegistryError(f"{ref}:{version} is not a Helm chart: its config media "
-                            f"type is {config.get('mediaType')!r}")
+        raise RegistryError(
+            f"{ref}:{version} is not a Helm chart: its config media "
+            f"type is {config.get('mediaType')!r}"
+        )
     meta = json.loads(repo.blob(str(config.get("digest", ""))))
     if not isinstance(meta, dict):
         raise RegistryError(f"{ref}:{version}: the config blob is not a JSON object")
     return meta
 
 
-def oci_chart_content(ref: str, version: str, get: Getter = http_get, *,
-                      credentials: Mapping[str, str] | None = None) -> bytes:
+def oci_chart_content(
+    ref: str, version: str, get: Getter = http_get, *, credentials: Mapping[str, str] | None = None
+) -> bytes:
     """The packaged chart `helm push` stores as an OCI chart's content layer.
 
     Read through an OciRepository over `get` and `credentials`.
@@ -702,8 +745,7 @@ def oci_chart_content(ref: str, version: str, get: Getter = http_get, *,
 _INDEXES: dict[str, dict] = {}
 
 
-def repo_index_entry(repo: str, chart: str, version: str,
-                     get: Getter = http_get) -> dict:
+def repo_index_entry(repo: str, chart: str, version: str, get: Getter = http_get) -> dict:
     """The index.yaml entry an HTTPS chart repository publishes for chart@version.
 
     A 'v' prefix on either side matches its absence on the other: Helm accepts
@@ -727,8 +769,9 @@ def repo_index_entry(repo: str, chart: str, version: str,
         listed = str((entry or {}).get("version", ""))
         if listed == version or listed.removeprefix("v") == bare:
             return entry
-    raise ChartUnavailable(f"{repo.rstrip('/')}/index.yaml lists no {chart} {version}",
-                           answered=True)
+    raise ChartUnavailable(
+        f"{repo.rstrip('/')}/index.yaml lists no {chart} {version}", answered=True
+    )
 
 
 def _unavailable(err: BaseException) -> ChartUnavailable:
@@ -752,8 +795,7 @@ def _unavailable(err: BaseException) -> ChartUnavailable:
 READ_FAILURES = (OSError, http.client.HTTPException, RegistryError, ValueError)
 
 
-def chart_metadata(source: str, chart: str, version: str,
-                   get: Getter = http_get) -> dict:
+def chart_metadata(source: str, chart: str, version: str, get: Getter = http_get) -> dict:
     """What chart@version says it is, read from the registry without a cache.
 
     `source` is an oci:// chart reference or an HTTPS chart repository. For the
@@ -769,8 +811,9 @@ def chart_metadata(source: str, chart: str, version: str,
         raise _unavailable(err) from err
 
 
-def archive_path(source: str, chart: str, version: str,
-                 cache: pathlib.Path | None = None) -> pathlib.Path:
+def archive_path(
+    source: str, chart: str, version: str, cache: pathlib.Path | None = None
+) -> pathlib.Path:
     """Where chart_archive keeps chart@version from `source`."""
     parts = urllib.parse.urlsplit(source)
     where = re.sub(r"[^A-Za-z0-9._-]+", "_", f"{parts.netloc}{parts.path}").strip("_")
@@ -840,22 +883,31 @@ def _https_archive(repo: str, chart: str, version: str, get: Getter) -> bytes:
     index = f"{repo.rstrip('/')}/index.yaml"
     urls = entry.get("urls") or []
     if not urls:
-        raise ChartUnavailable(f"{index} names no archive for {chart} {version}",
-                               answered=True)
+        raise ChartUnavailable(f"{index} names no archive for {chart} {version}", answered=True)
     digest = str(entry.get("digest") or "")
     if not digest:
-        raise ChartUnavailable(f"{index} publishes no digest for {chart} {version}, so "
-                               f"its archive could not be checked", answered=True)
+        raise ChartUnavailable(
+            f"{index} publishes no digest for {chart} {version}, so "
+            f"its archive could not be checked",
+            answered=True,
+        )
     data = get(urllib.parse.urljoin(repo.rstrip("/") + "/", str(urls[0])), {}, None)
     if hashlib.sha256(data).hexdigest() != digest:
-        raise RegistryError(f"{chart} {version} from {repo} does not match the digest "
-                            f"its index publishes")
+        raise RegistryError(
+            f"{chart} {version} from {repo} does not match the digest its index publishes"
+        )
     return data
 
 
-def chart_archive(source: str, chart: str, version: str, *,
-                  cache: pathlib.Path | None = None, get: Getter = http_get,
-                  credentials: Mapping[str, str] | None = None) -> pathlib.Path:
+def chart_archive(
+    source: str,
+    chart: str,
+    version: str,
+    *,
+    cache: pathlib.Path | None = None,
+    get: Getter = http_get,
+    credentials: Mapping[str, str] | None = None,
+) -> pathlib.Path:
     """A local archive of chart@version, fetched once into the chart cache.
 
     `source` is an oci:// chart reference — ArgoCD's repoURL with the chart name
@@ -871,8 +923,11 @@ def chart_archive(source: str, chart: str, version: str, *,
     if _intact(path):
         return path
     if path.exists():
-        print(f"  {path}: cached, and not the bytes that were verified when it was "
-              f"kept; fetching it again", file=sys.stderr)
+        print(
+            f"  {path}: cached, and not the bytes that were verified when it was "
+            f"kept; fetching it again",
+            file=sys.stderr,
+        )
     try:
         if source.startswith("oci://"):
             data = oci_chart_content(source, version, get, credentials=credentials)

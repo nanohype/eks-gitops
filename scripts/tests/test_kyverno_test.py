@@ -41,8 +41,11 @@ CI = ROOT / ".github" / "workflows" / "ci.yml"
 TOOLS = ("grep", "sed", "head", "dirname")
 
 # The endpoints the script reaches before running the suite, in order.
-ENDPOINTS = ["https://ghcr.io/v2/", "https://tuf-repo-cdn.sigstore.dev/timestamp.json",
-             "https://rekor.sigstore.dev/api/v1/log"]
+ENDPOINTS = [
+    "https://ghcr.io/v2/",
+    "https://tuf-repo-cdn.sigstore.dev/timestamp.json",
+    "https://rekor.sigstore.dev/api/v1/log",
+]
 
 
 ATTEMPTS = setting(SCRIPT, "ATTEMPTS")
@@ -77,57 +80,134 @@ printf '%s\\n' "${{bounds[*]}}" >> '{bin}/bounds'
 exec "$@"
 """
 
+
 def row(n: int, resource: str, result: str, reason: str, message: str) -> str:
-    return (f"│ {n:<3}│ verify-images │ verify-images │ v1/Pod/workloads/{resource:<24}│ "
-            f"{result:<6}│ {reason:<22}│ {message} │")
+    return (
+        f"│ {n:<3}│ verify-images │ verify-images │ v1/Pod/workloads/{resource:<24}│ "
+        f"{result:<6}│ {reason:<22}│ {message} │"
+    )
 
 
 IDENTITY = identity_message()
-MISMATCH = verifier_line("failed to verify cosign signatures: no matching signatures: none of "
-                         "the expected identities matched what was in the certificate")
+MISMATCH = verifier_line(
+    "failed to verify cosign signatures: no matching signatures: none of "
+    "the expected identities matched what was in the certificate"
+)
 SUMMARY_OK = "Test Summary: 70 tests passed and 0 tests failed"
 SUMMARY_FAILED = "Test Summary: 68 tests passed and 2 tests failed"
 
-CLEAN = ("\n".join([row(15, "vi-signed", "Pass", "Ok", "success"),
-                    row(18, "vi-branch-signed", "Pass", "Ok", IDENTITY),
-                    MISMATCH, SUMMARY_OK]), 0)
+CLEAN = (
+    "\n".join(
+        [
+            row(15, "vi-signed", "Pass", "Ok", "success"),
+            row(18, "vi-branch-signed", "Pass", "Ok", IDENTITY),
+            MISMATCH,
+            SUMMARY_OK,
+        ]
+    ),
+    0,
+)
 
 # The policy refused a release-signed image, on a network that answered.
-REFUSED = ("\n".join([row(15, "vi-signed", "Fail", "Want pass, got fail", IDENTITY),
-                      MISMATCH, SUMMARY_FAILED, "Error: 2 tests failed"]), 1)
+REFUSED = (
+    "\n".join(
+        [
+            row(15, "vi-signed", "Fail", "Want pass, got fail", IDENTITY),
+            MISMATCH,
+            SUMMARY_FAILED,
+            "Error: 2 tests failed",
+        ]
+    ),
+    1,
+)
 
 # The policy does not evaluate, for a reason of its own.
-CEL_ERROR = ("\n".join([row(15, "vi-signed", "Fail", "Want pass, got error",
-                            "failed to evaluate policy: undeclared reference to 'imagez'"),
-                        SUMMARY_FAILED, "Error: 2 tests failed"]), 1)
+CEL_ERROR = (
+    "\n".join(
+        [
+            row(
+                15,
+                "vi-signed",
+                "Fail",
+                "Want pass, got error",
+                "failed to evaluate policy: undeclared reference to 'imagez'",
+            ),
+            SUMMARY_FAILED,
+            "Error: 2 tests failed",
+        ]
+    ),
+    1,
+)
 
 # Reading the image failed, so the row is an error carrying the transport error.
-GOT_ERROR = ("\n".join([row(15, "vi-signed", "Fail", "Want pass, got error",
-                            'failed to evaluate policy: Get "https://ghcr.io/v2/": dial tcp: '
-                            "lookup ghcr.io: no such host"),
-                        SUMMARY_FAILED, "Error: 2 tests failed"]), 1)
+GOT_ERROR = (
+    "\n".join(
+        [
+            row(
+                15,
+                "vi-signed",
+                "Fail",
+                "Want pass, got error",
+                'failed to evaluate policy: Get "https://ghcr.io/v2/": dial tcp: '
+                "lookup ghcr.io: no such host",
+            ),
+            SUMMARY_FAILED,
+            "Error: 2 tests failed",
+        ]
+    ),
+    1,
+)
 
 # The trusted root could not be fetched, which verification counts as a
 # signature that did not verify: the row carries the policy's own message.
-SWALLOWED = ("\n".join([row(15, "vi-signed", "Fail", "Want pass, got fail", IDENTITY),
-                        verifier_line('failed to build cosign verification opts: tuf: failed '
-                                      'to download 17.root.json: Get \\"https://tuf-repo-cdn.'
-                                      'sigstore.dev/17.root.json\\": net/http: TLS handshake '
-                                      'timeout'),
-                        SUMMARY_FAILED, "Error: 2 tests failed"]), 1)
+SWALLOWED = (
+    "\n".join(
+        [
+            row(15, "vi-signed", "Fail", "Want pass, got fail", IDENTITY),
+            verifier_line(
+                "failed to build cosign verification opts: tuf: failed "
+                'to download 17.root.json: Get \\"https://tuf-repo-cdn.'
+                'sigstore.dev/17.root.json\\": net/http: TLS handshake '
+                "timeout"
+            ),
+            SUMMARY_FAILED,
+            "Error: 2 tests failed",
+        ]
+    ),
+    1,
+)
 
 # The same failure under a row expecting a fail: it passes, for the wrong reason.
-FALSE_PASS = ("\n".join([row(18, "vi-branch-signed", "Pass", "Ok", IDENTITY),
-                         verifier_line("failed to verify cosign signatures: [POST /api/v1/log/"
-                                       "entries/retrieve][503] searchLogQueryDefault"),
-                         SUMMARY_OK]), 0)
+FALSE_PASS = (
+    "\n".join(
+        [
+            row(18, "vi-branch-signed", "Pass", "Ok", IDENTITY),
+            verifier_line(
+                "failed to verify cosign signatures: [POST /api/v1/log/"
+                "entries/retrieve][503] searchLogQueryDefault"
+            ),
+            SUMMARY_OK,
+        ]
+    ),
+    0,
+)
 
 # The registry throttling the signature's manifest read, behind the policy's message.
-THROTTLED = ("\n".join([row(15, "vi-signed", "Fail", "Want pass, got fail", IDENTITY),
-                        verifier_line("failed to verify cosign signatures: GET https://ghcr.io/"
-                                      "v2/nanohype/x/manifests/sha256-0.sig: unexpected status "
-                                      "code 429 Too Many Requests"),
-                        SUMMARY_FAILED, "Error: 2 tests failed"]), 1)
+THROTTLED = (
+    "\n".join(
+        [
+            row(15, "vi-signed", "Fail", "Want pass, got fail", IDENTITY),
+            verifier_line(
+                "failed to verify cosign signatures: GET https://ghcr.io/"
+                "v2/nanohype/x/manifests/sha256-0.sig: unexpected status "
+                "code 429 Too Many Requests"
+            ),
+            SUMMARY_FAILED,
+            "Error: 2 tests failed",
+        ]
+    ),
+    1,
+)
 
 # A run timeout ended partway through its table.
 CUT_OFF = (row(15, "vi-signed", "Pass", "Ok", "success"), 124)
@@ -180,8 +260,13 @@ class KyvernoTestScript(unittest.TestCase):
             (self.bin / f"run{n}.out").write_text(out)
             (self.bin / f"run{n}.rc").write_text(str(rc))
         env = {"PATH": str(self.bin), "HOME": str(self.bin)}
-        proc = subprocess.run([self.bash, str(SCRIPT), str(self.tests)], capture_output=True,
-                              text=True, env=env, timeout=60)
+        proc = subprocess.run(
+            [self.bash, str(SCRIPT), str(self.tests)],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=60,
+        )
         return proc.returncode, proc.stdout + proc.stderr
 
     def calls(self) -> int:
@@ -325,11 +410,16 @@ class ARunThatDoesNotFinish(KyvernoTestScript):
         probe = re.search(r"--max-time (\d+)", SCRIPT.read_text())
         self.assertIsNotNone(probe, f"{SCRIPT.name} bounds no endpoint probe")
         assert probe is not None
-        worst = (len(ENDPOINTS) * int(probe.group(1)) + ATTEMPTS * (RUN_TIMEOUT + KILL_TIMEOUT)
-                 + PAUSE * sum(range(1, ATTEMPTS)))
+        worst = (
+            len(ENDPOINTS) * int(probe.group(1))
+            + ATTEMPTS * (RUN_TIMEOUT + KILL_TIMEOUT)
+            + PAUSE * sum(range(1, ATTEMPTS))
+        )
         job = yaml.safe_load(CI.read_text())["jobs"]["kyverno"]
-        self.assertIn("./scripts/kyverno-test.sh policies/kyverno/tests",
-                      [step.get("run") for step in job["steps"]])
+        self.assertIn(
+            "./scripts/kyverno-test.sh policies/kyverno/tests",
+            [step.get("run") for step in job["steps"]],
+        )
         self.assertLess(worst, job["timeout-minutes"] * 60)
 
 
@@ -386,9 +476,13 @@ class RowsTheirPolicyNeverSaw(KyvernoTestScript):
 
     def test_a_pair_with_only_excluded_rows_fails(self):
         out, _ = CLEAN
-        table = "\n".join(["Loading test suite ( tests/kyverno-test.yaml ) ...",
-                           vrow(1, "require-readiness-probe", "", "v1/Pod/workloads/good-pod",
-                                "Excluded"), out])
+        table = "\n".join(
+            [
+                "Loading test suite ( tests/kyverno-test.yaml ) ...",
+                vrow(1, "require-readiness-probe", "", "v1/Pod/workloads/good-pod", "Excluded"),
+                out,
+            ]
+        )
         rc, said = self.run_script((table, 0))
         self.assertEqual(rc, 1, said)
         self.assertIn("require-readiness-probe never evaluated v1/Pod/workloads/good-pod", said)
@@ -397,9 +491,14 @@ class RowsTheirPolicyNeverSaw(KyvernoTestScript):
         """The Pod rule prints Excluded beside the controller variant that ran."""
         out, _ = CLEAN
         res = "apps/v1/Deployment/workloads/good-deploy"
-        table = "\n".join(["Loading test suite ( tests/kyverno-test.yaml ) ...",
-                           vrow(1, "require-cpu-limit", "", res, "Excluded"),
-                           vrow(2, "require-cpu-limit", "validation", res, "Ok"), out])
+        table = "\n".join(
+            [
+                "Loading test suite ( tests/kyverno-test.yaml ) ...",
+                vrow(1, "require-cpu-limit", "", res, "Excluded"),
+                vrow(2, "require-cpu-limit", "validation", res, "Ok"),
+                out,
+            ]
+        )
         rc, said = self.run_script((table, 0))
         self.assertEqual(rc, 0, said)
 
@@ -409,8 +508,10 @@ class RowsTheirPolicyNeverSaw(KyvernoTestScript):
         floor = setting(SCRIPT, "MIN_TESTS")
         rows = ["Loading test suite ( tests/kyverno-test.yaml ) ..."]
         for n in range(3):
-            rows += [vrow(2 * n + 1, f"policy-{n}", "", res, "Excluded"),
-                     vrow(2 * n + 2, f"policy-{n}", "validation", res, "Ok")]
+            rows += [
+                vrow(2 * n + 1, f"policy-{n}", "", res, "Excluded"),
+                vrow(2 * n + 2, f"policy-{n}", "validation", res, "Ok"),
+            ]
         # Every pair evaluated, so the scan passes; the summary reaches the floor
         # only by counting the three Excluded rows.
         rows.append(f"Test Summary: {floor + 2} tests passed and 0 tests failed")
@@ -423,10 +524,15 @@ class RowsTheirPolicyNeverSaw(KyvernoTestScript):
         """Each test file stands on its own rows."""
         out, _ = CLEAN
         res = "v1/Pod/workloads/good-pod"
-        table = "\n".join(["Loading test one ( one/kyverno-test.yaml ) ...",
-                           vrow(1, "require-cpu-limit", "validation", res, "Ok"),
-                           "Loading test two ( two/kyverno-test.yaml ) ...",
-                           vrow(1, "require-cpu-limit", "", res, "Excluded"), out])
+        table = "\n".join(
+            [
+                "Loading test one ( one/kyverno-test.yaml ) ...",
+                vrow(1, "require-cpu-limit", "validation", res, "Ok"),
+                "Loading test two ( two/kyverno-test.yaml ) ...",
+                vrow(1, "require-cpu-limit", "", res, "Excluded"),
+                out,
+            ]
+        )
         rc, said = self.run_script((table, 0))
         self.assertEqual(rc, 1, said)
         self.assertIn("two: require-cpu-limit never evaluated", said)

@@ -228,7 +228,8 @@ EXPR = re.compile(r"\$\{\{(.*?)\}\}", re.DOTALL)
 WS = r'"?\$(?:\{GITHUB_WORKSPACE\}|GITHUB_WORKSPACE)'
 # The script's own grammar: --optional only first, then environment variable names.
 MASK_AWS = re.compile(
-    rf"^bash\s+{WS}/(scripts/mask-aws-ids\.sh)\"?(\s+--optional)?((?:\s+[A-Za-z_][A-Za-z0-9_]*)+)\s*$")
+    rf"^bash\s+{WS}/(scripts/mask-aws-ids\.sh)\"?(\s+--optional)?((?:\s+[A-Za-z_][A-Za-z0-9_]*)+)\s*$"
+)
 CONFIGURE_AWS = "aws-actions/configure-aws-credentials"
 AFTER_FAILURE = re.compile(r"\b(?:always|failure|cancelled)\s*\(", re.IGNORECASE)
 ARN_LITERAL = re.compile(r"arn:aws[a-z-]*:[a-z0-9-]*:[a-z0-9-]*:([0-9]{12})(?![0-9])")
@@ -301,11 +302,13 @@ LineLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_SEQUENCE_TAG, _seq
 
 class LInt(int):
     """An int that keeps the text YAML read it from, in `raw`."""
+
     raw = ""
 
 
 class LFloat(float):
     """A float that keeps the text YAML read it from, in `raw`."""
+
     raw = ""
 
 
@@ -409,8 +412,11 @@ def redact(text: str) -> str:
     The gate that rejects an account id written into a workflow must not be
     what publishes it a second time."""
     return ID_RUN.sub(
-        lambda m: m.group(0) if len(m.group(0)) == 12 and placeholder(m.group(0))
-        else "<account id>", text)
+        lambda m: (
+            m.group(0) if len(m.group(0)) == 12 and placeholder(m.group(0)) else "<account id>"
+        ),
+        text,
+    )
 
 
 def quote(text, limit: int) -> str:
@@ -431,9 +437,11 @@ def parse_error(e) -> str:
     context and their line and column say everything the excerpt does; the
     line itself is in the file."""
     if isinstance(e, yaml.MarkedYAMLError):
-        parts = [what + (f" (line {mark.line + 1}, column {mark.column + 1})" if mark else "")
-                 for what, mark in ((e.context, e.context_mark), (e.problem, e.problem_mark))
-                 if what]
+        parts = [
+            what + (f" (line {mark.line + 1}, column {mark.column + 1})" if mark else "")
+            for what, mark in ((e.context, e.context_mark), (e.problem, e.problem_mark))
+            if what
+        ]
         if e.note:
             parts.append(e.note)
         text = "; ".join(parts) or type(e).__name__
@@ -456,13 +464,16 @@ def with_key(block, key: str):
 
 # --- expressions --------------------------------------------------------------
 
-TOKEN = re.compile(r"""
+TOKEN = re.compile(
+    r"""
     (?P<ws>\s+)
   | (?P<str>'(?:[^']|'')*')
   | (?P<num>-?(?:0x[0-9A-Fa-f]+|[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?))
   | (?P<ident>[A-Za-z_][A-Za-z0-9_-]*)
   | (?P<op>==|!=|<=|>=|&&|\|\||[!<>().,\[\]*])
-""", re.VERBOSE)
+""",
+    re.VERBOSE,
+)
 CONTEXT_WORDS = re.compile(r"(?i)\b(?:secrets|vars|inputs)\b")
 
 
@@ -488,7 +499,11 @@ class Ref:
 def refs(toks) -> list[Ref]:
     out, n = [], len(toks)
     for i, (kind, value) in enumerate(toks):
-        if kind != "ident" or (i and toks[i - 1][1] == ".") or (i + 1 < n and toks[i + 1][1] == "("):
+        if (
+            kind != "ident"
+            or (i and toks[i - 1][1] == ".")
+            or (i + 1 < n and toks[i + 1][1] == "(")
+        ):
             continue
         if value.lower() in ("true", "false", "null"):
             continue
@@ -508,7 +523,7 @@ def refs(toks) -> list[Ref]:
                 while m < n and depth:
                     depth += {"[": 1, "]": -1}.get(toks[m][1], 0)
                     m += 1
-                inner = toks[j + 1:m - 1]
+                inner = toks[j + 1 : m - 1]
                 if len(inner) == 1 and inner[0][0] == "str":
                     path.append(("name", inner[0][1][1:-1].replace("''", "'")))
                 else:
@@ -527,8 +542,13 @@ def resolve(r: Ref):
     context itself) or 'computed' (a dynamic index or a filter)."""
     path = r.path
     if r.ctx == "github":
-        if len(path) >= 2 and path[0][0] == "name" and path[0][1].lower() == "event" \
-                and path[1][0] == "name" and path[1][1].lower() == "inputs":
+        if (
+            len(path) >= 2
+            and path[0][0] == "name"
+            and path[0][1].lower() == "event"
+            and path[1][0] == "name"
+            and path[1][1].lower() == "inputs"
+        ):
             ctx, path = "inputs", path[2:]
         else:
             return None
@@ -555,7 +575,7 @@ def guard_ref(toks, rs) -> Ref | None:
     if len(rs) != 1:
         return None
     r = rs[0]
-    before, after = toks[:r.start], toks[r.end:]
+    before, after = toks[: r.start], toks[r.end :]
     cmp = ("==", "!=")
     if not before and len(after) == 2 and after[0][1] in cmp and after[1] == ("str", "''"):
         return r
@@ -614,8 +634,13 @@ def step_output_whole(text) -> str | None:
     if not toks:
         return None
     r = sole(toks, refs(toks))
-    if r and r.ctx == "steps" and len(r.path) == 3 and all(k == "name" for k, _ in r.path) \
-            and r.path[1][1].lower() == "outputs":
+    if (
+        r
+        and r.ctx == "steps"
+        and len(r.path) == 3
+        and all(k == "name" for k, _ in r.path)
+        and r.path[1][1].lower() == "outputs"
+    ):
         return r.path[0][1].lower()
     return None
 
@@ -627,8 +652,13 @@ def is_guard(text) -> bool:
         return False
     r = guard_ref(toks, refs(toks))
     got = resolve(r) if r else None
-    return bool(r is not None and got and got[0] in ("secrets", "vars") and got[2] is None
-                and len(r.path) == 1)
+    return bool(
+        r is not None
+        and got
+        and got[0] in ("secrets", "vars")
+        and got[2] is None
+        and len(r.path) == 1
+    )
 
 
 def mask_command(step) -> tuple[str | None, set[str] | None, int]:
@@ -686,7 +716,11 @@ def collect_ids_by_use(docs) -> set[str]:
                     if not isinstance(block, dict):
                         continue
                     for k, v in block.items():
-                        if str(k).lower() == "role-to-assume" or is_sink_key(k) or (key == "env" and covers and k in covers):
+                        if (
+                            str(k).lower() == "role-to-assume"
+                            or is_sink_key(k)
+                            or (key == "env" and covers and k in covers)
+                        ):
                             names |= named_reads(v)
         for block in blocks:
             if isinstance(block, dict):
@@ -720,36 +754,56 @@ def vendored_findings(root: Path) -> list[tuple[str, int, str]]:
     try:
         record = json.loads(record_path.read_text())
     except (OSError, ValueError) as e:
-        return [(VENDORED_REL, 1, f"could not be read as JSON ({e}), so the mask script "
-                                  "cannot be shown to be the copy it was taken as.")]
+        return [
+            (
+                VENDORED_REL,
+                1,
+                f"could not be read as JSON ({e}), so the mask script "
+                "cannot be shown to be the copy it was taken as.",
+            )
+        ]
     entry = record.get(MASK_SCRIPT) if isinstance(record, dict) else None
     if not isinstance(entry, dict) or not all(
-            isinstance(entry.get(k), str) and entry.get(k)
-            for k in ("repo", "path", "commit", "sha256")):
-        return [(VENDORED_REL, 1, f"has no complete record for {MASK_SCRIPT} (repo, path, "
-                                  "commit and sha256), so nothing says which bytes the "
-                                  "mask script must be.")]
+        isinstance(entry.get(k), str) and entry.get(k) for k in ("repo", "path", "commit", "sha256")
+    ):
+        return [
+            (
+                VENDORED_REL,
+                1,
+                f"has no complete record for {MASK_SCRIPT} (repo, path, "
+                "commit and sha256), so nothing says which bytes the "
+                "mask script must be.",
+            )
+        ]
     script = root / MASK_SCRIPT
     if not script.is_file():
-        return [(MASK_SCRIPT, 1, "is not in the tree, so nothing masks the ids the "
-                                 "workflows read.")]
+        return [
+            (MASK_SCRIPT, 1, "is not in the tree, so nothing masks the ids the workflows read.")
+        ]
     want = entry["sha256"]
     got = hashlib.sha256(script.read_bytes()).hexdigest()
     if got != want:
-        return [(MASK_SCRIPT, 1,
-                 f"hashes to {got[:12]}, not the {want[:12]} {VENDORED_REL} records for "
-                 f"{entry['repo']}:{entry['path']} at {entry['commit'][:12]}. It is "
-                 "vendored byte for byte: change it in that repository, with its "
-                 "self-test, then copy it here and move the record in the same commit.")]
+        return [
+            (
+                MASK_SCRIPT,
+                1,
+                f"hashes to {got[:12]}, not the {want[:12]} {VENDORED_REL} records for "
+                f"{entry['repo']}:{entry['path']} at {entry['commit'][:12]}. It is "
+                "vendored byte for byte: change it in that repository, with its "
+                "self-test, then copy it here and move the record in the same commit.",
+            )
+        ]
     return []
 
 
 def check(root: Path) -> Result:
     res = Result()
     wf_dir = root / WORKFLOWS_REL
-    paths = sorted(
-        p for p in wf_dir.glob("*") if p.suffix in (".yml", ".yaml") and p.is_file()
-    ) if wf_dir.is_dir() else []
+    paths = (
+        sorted(p for p in wf_dir.glob("*") if p.suffix in (".yml", ".yaml") and p.is_file())
+        if wf_dir.is_dir()
+        else []
+    )
     res.workflows = len(paths)
     res.findings.extend(vendored_findings(root))
     docs = {}
@@ -783,24 +837,37 @@ def check_workflow(root, rel, doc, ident, out, res) -> None:
 
     raw_jobs = doc.get("jobs")
     jobs: LDict = raw_jobs if isinstance(raw_jobs, LDict) else LDict()
-    guarded_vars: set[str] = set()     # vars.NAME compared against ''
+    guarded_vars: set[str] = set()  # vars.NAME compared against ''
     id_reads: dict[str, tuple[str, int]] = {}  # NAME -> (spelling, first line)
     wf_shell = shell_of(doc)
 
     def literal_ids(value, line):
         for text, ln in strings_with_lines(value, line, skip_keys=("uses",), numbers=True):
-            for pat, what in ((ARN_LITERAL, "an ARN naming an account"), (ID_LITERAL, "an account id")):
+            for pat, what in (
+                (ARN_LITERAL, "an ARN naming an account"),
+                (ID_LITERAL, "an account id"),
+            ):
                 for m in pat.finditer(text):
                     if not placeholder(m.group(1)):
-                        bad(line_in(text, ln, m.start()),
+                        bad(
+                            line_in(text, ln, m.start()),
                             f"carries {what} as a literal (not repeated here). A literal is printed "
                             "wherever it is used and kept in the public repository besides; it "
                             "belongs in a secret (see WHERE A SECRET LIVES in this gate). Only the tree's "
                             "synthetic placeholders (one digit repeated, or 123456789012) may "
-                            "appear in a workflow.")
+                            "appear in a workflow.",
+                        )
 
-    def scan(value, line, where: str, *, aws_job: bool, guards: set | None = None,
-             entry: bool = False, is_if: bool = False) -> set[str]:
+    def scan(
+        value,
+        line,
+        where: str,
+        *,
+        aws_job: bool,
+        guards: set | None = None,
+        entry: bool = False,
+        is_if: bool = False,
+    ) -> set[str]:
         """Apply rules 1-3 to every expression in value. Returns {id secret} read.
 
         entry: value is one step env/with entry, where an id secret may appear
@@ -813,10 +880,13 @@ def check_workflow(root, rel, doc, ident, out, res) -> None:
                 toks = tokenize(expr)
                 if toks is None:
                     if CONTEXT_WORDS.search(expr):
-                        bad(at, f"has an expression in its {where} this gate cannot read "
-                                f"({quote(expr.strip(), 60)}) that mentions the secrets, vars or "
-                                "inputs context. Write it in a form the gate can read, so it "
-                                "can prove it names no account id or role ARN.")
+                        bad(
+                            at,
+                            f"has an expression in its {where} this gate cannot read "
+                            f"({quote(expr.strip(), 60)}) that mentions the secrets, vars or "
+                            "inputs context. Write it in a form the gate can read, so it "
+                            "can prove it names no account id or role ARN.",
+                        )
                     continue
                 rs = refs(toks)
                 g = guard_ref(toks, rs)
@@ -827,12 +897,19 @@ def check_workflow(root, rel, doc, ident, out, res) -> None:
                         continue
                     ctx, name, problem = got
                     if problem:
-                        how = "the whole" if problem == "whole" else "a computed index or filter of the"
-                        bad(at, f"reads {how} `{ctx}` context in its {where} "
-                                f"({quote(expr.strip(), 60)}). This gate cannot tell what that "
-                                "names, so it cannot prove it names no account id or role ARN; "
-                                "a whole context printed or passed on carries every id in it. "
-                                f"Read each value by its literal name (`{ctx}.NAME`).")
+                        how = (
+                            "the whole"
+                            if problem == "whole"
+                            else "a computed index or filter of the"
+                        )
+                        bad(
+                            at,
+                            f"reads {how} `{ctx}` context in its {where} "
+                            f"({quote(expr.strip(), 60)}). This gate cannot tell what that "
+                            "names, so it cannot prove it names no account id or role ARN; "
+                            "a whole context printed or passed on carries every id in it. "
+                            f"Read each value by its literal name (`{ctx}.NAME`).",
+                        )
                         continue
                     key = name.upper()
                     if r is g and len(r.path) == 1 and ctx in ("secrets", "vars"):
@@ -843,27 +920,36 @@ def check_workflow(root, rel, doc, ident, out, res) -> None:
                         continue
                     if ctx == "inputs":
                         if ident(name):
-                            bad(at, f"reads the input {name}, an AWS account id or role ARN. An "
-                                    "input cannot be masked before it is printed; take it from "
-                                    "a secret instead.")
+                            bad(
+                                at,
+                                f"reads the input {name}, an AWS account id or role ARN. An "
+                                "input cannot be masked before it is printed; take it from "
+                                "a secret instead.",
+                            )
                         continue
                     if ctx == "vars":
                         if ident(name):
-                            bad(at, f"reads {name}, an AWS account id or role ARN, from "
-                                    "`vars.` in its " + where + ". A variable is never masked: "
-                                    "the runner prints it in the env block and the inputs of every "
-                                    "step that receives it, before any step can mask it. Make it a "
-                                    "secret (see docs/runbooks/render-gate-failures.md for "
-                                    "ECR_PUBLIC_PULL_ROLE_ARN); only the guard form "
-                                    f"`${{{{ vars.{name} != '' }}}}` may name the variable.")
+                            bad(
+                                at,
+                                f"reads {name}, an AWS account id or role ARN, from "
+                                "`vars.` in its " + where + ". A variable is never masked: "
+                                "the runner prints it in the env block and the inputs of every "
+                                "step that receives it, before any step can mask it. Make it a "
+                                "secret (see docs/runbooks/render-gate-failures.md for "
+                                "ECR_PUBLIC_PULL_ROLE_ARN); only the guard form "
+                                f"`${{{{ vars.{name} != '' }}}}` may name the variable.",
+                            )
                         elif aws_job and key not in VARS_ALLOWED:
-                            bad(at, f"reads the variable {name} in its {where}, in a job that can "
-                                    "hold AWS credentials. Such a job reads no variable except in "
-                                    "the guard form: a variable is printed unmasked, and one named "
-                                    "outside the id naming rule (a state bucket, an account under "
-                                    "another name) still carries an account id. Make it a secret, or "
-                                    "add the name to VARS_ALLOWED with the reason it can never "
-                                    "carry an id.")
+                            bad(
+                                at,
+                                f"reads the variable {name} in its {where}, in a job that can "
+                                "hold AWS credentials. Such a job reads no variable except in "
+                                "the guard form: a variable is printed unmasked, and one named "
+                                "outside the id naming rule (a state bucket, an account under "
+                                "another name) still carries an account id. Make it a secret, or "
+                                "add the name to VARS_ALLOWED with the reason it can never "
+                                "carry an id.",
+                            )
                         continue
                     if not ident(name):
                         continue
@@ -871,24 +957,35 @@ def check_workflow(root, rel, doc, ident, out, res) -> None:
                     res.id_names.add(key)
                     id_reads.setdefault(key, (name, at))
                     found.add(key)
-                    whole_value = entry and whole is not None and whole == expr and s is r \
+                    whole_value = (
+                        entry
+                        and whole is not None
+                        and whole == expr
+                        and s is r
                         and len(r.path) == 1
+                    )
                     if whole_value:
                         continue
                     if entry:
-                        bad(at, f"computes from the id secret {name} in its {where} "
-                                f"({quote(expr.strip(), 60)}). The runner masks a secret only "
-                                "whole: a value derived from it (fromJSON, toJSON, format, an "
-                                "index, a concatenation) is printed in the clear in this step's "
-                                "env block, before its first command can mask it. Pass "
-                                f"`${{{{ secrets.{name} }}}}` whole, and cut pieces out in shell "
-                                "after the mask command, handing them on as step outputs.")
+                        bad(
+                            at,
+                            f"computes from the id secret {name} in its {where} "
+                            f"({quote(expr.strip(), 60)}). The runner masks a secret only "
+                            "whole: a value derived from it (fromJSON, toJSON, format, an "
+                            "index, a concatenation) is printed in the clear in this step's "
+                            "env block, before its first command can mask it. Pass "
+                            f"`${{{{ secrets.{name} }}}}` whole, and cut pieces out in shell "
+                            "after the mask command, handing them on as step outputs.",
+                        )
                     else:
-                        bad(at, f"passes the id secret {name} through its {where}. It may "
-                                "reach a step only through that step's `env:` map or `with:` "
-                                "inputs, whole, after the job's mask step: anywhere else it "
-                                "reaches steps that run before the mask, or is expanded into "
-                                "text where its pieces are printed unmasked.")
+                        bad(
+                            at,
+                            f"passes the id secret {name} through its {where}. It may "
+                            "reach a step only through that step's `env:` map or `with:` "
+                            "inputs, whole, after the job's mask step: anywhere else it "
+                            "reaches steps that run before the mask, or is expanded into "
+                            "text where its pieces are printed unmasked.",
+                        )
         return found
 
     def sink_check(key, value, line, where, mask_ids: set | None):
@@ -902,14 +999,21 @@ def check_workflow(root, rel, doc, ident, out, res) -> None:
                 sid = step_output_whole(text)
                 if mask_ids is not None and sid is not None and sid in mask_ids:
                     continue
-                allowed = ("`${{ secrets.NAME }}` whole, an output of a mask step earlier in "
-                           "this job, or the guard form") if mask_ids is not None else \
-                    "only the guard form (a secret or a mask-step output cannot be here)"
-                bad(line_in(text, ln, idx),
+                allowed = (
+                    (
+                        "`${{ secrets.NAME }}` whole, an output of a mask step earlier in "
+                        "this job, or the guard form"
+                    )
+                    if mask_ids is not None
+                    else "only the guard form (a secret or a mask-step output cannot be here)"
+                )
+                bad(
+                    line_in(text, ln, idx),
                     f"sets {key}, which by its name carries an account id or role ARN, from "
                     f"{quote(expr.strip(), 60)} in its {where}. Such a key takes {allowed}: a "
                     "variable, an input, a matrix value or another job's output is printed "
-                    "unmasked in this step's env block or inputs, whatever it is called.")
+                    "unmasked in this step's env block or inputs, whatever it is called.",
+                )
 
     # Workflow-level: triggers' inputs and everything but jobs.
     on = doc.get("on", doc.get(True))
@@ -920,12 +1024,14 @@ def check_workflow(root, rel, doc, ident, out, res) -> None:
             if isinstance(inputs, LDict):
                 for name in inputs:
                     if isinstance(name, str) and ident(name):
-                        bad(inputs.key_lines.get(name, inputs.line),
+                        bad(
+                            inputs.key_lines.get(name, inputs.line),
                             f"declares the {trig} input '{name}', an AWS account id or "
                             "role ARN. An input is typed into the dispatch form, kept in the "
                             "run's event payload and printed in the env block of the first "
                             "step that reads it, so no step can mask it first. Take it from "
-                            "a secret (or derive it from one).")
+                            "a secret (or derive it from one).",
+                        )
     literal_ids(doc, 1)
     for key in doc:
         if key in ("on", True, "jobs"):
@@ -951,13 +1057,26 @@ def check_workflow(root, rel, doc, ident, out, res) -> None:
             if key == "steps":
                 continue
             kl = job.key_lines.get(key, job.line)
-            if key == "secrets" and isinstance(job[key], str) and job[key].strip().lower() == "inherit":
-                bad(kl, f"job '{job_id}' passes `secrets: inherit`, which hands every "
-                        "secret, account ids and role ARNs included, to a reusable workflow "
-                        "this gate cannot read. Pass the secrets it needs by name.")
+            if (
+                key == "secrets"
+                and isinstance(job[key], str)
+                and job[key].strip().lower() == "inherit"
+            ):
+                bad(
+                    kl,
+                    f"job '{job_id}' passes `secrets: inherit`, which hands every "
+                    "secret, account ids and role ARNs included, to a reusable workflow "
+                    "this gate cannot read. Pass the secrets it needs by name.",
+                )
                 continue
-            for name in scan(job[key], job.value_lines.get(key, kl), f"job-level `{key}`",
-                             aws_job=aws_job, guards=guards, is_if=(key == "if")):
+            for name in scan(
+                job[key],
+                job.value_lines.get(key, kl),
+                f"job-level `{key}`",
+                aws_job=aws_job,
+                guards=guards,
+                is_if=(key == "if"),
+            ):
                 reads_value.setdefault(name, kl)
             if key == "env" and isinstance(job[key], LDict):
                 for k, v in job[key].items():
@@ -978,15 +1097,28 @@ def check_workflow(root, rel, doc, ident, out, res) -> None:
                     block = step[key]
                     for k, v in block.items():
                         kline = block.key_lines.get(k, block.line)
-                        for name in scan(v, block.value_lines.get(k, kline), f"`{key}.{k}`",
-                                         aws_job=aws_job, guards=guards, entry=True):
+                        for name in scan(
+                            v,
+                            block.value_lines.get(k, kline),
+                            f"`{key}.{k}`",
+                            aws_job=aws_job,
+                            guards=guards,
+                            entry=True,
+                        ):
                             receives.setdefault(name, []).append((f"{key}.{k}", kline))
                         if is_sink_key(k):
-                            sink_check(k, v, block.value_lines.get(k, kline), f"`{key}`",
-                                       mask_step_ids)
+                            sink_check(
+                                k, v, block.value_lines.get(k, kline), f"`{key}`", mask_step_ids
+                            )
                 else:
-                    scan(step[key], vl, f"step `{key}`", aws_job=aws_job, guards=guards,
-                         is_if=(key == "if"))
+                    scan(
+                        step[key],
+                        vl,
+                        f"step `{key}`",
+                        aws_job=aws_job,
+                        guards=guards,
+                        is_if=(key == "if"),
+                    )
             for name, places in receives.items():
                 reads_value.setdefault(name, places[0][1])
 
@@ -998,28 +1130,38 @@ def check_workflow(root, rel, doc, ident, out, res) -> None:
                 res.mask_steps += 1
                 ok = True
                 if not (root / script).is_file():
-                    bad(cmd_line, f"runs {script}, which is not in the tree, so nothing "
-                                  "is masked.")
+                    bad(cmd_line, f"runs {script}, which is not in the tree, so nothing is masked.")
                     ok = False
                 if "if" in step:
-                    bad(step.key_lines["if"], f"job '{job_id}', mask step '{step_name}' has an "
+                    bad(
+                        step.key_lines["if"],
+                        f"job '{job_id}', mask step '{step_name}' has an "
                         "`if:`. A mask step runs whenever its job does: skipped, every later "
-                        "step still receives the secret and nothing has masked its pieces.")
+                        "step still receives the secret and nothing has masked its pieces.",
+                    )
                     ok = False
                 coe = step.get("continue-on-error")
                 if coe is not None and str(coe).strip().lower() != "false":
-                    bad(step.key_lines["continue-on-error"], f"job '{job_id}', mask step "
+                    bad(
+                        step.key_lines["continue-on-error"],
+                        f"job '{job_id}', mask step "
                         f"'{step_name}' sets `continue-on-error`. A mask step that fails must "
-                        "stop the job: the masks may not have been registered.")
+                        "stop the job: the masks may not have been registered.",
+                    )
                     ok = False
-                for shell, where, ln in ((step.get("shell"), "step", step.key_lines.get("shell")),
-                                         (job_shell, "job's `defaults.run`", job.key_lines.get("defaults")),
-                                         (wf_shell, "workflow's `defaults.run`", doc.key_lines.get("defaults"))):
+                for shell, where, ln in (
+                    (step.get("shell"), "step", step.key_lines.get("shell")),
+                    (job_shell, "job's `defaults.run`", job.key_lines.get("defaults")),
+                    (wf_shell, "workflow's `defaults.run`", doc.key_lines.get("defaults")),
+                ):
                     if shell is not None and str(shell).strip() != "bash":
-                        bad(ln or step.line, f"job '{job_id}', mask step '{step_name}' runs under "
+                        bad(
+                            ln or step.line,
+                            f"job '{job_id}', mask step '{step_name}' runs under "
                             f"the {where} shell {quote(str(shell), 30)}. The mask command is bash, "
                             "and only the default shell or `bash` (both `-e`) stops the step "
-                            "when it fails; another shell runs on with nothing masked.")
+                            "when it fails; another shell runs on with nothing masked.",
+                        )
                         ok = False
                     if shell is not None:
                         break
@@ -1027,16 +1169,21 @@ def check_workflow(root, rel, doc, ident, out, res) -> None:
                 env: LDict = raw_env if isinstance(raw_env, LDict) else LDict()
                 for k in sorted(covers or ()):
                     if k not in env:
-                        bad(cmd_line, f"job '{job_id}', mask step '{step_name}' names {k}, "
-                                      "which this step's env does not carry, so it masks nothing "
-                                      "for it.")
+                        bad(
+                            cmd_line,
+                            f"job '{job_id}', mask step '{step_name}' names {k}, "
+                            "which this step's env does not carry, so it masks nothing "
+                            "for it.",
+                        )
                         ok = False
                     elif whole_read_name(env[k]) is None:
-                        bad(env.key_lines.get(k, env.line),
+                        bad(
+                            env.key_lines.get(k, env.line),
                             f"job '{job_id}', mask step '{step_name}' masks {k}, which holds "
                             f"{quote(str(env[k]), 60)}. What a mask step masks, and what it hands on "
                             "as step outputs, is a secret read whole: anything else was printed "
-                            "unmasked in this step's env block before the mask ran.")
+                            "unmasked in this step's env block before the mask ran.",
+                        )
                         ok = False
                 if ok and isinstance(step.get("id"), str):
                     mask_step_ids.add(step["id"].lower())
@@ -1044,35 +1191,47 @@ def check_workflow(root, rel, doc, ident, out, res) -> None:
             for name, places in receives.items():
                 if name in masked:
                     if AFTER_FAILURE.search(str(step.get("if", ""))):
-                        bad(step.key_lines["if"], f"job '{job_id}', step '{step_name}' receives "
+                        bad(
+                            step.key_lines["if"],
+                            f"job '{job_id}', step '{step_name}' receives "
                             f"{name} and runs after a failure ({quote(str(step['if']), 50)}). If a "
                             "step ahead of the mask step fails, the mask step is skipped and "
-                            "this one runs with nothing masked.")
+                            "this one runs with nothing masked.",
+                        )
                     continue
                 masked.add(name)
                 env_keys = [w.split(".", 1)[1] for w, _ in places if w.startswith("env.")]
                 with_places = [(w, ln) for w, ln in places if w.startswith("with.")]
                 if with_places or not run:
                     where, ln = (with_places or places)[0]
-                    bad(ln, f"job '{job_id}', step '{step_name}' is the first to receive "
-                            f"{name} ({where}), and it is not a mask step. The first step "
-                            "that receives an id secret must be a `run` step whose first "
-                            'command is `bash "$GITHUB_WORKSPACE/scripts/mask-aws-ids.sh" '
-                            f'{name}`; an action prints its inputs before it runs.')
+                    bad(
+                        ln,
+                        f"job '{job_id}', step '{step_name}' is the first to receive "
+                        f"{name} ({where}), and it is not a mask step. The first step "
+                        "that receives an id secret must be a `run` step whose first "
+                        'command is `bash "$GITHUB_WORKSPACE/scripts/mask-aws-ids.sh" '
+                        f"{name}`; an action prints its inputs before it runs.",
+                    )
                 elif covers is None:
-                    bad(cmd_line, f"job '{job_id}', step '{step_name}' is the first to "
-                                  f"receive {name}, and its first command is {quote(cmd, 70)}, "
-                                  'not `bash "$GITHUB_WORKSPACE/scripts/mask-aws-ids.sh" '
-                                  f'[--optional] {" ".join(env_keys)}`. Masks take effect from '
-                                  "the line after `::add-mask::`, so anything before it can "
-                                  "print a piece of the value.")
+                    bad(
+                        cmd_line,
+                        f"job '{job_id}', step '{step_name}' is the first to "
+                        f"receive {name}, and its first command is {quote(cmd, 70)}, "
+                        'not `bash "$GITHUB_WORKSPACE/scripts/mask-aws-ids.sh" '
+                        f"[--optional] {' '.join(env_keys)}`. Masks take effect from "
+                        "the line after `::add-mask::`, so anything before it can "
+                        "print a piece of the value.",
+                    )
                 else:
                     missing = [k for k in env_keys if k not in covers]
                     if missing:
-                        bad(cmd_line, f"job '{job_id}', step '{step_name}': the mask "
-                                      f"command does not name {', '.join(missing)}, which "
-                                      f"carries {name} into this step, so its pieces are "
-                                      "never masked.")
+                        bad(
+                            cmd_line,
+                            f"job '{job_id}', step '{step_name}': the mask "
+                            f"command does not name {', '.join(missing)}, which "
+                            f"carries {name} into this step, so its pieces are "
+                            "never masked.",
+                        )
 
             w = step.get("with")
             role = with_key(w, "role-to-assume") if isinstance(w, LDict) else None
@@ -1080,20 +1239,27 @@ def check_workflow(root, rel, doc, ident, out, res) -> None:
                 spelt, v = role
                 ln = w.key_lines.get(spelt, w.line)
                 sid = step_output_whole(v)
-                if not (whole_read_name(v) is not None or (sid is not None and sid in mask_step_ids)):
-                    bad(ln, f"job '{job_id}': role-to-assume is {quote(str(v), 60)}. It must be "
-                            "`${{ secrets.NAME }}`, read after the job's mask step, or "
-                            "`${{ steps.ID.outputs.X }}` from that mask step. The action "
-                            "prints this input, so a variable, matrix value, input or literal "
-                            "here publishes the role ARN and its account id.")
+                if not (
+                    whole_read_name(v) is not None or (sid is not None and sid in mask_step_ids)
+                ):
+                    bad(
+                        ln,
+                        f"job '{job_id}': role-to-assume is {quote(str(v), 60)}. It must be "
+                        "`${{ secrets.NAME }}`, read after the job's mask step, or "
+                        "`${{ steps.ID.outputs.X }}` from that mask step. The action "
+                        "prints this input, so a variable, matrix value, input or literal "
+                        "here publishes the role ARN and its account id.",
+                    )
             if uses_configure_aws(step):
                 found = with_key(w, "mask-aws-account-id")
                 if found is None or str(found[1]).lower() != "true":
-                    bad(step.key_lines.get("uses", step.line),
+                    bad(
+                        step.key_lines.get("uses", step.line),
                         f"job '{job_id}': {CONFIGURE_AWS} without `mask-aws-account-id: "
                         "true`. The job's mask step registers the id already; stating it "
                         "keeps the action's own handling of the account id it reads back "
-                        "from being the one place it is not.")
+                        "from being the one place it is not.",
+                    )
 
         # Rule 4, where the secret lives. A REPOSITORY_LEVEL_IDS name is read only
         # by jobs with no environment; any other id only by a job that declares
@@ -1102,22 +1268,27 @@ def check_workflow(root, rel, doc, ident, out, res) -> None:
         for name, ln in sorted(reads_value.items(), key=lambda kv: kv[1]):
             if name in REPOSITORY_LEVEL_IDS:
                 if environment:
-                    bad(job.key_lines.get("environment", job_line),
+                    bad(
+                        job.key_lines.get("environment", job_line),
                         f"job '{job_id}' declares an environment and reads {name}, which "
                         "is a repository secret here: "
                         f"{REPOSITORY_LEVEL_IDS[name]}. In this job the secrets context "
                         "would hand it the environment's same-named secret first, and the "
                         "OIDC token would carry an environment subject. Read it from a "
-                        "job with no environment.")
+                        "job with no environment.",
+                    )
             elif not environment:
-                bad(ln, f"job '{job_id}' (line {job_line}) reads the value of {name} but "
-                        "declares no environment. An id other than the repository secrets "
-                        f"this gate names ({', '.join(sorted(REPOSITORY_LEVEL_IDS))}) is a "
-                        "secret on the GitHub Environment its job declares; a job with no "
-                        "environment sees only repository and organization secrets, and may "
-                        "only compare them against '' (the guard form). Add the name to "
-                        "REPOSITORY_LEVEL_IDS only with the reason an environment cannot "
-                        "hold it.")
+                bad(
+                    ln,
+                    f"job '{job_id}' (line {job_line}) reads the value of {name} but "
+                    "declares no environment. An id other than the repository secrets "
+                    f"this gate names ({', '.join(sorted(REPOSITORY_LEVEL_IDS))}) is a "
+                    "secret on the GitHub Environment its job declares; a job with no "
+                    "environment sees only repository and organization secrets, and may "
+                    "only compare them against '' (the guard form). Add the name to "
+                    "REPOSITORY_LEVEL_IDS only with the reason an environment cannot "
+                    "hold it.",
+                )
         if environment:
             for name, ln in reads_value.items():
                 if name not in REPOSITORY_LEVEL_IDS:
@@ -1131,7 +1302,7 @@ def check_workflow(root, rel, doc, ident, out, res) -> None:
         while todo:
             j = jobs.get(todo.pop())
             n = j.get("needs") if isinstance(j, dict) else None
-            for dep in ([n] if isinstance(n, str) else n if isinstance(n, list) else []):
+            for dep in [n] if isinstance(n, str) else n if isinstance(n, list) else []:
                 if isinstance(dep, str) and dep not in seen:
                     seen.add(dep)
                     todo.append(dep)
@@ -1140,35 +1311,45 @@ def check_workflow(root, rel, doc, ident, out, res) -> None:
     for key, (name, ln) in sorted(env_reads.items(), key=lambda kv: kv[1][1]):
         job_id = key.split("\0", 1)[0]
         if not any(name in no_env_guards.get(dep, ()) for dep in needs_of(job_id)):
-            bad(ln, f"job '{job_id}' reads the id secret {name} from its environment, but no "
-                    f"job it needs, with no environment, compares `secrets.{name}` against ''. "
-                    "The secrets context falls back from the environment to the repository and "
-                    "the organization, so a value stored at repository level (a migration that "
-                    "left off --env) is read here, and by every workflow in the repository, "
-                    "while the run stays green. Add a refuse-inherited-config job with no "
-                    "environment and `permissions: {}` that fails when "
-                    f"`${{{{ secrets.{name} != '' }}}}`, and make this job need it.")
+            bad(
+                ln,
+                f"job '{job_id}' reads the id secret {name} from its environment, but no "
+                f"job it needs, with no environment, compares `secrets.{name}` against ''. "
+                "The secrets context falls back from the environment to the repository and "
+                "the organization, so a value stored at repository level (a migration that "
+                "left off --env) is read here, and by every workflow in the repository, "
+                "while the run stays green. Add a refuse-inherited-config job with no "
+                "environment and `permissions: {}` that fails when "
+                f"`${{{{ secrets.{name} != '' }}}}`, and make this job need it.",
+            )
 
     for key, (name, ln) in sorted(id_reads.items(), key=lambda kv: kv[1][1]):
         if key not in guarded_vars:
-            bad(ln, f"reads the id secret {name}, and nothing in this workflow compares "
-                    f"`vars.{name}` against ''. A value left behind as a variable from before "
-                    "it became a secret must fail the run (it is never masked, and the next "
-                    f"edit that reads it prints it): add `${{{{ vars.{name} != '' }}}}` to "
-                    "the env of the first step that receives the secret, and fail on true.")
+            bad(
+                ln,
+                f"reads the id secret {name}, and nothing in this workflow compares "
+                f"`vars.{name}` against ''. A value left behind as a variable from before "
+                "it became a secret must fail the run (it is never masked, and the next "
+                f"edit that reads it prints it): add `${{{{ vars.{name} != '' }}}}` to "
+                "the env of the first step that receives the secret, and fail on true.",
+            )
 
 
 def report(res: Result) -> int:
     if res.findings:
         for rel, line, msg in res.findings:
             print(f"::error file={rel},line={line}::{rel}:{line}: {msg}")
-        print(f"\n{len(res.findings)} finding(s). See the docstring of "
-              "scripts/check-workflow-id-masking.py and the ECR Public login section of "
-              "docs/runbooks/render-gate-failures.md.")
+        print(
+            f"\n{len(res.findings)} finding(s). See the docstring of "
+            "scripts/check-workflow-id-masking.py and the ECR Public login section of "
+            "docs/runbooks/render-gate-failures.md."
+        )
         return 1
-    print(f"OK: {res.workflows} workflow(s) read; {res.id_reads} id secret read(s) of "
-          f"{len(res.id_names)} name(s), each masked first by one of {res.mask_steps} mask "
-          f"step(s), none from vars; {MASK_SCRIPT} is the copy {VENDORED_REL} records.")
+    print(
+        f"OK: {res.workflows} workflow(s) read; {res.id_reads} id secret read(s) of "
+        f"{len(res.id_names)} name(s), each masked first by one of {res.mask_steps} mask "
+        f"step(s), none from vars; {MASK_SCRIPT} is the copy {VENDORED_REL} records."
+    )
     return 0
 
 
@@ -1178,15 +1359,20 @@ def repo_is_visible(root: Path) -> tuple[bool, str]:
     A gate that reports on a tree it cannot see reports a pass, and a count of
     matched files says the pattern matched, not that the repository is there.
     """
-    proc = subprocess.run(["git", "-C", str(root), "ls-files"],
-                          capture_output=True, text=True, check=False)
+    proc = subprocess.run(
+        ["git", "-C", str(root), "ls-files"], capture_output=True, text=True, check=False
+    )
     if proc.returncode != 0:
-        return False, ("`git ls-files` failed, so the tracked set could not be read; "
-                       "there is nothing to check rather than nothing to report.")
+        return False, (
+            "`git ls-files` failed, so the tracked set could not be read; "
+            "there is nothing to check rather than nothing to report."
+        )
     tracked = [p for p in proc.stdout.split("\n") if p]
     if not any(not p.startswith("scripts/") for p in tracked):
-        return False, (f"the {len(tracked)} tracked file(s) are all under scripts/ (or "
-                       "there are none), so this is not a checkout of the repository.")
+        return False, (
+            f"the {len(tracked)} tracked file(s) are all under scripts/ (or "
+            "there are none), so this is not a checkout of the repository."
+        )
     return True, ""
 
 
@@ -1194,11 +1380,13 @@ def floor_problem(res: Result) -> str | None:
     """Why a scan did not see what it checks, or None."""
     unseen = sorted(KNOWN_ID_READS - res.id_names)
     if res.workflows < MIN_WORKFLOWS or res.mask_steps < MIN_MASK_STEPS or unseen:
-        return (f"read {res.workflows} workflow(s) and {res.mask_steps} mask step(s) under "
-                f"{WORKFLOWS_REL} (expected at least {MIN_WORKFLOWS} and {MIN_MASK_STEPS}), "
-                f"and saw no read of {', '.join(unseen) or 'nothing missing'} among the id "
-                "secrets the workflows read today. This gate did not see what it checks "
-                "and refuses to report a pass.")
+        return (
+            f"read {res.workflows} workflow(s) and {res.mask_steps} mask step(s) under "
+            f"{WORKFLOWS_REL} (expected at least {MIN_WORKFLOWS} and {MIN_MASK_STEPS}), "
+            f"and saw no read of {', '.join(unseen) or 'nothing missing'} among the id "
+            "secrets the workflows read today. This gate did not see what it checks "
+            "and refuses to report a pass."
+        )
     return None
 
 
@@ -1223,19 +1411,25 @@ def main_check() -> int:
 
 # Anchors in the workflows as they are. Each must occur exactly once in its file;
 # the steps ci.yml reuses through YAML aliases occur once in the text.
-MASK_STEP = ("      - &ecr-public-role\n"
-             "        name: Mask the ECR Public pull role and decide whether to log in\n")
+MASK_STEP = (
+    "      - &ecr-public-role\n"
+    "        name: Mask the ECR Public pull role and decide whether to log in\n"
+)
 MASK_STEP_ID = MASK_STEP + "        id: ecr-public-role\n"
-MASK_ENV = ("          ECR_PUBLIC_PULL_ROLE_ARN: ${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }}"
-            " # zizmor: ignore[secrets-outside-env]\n          ROLE_ARN_VARIABLE")
+MASK_ENV = (
+    "          ECR_PUBLIC_PULL_ROLE_ARN: ${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }}"
+    " # zizmor: ignore[secrets-outside-env]\n          ROLE_ARN_VARIABLE"
+)
 MASK_CMD = 'bash "$GITHUB_WORKSPACE/scripts/mask-aws-ids.sh" --optional ECR_PUBLIC_PULL_ROLE_ARN\n'
 ROLE = "role-to-assume: ${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }}"
 GUARD = "ROLE_ARN_VARIABLE: ${{ vars.ECR_PUBLIC_PULL_ROLE_ARN != '' }}"
 CREDS_WITH = "          aws-region: &ecr-public-region us-east-1\n"
 FETCH = "      - name: Fetch every pinned chart\n        id: fetch\n"
 FETCH_RUN = "        run: ./scripts/render-addons.py --fetch\n"
-CHARTS_JOB = ("  charts:\n    name: Pinned chart archives\n    runs-on: ubuntu-latest\n"
-              "    timeout-minutes: 20\n")
+CHARTS_JOB = (
+    "  charts:\n    name: Pinned chart archives\n    runs-on: ubuntu-latest\n"
+    "    timeout-minutes: 20\n"
+)
 DIFF_INPUT = "    inputs:\n      environment:\n"
 DIFF_STEP = "      - name: Install Helm\n        uses: azure/setup-helm@"
 MERGE_GATE = "  merge-gate:\n    name: merge gate\n"
@@ -1249,171 +1443,476 @@ WORKFLOW_ENV = "env:\n  # renovate: datasource=github-releases depName=kyverno/k
 # mutation is rejected for the rule it plants against rather than a neighbour.
 MUTATIONS: list[tuple] = [
     # Rule 1: variables, and the ways an expression spells a read.
-    ("role-to-assume from a variable", "ci.yml",
-     ROLE, "role-to-assume: ${{ vars.ECR_PUBLIC_PULL_ROLE_ARN }}", None, "from `vars.`"),
-    ("the mask step fed from a variable", "ci.yml", MASK_ENV,
-     MASK_ENV.replace("secrets.ECR_PUBLIC_PULL_ROLE_ARN", "vars.ECR_PUBLIC_PULL_ROLE_ARN"),
-     None, None),
-    ("a variable read with index syntax", "ci.yml", FETCH_RUN,
-     "        env:\n          R: ${{ vars['ECR_PUBLIC_PULL_ROLE_ARN'] }}\n" + FETCH_RUN, None,
-     "from `vars.`"),
-    ("a variable read through a mixed-case context name", "ci.yml", FETCH_RUN,
-     "        env:\n          R: ${{ Vars.ECR_PUBLIC_PULL_ROLE_ARN }}\n" + FETCH_RUN, None,
-     "from `vars.`"),
-    ("a variable read through a computed index", "ci.yml", CREDS_WITH,
-     CREDS_WITH + "          role-session-name: ${{ vars[format('ECR_{0}', 'ROLE_ARN')] }}\n",
-     None, "computed index"),
-    ("every variable read at once", "ci.yml", FETCH_RUN,
-     "        env:\n          ALL: ${{ toJSON(vars) }}\n" + FETCH_RUN, None, "the whole `vars`"),
-    ("every secret in a job-level env", "ci.yml", CHARTS_JOB,
-     CHARTS_JOB + "    env:\n      ALL: ${{ toJSON(secrets) }}\n", None, "the whole `secrets`"),
-    ("a variable of a name outside the rule in an AWS job", "ci.yml", FETCH_RUN,
-     "        env:\n          BUCKET: ${{ vars.CHART_BUCKET }}\n" + FETCH_RUN, None,
-     "can hold AWS credentials"),
-    ("an id-named key fed from a variable of another name", "ci.yml", FETCH_RUN,
-     "        env:\n          ACCOUNT_ID: ${{ vars.AWS_OWNER }}\n" + FETCH_RUN, None, "sets ACCOUNT_ID"),
+    (
+        "role-to-assume from a variable",
+        "ci.yml",
+        ROLE,
+        "role-to-assume: ${{ vars.ECR_PUBLIC_PULL_ROLE_ARN }}",
+        None,
+        "from `vars.`",
+    ),
+    (
+        "the mask step fed from a variable",
+        "ci.yml",
+        MASK_ENV,
+        MASK_ENV.replace("secrets.ECR_PUBLIC_PULL_ROLE_ARN", "vars.ECR_PUBLIC_PULL_ROLE_ARN"),
+        None,
+        None,
+    ),
+    (
+        "a variable read with index syntax",
+        "ci.yml",
+        FETCH_RUN,
+        "        env:\n          R: ${{ vars['ECR_PUBLIC_PULL_ROLE_ARN'] }}\n" + FETCH_RUN,
+        None,
+        "from `vars.`",
+    ),
+    (
+        "a variable read through a mixed-case context name",
+        "ci.yml",
+        FETCH_RUN,
+        "        env:\n          R: ${{ Vars.ECR_PUBLIC_PULL_ROLE_ARN }}\n" + FETCH_RUN,
+        None,
+        "from `vars.`",
+    ),
+    (
+        "a variable read through a computed index",
+        "ci.yml",
+        CREDS_WITH,
+        CREDS_WITH + "          role-session-name: ${{ vars[format('ECR_{0}', 'ROLE_ARN')] }}\n",
+        None,
+        "computed index",
+    ),
+    (
+        "every variable read at once",
+        "ci.yml",
+        FETCH_RUN,
+        "        env:\n          ALL: ${{ toJSON(vars) }}\n" + FETCH_RUN,
+        None,
+        "the whole `vars`",
+    ),
+    (
+        "every secret in a job-level env",
+        "ci.yml",
+        CHARTS_JOB,
+        CHARTS_JOB + "    env:\n      ALL: ${{ toJSON(secrets) }}\n",
+        None,
+        "the whole `secrets`",
+    ),
+    (
+        "a variable of a name outside the rule in an AWS job",
+        "ci.yml",
+        FETCH_RUN,
+        "        env:\n          BUCKET: ${{ vars.CHART_BUCKET }}\n" + FETCH_RUN,
+        None,
+        "can hold AWS credentials",
+    ),
+    (
+        "an id-named key fed from a variable of another name",
+        "ci.yml",
+        FETCH_RUN,
+        "        env:\n          ACCOUNT_ID: ${{ vars.AWS_OWNER }}\n" + FETCH_RUN,
+        None,
+        "sets ACCOUNT_ID",
+    ),
     # Rule 2: inputs.
-    ("an account id as a dispatch input", "diff.yml", DIFF_INPUT,
-     "    inputs:\n      account_id:\n        description: 'Target AWS account ID'\n"
-     "      environment:\n", None, "declares the workflow_dispatch input"),
-    ("an account as a dispatch input under another name", "diff.yml", DIFF_INPUT,
-     "    inputs:\n      aws_account:\n        description: 'Target AWS account (12 digits)'\n"
-     "      environment:\n", None, "declares the workflow_dispatch input"),
-    ("an id input read through github.event.inputs with index syntax", "diff.yml", DIFF_STEP,
-     "      - name: Early\n        env:\n          ACCT: ${{ github.event.inputs['account_id'] }}\n"
-     "        run: echo early\n" + DIFF_STEP, None, "reads the input"),
-    ("an id input read through an upper-case context name", "diff.yml", DIFF_STEP,
-     "      - name: Early\n        env:\n          ACCT: ${{ INPUTS.role_arn }}\n"
-     "        run: echo early\n" + DIFF_STEP, None, "reads the input"),
+    (
+        "an account id as a dispatch input",
+        "diff.yml",
+        DIFF_INPUT,
+        "    inputs:\n      account_id:\n        description: 'Target AWS account ID'\n"
+        "      environment:\n",
+        None,
+        "declares the workflow_dispatch input",
+    ),
+    (
+        "an account as a dispatch input under another name",
+        "diff.yml",
+        DIFF_INPUT,
+        "    inputs:\n      aws_account:\n        description: 'Target AWS account (12 digits)'\n"
+        "      environment:\n",
+        None,
+        "declares the workflow_dispatch input",
+    ),
+    (
+        "an id input read through github.event.inputs with index syntax",
+        "diff.yml",
+        DIFF_STEP,
+        "      - name: Early\n        env:\n          ACCT: ${{ github.event.inputs['account_id'] }}\n"
+        "        run: echo early\n" + DIFF_STEP,
+        None,
+        "reads the input",
+    ),
+    (
+        "an id input read through an upper-case context name",
+        "diff.yml",
+        DIFF_STEP,
+        "      - name: Early\n        env:\n          ACCT: ${{ INPUTS.role_arn }}\n"
+        "        run: echo early\n" + DIFF_STEP,
+        None,
+        "reads the input",
+    ),
     # Rule 3: whole, in a step's env or with, and nowhere else.
-    ("a piece of the secret computed in the mask step's env", "ci.yml", MASK_ENV,
-     MASK_ENV.replace("          ROLE_ARN_VARIABLE",
-                      "          ROLE_NAME: ${{ format('{0}', secrets.ECR_PUBLIC_PULL_ROLE_ARN) }}\n"
-                      "          ROLE_ARN_VARIABLE"), None, "computes from the id secret"),
-    ("the secret re-serialised in a later step's env", "ci.yml", FETCH_RUN,
-     "        env:\n          R: ${{ toJSON(secrets.ECR_PUBLIC_PULL_ROLE_ARN) }}\n" + FETCH_RUN,
-     None, "computes from the id secret"),
-    ("the secret expanded into run text", "ci.yml", FETCH_RUN,
-     "        run: ./scripts/render-addons.py --fetch --role ${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }}\n",
-     None, "passes the id secret"),
-    ("the secret in a workflow-level env", "ci.yml", WORKFLOW_ENV,
-     WORKFLOW_ENV + "  ROLE: ${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }}\n", None,
-     "passes the id secret"),
-    ("the secret in a job-level env", "ci.yml", CHARTS_JOB,
-     CHARTS_JOB + "    env:\n      ECR_PUBLIC_PULL_ROLE_ARN: ${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }}\n",
-     None, "passes the id secret"),
-    ("secrets: inherit", "ci.yml", CHARTS_JOB, CHARTS_JOB + "    secrets: inherit\n", None,
-     "secrets: inherit"),
+    (
+        "a piece of the secret computed in the mask step's env",
+        "ci.yml",
+        MASK_ENV,
+        MASK_ENV.replace(
+            "          ROLE_ARN_VARIABLE",
+            "          ROLE_NAME: ${{ format('{0}', secrets.ECR_PUBLIC_PULL_ROLE_ARN) }}\n"
+            "          ROLE_ARN_VARIABLE",
+        ),
+        None,
+        "computes from the id secret",
+    ),
+    (
+        "the secret re-serialised in a later step's env",
+        "ci.yml",
+        FETCH_RUN,
+        "        env:\n          R: ${{ toJSON(secrets.ECR_PUBLIC_PULL_ROLE_ARN) }}\n" + FETCH_RUN,
+        None,
+        "computes from the id secret",
+    ),
+    (
+        "the secret expanded into run text",
+        "ci.yml",
+        FETCH_RUN,
+        "        run: ./scripts/render-addons.py --fetch --role ${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }}\n",
+        None,
+        "passes the id secret",
+    ),
+    (
+        "the secret in a workflow-level env",
+        "ci.yml",
+        WORKFLOW_ENV,
+        WORKFLOW_ENV + "  ROLE: ${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }}\n",
+        None,
+        "passes the id secret",
+    ),
+    (
+        "the secret in a job-level env",
+        "ci.yml",
+        CHARTS_JOB,
+        CHARTS_JOB
+        + "    env:\n      ECR_PUBLIC_PULL_ROLE_ARN: ${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }}\n",
+        None,
+        "passes the id secret",
+    ),
+    (
+        "secrets: inherit",
+        "ci.yml",
+        CHARTS_JOB,
+        CHARTS_JOB + "    secrets: inherit\n",
+        None,
+        "secrets: inherit",
+    ),
     # Rule 4: where the secret lives.
-    ("the repository secret read in a job declaring an environment", "ci.yml", CHARTS_JOB,
-     CHARTS_JOB + "    environment: ecr-public\n", None, "is a repository secret here"),
-    ("another id read in a job with no environment", "ci.yml", MASK_ENV,
-     MASK_ENV.replace("          ROLE_ARN_VARIABLE",
-                      "          DEPLOY_ROLE_ARN: ${{ secrets.DEPLOY_ROLE_ARN }}\n"
-                      "          ROLE_ARN_VARIABLE"), None, "declares no environment"),
-    ("an environment id with no job refusing the inherited name", "ci.yml", MERGE_GATE,
-     ("  deploy-probe:\n    runs-on: ubuntu-latest\n    timeout-minutes: 5\n"
-      "    environment: probe\n    steps:\n      - name: Mask\n        env:\n"
-      "          DEPLOY_ROLE_ARN: ${{ secrets.DEPLOY_ROLE_ARN }}\n"
-      "          ROLE_ARN_VARIABLE: ${{ vars.DEPLOY_ROLE_ARN != '' }}\n"
-      "        run: |\n"
-      '          bash "$GITHUB_WORKSPACE/scripts/mask-aws-ids.sh" DEPLOY_ROLE_ARN\n\n'
-      + MERGE_GATE), r"^\s+DEPLOY_ROLE_ARN: \$\{\{ secrets\.DEPLOY_ROLE_ARN \}\}",
-     "no job it needs"),
+    (
+        "the repository secret read in a job declaring an environment",
+        "ci.yml",
+        CHARTS_JOB,
+        CHARTS_JOB + "    environment: ecr-public\n",
+        None,
+        "is a repository secret here",
+    ),
+    (
+        "another id read in a job with no environment",
+        "ci.yml",
+        MASK_ENV,
+        MASK_ENV.replace(
+            "          ROLE_ARN_VARIABLE",
+            "          DEPLOY_ROLE_ARN: ${{ secrets.DEPLOY_ROLE_ARN }}\n"
+            "          ROLE_ARN_VARIABLE",
+        ),
+        None,
+        "declares no environment",
+    ),
+    (
+        "an environment id with no job refusing the inherited name",
+        "ci.yml",
+        MERGE_GATE,
+        (
+            "  deploy-probe:\n    runs-on: ubuntu-latest\n    timeout-minutes: 5\n"
+            "    environment: probe\n    steps:\n      - name: Mask\n        env:\n"
+            "          DEPLOY_ROLE_ARN: ${{ secrets.DEPLOY_ROLE_ARN }}\n"
+            "          ROLE_ARN_VARIABLE: ${{ vars.DEPLOY_ROLE_ARN != '' }}\n"
+            "        run: |\n"
+            '          bash "$GITHUB_WORKSPACE/scripts/mask-aws-ids.sh" DEPLOY_ROLE_ARN\n\n'
+            + MERGE_GATE
+        ),
+        r"^\s+DEPLOY_ROLE_ARN: \$\{\{ secrets\.DEPLOY_ROLE_ARN \}\}",
+        "no job it needs",
+    ),
     # Rule 5: the mask step comes first, and has the shape that stops the job.
-    ("a step receives the secret before the mask step", "ci.yml", MASK_STEP,
-     EARLY + "          EARLY: ${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }}\n"
-     "        run: echo early\n" + MASK_STEP, None, "not `bash"),
-    ("an early step reads the secret with index syntax", "ci.yml", MASK_STEP,
-     EARLY + "          EARLY: ${{ secrets['ECR_PUBLIC_PULL_ROLE_ARN'] }}\n"
-     "        run: echo \"${EARLY#arn:aws:iam::}\"\n" + MASK_STEP, None, None),
-    ("an early step reads the secret through a mixed-case context name", "ci.yml", MASK_STEP,
-     EARLY + "          EARLY: ${{ Secrets.ECR_PUBLIC_PULL_ROLE_ARN }}\n"
-     "        run: echo \"${EARLY#arn:aws:iam::}\"\n" + MASK_STEP, None, None),
-    ("an action is the first step to receive the secret", "ci.yml", MASK_ENV,
-     MASK_ENV.replace("${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }}", "${{ steps.none.outputs.none }}"),
-     r"^\s+role-to-assume: \$\{\{ secrets\.ECR_PUBLIC_PULL_ROLE_ARN \}\}", "not a mask step"),
-    ("the mask is not the first command", "ci.yml", "        run: |\n          " + MASK_CMD,
-     "        run: |\n          echo \"starting\"\n          " + MASK_CMD, None, None),
-    ("the mask step is conditional", "ci.yml", MASK_STEP_ID,
-     MASK_STEP_ID + "        if: github.event_name == 'push'\n", None, "has an `if:`"),
-    ("the mask step continues on error", "ci.yml", MASK_STEP_ID,
-     MASK_STEP_ID + "        continue-on-error: true\n", None, "continue-on-error"),
-    ("the mask step runs under pwsh", "ci.yml", MASK_STEP_ID,
-     MASK_STEP_ID + "        shell: pwsh\n", None, "shell"),
-    ("the job's default shell does not stop on failure", "ci.yml", CHARTS_JOB,
-     CHARTS_JOB + "    defaults:\n      run:\n        shell: bash {0}\n", None, "shell"),
-    ("the workflow's default shell does not stop on failure", "ci.yml",
-     "permissions:\n  contents: read\n\n# Tool versions",
-     "permissions:\n  contents: read\n\ndefaults:\n  run:\n    shell: sh\n\n# Tool versions",
-     None, "shell"),
-    ("the mask command carries an argument the script refuses", "ci.yml", MASK_CMD,
-     MASK_CMD.replace("ECR_PUBLIC_PULL_ROLE_ARN\n", "ECR_PUBLIC_PULL_ROLE_ARN --bogus\n"), None,
-     None),
-    ("--optional after a name", "ci.yml", MASK_CMD,
-     MASK_CMD.replace("--optional ECR_PUBLIC_PULL_ROLE_ARN", "ECR_PUBLIC_PULL_ROLE_ARN --optional"),
-     None, None),
-    ("the mask command omits the key the step carries the secret in", "ci.yml", MASK_CMD,
-     MASK_CMD.replace("--optional ECR_PUBLIC_PULL_ROLE_ARN", "--optional ROLE_ARN"), None,
-     "does not carry"),
-    ("the mask step masks a variable it hands on", "ci.yml", MASK_ENV,
-     MASK_ENV.replace("${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }}", "${{ vars.ECR_ROLE }}"), None,
-     None),
-    ("a receiving step runs after a failure", "ci.yml",
-     "        if: steps.ecr-public-role.outputs.configured == 'true' && (",
-     "        if: always() && steps.ecr-public-role.outputs.configured == 'true' && (", None,
-     "runs after a failure"),
+    (
+        "a step receives the secret before the mask step",
+        "ci.yml",
+        MASK_STEP,
+        EARLY + "          EARLY: ${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }}\n"
+        "        run: echo early\n" + MASK_STEP,
+        None,
+        "not `bash",
+    ),
+    (
+        "an early step reads the secret with index syntax",
+        "ci.yml",
+        MASK_STEP,
+        EARLY + "          EARLY: ${{ secrets['ECR_PUBLIC_PULL_ROLE_ARN'] }}\n"
+        '        run: echo "${EARLY#arn:aws:iam::}"\n' + MASK_STEP,
+        None,
+        None,
+    ),
+    (
+        "an early step reads the secret through a mixed-case context name",
+        "ci.yml",
+        MASK_STEP,
+        EARLY + "          EARLY: ${{ Secrets.ECR_PUBLIC_PULL_ROLE_ARN }}\n"
+        '        run: echo "${EARLY#arn:aws:iam::}"\n' + MASK_STEP,
+        None,
+        None,
+    ),
+    (
+        "an action is the first step to receive the secret",
+        "ci.yml",
+        MASK_ENV,
+        MASK_ENV.replace(
+            "${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }}", "${{ steps.none.outputs.none }}"
+        ),
+        r"^\s+role-to-assume: \$\{\{ secrets\.ECR_PUBLIC_PULL_ROLE_ARN \}\}",
+        "not a mask step",
+    ),
+    (
+        "the mask is not the first command",
+        "ci.yml",
+        "        run: |\n          " + MASK_CMD,
+        '        run: |\n          echo "starting"\n          ' + MASK_CMD,
+        None,
+        None,
+    ),
+    (
+        "the mask step is conditional",
+        "ci.yml",
+        MASK_STEP_ID,
+        MASK_STEP_ID + "        if: github.event_name == 'push'\n",
+        None,
+        "has an `if:`",
+    ),
+    (
+        "the mask step continues on error",
+        "ci.yml",
+        MASK_STEP_ID,
+        MASK_STEP_ID + "        continue-on-error: true\n",
+        None,
+        "continue-on-error",
+    ),
+    (
+        "the mask step runs under pwsh",
+        "ci.yml",
+        MASK_STEP_ID,
+        MASK_STEP_ID + "        shell: pwsh\n",
+        None,
+        "shell",
+    ),
+    (
+        "the job's default shell does not stop on failure",
+        "ci.yml",
+        CHARTS_JOB,
+        CHARTS_JOB + "    defaults:\n      run:\n        shell: bash {0}\n",
+        None,
+        "shell",
+    ),
+    (
+        "the workflow's default shell does not stop on failure",
+        "ci.yml",
+        "permissions:\n  contents: read\n\n# Tool versions",
+        "permissions:\n  contents: read\n\ndefaults:\n  run:\n    shell: sh\n\n# Tool versions",
+        None,
+        "shell",
+    ),
+    (
+        "the mask command carries an argument the script refuses",
+        "ci.yml",
+        MASK_CMD,
+        MASK_CMD.replace("ECR_PUBLIC_PULL_ROLE_ARN\n", "ECR_PUBLIC_PULL_ROLE_ARN --bogus\n"),
+        None,
+        None,
+    ),
+    (
+        "--optional after a name",
+        "ci.yml",
+        MASK_CMD,
+        MASK_CMD.replace(
+            "--optional ECR_PUBLIC_PULL_ROLE_ARN", "ECR_PUBLIC_PULL_ROLE_ARN --optional"
+        ),
+        None,
+        None,
+    ),
+    (
+        "the mask command omits the key the step carries the secret in",
+        "ci.yml",
+        MASK_CMD,
+        MASK_CMD.replace("--optional ECR_PUBLIC_PULL_ROLE_ARN", "--optional ROLE_ARN"),
+        None,
+        "does not carry",
+    ),
+    (
+        "the mask step masks a variable it hands on",
+        "ci.yml",
+        MASK_ENV,
+        MASK_ENV.replace("${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }}", "${{ vars.ECR_ROLE }}"),
+        None,
+        None,
+    ),
+    (
+        "a receiving step runs after a failure",
+        "ci.yml",
+        "        if: steps.ecr-public-role.outputs.configured == 'true' && (",
+        "        if: always() && steps.ecr-public-role.outputs.configured == 'true' && (",
+        None,
+        "runs after a failure",
+    ),
     # Rules 6 and 7: role-to-assume and configure-aws-credentials.
-    ("role-to-assume from the matrix", "ci.yml", ROLE, "role-to-assume: ${{ matrix.role_arn }}",
-     None, "role-to-assume is"),
-    ("role-to-assume as a literal", "ci.yml", ROLE,
-     "role-to-assume: arn:aws:iam::222233334444:role/ecr-public-pull", None, "role-to-assume is"),
-    ("role-to-assume spelt in mixed case, from a secret named outside the rule", "ci.yml", ROLE,
-     "Role-To-Assume: ${{ secrets.PULL_ROLE }}", None, "not a mask step"),
-    ("configure-aws-credentials without mask-aws-account-id", "ci.yml",
-     "          mask-aws-account-id: true\n", "",
-     r"^\s+uses: aws-actions/configure-aws-credentials@", "mask-aws-account-id"),
-    ("configure-aws-credentials spelt in mixed case, unmasked", "ci.yml",
-     ("        uses: aws-actions/configure-aws-credentials@", "          mask-aws-account-id: true\n"),
-     ("        uses: Aws-Actions/Configure-AWS-Credentials@", ""),
-     r"^\s+uses: Aws-Actions/Configure-AWS-Credentials@", "mask-aws-account-id"),
+    (
+        "role-to-assume from the matrix",
+        "ci.yml",
+        ROLE,
+        "role-to-assume: ${{ matrix.role_arn }}",
+        None,
+        "role-to-assume is",
+    ),
+    (
+        "role-to-assume as a literal",
+        "ci.yml",
+        ROLE,
+        "role-to-assume: arn:aws:iam::222233334444:role/ecr-public-pull",
+        None,
+        "role-to-assume is",
+    ),
+    (
+        "role-to-assume spelt in mixed case, from a secret named outside the rule",
+        "ci.yml",
+        ROLE,
+        "Role-To-Assume: ${{ secrets.PULL_ROLE }}",
+        None,
+        "not a mask step",
+    ),
+    (
+        "configure-aws-credentials without mask-aws-account-id",
+        "ci.yml",
+        "          mask-aws-account-id: true\n",
+        "",
+        r"^\s+uses: aws-actions/configure-aws-credentials@",
+        "mask-aws-account-id",
+    ),
+    (
+        "configure-aws-credentials spelt in mixed case, unmasked",
+        "ci.yml",
+        (
+            "        uses: aws-actions/configure-aws-credentials@",
+            "          mask-aws-account-id: true\n",
+        ),
+        ("        uses: Aws-Actions/Configure-AWS-Credentials@", ""),
+        r"^\s+uses: Aws-Actions/Configure-AWS-Credentials@",
+        "mask-aws-account-id",
+    ),
     # Rule 8: the leftover-variable guard.
-    ("the leftover-variable guard removed", "ci.yml", GUARD, "ROLE_ARN_VARIABLE: \"false\"",
-     r"^\s+ECR_PUBLIC_PULL_ROLE_ARN: \$\{\{ secrets\.ECR_PUBLIC_PULL_ROLE_ARN \}\}",
-     "compares `vars.ECR_PUBLIC_PULL_ROLE_ARN`"),
-    ("the guard reads the variable's value", "ci.yml", GUARD,
-     "ROLE_ARN_VARIABLE: ${{ vars.ECR_PUBLIC_PULL_ROLE_ARN }}", None, "from `vars.`"),
+    (
+        "the leftover-variable guard removed",
+        "ci.yml",
+        GUARD,
+        'ROLE_ARN_VARIABLE: "false"',
+        r"^\s+ECR_PUBLIC_PULL_ROLE_ARN: \$\{\{ secrets\.ECR_PUBLIC_PULL_ROLE_ARN \}\}",
+        "compares `vars.ECR_PUBLIC_PULL_ROLE_ARN`",
+    ),
+    (
+        "the guard reads the variable's value",
+        "ci.yml",
+        GUARD,
+        "ROLE_ARN_VARIABLE: ${{ vars.ECR_PUBLIC_PULL_ROLE_ARN }}",
+        None,
+        "from `vars.`",
+    ),
     # Rule 9: literals.
-    ("a literal account id", "ci.yml", FETCH_RUN,
-     "        env:\n          OWNER: \"222233334444\"\n" + FETCH_RUN, None, "as a literal"),
-    ("a literal account id YAML reads as a number", "ci.yml", FETCH_RUN,
-     "        env:\n          OWNER: 222233334444\n" + FETCH_RUN, None, "as a literal"),
-    ("a literal account id as a number in an action input", "ci.yml", CREDS_WITH,
-     CREDS_WITH + "          role-session-name: 222233334444\n", None, "as a literal"),
-    ("a literal account id as a number in an env key", "ci.yml", FETCH_RUN,
-     "        env:\n          222233334444: x\n" + FETCH_RUN, None, "as a literal"),
+    (
+        "a literal account id",
+        "ci.yml",
+        FETCH_RUN,
+        '        env:\n          OWNER: "222233334444"\n' + FETCH_RUN,
+        None,
+        "as a literal",
+    ),
+    (
+        "a literal account id YAML reads as a number",
+        "ci.yml",
+        FETCH_RUN,
+        "        env:\n          OWNER: 222233334444\n" + FETCH_RUN,
+        None,
+        "as a literal",
+    ),
+    (
+        "a literal account id as a number in an action input",
+        "ci.yml",
+        CREDS_WITH,
+        CREDS_WITH + "          role-session-name: 222233334444\n",
+        None,
+        "as a literal",
+    ),
+    (
+        "a literal account id as a number in an env key",
+        "ci.yml",
+        FETCH_RUN,
+        "        env:\n          222233334444: x\n" + FETCH_RUN,
+        None,
+        "as a literal",
+    ),
     # Digits 0-7 behind a leading 0 are octal to YAML 1.1: the value is
     # 1402433619, and only the source text still reads as an account id.
-    ("a literal account id YAML reads as octal", "ci.yml", FETCH_RUN,
-     "        env:\n          OWNER: 012345670123\n" + FETCH_RUN, None, "as a literal"),
-    ("a literal account id YAML reads as octal, as an env key", "ci.yml", FETCH_RUN,
-     "        env:\n          012345670123: x\n" + FETCH_RUN, None, "as a literal"),
+    (
+        "a literal account id YAML reads as octal",
+        "ci.yml",
+        FETCH_RUN,
+        "        env:\n          OWNER: 012345670123\n" + FETCH_RUN,
+        None,
+        "as a literal",
+    ),
+    (
+        "a literal account id YAML reads as octal, as an env key",
+        "ci.yml",
+        FETCH_RUN,
+        "        env:\n          012345670123: x\n" + FETCH_RUN,
+        None,
+        "as a literal",
+    ),
     # PyYAML cuts its excerpt to about 75 characters around the column; here
     # the cut falls inside the id, leaving a tail too short to redact.
-    ("a workflow that does not parse, with an account id at the parser's excerpt cut",
-     "ci.yml", FETCH_RUN,
-     "        env:\n          OWNER: x 222233334444 qqqqqqqqqqqqqqqqqqqqq: y\n" + FETCH_RUN,
-     r"^", "could not be parsed"),
-    ("a literal ARN in prose a step prints", "diff.yml", DIFF_STEP,
-     "      - name: Early\n        run: echo arn:aws:iam::313131313131:role/x\n" + DIFF_STEP,
-     None, "as a literal"),
+    (
+        "a workflow that does not parse, with an account id at the parser's excerpt cut",
+        "ci.yml",
+        FETCH_RUN,
+        "        env:\n          OWNER: x 222233334444 qqqqqqqqqqqqqqqqqqqqq: y\n" + FETCH_RUN,
+        r"^",
+        "could not be parsed",
+    ),
+    (
+        "a literal ARN in prose a step prints",
+        "diff.yml",
+        DIFF_STEP,
+        "      - name: Early\n        run: echo arn:aws:iam::313131313131:role/x\n" + DIFF_STEP,
+        None,
+        "as a literal",
+    ),
 ]
 
 # The mask script itself: the vendored bytes are pinned by digest.
 SCRIPT_MUTATIONS: list[tuple] = [
-    ("the vendored mask script edited", MASK_SCRIPT,
-     "ARN_PATTERN='arn:aws:iam::[0-9]{12}:", "ARN_PATTERN='arn:aws:iam::[0-9]{13}:",
-     r"^", "vendored byte for byte"),
+    (
+        "the vendored mask script edited",
+        MASK_SCRIPT,
+        "ARN_PATTERN='arn:aws:iam::[0-9]{12}:",
+        "ARN_PATTERN='arn:aws:iam::[0-9]{13}:",
+        r"^",
+        "vendored byte for byte",
+    ),
 ]
 
 
@@ -1436,8 +1935,9 @@ def _wanted_lines(mutated: str, old, new, expect) -> set[int]:
     start = mutated.index(new_text) if new_text else 0
     first = mutated.count("\n", 0, start) + 1
     old_lines = set(old_text.splitlines())
-    return {first + i for i, ln in enumerate(new_text.splitlines())
-            if ln not in old_lines} or {first}
+    return {first + i for i, ln in enumerate(new_text.splitlines()) if ln not in old_lines} or {
+        first
+    }
 
 
 def leaked_ids(findings, planted=frozenset()) -> list[tuple[str, int, str]]:
@@ -1447,9 +1947,12 @@ def leaked_ids(findings, planted=frozenset()) -> list[tuple[str, int, str]]:
     last six digits of an id the mutation planted: a quote or a parser excerpt
     cut before it is redacted keeps a head or tail too short to look like an
     id, and still publishes it."""
+
     def leaks(msg: str) -> bool:
-        return any(not (len(run) == 12 and placeholder(run)) for run in ID_RUN.findall(msg)) \
-            or any(i[:6] in msg or i[-6:] in msg for i in planted)
+        return any(not (len(run) == 12 and placeholder(run)) for run in ID_RUN.findall(msg)) or any(
+            i[:6] in msg or i[-6:] in msg for i in planted
+        )
+
     return [f for f in findings if leaks(f[2])]
 
 
@@ -1493,27 +1996,37 @@ def self_test(root: Path = ROOT) -> int:
                 res = check(base)
             finally:
                 target.write_text(text)
-            planted = {m.group(1) for m in ID_LITERAL.finditer(mutated)
-                       if not placeholder(m.group(1))} - set(ID_LITERAL.findall(text))
+            planted = {
+                m.group(1) for m in ID_LITERAL.finditer(mutated) if not placeholder(m.group(1))
+            } - set(ID_LITERAL.findall(text))
             leaked = leaked_ids(res.findings, planted)
             if leaked:
                 # Not printed: the point is that the message carries an id.
-                print(f"FAIL [{name}]: {len(leaked)} finding(s) quote an account id, at "
-                      f"{sorted({(r, ln) for r, ln, _ in leaked})}; a finding is published "
-                      "as an annotation and must say <account id> instead", file=sys.stderr)
+                print(
+                    f"FAIL [{name}]: {len(leaked)} finding(s) quote an account id, at "
+                    f"{sorted({(r, ln) for r, ln, _ in leaked})}; a finding is published "
+                    "as an annotation and must say <account id> instead",
+                    file=sys.stderr,
+                )
                 failures += 1
                 continue
             wanted = _wanted_lines(mutated, old, new, expect) if expect != r"^" else {1}
             cited = {ln for r, ln, _ in res.findings if r == rel}
-            hits = [f for f in res.findings if f[0] == rel and f[1] in wanted
-                    and (must_say is None or must_say in f[2])]
+            hits = [
+                f
+                for f in res.findings
+                if f[0] == rel and f[1] in wanted and (must_say is None or must_say in f[2])
+            ]
             if not res.findings:
                 print(f"FAIL [{name}]: not rejected", file=sys.stderr)
                 failures += 1
             elif not hits:
-                print(f"FAIL [{name}]: rejected, but cited {sorted(cited) or 'no line'} in "
-                      f"{rel}, not the mutated line(s) {sorted(wanted)}"
-                      + (f" saying {must_say!r}" if must_say else ""), file=sys.stderr)
+                print(
+                    f"FAIL [{name}]: rejected, but cited {sorted(cited) or 'no line'} in "
+                    f"{rel}, not the mutated line(s) {sorted(wanted)}"
+                    + (f" saying {must_say!r}" if must_say else ""),
+                    file=sys.stderr,
+                )
                 for r, ln, msg in res.findings:
                     print(f"    {r}:{ln}: {msg[:110]}", file=sys.stderr)
                 failures += 1
@@ -1526,22 +2039,27 @@ def self_test(root: Path = ROOT) -> int:
         for p in (base / WORKFLOWS_REL).glob("*.y*ml"):
             p.unlink()
         if floor_problem(check(base)) is None:
-            print("FAIL [no workflows]: the floor accepted a scan of no workflows",
-                  file=sys.stderr)
+            print("FAIL [no workflows]: the floor accepted a scan of no workflows", file=sys.stderr)
             failures += 1
         else:
             print("ok [no workflows]: the floor refuses a scan that read nothing")
 
     if failures:
-        print(f"check-workflow-id-masking self-test FAILED: {failures} of {ran} mutation(s)",
-              file=sys.stderr)
+        print(
+            f"check-workflow-id-masking self-test FAILED: {failures} of {ran} mutation(s)",
+            file=sys.stderr,
+        )
         return 1
     if ran < len(MUTATIONS) + len(SCRIPT_MUTATIONS) + 1:
-        print("self-test ran fewer mutations than it lists; refusing to report a pass",
-              file=sys.stderr)
+        print(
+            "self-test ran fewer mutations than it lists; refusing to report a pass",
+            file=sys.stderr,
+        )
         return 1
-    print(f"check-workflow-id-masking self-test passed ({ran} mutations rejected at the "
-          "mutated line, unmutated workflows accepted).")
+    print(
+        f"check-workflow-id-masking self-test passed ({ran} mutations rejected at the "
+        "mutated line, unmutated workflows accepted)."
+    )
     return 0
 
 

@@ -103,8 +103,7 @@ UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
 
 # `metric{labels}[range]` — the labels are kept because they are part of what a
 # panel has to match to be measuring the same thing.
-SELECTOR = re.compile(
-    r"(?P<sel>[a-zA-Z_:][a-zA-Z0-9_:]*(?:\{[^}]*\})?)\[(?P<range>\d+[smhdw])\]")
+SELECTOR = re.compile(r"(?P<sel>[a-zA-Z_:][a-zA-Z0-9_:]*(?:\{[^}]*\})?)\[(?P<range>\d+[smhdw])\]")
 # The burn factor, and what separates it from every other `> bool` in a rule.
 # A burn comparison is made against the error ratio NORMALISED by the budget:
 # `<error ratio> / <budget> > bool <factor>`. Matching `> bool` alone also
@@ -112,11 +111,9 @@ SELECTOR = re.compile(
 # roughly one request a minute, there to stop an idle service alerting on a
 # ratio computed from nothing. Read as a factor it makes a rule look like two
 # contradictory claims about one rate of spend.
-FACTOR = re.compile(
-    r"/\s*(?P<budget>0\.\d+)\s*>\s*bool\s+(?P<factor>\d+(?:\.\d+)?)")
+FACTOR = re.compile(r"/\s*(?P<budget>0\.\d+)\s*>\s*bool\s+(?P<factor>\d+(?:\.\d+)?)")
 # The claim in the summary: a percentage of budget over a window.
-CLAIM = re.compile(
-    r"(?P<pct>\d+(?:\.(?P<frac>\d+))?)%\s+(?:in|over)\s+(?P<window>\d+[smhdw])")
+CLAIM = re.compile(r"(?P<pct>\d+(?:\.(?P<frac>\d+))?)%\s+(?:in|over)\s+(?P<window>\d+[smhdw])")
 
 
 def under_root(path: pathlib.Path) -> str:
@@ -189,8 +186,7 @@ def long_window(expr: str) -> tuple[int, set[str]]:
     """
     ranges: dict[int, set[str]] = {}
     for m in SELECTOR.finditer(expr):
-        ranges.setdefault(seconds(m.group("range")), set()).add(
-            re.sub(r"\s+", "", m.group("sel")))
+        ranges.setdefault(seconds(m.group("range")), set()).add(re.sub(r"\s+", "", m.group("sel")))
     longest = max(ranges)
     return longest, ranges[longest]
 
@@ -215,12 +211,13 @@ def delivered_dashboards(root: pathlib.Path) -> list[dict]:
     a document no cluster receives.
     """
     gatelib.require("kustomize")
-    proc = subprocess.run(["kustomize", "build", str(root)],
-                          capture_output=True, text=True)
+    proc = subprocess.run(["kustomize", "build", str(root)], capture_output=True, text=True)
     if proc.returncode != 0:
-        print(f"Cannot run: kustomize build {under_root(root)} failed, so "
-              f"which panels this catalog delivers could not be read. The "
-              f"dashboards on disk say nothing about that on their own.")
+        print(
+            f"Cannot run: kustomize build {under_root(root)} failed, so "
+            f"which panels this catalog delivers could not be read. The "
+            f"dashboards on disk say nothing about that on their own."
+        )
         print(proc.stderr.strip()[:500])
         sys.exit(gatelib.CANNOT_RUN)
     out: list[dict] = []
@@ -236,9 +233,11 @@ def delivered_dashboards(root: pathlib.Path) -> list[dict]:
             # Refusing to skip a dashboard that will not parse. A gate that
             # silently drops its subject reports success over nothing.
             name = (doc.get("metadata") or {}).get("name", "<unnamed>")
-            print(f"Cannot run: {DASHBOARD}/{name} renders spec.json that is not "
-                  f"valid JSON, so the objective it measures could not be read: "
-                  f"{err}")
+            print(
+                f"Cannot run: {DASHBOARD}/{name} renders spec.json that is not "
+                f"valid JSON, so the objective it measures could not be read: "
+                f"{err}"
+            )
             sys.exit(gatelib.CANNOT_RUN)
     return out
 
@@ -296,16 +295,20 @@ def as_percent(value: Fraction, places: int) -> str:
 
 def main() -> int:
     if not ALERT_DIR.is_dir():
-        print(f"Cannot run: {ALERT_DIR.relative_to(ROOT)} does not exist, so the "
-              f"burn-rate rules whose claims this gate checks are not there.")
+        print(
+            f"Cannot run: {ALERT_DIR.relative_to(ROOT)} does not exist, so the "
+            f"burn-rate rules whose claims this gate checks are not there."
+        )
         print("This gate examined nothing, which is not the same as finding nothing.")
         return gatelib.CANNOT_RUN
 
     rules = list(burn_rules(ALERT_DIR))
     if not rules:
-        print(f"Cannot run: no burn-rate rule found under "
-              f"{ALERT_DIR.relative_to(ROOT)}. A run over no rule reports what a "
-              f"catalog of correct claims reports.")
+        print(
+            f"Cannot run: no burn-rate rule found under "
+            f"{ALERT_DIR.relative_to(ROOT)}. A run over no rule reports what a "
+            f"catalog of correct claims reports."
+        )
         return gatelib.CANNOT_RUN
 
     windows = objective_windows()
@@ -321,7 +324,8 @@ def main() -> int:
             failures.append(
                 f"{where} compares against {len(seen)} different burn factors "
                 f"({', '.join(decimal(f) for f in sorted(seen))}), so there is no one "
-                f"rate of spend for its summary to be describing.")
+                f"rate of spend for its summary to be describing."
+            )
             continue
         factor = seen.pop()
 
@@ -334,7 +338,8 @@ def main() -> int:
                 f"{where} is a burn-rate rule and its summary states no budget "
                 f"figure: {summary!r}. The summary is the alert title, and a burn "
                 f"title that does not say how much budget is at stake gives the "
-                f"reader nothing to act on.")
+                f"reader nothing to act on."
+            )
             continue
 
         stated_window = seconds(claim.group("window"))
@@ -342,7 +347,8 @@ def main() -> int:
             failures.append(
                 f"{where} says {claim.group(0)!r} and its expression measures over "
                 f"{human(window)}. The sentence and the query describe different "
-                f"periods, so one of them is about an alert that does not exist.")
+                f"periods, so one of them is about an alert that does not exist."
+            )
             continue
 
         objective = {windows[sel] for sel in selectors if sel in windows}
@@ -352,13 +358,15 @@ def main() -> int:
                 f"by {under_root(KUSTOMIZE_ROOT)} measures "
                 f"{' or '.join(sorted(selectors))} over an explicit range. The "
                 f"figure is compared to nothing, which is how the last wrong one "
-                f"survived.")
+                f"survived."
+            )
             continue
         if len(objective) > 1:
             failures.append(
                 f"{where} burns against selectors whose panels measure them over "
                 f"{', '.join(human(w) for w in sorted(objective))}. Which of those "
-                f"is the SLO window decides the figure, and the tree states both.")
+                f"is the SLO window decides the figure, and the tree states both."
+            )
             continue
         slo = objective.pop()
 
@@ -371,26 +379,35 @@ def main() -> int:
                 f"{as_percent(derived, places)}% over {human(window)}: burn factor "
                 f"{decimal(factor)} against a {human(slo)} objective is "
                 f"{decimal(factor)} x {human(window)} / {human(slo)}. This "
-                f"sentence is the alert title.")
+                f"sentence is the alert title."
+            )
             continue
         checked += 1
 
     if failures:
-        print(f"{len(failures)} burn-rate budget claim(s) the expression does not "
-              f"support:\n")
+        print(f"{len(failures)} burn-rate budget claim(s) the expression does not support:\n")
         for f in failures:
             print(f"  {f}")
         return 1
 
-    objectives = sorted({human(windows[sel])
-                         for _p, _g, _r, e in rules
-                         for sel in long_window(e)[1] if sel in windows})
-    print(f"✓ every burn-rate summary states the budget its expression spends: "
-          f"{checked} rule(s) across {len({g for _p, g, _r, _e in rules})} group(s), "
-          f"each derived from its own factor and window against the "
-          f"{', '.join(objectives)} objective(s) the dashboards measure")
-    print("  the objective itself, the choice of factors, and whether any rule "
-          "fires are outside this claim")
+    objectives = sorted(
+        {
+            human(windows[sel])
+            for _p, _g, _r, e in rules
+            for sel in long_window(e)[1]
+            if sel in windows
+        }
+    )
+    print(
+        f"✓ every burn-rate summary states the budget its expression spends: "
+        f"{checked} rule(s) across {len({g for _p, g, _r, _e in rules})} group(s), "
+        f"each derived from its own factor and window against the "
+        f"{', '.join(objectives)} objective(s) the dashboards measure"
+    )
+    print(
+        "  the objective itself, the choice of factors, and whether any rule "
+        "fires are outside this claim"
+    )
     return 0
 
 

@@ -47,7 +47,6 @@ class BandsAreCoherent(unittest.TestCase):
             self.assertIn(category, sw.BANDS, f"{f} maps to unbanded {category!r}")
 
 
-
 class PolicyCRDsPrecedeThePolicies(unittest.TestCase):
     """Every kind the kyverno-policies Applications render comes from the
     kyverno chart, so its group must be an edge the gate orders."""
@@ -62,8 +61,11 @@ class PolicyCRDsPrecedeThePolicies(unittest.TestCase):
                     if group != "kustomize.config.k8s.io":
                         groups.add(group)
         self.assertTrue(groups, "no policy manifest was read")
-        ordered = {edge["group"] for edge in sw.CRD_PRECEDENCE.values()
-                   if "kyverno-policies.yaml" in edge["consumers"]}
+        ordered = {
+            edge["group"]
+            for edge in sw.CRD_PRECEDENCE.values()
+            if "kyverno-policies.yaml" in edge["consumers"]
+        }
         self.assertEqual(groups - ordered, set())
 
 
@@ -76,22 +78,36 @@ class ChartLocks(unittest.TestCase):
 
     def appset_dir(self, controller_version, crds_version, crds_chart="gateway-crds-helm"):
         import tempfile
+
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         root = pathlib.Path(tmp.name)
-        doc = {"kind": "ApplicationSet", "spec": {
-            "template": {"spec": {"sources": [{"chart": "{{ .chart }}"}]}},
-            "generators": [{"list": {"elements": [
-                {"chart": "gateway-helm", "chartVersion": controller_version},
-                {"chart": crds_chart, "chartVersion": crds_version}]}}]}}
+        doc = {
+            "kind": "ApplicationSet",
+            "spec": {
+                "template": {"spec": {"sources": [{"chart": "{{ .chart }}"}]}},
+                "generators": [
+                    {
+                        "list": {
+                            "elements": [
+                                {"chart": "gateway-helm", "chartVersion": controller_version},
+                                {"chart": crds_chart, "chartVersion": crds_version},
+                            ]
+                        }
+                    }
+                ],
+            },
+        }
         (root / "a.yaml").write_text(yaml.safe_dump(doc))
         return root
 
     def locks(self, root):
         from unittest import mock
-        with mock.patch.object(sw, "APPSET_DIR", root), \
-                mock.patch.object(sw, "CHART_LOCKS",
-                                  [("a.yaml", "gateway-helm", "gateway-crds-helm")]):
+
+        with (
+            mock.patch.object(sw, "APPSET_DIR", root),
+            mock.patch.object(sw, "CHART_LOCKS", [("a.yaml", "gateway-helm", "gateway-crds-helm")]),
+        ):
             return sw.chart_locks()
 
     def test_a_pair_at_one_version_holds(self):

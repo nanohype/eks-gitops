@@ -69,6 +69,7 @@ MIN_REFS = 60
 # brackets and template braces are the two spellings this repo uses.
 PLACEHOLDER = re.compile(r"[<>{}*]|\.\.\.")
 
+
 # What counts as a claim about THIS tree, as opposed to prose about a shape.
 #
 # A bare `values.yaml` in this repo's prose means "the addon's values.yaml" —
@@ -93,11 +94,14 @@ def rooted_prefixes(root: pathlib.Path) -> tuple[str, ...]:
     That direction fails closed; the mirror image, a fixture MISSING something
     this repo has, would have passed falsely.
     """
-    return tuple(sorted(
-        p.name + ("/" if p.is_dir() else "")
-        for p in root.iterdir()
-        if not p.name.startswith(".git") and p.name not in {"rendered"}
-    ))
+    return tuple(
+        sorted(
+            p.name + ("/" if p.is_dir() else "")
+            for p in root.iterdir()
+            if not p.name.startswith(".git") and p.name not in {"rendered"}
+        )
+    )
+
 
 # A `path:line` or `path:lo-hi` citation. The file must exist and the line must
 # be inside it: a citation past the end of a file is a reference that grew stale
@@ -225,24 +229,32 @@ def tracked_files(root: pathlib.Path) -> list[pathlib.Path]:
     tree it could not enumerate.
     """
     if shutil.which("git") is None:
-        print("Cannot run: git is not on PATH. This gate examines the tracked set, "
-              "so without git the population is unknown — which is not the same as "
-              "empty, and not something to substitute a filesystem walk for.")
+        print(
+            "Cannot run: git is not on PATH. This gate examines the tracked set, "
+            "so without git the population is unknown — which is not the same as "
+            "empty, and not something to substitute a filesystem walk for."
+        )
         sys.exit(CANNOT_RUN)
-    out = subprocess.run(["git", "ls-files", "-z"], cwd=root,
-                         capture_output=True, text=True, timeout=120)
+    out = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=root, capture_output=True, text=True, timeout=120
+    )
     if out.returncode != 0:
         err = (out.stderr or "").strip().splitlines()
-        print(f"Cannot run: `git ls-files` failed in {root} — "
-              f"{err[0] if err else f'exit {out.returncode}'}")
-        print("This gate examines the tracked set and could not determine it, so it "
-              "has checked nothing.")
+        print(
+            f"Cannot run: `git ls-files` failed in {root} — "
+            f"{err[0] if err else f'exit {out.returncode}'}"
+        )
+        print(
+            "This gate examines the tracked set and could not determine it, so it "
+            "has checked nothing."
+        )
         sys.exit(CANNOT_RUN)
-    files = [root / rel for rel in out.stdout.split("\0")
-             if rel and (root / rel).is_file()]
+    files = [root / rel for rel in out.stdout.split("\0") if rel and (root / rel).is_file()]
     if not files:
-        print(f"Cannot run: `git ls-files` reports no tracked files in {root}. A gate "
-              f"over an empty population passes for the same reason a clean tree does.")
+        print(
+            f"Cannot run: `git ls-files` reports no tracked files in {root}. A gate "
+            f"over an empty population passes for the same reason a clean tree does."
+        )
         sys.exit(CANNOT_RUN)
     return files
 
@@ -281,15 +293,19 @@ def main() -> int:
 
     docs = sorted(p for p in tracked_files(root) if p.suffix == ".md")
     if len(docs) < MIN_DOCS:
-        print(f"FAIL  found {len(docs)} markdown file(s), fewer than the {MIN_DOCS} this "
-              f"repo carries — the glob no longer matches the tree, so a pass here "
-              f"would prove nothing.")
+        print(
+            f"FAIL  found {len(docs)} markdown file(s), fewer than the {MIN_DOCS} this "
+            f"repo carries — the glob no longer matches the tree, so a pass here "
+            f"would prove nothing."
+        )
         return 2
 
     targets = task_targets(root)
     if not targets:
-        print("FAIL  read no task targets out of Taskfile.yaml — the parser and the "
-              "Taskfile disagree, so every `task ...` reference would pass unchecked.")
+        print(
+            "FAIL  read no task targets out of Taskfile.yaml — the parser and the "
+            "Taskfile disagree, so every `task ...` reference would pass unchecked."
+        )
         return 2
 
     rooted = rooted_prefixes(root)
@@ -320,8 +336,8 @@ def main() -> int:
             checked += 1
             if name not in targets:
                 failures.append(
-                    f"{rel_doc}:{lineno}: `task {name}` names no target the "
-                    f"Taskfile defines")
+                    f"{rel_doc}:{lineno}: `task {name}` names no target the Taskfile defines"
+                )
 
         # Citations are read from the RAW line, not from backticked spans:
         # this repo writes them as bare prose ("wired as the CI fork-safety job
@@ -341,12 +357,15 @@ def main() -> int:
                         f"{rel_doc}:{lineno}: cites {target}:{m.group(2)}"
                         f"{'-' + m.group(3) if m.group(3) else ''} but "
                         f"{cited.relative_to(root)} has {total} line(s) — the citation "
-                        f"outlived the lines it named")
+                        f"outlived the lines it named"
+                    )
 
     if checked < MIN_REFS:
-        print(f"FAIL  extracted only {checked} reference(s) from {len(docs)} document(s), "
-              f"fewer than the {MIN_REFS} this repo's prose carries — the extractor is "
-              f"matching almost nothing.")
+        print(
+            f"FAIL  extracted only {checked} reference(s) from {len(docs)} document(s), "
+            f"fewer than the {MIN_REFS} this repo's prose carries — the extractor is "
+            f"matching almost nothing."
+        )
         return 2
 
     if failures:

@@ -46,10 +46,16 @@ class ClassifyReference(unittest.TestCase):
         self.assertTrue(gate.is_repo_path("../architecture/overview.md", True, ROOTED))
 
     def test_external_and_placeholder_references_are_skipped(self):
-        for ref in ("https://taskfile.dev/", "mailto:x@example.com", "#anchor",
-                    "oci://docker.io/envoyproxy/ai-gateway-helm",
-                    "git@github.com:nanohype/clusters.git",
-                    "addons/<category>/<name>/", "{{ .path }}", "a b c"):
+        for ref in (
+            "https://taskfile.dev/",
+            "mailto:x@example.com",
+            "#anchor",
+            "oci://docker.io/envoyproxy/ai-gateway-helm",
+            "git@github.com:nanohype/clusters.git",
+            "addons/<category>/<name>/",
+            "{{ .path }}",
+            "a b c",
+        ):
             with self.subTest(ref=ref):
                 self.assertFalse(gate.is_repo_path(ref, False, ROOTED))
                 if ref.startswith(("http", "mailto", "#", "oci", "git@")) or "<" in ref:
@@ -81,8 +87,7 @@ class FenceHandling(unittest.TestCase):
     def test_line_count_survives_blanking(self):
         # Line numbers in a finding must resolve in the file the reader opens.
         doc = "a\n```\nb\nc\n```\nd\n"
-        self.assertEqual(len(gate.strip_fences(doc).splitlines()),
-                         len(doc.splitlines()))
+        self.assertEqual(len(gate.strip_fences(doc).splitlines()), len(doc.splitlines()))
 
     def test_fenced_content_is_removed_from_the_path_view(self):
         doc = "```\n`addons/nope/missing.yaml`\n```\n"
@@ -94,12 +99,15 @@ class FenceHandling(unittest.TestCase):
         self.assertIn("scripts/check-sync-waves.py", refs)
 
     def test_both_link_syntaxes_are_claims_on_their_own_line(self):
-        doc = ("intro\n"
-               "see [the runbook](docs/runbooks/rollback.md \"title\")\n"
-               "[waves]: <scripts/check-sync-waves.py>\n")
-        self.assertEqual(list(gate.candidates(doc)),
-                         [(2, "docs/runbooks/rollback.md", True),
-                          (3, "scripts/check-sync-waves.py", True)])
+        doc = (
+            "intro\n"
+            'see [the runbook](docs/runbooks/rollback.md "title")\n'
+            "[waves]: <scripts/check-sync-waves.py>\n"
+        )
+        self.assertEqual(
+            list(gate.candidates(doc)),
+            [(2, "docs/runbooks/rollback.md", True), (3, "scripts/check-sync-waves.py", True)],
+        )
 
 
 class TaskfileTargets(unittest.TestCase):
@@ -118,9 +126,11 @@ class TaskfileTargets(unittest.TestCase):
                 "    desc: render every addon\n"
                 "  reverify:gates:\n"
                 "    cmds:\n"
-                "      - task: validate\n")
-            self.assertEqual(gate.task_targets(root),
-                             {"lint", "validate:helm-render", "reverify:gates"})
+                "      - task: validate\n"
+            )
+            self.assertEqual(
+                gate.task_targets(root), {"lint", "validate:helm-render", "reverify:gates"}
+            )
 
 
 class Citations(unittest.TestCase):
@@ -133,8 +143,7 @@ class Citations(unittest.TestCase):
     def test_single_line_citation(self):
         m = gate.CITATION.search("the base keeps it at verify-images.yaml:21")
         self.assertIsNotNone(m)
-        self.assertEqual((m.group(1), m.group(2), m.group(3)),
-                         ("verify-images.yaml", "21", None))
+        self.assertEqual((m.group(1), m.group(2), m.group(3)), ("verify-images.yaml", "21", None))
 
     def test_a_version_is_not_a_citation(self):
         # `chart 1.4.2` and `KSV-0012` must not read as file:line.

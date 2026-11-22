@@ -123,6 +123,7 @@ PARAM_SYNTH = {
     "vpcId": "vpc-00000000000000000",
 }
 
+
 # What a directory-source Application owns, recorded against the exact source it
 # was read from. Those sources are manifest directories in another repository,
 # read at a pinned tag, so no render here sees what they install; a chart that
@@ -150,20 +151,29 @@ class DirectoryOwner:
 DIRECTORY_OWNERS = (
     DirectoryOwner(
         appset="gateway-api-crds.yaml",
-        source=("https://github.com/kubernetes-sigs/gateway-api", "v1.7.0",
-                "config/crd/standard"),
+        source=("https://github.com/kubernetes-sigs/gateway-api", "v1.7.0", "config/crd/standard"),
         crd_groups=("gateway.networking.k8s.io",),
-        objects=("ValidatingAdmissionPolicy/safe-upgrades.gateway.networking.k8s.io",
-                 "ValidatingAdmissionPolicyBinding/safe-upgrades.gateway.networking.k8s.io"),
+        objects=(
+            "ValidatingAdmissionPolicy/safe-upgrades.gateway.networking.k8s.io",
+            "ValidatingAdmissionPolicyBinding/safe-upgrades.gateway.networking.k8s.io",
+        ),
     ),
     DirectoryOwner(
         appset="argo-workflows-crds.yaml",
-        source=("https://github.com/argoproj/argo-workflows", "v4.1.6",
-                "manifests/base/crds/full"),
-        objects=tuple(f"CustomResourceDefinition/{plural}.argoproj.io" for plural in (
-            "clusterworkflowtemplates", "cronworkflows", "workflowartifactgctasks",
-            "workfloweventbindings", "workflows", "workflowtaskresults",
-            "workflowtasksets", "workflowtemplates")),
+        source=("https://github.com/argoproj/argo-workflows", "v4.1.6", "manifests/base/crds/full"),
+        objects=tuple(
+            f"CustomResourceDefinition/{plural}.argoproj.io"
+            for plural in (
+                "clusterworkflowtemplates",
+                "cronworkflows",
+                "workflowartifactgctasks",
+                "workfloweventbindings",
+                "workflows",
+                "workflowtaskresults",
+                "workflowtasksets",
+                "workflowtemplates",
+            )
+        ),
     ),
 )
 
@@ -173,9 +183,13 @@ CLUSTER_SCOPED_KINDS = {
     "": {"Namespace"},
     "apiextensions.k8s.io": {"CustomResourceDefinition"},
     "admissionregistration.k8s.io": {
-        "ValidatingAdmissionPolicy", "ValidatingAdmissionPolicyBinding",
-        "MutatingAdmissionPolicy", "MutatingAdmissionPolicyBinding",
-        "ValidatingWebhookConfiguration", "MutatingWebhookConfiguration"},
+        "ValidatingAdmissionPolicy",
+        "ValidatingAdmissionPolicyBinding",
+        "MutatingAdmissionPolicy",
+        "MutatingAdmissionPolicyBinding",
+        "ValidatingWebhookConfiguration",
+        "MutatingWebhookConfiguration",
+    },
     "apiregistration.k8s.io": {"APIService"},
     "rbac.authorization.k8s.io": {"ClusterRole", "ClusterRoleBinding"},
     "scheduling.k8s.io": {"PriorityClass"},
@@ -385,9 +399,11 @@ def cluster_objects(manifest: str) -> set[str]:
     return keys
 
 
-def object_ownership(owners: dict[str, set[str]],
-                     directory: tuple[DirectoryOwner, ...] = DIRECTORY_OWNERS,
-                     selectors: dict[str, dict[str, str]] | None = None) -> list[str]:
+def object_ownership(
+    owners: dict[str, set[str]],
+    directory: tuple[DirectoryOwner, ...] = DIRECTORY_OWNERS,
+    selectors: dict[str, dict[str, str]] | None = None,
+) -> list[str]:
     """Every cluster-scoped object more than one Application would install on one cluster.
 
     ``owners`` maps an object key to the render units that rendered it. A
@@ -403,15 +419,21 @@ def object_ownership(owners: dict[str, set[str]],
     for key in sorted(owners):
         holders = set(owners[key])
         kind, _, name = key.partition("/")
-        group = name.split(".", 1)[1] if kind == "CustomResourceDefinition" and "." in name else None
+        group = (
+            name.split(".", 1)[1] if kind == "CustomResourceDefinition" and "." in name else None
+        )
         for d in directory:
             if key in d.objects or (group is not None and group in d.crd_groups):
                 holders.add(d.label)
         ordered = sorted(holders)
-        if any(can_share_a_cluster(selectors.get(a, {}), selectors.get(b, {}))
-               for i, a in enumerate(ordered) for b in ordered[i + 1:]):
-            problems.append(f"{key} is installed by {len(holders)} Applications: "
-                            + ", ".join(sorted(holders)))
+        if any(
+            can_share_a_cluster(selectors.get(a, {}), selectors.get(b, {}))
+            for i, a in enumerate(ordered)
+            for b in ordered[i + 1 :]
+        ):
+            problems.append(
+                f"{key} is installed by {len(holders)} Applications: " + ", ".join(sorted(holders))
+            )
     return problems
 
 
@@ -420,31 +442,39 @@ def _template_source(appset_file: pathlib.Path) -> tuple[str, str, str] | None:
     src = ((((doc or {}).get("spec") or {}).get("template") or {}).get("spec") or {}).get("source")
     if not isinstance(src, dict):
         return None
-    return (str(src.get("repoURL", "")), str(src.get("targetRevision", "")),
-            str(src.get("path", "")))
+    return (
+        str(src.get("repoURL", "")),
+        str(src.get("targetRevision", "")),
+        str(src.get("path", "")),
+    )
 
 
-def directory_owner_drift(directory: tuple[DirectoryOwner, ...] = DIRECTORY_OWNERS,
-                          appset_dir: pathlib.Path | None = None) -> list[str]:
+def directory_owner_drift(
+    directory: tuple[DirectoryOwner, ...] = DIRECTORY_OWNERS, appset_dir: pathlib.Path | None = None
+) -> list[str]:
     """Every DIRECTORY_OWNERS record whose ApplicationSet no longer reads its source."""
     appset_dir = appset_dir or APPSET_DIR
     problems = []
     for d in directory:
         path = appset_dir / d.appset
         if not path.is_file():
-            problems.append(f"{d.appset}: recorded as a directory owner, but there is no such "
-                            f"ApplicationSet")
+            problems.append(
+                f"{d.appset}: recorded as a directory owner, but there is no such ApplicationSet"
+            )
             continue
         live = _template_source(path)
         if live != d.source:
-            problems.append(f"{d.appset}: ownership recorded for {d.source}, but the "
-                            f"ApplicationSet reads {live}. Re-read what that source installs "
-                            f"and update DIRECTORY_OWNERS in scripts/render-addons.py")
+            problems.append(
+                f"{d.appset}: ownership recorded for {d.source}, but the "
+                f"ApplicationSet reads {live}. Re-read what that source installs "
+                f"and update DIRECTORY_OWNERS in scripts/render-addons.py"
+            )
     return problems
 
 
-def render(unit: Unit, env: str | None,
-           objects: dict[str, set[str]] | None = None) -> tuple[bool, str]:
+def render(
+    unit: Unit, env: str | None, objects: dict[str, set[str]] | None = None
+) -> tuple[bool, str]:
     # The directory is the discriminator, and it has to be checked first.
     #
     # "this addon has no delta for this environment" and "the ApplicationSet
@@ -457,7 +487,10 @@ def render(unit: Unit, env: str | None,
     # inside a real directory always is.
     unit_dir = REPO_ROOT / unit.path
     if not unit_dir.is_dir():
-        return (False, f"path '{unit.path}' does not exist — the ApplicationSet element points at nothing")
+        return (
+            False,
+            f"path '{unit.path}' does not exist — the ApplicationSet element points at nothing",
+        )
 
     base = unit_dir / "values.yaml"
     value_files = []
@@ -524,8 +557,9 @@ def stale_skips(units: list[Unit]) -> list[tuple[str, str]]:
             continue
         with tempfile.TemporaryDirectory() as empty:
             try:
-                registry.chart_archive(u.source, u.chart, u.version,
-                                       cache=pathlib.Path(empty), credentials={})
+                registry.chart_archive(
+                    u.source, u.chart, u.version, cache=pathlib.Path(empty), credentials={}
+                )
             except registry.ChartUnavailable:
                 continue
         stale.append((u.chart, SKIP_CHARTS[u.chart]))
@@ -547,15 +581,22 @@ def fetch_all(units: list[Unit]) -> int:
     read once per pin set rather than once per job, and the cache that job
     carries to the next pin set holds that set and nothing older.
     """
-    kept = {gatelib.chart_archive_or_exit(u.source, u.chart, u.version)
-            for u in units if u.chart not in SKIP_CHARTS}
+    kept = {
+        gatelib.chart_archive_or_exit(u.source, u.chart, u.version)
+        for u in units
+        if u.chart not in SKIP_CHARTS
+    }
     if not kept:
-        print("Cannot run: discovery found no chart to fetch, so an empty cache would "
-              "read as a complete one.")
+        print(
+            "Cannot run: discovery found no chart to fetch, so an empty cache would "
+            "read as a complete one."
+        )
         return gatelib.CANNOT_RUN
     dropped = registry.prune_archives(kept)
-    print(f"Fetched {len(kept)} pinned chart archive(s) into {registry.CHART_CACHE}; "
-          f"removed {dropped} cached file(s) no pin names.")
+    print(
+        f"Fetched {len(kept)} pinned chart archive(s) into {registry.CHART_CACHE}; "
+        f"removed {dropped} cached file(s) no pin names."
+    )
     return 0
 
 
@@ -563,9 +604,12 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--env", choices=ENVIRONMENTS, help="render one environment (default: all)")
     ap.add_argument("--list", action="store_true", help="print discovered units and exit")
-    ap.add_argument("--fetch", action="store_true",
-                    help="fetch every pinned chart into the chart cache, render nothing, "
-                         "and remove every cached file no pin names")
+    ap.add_argument(
+        "--fetch",
+        action="store_true",
+        help="fetch every pinned chart into the chart cache, render nothing, "
+        "and remove every cached file no pin names",
+    )
     args = ap.parse_args()
 
     units = discover()
@@ -577,7 +621,7 @@ def main() -> int:
     if args.fetch:
         return fetch_all(units)
 
-    gatelib.require('helm')
+    gatelib.require("helm")
 
     rendered = [u for u in units if u.chart not in SKIP_CHARTS]
     skipped = [u for u in units if u.chart in SKIP_CHARTS]
@@ -606,9 +650,11 @@ def main() -> int:
     stale = stale_skips(skipped)
     print(f"\nRendered {count} addon×env combinations, {len(failures)} failed.")
     if count < MIN_COMBINATIONS:
-        print(f"FAIL  rendered {count} combination(s), under the floor of "
-              f"{MIN_COMBINATIONS}. Discovery matched almost nothing, so a clean "
-              f"result here describes the discovery and not the fleet.")
+        print(
+            f"FAIL  rendered {count} combination(s), under the floor of "
+            f"{MIN_COMBINATIONS}. Discovery matched almost nothing, so a clean "
+            f"result here describes the discovery and not the fleet."
+        )
         return 2
 
     if stale:
@@ -625,8 +671,10 @@ def main() -> int:
     shared = object_ownership(objects, selectors={u.owner: u.cluster_labels for u in rendered})
     drift = directory_owner_drift()
     n_crds = sum(1 for k in objects if k.startswith("CustomResourceDefinition/"))
-    print(f"Rendered {len(objects)} cluster-scoped object(s), {n_crds} of them "
-          f"CustomResourceDefinitions; {len(shared)} with more than one owning Application.")
+    print(
+        f"Rendered {len(objects)} cluster-scoped object(s), {n_crds} of them "
+        f"CustomResourceDefinitions; {len(shared)} with more than one owning Application."
+    )
     if shared:
         print("\n" + "=" * 72)
         print("\nA cluster-scoped object two Applications install is overwritten by each in")

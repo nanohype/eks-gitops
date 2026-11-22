@@ -45,7 +45,7 @@ os.environ["DOCKER_CONFIG"] = DOCKER_CONFIG
 def load(script: str):
     """Load scripts/<script>.py and return the module."""
     path = SCRIPTS / f"{script}.py"
-    if not path.exists():                       # a renamed gate must fail loudly
+    if not path.exists():  # a renamed gate must fail loudly
         raise FileNotFoundError(
             f"{path} does not exist — the gate was renamed or removed and this "
             f"test is now asserting nothing."

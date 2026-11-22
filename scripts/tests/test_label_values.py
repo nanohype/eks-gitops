@@ -68,11 +68,14 @@ class WhichLabelsAreChecked(unittest.TestCase):
     """Labels applied to a resource are checked wherever its metadata sits."""
 
     def test_every_metadata_labels_map_is_found_with_its_path(self):
-        doc = {"metadata": {"labels": {"a": "1"}},
-               "spec": {"template": {"metadata": {"labels": {"b": "2"}}}}}
-        self.assertEqual(lv.blocks_for(doc),
-                         [(".metadata.labels", {"a": "1"}),
-                          (".spec.template.metadata.labels", {"b": "2"})])
+        doc = {
+            "metadata": {"labels": {"a": "1"}},
+            "spec": {"template": {"metadata": {"labels": {"b": "2"}}}},
+        }
+        self.assertEqual(
+            lv.blocks_for(doc),
+            [(".metadata.labels", {"a": "1"}), (".spec.template.metadata.labels", {"b": "2"})],
+        )
 
     def test_a_list_item_carries_its_index(self):
         doc = {"items": [{"metadata": {"name": "x"}}, {"metadata": {"labels": {"a": "1"}}}]}
@@ -84,10 +87,18 @@ class WhichLabelsAreChecked(unittest.TestCase):
 
     def test_a_policy_document_has_no_exemption(self):
         """A labels map under any metadata is checked, in a policy as anywhere."""
-        doc = {"kind": "ValidatingPolicy", "metadata": {"labels": {"team": "platform"}},
-               "spec": {"x": {"metadata": {"labels": {"env": "?*"}}}}}
-        self.assertEqual(lv.blocks_for(doc), [(".metadata.labels", {"team": "platform"}),
-                                              (".spec.x.metadata.labels", {"env": "?*"})])
+        doc = {
+            "kind": "ValidatingPolicy",
+            "metadata": {"labels": {"team": "platform"}},
+            "spec": {"x": {"metadata": {"labels": {"env": "?*"}}}},
+        }
+        self.assertEqual(
+            lv.blocks_for(doc),
+            [
+                (".metadata.labels", {"team": "platform"}),
+                (".spec.x.metadata.labels", {"env": "?*"}),
+            ],
+        )
 
 
 class UnconditionalFloor(unittest.TestCase):
@@ -101,21 +112,24 @@ class UnconditionalFloor(unittest.TestCase):
 
     def test_manifest_paths_count_as_product(self):
         root = lv.REPO
-        paths = [root / "addons/security/kyverno/values.yaml",
-                 root / "applicationsets/addons-karpenter.yaml"]
+        paths = [
+            root / "addons/security/kyverno/values.yaml",
+            root / "applicationsets/addons-karpenter.yaml",
+        ]
         self.assertEqual(lv.outside_self(paths, root), 2)
 
     def test_the_gates_own_directories_do_not(self):
         root = lv.REPO
-        paths = [root / "scripts/check-label-values.py",
-                 root / "policies/kyverno/tests/kyverno-test.yaml",
-                 root / "applicationsets/rendertest/go.mod"]
+        paths = [
+            root / "scripts/check-label-values.py",
+            root / "policies/kyverno/tests/kyverno-test.yaml",
+            root / "applicationsets/rendertest/go.mod",
+        ]
         self.assertEqual(lv.outside_self(paths, root), 0)
 
     def test_a_mixed_set_counts_only_the_product_half(self):
         root = lv.REPO
-        paths = [root / "scripts/gatelib.py",
-                 root / "addons/security/kyverno/values.yaml"]
+        paths = [root / "scripts/gatelib.py", root / "addons/security/kyverno/values.yaml"]
         self.assertEqual(lv.outside_self(paths, root), 1)
 
     def test_a_path_outside_the_repo_is_not_counted(self):

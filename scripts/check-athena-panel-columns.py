@@ -79,15 +79,74 @@ ATHENA_DS_TYPE = "grafana-athena-datasource"
 # Reserved words, functions and literals that may appear where an identifier
 # would. Presto/Trino vocabulary, restricted to what a CUR panel plausibly uses.
 SQL_VOCAB = {
-    "select", "from", "where", "group", "by", "order", "having", "limit",
-    "and", "or", "not", "is", "null", "as", "asc", "desc", "distinct",
-    "case", "when", "then", "else", "end", "in", "between", "like", "on",
-    "join", "left", "right", "inner", "outer", "union", "all", "with",
-    "sum", "count", "avg", "min", "max", "coalesce", "cast", "try_cast",
-    "element_at", "date_format", "date_trunc", "current_date", "current_timestamp",
-    "substr", "substring", "concat", "lower", "upper", "abs", "round",
-    "approx_distinct", "arbitrary", "if", "nullif", "greatest", "least",
-    "interval", "day", "month", "year", "true", "false", "over", "partition",
+    "select",
+    "from",
+    "where",
+    "group",
+    "by",
+    "order",
+    "having",
+    "limit",
+    "and",
+    "or",
+    "not",
+    "is",
+    "null",
+    "as",
+    "asc",
+    "desc",
+    "distinct",
+    "case",
+    "when",
+    "then",
+    "else",
+    "end",
+    "in",
+    "between",
+    "like",
+    "on",
+    "join",
+    "left",
+    "right",
+    "inner",
+    "outer",
+    "union",
+    "all",
+    "with",
+    "sum",
+    "count",
+    "avg",
+    "min",
+    "max",
+    "coalesce",
+    "cast",
+    "try_cast",
+    "element_at",
+    "date_format",
+    "date_trunc",
+    "current_date",
+    "current_timestamp",
+    "substr",
+    "substring",
+    "concat",
+    "lower",
+    "upper",
+    "abs",
+    "round",
+    "approx_distinct",
+    "arbitrary",
+    "if",
+    "nullif",
+    "greatest",
+    "least",
+    "interval",
+    "day",
+    "month",
+    "year",
+    "true",
+    "false",
+    "over",
+    "partition",
 }
 
 # The table itself is named in FROM and is not a column.
@@ -97,7 +156,9 @@ TABLE_NAMES = {"cur"}
 def delivered_columns() -> set[str]:
     """Column names the CUR table delivers, from the committed contract."""
     if not COLUMNS_FILE.is_file():
-        sys.exit(f"FAIL  {COLUMNS_FILE.relative_to(ROOT)} is missing — the contract this gate reads")
+        sys.exit(
+            f"FAIL  {COLUMNS_FILE.relative_to(ROOT)} is missing — the contract this gate reads"
+        )
     out = set()
     for line in COLUMNS_FILE.read_text(encoding="utf-8").splitlines():
         line = line.split("#", 1)[0].strip()
@@ -186,11 +247,13 @@ def main() -> int:
     # and the exclusion list has to be narrowed before this check means anything.
     shadowed = sorted((columns & SQL_VOCAB) | (columns & TABLE_NAMES))
     if shadowed:
-        print(f"FAIL  the CUR export delivers {', '.join(repr(c) for c in shadowed)}, "
-              f"which this gate subtracts as SQL vocabulary or a table name before "
-              f"comparing. Those columns are excluded from every panel check, so a "
-              f"panel referencing one is neither confirmed nor reported. Narrow the "
-              f"exclusion list.")
+        print(
+            f"FAIL  the CUR export delivers {', '.join(repr(c) for c in shadowed)}, "
+            f"which this gate subtracts as SQL vocabulary or a table name before "
+            f"comparing. Those columns are excluded from every panel check, so a "
+            f"panel referencing one is neither confirmed nor reported. Narrow the "
+            f"exclusion list."
+        )
         return 1
 
     failures: list[str] = []
@@ -216,9 +279,11 @@ def main() -> int:
         print("FAIL  found no Athena panel queries — this check would pass vacuously")
         return 1
 
-    print(f"  contract: {len(columns)} delivered columns; exclusions applied "
-          f"per query: {len(SQL_VOCAB)} SQL vocabulary, {len(TABLE_NAMES)} table "
-          f"name(s), plus each query's own aliases")
+    print(
+        f"  contract: {len(columns)} delivered columns; exclusions applied "
+        f"per query: {len(SQL_VOCAB)} SQL vocabulary, {len(TABLE_NAMES)} table "
+        f"name(s), plus each query's own aliases"
+    )
 
     if failures:
         print(f"FAIL  {len(failures)} Athena panel(s) reference undelivered columns:\n")

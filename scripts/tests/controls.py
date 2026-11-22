@@ -88,6 +88,7 @@ IDENTIFIES = {
     "mask-aws-ids.sh": "mask-aws-ids self-test FAILED",
 }
 
+
 # Sentinel for a mutation that removes a file rather than editing one. Some
 # gates ask whether a path exists, and for those an emptied file is a mutation
 # that changes bytes without changing meaning.
@@ -193,7 +194,7 @@ def blank_comments(text: str) -> str:
                 i += 2
                 continue
             if text.startswith(quote, i):
-                out.append(text[i + 1:i + len(quote)])
+                out.append(text[i + 1 : i + len(quote)])
                 i += len(quote)
                 quote = None
                 continue
@@ -246,8 +247,11 @@ def called_names(src: str) -> set[str]:
     # exemption then read as stale and the floor went blind to the very file it
     # could not read. Let it out: an unparseable gate is a fact about the tree,
     # not an empty answer about its contents.
-    return {name for n in ast.walk(ast.parse(src))
-            if isinstance(n, ast.Call) and (name := dotted(n.func))}
+    return {
+        name
+        for n in ast.walk(ast.parse(src))
+        if isinstance(n, ast.Call) and (name := dotted(n.func))
+    }
 
 
 # The harnesses, which cannot control themselves: a suite asserting its own
@@ -258,19 +262,19 @@ def called_names(src: str) -> set[str]:
 # nothing in the repo invokes fails.
 NOT_GATES = {
     "tests/controls.py": "the control harness; self_test() runs on every "
-                         "invocation, and test_controls.py holds the reader "
-                         "this rule asks",
+    "invocation, and test_controls.py holds the reader "
+    "this rule asks",
     "tests/run.py": "the unit-test runner; asserts its own module list and floors",
     "tests/reverify-gates.sh": "the Tier-1 re-verification harness; it drives the "
-                               "gates rather than checking the tree, and asserts "
-                               "its own pass/fail totals",
+    "gates rather than checking the tree, and asserts "
+    "its own pass/fail totals",
     "tests/empty-corpus.py": "the vacuity harness; it runs every gate against an "
-                             "emptied corpus rather than checking the tree, and "
-                             "asserts its own probe floor and exemptions",
+    "emptied corpus rather than checking the tree, and "
+    "asserts its own probe floor and exemptions",
     "tests/reverify-tests.sh": "the unit-test re-verification harness; it reverts a "
-                               "gate behaviour and requires the suite to name it, "
-                               "asserts the tree is green before and after, and "
-                               "carries its own probe floor",
+    "gate behaviour and requires the suite to name it, "
+    "asserts the tree is green before and after, and "
+    "carries its own probe floor",
 }
 
 
@@ -318,10 +322,13 @@ def _sub(root: pathlib.Path, rel: str, old: str, new: str, marker: str | None = 
 
 def m_label_values(root):
     """A label value the API server's grammar rejects (leading dash)."""
-    return _sub(root, "applicationsets/addons-karpenter.yaml",
-                "platform.nanohype.dev/team: platform-engineering",
-                f"platform.nanohype.dev/team: -{MARKER}",
-                marker=f"-{MARKER}".lstrip("-"))
+    return _sub(
+        root,
+        "applicationsets/addons-karpenter.yaml",
+        "platform.nanohype.dev/team: platform-engineering",
+        f"platform.nanohype.dev/team: -{MARKER}",
+        marker=f"-{MARKER}".lstrip("-"),
+    )
 
 
 def m_sync_waves(root):
@@ -333,18 +340,24 @@ def m_sync_waves(root):
     the gate classifies — not the ApplicationSet's own, which carries the same
     literal one indent level out and is not what the band check reads.
     """
-    return _sub(root, "applicationsets/addons-velero.yaml",
-                '        argocd.argoproj.io/sync-wave: "40"',
-                f'        argocd.argoproj.io/sync-wave: "0"  # {MARKER}',
-                marker=MARKER)
+    return _sub(
+        root,
+        "applicationsets/addons-velero.yaml",
+        '        argocd.argoproj.io/sync-wave: "40"',
+        f'        argocd.argoproj.io/sync-wave: "0"  # {MARKER}',
+        marker=MARKER,
+    )
 
 
 def m_hardcoded_org(root):
     """A repoURL pinned to this org in an applied ApplicationSet."""
-    return _sub(root, "applicationsets/addons-karpenter.yaml",
-                "repoURL: '{{ index .metadata.annotations \"gitops/repo-url\" }}'",
-                f"repoURL: 'https://github.com/nanohype/eks-gitops'  # {MARKER}",
-                marker=MARKER)
+    return _sub(
+        root,
+        "applicationsets/addons-karpenter.yaml",
+        "repoURL: '{{ index .metadata.annotations \"gitops/repo-url\" }}'",
+        f"repoURL: 'https://github.com/nanohype/eks-gitops'  # {MARKER}",
+        marker=MARKER,
+    )
 
 
 def m_renovate_coverage(root):
@@ -389,22 +402,25 @@ def m_externalsecret_keys(root):
     the per-cluster patch can only rewrite one, so one cluster reads a secret
     meant for another.
     """
-    return _sub(root, "dashboards/base/grafana-token.yaml",
-                "  dataFrom:\n    - extract:\n        key: eks-grafana-token",
-                "  dataFrom:\n    - extract:\n        key: eks-grafana-token\n"
-                f"    - extract:\n        key: {MARKER}-second-remote-name",
-                marker=f"{MARKER}-second-remote-name")
+    return _sub(
+        root,
+        "dashboards/base/grafana-token.yaml",
+        "  dataFrom:\n    - extract:\n        key: eks-grafana-token",
+        "  dataFrom:\n    - extract:\n        key: eks-grafana-token\n"
+        f"    - extract:\n        key: {MARKER}-second-remote-name",
+        marker=f"{MARKER}-second-remote-name",
+    )
 
 
 def m_athena_columns(root):
     """A CUR panel querying a column the export does not deliver."""
     import glob
+
     for h in sorted(glob.glob(str(root / "dashboards/**/*.yaml"), recursive=True)):
         p = pathlib.Path(h)
         before = p.read_text()
         if "line_item_unblended_cost" in before:
-            after = before.replace("line_item_unblended_cost",
-                                   f"{MARKER}_undelivered_column", 1)
+            after = before.replace("line_item_unblended_cost", f"{MARKER}_undelivered_column", 1)
             p.write_text(after)
             return p, before, after, f"{MARKER}_undelivered_column"
     raise AssertionError("control found no Athena panel referencing a CUR column")
@@ -434,13 +450,16 @@ def m_image_verification(root):
 def m_catalog_revision(root):
     """A catalog source pinning a revision instead of reading one."""
     import glob
+
     for h in sorted(glob.glob(str(root / "applicationsets/*.yaml"))):
         p = pathlib.Path(h)
         before = p.read_text()
         if "gitops/repo-branch" in before:
             after = before.replace(
                 "targetRevision: '{{ index .metadata.annotations \"gitops/repo-branch\" }}'",
-                f"targetRevision: main  # {MARKER}", 1)
+                f"targetRevision: main  # {MARKER}",
+                1,
+            )
             if after != before:
                 p.write_text(after)
                 return p, before, after, MARKER
@@ -460,10 +479,13 @@ def m_policy_validity(root):
     here could have been for the other one. Verified: this mutation trips this
     gate and no other.
     """
-    return _sub(root, "policies/kyverno/best-practices/base/require-labels.yaml",
-                "apiVersion: policies.kyverno.io/v1",
-                f"apiVersion: policies.kyverno.io/v1{MARKER}",
-                marker=MARKER)
+    return _sub(
+        root,
+        "policies/kyverno/best-practices/base/require-labels.yaml",
+        "apiVersion: policies.kyverno.io/v1",
+        f"apiVersion: policies.kyverno.io/v1{MARKER}",
+        marker=MARKER,
+    )
 
 
 def m_serviceaccount_bindings(root):
@@ -473,10 +495,13 @@ def m_serviceaccount_bindings(root):
     one the chart creates. Renaming the created account leaves the pods pointing
     at a name that no longer exists — the association silently binds nothing.
     """
-    return _sub(root, "catalog/druid/chart/templates/serviceaccount.yaml",
-                "  name: druid-{{ $sa }}",
-                "  name: " + MARKER + "-{{ $sa }}",
-                marker=MARKER + "-{{ $sa }}")
+    return _sub(
+        root,
+        "catalog/druid/chart/templates/serviceaccount.yaml",
+        "  name: druid-{{ $sa }}",
+        "  name: " + MARKER + "-{{ $sa }}",
+        marker=MARKER + "-{{ $sa }}",
+    )
 
 
 def m_alert_coverage(root):
@@ -488,10 +513,13 @@ def m_alert_coverage(root):
     right series and Grafana's `gt 0` reducer never trips, so the state looks
     covered and is not.
     """
-    return _sub(root, "dashboards/base/alerting/agent-platform.yaml",
-                'field=\\"lastRunAt\\"} == bool 0',
-                'field=\\"lastRunAt\\"} == 0',
-                marker='lastRunAt\\"} == 0')
+    return _sub(
+        root,
+        "dashboards/base/alerting/agent-platform.yaml",
+        'field=\\"lastRunAt\\"} == bool 0',
+        'field=\\"lastRunAt\\"} == 0',
+        marker='lastRunAt\\"} == 0',
+    )
 
 
 def m_alert_severity_routes(root):
@@ -503,10 +531,13 @@ def m_alert_severity_routes(root):
     Nothing else in the tree can see that, because the rule and the policy never
     name each other.
     """
-    return _sub(root, "dashboards/base/alerting/agent-operator.yaml",
-                "        severity: page\n",
-                f"        severity: {MARKER}-urgent\n",
-                marker=f"severity: {MARKER}-urgent")
+    return _sub(
+        root,
+        "dashboards/base/alerting/agent-operator.yaml",
+        "        severity: page\n",
+        f"        severity: {MARKER}-urgent\n",
+        marker=f"severity: {MARKER}-urgent",
+    )
 
 
 def m_burn_rate_budgets(root):
@@ -518,10 +549,13 @@ def m_burn_rate_budgets(root):
     30d budget. The expression stays correct and only the sentence changes,
     which is what every rule-level validation passes.
     """
-    return _sub(root, "dashboards/base/alerting/agent-operator.yaml",
-                "budget burning slowest (10% in 3d)",
-                "budget burning (100% over 3d)",
-                marker="100% over 3d")
+    return _sub(
+        root,
+        "dashboards/base/alerting/agent-operator.yaml",
+        "budget burning slowest (10% in 3d)",
+        "budget burning (100% over 3d)",
+        marker="100% over 3d",
+    )
 
 
 def m_secret_store_refs(root):
@@ -533,10 +567,13 @@ def m_secret_store_refs(root):
     ExternalSecret installs, syncs, records SecretSyncedError on its own status,
     and never creates the Secret the workload mounts.
     """
-    return _sub(root, "catalog/druid/chart/templates/externalsecret.yaml",
-                "    name: aws-secrets-manager\n",
-                "    name: aws-secretsmanager\n",
-                marker="aws-secretsmanager")
+    return _sub(
+        root,
+        "catalog/druid/chart/templates/externalsecret.yaml",
+        "    name: aws-secrets-manager\n",
+        "    name: aws-secretsmanager\n",
+        marker="aws-secretsmanager",
+    )
 
 
 def m_directory_manifest_size(root):
@@ -549,10 +586,13 @@ def m_directory_manifest_size(root):
     the violation as it actually arrives, from a host configured lower than the
     catalog needs rather than from a manifest anyone edited.
     """
-    return _sub(root, "contracts/repo-server.json",
-                '"maxCombinedDirectoryManifestsSize": "20M"',
-                '"maxCombinedDirectoryManifestsSize": "10M"',
-                marker='"maxCombinedDirectoryManifestsSize": "10M"')
+    return _sub(
+        root,
+        "contracts/repo-server.json",
+        '"maxCombinedDirectoryManifestsSize": "20M"',
+        '"maxCombinedDirectoryManifestsSize": "10M"',
+        marker='"maxCombinedDirectoryManifestsSize": "10M"',
+    )
 
 
 def m_lb_scheme_inputs(root):
@@ -578,6 +618,7 @@ def m_lb_scheme_inputs(root):
 def m_chart_deprecation(root):
     """A recorded chart that nothing pins, which the offline gate must reject."""
     import json
+
     p = root / "scripts/chart-provenance.json"
     before = p.read_text()
     doc = json.loads(before)
@@ -593,26 +634,35 @@ def m_chart_deprecation(root):
 
 def m_named_things(root):
     """A runbook naming a task target the Taskfile does not define."""
-    return _sub(root, "docs/runbooks/troubleshooting.md",
-                "```bash",
-                f"```bash\ntask {MARKER}-not-a-target",
-                marker=f"task {MARKER}-not-a-target")
+    return _sub(
+        root,
+        "docs/runbooks/troubleshooting.md",
+        "```bash",
+        f"```bash\ntask {MARKER}-not-a-target",
+        marker=f"task {MARKER}-not-a-target",
+    )
 
 
 def m_ai_config(root):
     """A ModelGateway route naming a model the Platform allowlist omits."""
-    return _sub(root, "addons/ai-platform/agent-platform/base/platform.yaml",
-                "      modelId: us.anthropic.claude-sonnet-5",
-                f"      modelId: us.anthropic.claude-opus-5  # {MARKER}",
-                marker=MARKER)
+    return _sub(
+        root,
+        "addons/ai-platform/agent-platform/base/platform.yaml",
+        "      modelId: us.anthropic.claude-sonnet-5",
+        f"      modelId: us.anthropic.claude-opus-5  # {MARKER}",
+        marker=MARKER,
+    )
 
 
 def m_workflows(root):
     """A checkout that persists the job token into the working tree."""
-    return _sub(root, ".github/workflows/diff.yml",
-                "        with:\n          persist-credentials: false",
-                f"        with:\n          fetch-depth: 0  # {MARKER}",
-                marker=MARKER)
+    return _sub(
+        root,
+        ".github/workflows/diff.yml",
+        "        with:\n          persist-credentials: false",
+        f"        with:\n          fetch-depth: 0  # {MARKER}",
+        marker=MARKER,
+    )
 
 
 def m_workflow_id_masking(root):
@@ -622,10 +672,13 @@ def m_workflow_id_masking(root):
     `role-to-assume` among its inputs before any step can register a mask, so
     the role ARN and the account id inside it reach the public log.
     """
-    return _sub(root, ".github/workflows/ci.yml",
-                "role-to-assume: ${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }}",
-                "role-to-assume: ${{ vars.ECR_PUBLIC_PULL_ROLE_ARN }}",
-                marker="vars.ECR_PUBLIC_PULL_ROLE_ARN }}")
+    return _sub(
+        root,
+        ".github/workflows/ci.yml",
+        "role-to-assume: ${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }}",
+        "role-to-assume: ${{ vars.ECR_PUBLIC_PULL_ROLE_ARN }}",
+        marker="vars.ECR_PUBLIC_PULL_ROLE_ARN }}",
+    )
 
 
 def m_mask_aws_ids(root):
@@ -636,10 +689,13 @@ def m_mask_aws_ids(root):
     account id printed in the clear. The control runs the script's --self-test
     (GATE_ARGS) and requires it to fail.
     """
-    return _sub(root, "scripts/mask-aws-ids.sh",
-                "grep -oE '[0-9]{12,}'",
-                "grep -oE '[0-9]{13,}'",
-                marker="grep -oE '[0-9]{13,}'")
+    return _sub(
+        root,
+        "scripts/mask-aws-ids.sh",
+        "grep -oE '[0-9]{12,}'",
+        "grep -oE '[0-9]{13,}'",
+        marker="grep -oE '[0-9]{13,}'",
+    )
 
 
 def m_env_coverage(root):
@@ -659,9 +715,11 @@ def m_env_coverage(root):
 
 CONTROLS = {
     "check-workflow-id-masking.py": ("a role ARN read from a variable", m_workflow_id_masking),
-    "mask-aws-ids.sh": ("a mask script that no longer masks a twelve-digit id",
-                        m_mask_aws_ids),
-    "check-env-coverage.py": ("an addon selected for an environment it cannot render", m_env_coverage),
+    "mask-aws-ids.sh": ("a mask script that no longer masks a twelve-digit id", m_mask_aws_ids),
+    "check-env-coverage.py": (
+        "an addon selected for an environment it cannot render",
+        m_env_coverage,
+    ),
     "check-workflows.sh": ("a checkout persisting the job token", m_workflows),
     "check-ai-config.py": ("a route naming a model outside the allowlist", m_ai_config),
     "check-named-things.py": ("prose naming a target that does not exist", m_named_things),
@@ -669,26 +727,41 @@ CONTROLS = {
     "check-label-values.py": ("a label value the API server rejects", m_label_values),
     "check-sync-waves.py": ("a category syncing ahead of its band", m_sync_waves),
     "check-hardcoded-org.py": ("an org-pinned repoURL in an applied appset", m_hardcoded_org),
-    "check-renovate-coverage.py": ("a deleted customManager leaving pins unwatched", m_renovate_coverage),
+    "check-renovate-coverage.py": (
+        "a deleted customManager leaving pins unwatched",
+        m_renovate_coverage,
+    ),
     "no-placeholders.sh": ("an unfilled sentinel in deploy config", m_no_placeholders),
     "check-externalsecret-keys.py": ("a duplicated remote secret name", m_externalsecret_keys),
     "check-athena-panel-columns.py": ("a panel naming an undelivered CUR column", m_athena_columns),
     "check-image-verification.py": ("a signing identity nobody signs with", m_image_verification),
     "check-catalog-revision.py": ("a catalog source pinning a revision", m_catalog_revision),
     "check-policy-validity.py": ("a structurally invalid ValidatingPolicy", m_policy_validity),
-    "check-serviceaccount-bindings.py": ("a pod naming an absent ServiceAccount", m_serviceaccount_bindings),
+    "check-serviceaccount-bindings.py": (
+        "a pod naming an absent ServiceAccount",
+        m_serviceaccount_bindings,
+    ),
     "check-alert-coverage.py": ("an alert on an unexported KSM field", m_alert_coverage),
-    "check-alert-severity-routes.py": ("a severity label that routes nowhere",
-                                       m_alert_severity_routes),
-    "check-burn-rate-budgets.py": ("a summary claiming a budget its expression "
-                                   "does not spend", m_burn_rate_budgets),
-    "check-secret-store-refs.py": ("a reference to a store the catalog does not "
-                                   "declare", m_secret_store_refs),
-    "check-directory-manifest-size.py": ("a directory source over the ceiling the "
-                                         "repo-server is configured for",
-                                         m_directory_manifest_size),
-    "check-lb-scheme-inputs.py": ("a scheme the controller decides on that the policy "
-                                  "stopped reading", m_lb_scheme_inputs),
+    "check-alert-severity-routes.py": (
+        "a severity label that routes nowhere",
+        m_alert_severity_routes,
+    ),
+    "check-burn-rate-budgets.py": (
+        "a summary claiming a budget its expression does not spend",
+        m_burn_rate_budgets,
+    ),
+    "check-secret-store-refs.py": (
+        "a reference to a store the catalog does not declare",
+        m_secret_store_refs,
+    ),
+    "check-directory-manifest-size.py": (
+        "a directory source over the ceiling the repo-server is configured for",
+        m_directory_manifest_size,
+    ),
+    "check-lb-scheme-inputs.py": (
+        "a scheme the controller decides on that the policy stopped reading",
+        m_lb_scheme_inputs,
+    ),
 }
 
 
@@ -706,8 +779,14 @@ def copy_tree(dest: pathlib.Path) -> None:
     grade a different tree than the one being edited; this one does not, for
     modifications, and says so for additions.
     """
-    listed = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True,
-                            text=True, check=True, timeout=GATE_TIMEOUT)
+    listed = subprocess.run(
+        ["git", "ls-files", "-z"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=GATE_TIMEOUT,
+    )
     copied: list[str] = []
     for rel in listed.stdout.split("\0"):
         if not rel:
@@ -727,20 +806,28 @@ def copy_tree(dest: pathlib.Path) -> None:
     #
     # `git add` takes the explicit list rather than `-A`: the fixture must
     # contain what the harness put there, not whatever else a run left behind.
-    subprocess.run(["git", "init", "-q"], cwd=dest, capture_output=True,
-                   text=True, timeout=GATE_TIMEOUT)
-    for chunk in (copied[i:i + 500] for i in range(0, len(copied), 500)):
-        subprocess.run(["git", "add", "--", *chunk], cwd=dest,
-                       capture_output=True, text=True, timeout=GATE_TIMEOUT)
+    subprocess.run(
+        ["git", "init", "-q"], cwd=dest, capture_output=True, text=True, timeout=GATE_TIMEOUT
+    )
+    for chunk in (copied[i : i + 500] for i in range(0, len(copied), 500)):
+        subprocess.run(
+            ["git", "add", "--", *chunk],
+            cwd=dest,
+            capture_output=True,
+            text=True,
+            timeout=GATE_TIMEOUT,
+        )
 
 
 # Flags a gate needs to be invoked the way CI invokes it. check-hardcoded-org
 # reports and exits 0 without --blocking, so a control that omitted the flag
 # would be testing the report-only mode and could never see a rejection.
-GATE_ARGS = {"check-hardcoded-org.py": ["--blocking"],
-             # The mask script's verdict on itself; without it the script reads
-             # no variable names and exits on a usage error.
-             "mask-aws-ids.sh": ["--self-test"]}
+GATE_ARGS = {
+    "check-hardcoded-org.py": ["--blocking"],
+    # The mask script's verdict on itself; without it the script reads
+    # no variable names and exits on a usage error.
+    "mask-aws-ids.sh": ["--self-test"],
+}
 
 
 def run_gate(gate: str, cwd: pathlib.Path) -> subprocess.CompletedProcess:
@@ -752,9 +839,11 @@ def run_gate(gate: str, cwd: pathlib.Path) -> subprocess.CompletedProcess:
 
 def caller_files(root: pathlib.Path) -> list[pathlib.Path]:
     """The files that decide what runs: the Taskfile and every workflow."""
-    return [p for p in (root / "Taskfile.yaml",
-                        *sorted((root / ".github" / "workflows").glob("*.y*ml")))
-            if p.is_file()]
+    return [
+        p
+        for p in (root / "Taskfile.yaml", *sorted((root / ".github" / "workflows").glob("*.y*ml")))
+        if p.is_file()
+    ]
 
 
 def _task_commands(task) -> list[str]:
@@ -808,8 +897,9 @@ def caller_commands(root: pathlib.Path) -> tuple[list[str], list[str]]:
             doc = yaml.safe_load(path.read_text())
         except yaml.YAMLError as exc:
             detail = str(exc).strip().splitlines()
-            unreadable.append(f"{path.relative_to(root)}: "
-                              f"{detail[0] if detail else exc.__class__.__name__}")
+            unreadable.append(
+                f"{path.relative_to(root)}: {detail[0] if detail else exc.__class__.__name__}"
+            )
             continue
         if not isinstance(doc, dict):
             continue
@@ -871,8 +961,7 @@ def invoked_anywhere(rel: str, root: pathlib.Path = ROOT) -> bool:
     return any(word in wanted for command in commands for word in command_words(command))
 
 
-def vacuity_problems(present: set[str], controls, network, not_gates,
-                     invoked=None) -> list[str]:
+def vacuity_problems(present: set[str], controls, network, not_gates, invoked=None) -> list[str]:
     """The list rules, over lists supplied rather than read off the tree.
 
     Separated from check_vacuity so each rule can be planted against: every one
@@ -888,7 +977,8 @@ def vacuity_problems(present: set[str], controls, network, not_gates,
             problems.append(
                 f"{name} is exempted as a harness rather than a gate, but no such "
                 f"executable exists under scripts/ — the exemption outlived its file. "
-                f"(recorded: {reason})")
+                f"(recorded: {reason})"
+            )
             continue
         # A harness excuses itself by asserting its own outcome on every ordinary
         # invocation, which is a claim about a thing that gets invoked. One
@@ -898,7 +988,8 @@ def vacuity_problems(present: set[str], controls, network, not_gates,
             problems.append(
                 f"{name} is exempted as a harness that asserts its own outcome, but "
                 f"neither Taskfile.yaml nor a workflow under .github/workflows/ runs "
-                f"it. A harness nothing invokes asserts nothing. (recorded: {reason})")
+                f"it. A harness nothing invokes asserts nothing. (recorded: {reason})"
+            )
 
     for gate in sorted(present):
         if gate in not_gates:
@@ -906,13 +997,15 @@ def vacuity_problems(present: set[str], controls, network, not_gates,
         if gate not in controls and gate not in network:
             problems.append(
                 f"{gate} ships no positive control and is on no exemption list. A gate "
-                f"nobody has shown to fail is an untested assertion about the tree.")
+                f"nobody has shown to fail is an untested assertion about the tree."
+            )
 
     for gate in sorted(set(controls) | set(network)):
         if gate not in present:
             problems.append(
                 f"{gate} is named by a control or an exemption but no longer exists in "
-                f"scripts/ — the reference outlived the gate.")
+                f"scripts/ — the reference outlived the gate."
+            )
     return problems
 
 
@@ -929,7 +1022,8 @@ def check_vacuity() -> list[str]:
         problems.append(
             f"{unreadable} — this file decides what runs, and it could not be "
             f"parsed. The harness-invocation rule examined nothing in it, which "
-            f"is not the same as it invoking nothing.")
+            f"is not the same as it invoking nothing."
+        )
 
     for gate, call in sorted(NEEDS_NETWORK_PY.items()):
         p = SCRIPTS / gate
@@ -946,13 +1040,15 @@ def check_vacuity() -> list[str]:
             problems.append(
                 f"{gate} could not be parsed ({exc.msg} at line {exc.lineno}), so its "
                 f"network exemption could not be checked. That is not the same as the "
-                f"exemption being stale.")
+                f"exemption being stale."
+            )
             continue
         if call not in calls:
             problems.append(
                 f"{gate} is exempted as network-dependent, but its syntax tree contains "
                 f"no call to {call}(). If the remote call is gone the gate is testable "
-                f"and the exemption must go with it.")
+                f"and the exemption must go with it."
+            )
 
     for gate, word in sorted(NEEDS_NETWORK_SH.items()):
         p = SCRIPTS / gate
@@ -960,12 +1056,14 @@ def check_vacuity() -> list[str]:
             problems.append(
                 f"{gate} is exempted as network-dependent, but {word!r} appears nowhere "
                 f"outside its comments. If the remote call is gone the gate is testable "
-                f"and the exemption must go with it.")
+                f"and the exemption must go with it."
+            )
     return problems
 
 
-def mutation_landed(rel, before: str, after: str | _Deleted,
-                    on_disk: str | _Deleted, marker: str) -> str | None:
+def mutation_landed(
+    rel, before: str, after: str | _Deleted, on_disk: str | _Deleted, marker: str
+) -> str | None:
     """Why this mutation does not count as landed, or None if it does.
 
     Three ways a mutation reports success without having changed the meaning,
@@ -984,34 +1082,44 @@ def mutation_landed(rel, before: str, after: str | _Deleted,
     """
     if isinstance(after, _Deleted):
         if not isinstance(on_disk, _Deleted):
-            return (f"control claims to delete {rel}, but the file is still present — "
-                    f"the mutation proved nothing.")
+            return (
+                f"control claims to delete {rel}, but the file is still present — "
+                f"the mutation proved nothing."
+            )
         return None
 
     if isinstance(on_disk, _Deleted):
         return f"{rel} was deleted, but the control did not declare a deletion."
 
     if on_disk == before:
-        return (f"mutation did not change {rel} — the control proved nothing, in the "
-                f"direction that looks like success.")
+        return (
+            f"mutation did not change {rel} — the control proved nothing, in the "
+            f"direction that looks like success."
+        )
     if on_disk != after:
         return f"{rel} on disk differs from what the control intended to write."
 
     if marker.startswith("-"):
         gone = marker[1:]
         if gone not in before:
-            return (f"control claims to remove {gone[:60]!r} from {rel}, but it was never "
-                    f"there — the mutation asserts nothing.")
+            return (
+                f"control claims to remove {gone[:60]!r} from {rel}, but it was never "
+                f"there — the mutation asserts nothing."
+            )
         if gone in on_disk:
             return f"control claims to remove {gone[:60]!r} from {rel}, but it is still present."
         return None
 
     if marker in before:
-        return (f"control plants {marker[:60]!r} into {rel}, but the file already carried it "
-                f"— the edit landed and the meaning did not change.")
+        return (
+            f"control plants {marker[:60]!r} into {rel}, but the file already carried it "
+            f"— the edit landed and the meaning did not change."
+        )
     if marker not in on_disk:
-        return (f"control claims to plant {marker[:60]!r} into {rel}, but it is absent from "
-                f"the written file.")
+        return (
+            f"control claims to plant {marker[:60]!r} into {rel}, but it is absent from "
+            f"the written file."
+        )
     return None
 
 
@@ -1020,28 +1128,44 @@ def self_test() -> int:
     cases: list[tuple[str, str, str, str, str, str | None]] = [
         ("no-op", "a: 1\n", "a: 1\n", "a: 1\n", "b: 2", "did not change"),
         ("off-target", "a: 1\n", "a: 2\n", "a: 3\n", "a: 2", "differs from what"),
-        ("pre-existing marker", "a: 1\nb: 2\n", "a: 9\nb: 2\n", "a: 9\nb: 2\n", "b: 2",
-         "already carried it"),
+        (
+            "pre-existing marker",
+            "a: 1\nb: 2\n",
+            "a: 9\nb: 2\n",
+            "a: 9\nb: 2\n",
+            "b: 2",
+            "already carried it",
+        ),
         ("honest plant", "a: 1\n", "a: 9\n", "a: 9\n", "a: 9", None),
         ("honest removal", "a: 1\nb: 2\n", "a: 1\n", "a: 1\n", "-b: 2", None),
         ("removal that never removed", "a: 1\n", "a: 2\n", "a: 2\n", "-b: 2", "never"),
     ]
     view_cases = [
-        ("comment cannot satisfy a code reference",
-         "# import urllib.request" + chr(10) + "x = 1" + chr(10), "urllib", False),
-        ("real code still satisfies it",
-         "import urllib.request" + chr(10) + "x = 1" + chr(10), "urllib", True),
-        ("a hash inside a string is not a comment",
-         "sep = " + chr(34) + "# not a comment" + chr(34) + chr(10) + "import urllib" + chr(10),
-         "urllib", True),
+        (
+            "comment cannot satisfy a code reference",
+            "# import urllib.request" + chr(10) + "x = 1" + chr(10),
+            "urllib",
+            False,
+        ),
+        (
+            "real code still satisfies it",
+            "import urllib.request" + chr(10) + "x = 1" + chr(10),
+            "urllib",
+            True,
+        ),
+        (
+            "a hash inside a string is not a comment",
+            "sep = " + chr(34) + "# not a comment" + chr(34) + chr(10) + "import urllib" + chr(10),
+            "urllib",
+            True,
+        ),
     ]
     bad = 0
     print("\u2500\u2500 Comment-view self-test \u2500\u2500")
     for name, src, needle, want in view_cases:
         got = needle in blank_comments(src)
         ok = got is want
-        print(f"  {'ok  ' if ok else 'FAIL'}  {name}: {needle!r} "
-              f"{'found' if got else 'absent'}")
+        print(f"  {'ok  ' if ok else 'FAIL'}  {name}: {needle!r} {'found' if got else 'absent'}")
         bad += 0 if ok else 1
     # The property, not the mechanism: a token below blanked comment lines must
     # still be findable at its own line number. Asserting the property rather
@@ -1051,11 +1175,15 @@ def self_test() -> int:
     raw = ("# aaaa" + chr(10)) * 3 + "import urllib" + chr(10)
     view = blank_comments(raw)
     raw_line = raw.splitlines().index("import urllib")
-    ok_lines = (len(view) == len(raw)
-                and len(view.splitlines()) == len(raw.splitlines())
-                and view.splitlines()[raw_line].strip() == "import urllib")
-    print(f"  {'ok  ' if ok_lines else 'FAIL'}  a token under blanked comments keeps its own "
-          f"line number ({raw_line})")
+    ok_lines = (
+        len(view) == len(raw)
+        and len(view.splitlines()) == len(raw.splitlines())
+        and view.splitlines()[raw_line].strip() == "import urllib"
+    )
+    print(
+        f"  {'ok  ' if ok_lines else 'FAIL'}  a token under blanked comments keeps its own "
+        f"line number ({raw_line})"
+    )
     bad += 0 if ok_lines else 1
     print()
 
@@ -1069,15 +1197,17 @@ def self_test() -> int:
         ("a comment naming the call", "# subprocess.run(x)" + chr(10), False),
         ("a string literal naming the call", 'm = "use subprocess.run"' + chr(10), False),
         ("a real call", "subprocess.run([1])" + chr(10), True),
-        ("a dead copy above a live one",
-         "# subprocess.run([0])" + chr(10) + "subprocess.run([1])" + chr(10), True),
+        (
+            "a dead copy above a live one",
+            "# subprocess.run([0])" + chr(10) + "subprocess.run([1])" + chr(10),
+            True,
+        ),
     ]
     print("\u2500\u2500 AST-view self-test \u2500\u2500")
     for name, src, want in ast_cases:
         got = "subprocess.run" in called_names(src)
         ok = got is want
-        print(f"  {'ok  ' if ok else 'FAIL'}  {name}: "
-              f"{'found' if got else 'absent'}")
+        print(f"  {'ok  ' if ok else 'FAIL'}  {name}: {'found' if got else 'absent'}")
         bad += 0 if ok else 1
     print()
 
@@ -1093,26 +1223,43 @@ def self_test() -> int:
     # branch it was written beside.
     print("\u2500\u2500 Vacuity-rule self-test \u2500\u2500")
     vacuity_cases: list[tuple[str, set[str], set[str], dict, dict, str | None]] = [
-        ("a gate on no list at all",
-         {"check-x.py"}, set(), {}, {}, "ships no positive control"),
-        ("a control naming a gate that is gone",
-         set(), {"check-x.py"}, {}, {}, "the reference outlived the gate"),
-        ("an exemption naming a harness that is gone",
-         set(), set(), {}, {"tests/gone.py": "a reason"},
-         "the exemption outlived its file"),
-        ("a harness nothing invokes",
-         {"tests/gone.py"}, set(), {}, {"tests/gone.py": "a reason"},
-         "A harness nothing invokes asserts nothing"),
-        ("a gate covered by a control",
-         {"check-x.py"}, {"check-x.py"}, {}, {}, None),
+        ("a gate on no list at all", {"check-x.py"}, set(), {}, {}, "ships no positive control"),
+        (
+            "a control naming a gate that is gone",
+            set(),
+            {"check-x.py"},
+            {},
+            {},
+            "the reference outlived the gate",
+        ),
+        (
+            "an exemption naming a harness that is gone",
+            set(),
+            set(),
+            {},
+            {"tests/gone.py": "a reason"},
+            "the exemption outlived its file",
+        ),
+        (
+            "a harness nothing invokes",
+            {"tests/gone.py"},
+            set(),
+            {},
+            {"tests/gone.py": "a reason"},
+            "A harness nothing invokes asserts nothing",
+        ),
+        ("a gate covered by a control", {"check-x.py"}, {"check-x.py"}, {}, {}, None),
     ]
     for name, present_, controls_, network_, not_gates_, expect_ in vacuity_cases:
-        found = vacuity_problems(present_, controls_, network_, not_gates_,
-                                 invoked=lambda _name: False)
+        found = vacuity_problems(
+            present_, controls_, network_, not_gates_, invoked=lambda _name: False
+        )
         shown = " ".join(found)
         ok = (not found) if expect_ is None else any(expect_ in p for p in found)
-        print(f"  {'ok  ' if ok else 'FAIL'}  {name}: "
-              f"{(shown[:70] + chr(8230)) if shown else 'accepted'}")
+        print(
+            f"  {'ok  ' if ok else 'FAIL'}  {name}: "
+            f"{(shown[:70] + chr(8230)) if shown else 'accepted'}"
+        )
         bad += 0 if ok else 1
     print()
 
@@ -1126,8 +1273,10 @@ def self_test() -> int:
     if bad:
         print(f"Mutation contract FAILED its own self-test: {bad} case(s).")
         return 1
-    print(f"✓ the mutation contract rejects every way a mutation can look landed "
-          f"without being ({len(cases)} cases)")
+    print(
+        f"✓ the mutation contract rejects every way a mutation can look landed "
+        f"without being ({len(cases)} cases)"
+    )
     return 0
 
 
@@ -1139,9 +1288,11 @@ def run_control(gate: str, what: str, mutate) -> tuple[bool, str]:
 
         clean = run_gate(gate, tree)
         if clean.returncode != 0:
-            return False, (f"gate is not clean before mutation (exit {clean.returncode}); a "
-                           f"rejection afterwards would prove nothing.\n"
-                           f"{(clean.stdout + clean.stderr).strip()[:600]}")
+            return False, (
+                f"gate is not clean before mutation (exit {clean.returncode}); a "
+                f"rejection afterwards would prove nothing.\n"
+                f"{(clean.stdout + clean.stderr).strip()[:600]}"
+            )
 
         try:
             path, before, after, marker = mutate(tree)
@@ -1156,8 +1307,10 @@ def run_control(gate: str, what: str, mutate) -> tuple[bool, str]:
 
         dirty = run_gate(gate, tree)
         if dirty.returncode == 0:
-            return False, (f"gate ACCEPTED {what} — it cannot reject the violation it exists "
-                           f"to catch.\n{(dirty.stdout + dirty.stderr).strip()[:600]}")
+            return False, (
+                f"gate ACCEPTED {what} — it cannot reject the violation it exists "
+                f"to catch.\n{(dirty.stdout + dirty.stderr).strip()[:600]}"
+            )
 
         # The rejection must NAME what was mutated. A non-zero exit alone only
         # says the gate behaved differently on a different tree, which a gate
@@ -1175,21 +1328,24 @@ def run_control(gate: str, what: str, mutate) -> tuple[bool, str]:
         # against this floor with a gate that raises after printing the path it
         # was processing, which satisfied both the exit check and the naming
         # check below.
-        for crash in ("Traceback (most recent call last)", "panic: ",
-                      "goroutine 1 [running]"):
+        for crash in ("Traceback (most recent call last)", "panic: ", "goroutine 1 [running]"):
             if crash in said:
-                return False, (f"gate exited {dirty.returncode} by CRASHING, not by "
-                               f"rejecting — a stack trace is not a verdict.\n"
-                               f"{said.strip()[:400]}")
+                return False, (
+                    f"gate exited {dirty.returncode} by CRASHING, not by "
+                    f"rejecting — a stack trace is not a verdict.\n"
+                    f"{said.strip()[:400]}"
+                )
 
         want = IDENTIFIES.get(gate)
         names = [want] if want else [str(rel), rel.name]
         hit = next((n for n in names if n in said), None)
         if hit is None:
-            return False, (f"gate exited {dirty.returncode} but its output never names "
-                           f"{want or rel} — a rejection that cannot say what it rejected "
-                           f"is indistinguishable from a gate reacting to any change at "
-                           f"all.\n{said.strip()[:400]}")
+            return False, (
+                f"gate exited {dirty.returncode} but its output never names "
+                f"{want or rel} — a rejection that cannot say what it rejected "
+                f"is indistinguishable from a gate reacting to any change at "
+                f"all.\n{said.strip()[:400]}"
+            )
         return True, f"rejected {what} (exit {dirty.returncode}, names {hit.split('/')[-1]})"
 
 
@@ -1207,19 +1363,26 @@ def population_authority() -> str | None:
     Hence before the loop, once, for the whole run.
     """
     if shutil.which("git") is None:
-        return ("git is not on PATH. copy_tree() takes its file list from the index "
-                "and the gates scope to the tracked set, so without git this run "
-                "cannot say what population it exercised anything over.")
-    probe = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True,
-                           text=True, timeout=GATE_TIMEOUT)
+        return (
+            "git is not on PATH. copy_tree() takes its file list from the index "
+            "and the gates scope to the tracked set, so without git this run "
+            "cannot say what population it exercised anything over."
+        )
+    probe = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, text=True, timeout=GATE_TIMEOUT
+    )
     if probe.returncode != 0:
         err = (probe.stderr or "").strip().splitlines()
-        return (f"`git ls-files` failed in {ROOT} — "
-                f"{err[0] if err else f'exit {probe.returncode}'}. The corpus every "
-                f"fixture is cut from is unknown.")
+        return (
+            f"`git ls-files` failed in {ROOT} — "
+            f"{err[0] if err else f'exit {probe.returncode}'}. The corpus every "
+            f"fixture is cut from is unknown."
+        )
     if not [r for r in probe.stdout.split("\0") if r]:
-        return (f"`git ls-files` reports no tracked files in {ROOT}. Every fixture "
-                f"would be empty and every control would pass over nothing.")
+        return (
+            f"`git ls-files` reports no tracked files in {ROOT}. Every fixture "
+            f"would be empty and every control would pass over nothing."
+        )
     return None
 
 
@@ -1246,8 +1409,10 @@ def main() -> int:
         print(f"FAIL  no control matches {only!r}")
         return 1
 
-    print(f"── Positive controls ── {len(items)} gate(s), "
-          f"{len(NEEDS_NETWORK)} exempted as network-dependent\n")
+    print(
+        f"── Positive controls ── {len(items)} gate(s), "
+        f"{len(NEEDS_NETWORK)} exempted as network-dependent\n"
+    )
 
     # Counted at the END of the loop body, after run_control has returned a
     # verdict — so `proven` is cases that completed a proof, not entries the
@@ -1270,19 +1435,25 @@ def main() -> int:
     print()
     silent = len(items) - (proven + failed)
     if silent:
-        print(f"FAIL  {silent} control(s) left the loop without proving or failing "
-              f"anything, so this run licenses nothing.")
+        print(
+            f"FAIL  {silent} control(s) left the loop without proving or failing "
+            f"anything, so this run licenses nothing."
+        )
         return 1
     if failed:
         print(f"Positive-control gate FAILED: {failed} of {len(items)} controls did not hold.")
         return 1
     if not only and proven < MIN_CONTROLS_RUN:
-        print(f"FAIL  only {proven} control(s) completed a proof, under the floor of "
-              f"{MIN_CONTROLS_RUN}. The registry naming a gate for every entry is a "
-              f"different claim from having exercised them.")
+        print(
+            f"FAIL  only {proven} control(s) completed a proof, under the floor of "
+            f"{MIN_CONTROLS_RUN}. The registry naming a gate for every entry is a "
+            f"different claim from having exercised them."
+        )
         return 1
-    print(f"✓ every gate with a control rejects the violation it names "
-          f"({proven} control(s) completed a proof)")
+    print(
+        f"✓ every gate with a control rejects the violation it names "
+        f"({proven} control(s) completed a proof)"
+    )
     return 0
 
 

@@ -24,8 +24,8 @@ from gateloader import load
 
 gate = load("check-catalog-revision")
 
-URL = "{{ index .metadata.annotations \"gitops/repo-url\" }}"
-REVISION = "{{ index .metadata.annotations \"gitops/repo-branch\" }}"
+URL = '{{ index .metadata.annotations "gitops/repo-url" }}'
+REVISION = '{{ index .metadata.annotations "gitops/repo-branch" }}'
 
 
 def appset(*sources: dict, single: dict | None = None, name: str = "addons") -> dict:
@@ -34,8 +34,12 @@ def appset(*sources: dict, single: dict | None = None, name: str = "addons") -> 
         spec["sources"] = list(sources)
     if single is not None:
         spec["source"] = single
-    return {"apiVersion": "argoproj.io/v1alpha1", "kind": "ApplicationSet",
-            "metadata": {"name": name}, "spec": {"template": {"spec": spec}}}
+    return {
+        "apiVersion": "argoproj.io/v1alpha1",
+        "kind": "ApplicationSet",
+        "metadata": {"name": name},
+        "spec": {"template": {"spec": spec}},
+    }
 
 
 def catalog(revision: str = REVISION) -> dict:
@@ -65,8 +69,11 @@ class Appsets(unittest.TestCase):
 
     def check(self, *argv: str) -> tuple[int, str]:
         out = io.StringIO()
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out), \
-                mock.patch("sys.argv", ["check-catalog-revision.py", *argv]):
+        with (
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(out),
+            mock.patch("sys.argv", ["check-catalog-revision.py", *argv]),
+        ):
             rc = gate.main()
         return rc, out.getvalue()
 
@@ -82,8 +89,11 @@ class ACatalogSource(Appsets):
         self.write("addons.yaml", appset(chart(), catalog("main")))
         rc, said = self.check()
         self.assertEqual(rc, 1, said)
-        self.assertIn("addons.yaml: a source reading gitops/repo-url pins targetRevision: "
-                      "'main' instead of reading gitops/repo-branch", said)
+        self.assertIn(
+            "addons.yaml: a source reading gitops/repo-url pins targetRevision: "
+            "'main' instead of reading gitops/repo-branch",
+            said,
+        )
 
     def test_one_with_no_revision_fails(self):
         source = catalog()
@@ -127,8 +137,12 @@ class WhatIsNotACatalogSource(Appsets):
         self.assertEqual(rc, 0, said)
 
     def test_documents_of_other_kinds_are_not_read(self):
-        self.write("addons.yaml", {"kind": "ConfigMap", "spec": {"template": {"spec": {
-            "source": catalog("main")}}}}, "text", appset(catalog(), "not-a-source"))
+        self.write(
+            "addons.yaml",
+            {"kind": "ConfigMap", "spec": {"template": {"spec": {"source": catalog("main")}}}},
+            "text",
+            appset(catalog(), "not-a-source"),
+        )
         rc, said = self.check()
         self.assertEqual(rc, 0, said)
 

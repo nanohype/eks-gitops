@@ -36,12 +36,10 @@ class PathIsRead(unittest.TestCase):
     DIRS = {"/etc/falco/rules.d"}
 
     def test_a_named_file_is_read(self):
-        self.assertTrue(
-            gate.reachable("/etc/falco/falco_rules.yaml", self.FILES, self.DIRS))
+        self.assertTrue(gate.reachable("/etc/falco/falco_rules.yaml", self.FILES, self.DIRS))
 
     def test_a_file_under_a_named_directory_is_read(self):
-        self.assertTrue(
-            gate.reachable("/etc/falco/rules.d/extra.yaml", self.FILES, self.DIRS))
+        self.assertTrue(gate.reachable("/etc/falco/rules.d/extra.yaml", self.FILES, self.DIRS))
 
     def test_an_installed_but_unnamed_file_is_not_read(self):
         """The exact shape #231 shipped against: the tier downloads and sits."""
@@ -53,12 +51,10 @@ class PathIsRead(unittest.TestCase):
 
     def test_a_sibling_sharing_a_directory_prefix_is_not_read(self):
         """Anchored on a separator: `rules.d` must not cover `rules.disabled`."""
-        self.assertFalse(
-            gate.reachable("/etc/falco/rules.disabled", self.FILES, self.DIRS))
+        self.assertFalse(gate.reachable("/etc/falco/rules.disabled", self.FILES, self.DIRS))
 
     def test_the_directory_itself_is_not_a_rule_file(self):
-        self.assertFalse(
-            gate.reachable("/etc/falco/rules.d", self.FILES, self.DIRS))
+        self.assertFalse(gate.reachable("/etc/falco/rules.d", self.FILES, self.DIRS))
 
 
 class SeverityOrder(unittest.TestCase):
@@ -100,8 +96,9 @@ class RulesFilesSplit(unittest.TestCase):
 
     def test_files_and_directories_are_separated(self):
         files, dirs = gate.read_paths(
-            {"rules_files": ["/etc/falco/a.yaml", "/etc/falco/b.yml",
-                             "/etc/falco/rules.d"]}, "development")
+            {"rules_files": ["/etc/falco/a.yaml", "/etc/falco/b.yml", "/etc/falco/rules.d"]},
+            "development",
+        )
         self.assertEqual(files, {"/etc/falco/a.yaml", "/etc/falco/b.yml"})
         self.assertEqual(dirs, {"/etc/falco/rules.d"})
         self.assertEqual(gate.failures, [])
@@ -113,8 +110,10 @@ class RulesFilesSplit(unittest.TestCase):
     def test_an_absent_rules_files_is_reported(self):
         files, dirs = gate.read_paths({}, "production")
         self.assertEqual((files, dirs), (set(), set()))
-        self.assertTrue(any("rules_files" in f for f in gate.failures),
-                        f"an empty rules_files was accepted: {gate.failures}")
+        self.assertTrue(
+            any("rules_files" in f for f in gate.failures),
+            f"an empty rules_files was accepted: {gate.failures}",
+        )
 
 
 class DerivedFromTheTree(unittest.TestCase):
@@ -130,7 +129,6 @@ class DerivedFromTheTree(unittest.TestCase):
         envs = gate.environments()
         self.assertIn("production", envs)
         self.assertTrue(envs, "no environment discovered — the gate would check none")
-
 
 
 def _rules_layer(files: dict[str, str]) -> bytes:
@@ -156,8 +154,9 @@ class ReadingARuleSetThroughTheSharedClient(unittest.TestCase):
     REPO = "falcosecurity/rules/falco-rules"
     BASE = f"https://ghcr.io/v2/{REPO}"
     MANIFEST = f"{BASE}/manifests/4"
-    CHALLENGE = (f'Bearer realm="https://ghcr.io/token",service="ghcr.io",'
-                 f'scope="repository:{REPO}:pull"')
+    CHALLENGE = (
+        f'Bearer realm="https://ghcr.io/token",service="ghcr.io",scope="repository:{REPO}:pull"'
+    )
 
     def setUp(self):
         gate.failures.clear()
@@ -173,24 +172,26 @@ class ReadingARuleSetThroughTheSharedClient(unittest.TestCase):
         if fake.auth(req) != "Bearer t":
             return fake.http_error(url, 401, {"WWW-Authenticate": self.CHALLENGE})
         if url == self.MANIFEST:
-            return json.dumps({"config": {"mediaType": self.config},
-                               "layers": [{"digest": self.digest}]}).encode()
+            return json.dumps(
+                {"config": {"mediaType": self.config}, "layers": [{"digest": self.digest}]}
+            ).encode()
         if url == f"{self.BASE}/blobs/{self.digest}":
             return self.layer
         return fake.http_error(url, 404)
 
     def authorised(self, answer):
         """A step answering `answer` to a request that carries the token, as ghcr.io would."""
+
         def step(req):
             if fake.auth(req) != "Bearer t":
                 return self.registry(req)
             return answer
+
         return step
 
     def read(self, *steps, ref="falco-rules:4"):
         self.transport = fake.Transport(*steps, *([self.registry] * 20))
-        with contextlib.redirect_stderr(io.StringIO()), \
-                contextlib.redirect_stdout(io.StringIO()):
+        with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
             return gate.rulesfile(ref, self.transport.bind(gate.registry.http_get))
 
     def cannot_run(self, *steps):
@@ -205,23 +206,28 @@ class ReadingARuleSetThroughTheSharedClient(unittest.TestCase):
         urls = self.transport.urls()
         token = [u for u in urls if u.startswith("https://ghcr.io/token?")]
         self.assertEqual(len(token), 1)
-        self.assertIn(f"scope=repository%3A{self.REPO.replace('/', '%2F')}%3Apull",
-                      token[0])
-        self.assertEqual([fake.auth(r) for r in self.transport.requests
-                          if r.full_url.startswith("https://ghcr.io/token?")], [None],
-                         "the token was asked for with credentials the test did not write")
+        self.assertIn(f"scope=repository%3A{self.REPO.replace('/', '%2F')}%3Apull", token[0])
+        self.assertEqual(
+            [
+                fake.auth(r)
+                for r in self.transport.requests
+                if r.full_url.startswith("https://ghcr.io/token?")
+            ],
+            [None],
+            "the token was asked for with credentials the test did not write",
+        )
         self.assertEqual(urls.count(self.MANIFEST), 2)
         self.assertEqual(gate.failures, [])
 
     def test_a_rate_limit_waits_as_long_as_the_registry_asks(self):
-        files = self.read(self.registry, self.registry,
-                          fake.http_error(self.MANIFEST, 429, {"Retry-After": "7"}))
+        files = self.read(
+            self.registry, self.registry, fake.http_error(self.MANIFEST, 429, {"Retry-After": "7"})
+        )
         self.assertIn("falco_rules.yaml", files)
         self.assertEqual(self.transport.waits, [7.0])
 
     def test_a_rate_limit_that_never_relents_cannot_run(self):
-        self.cannot_run(self.registry, self.registry,
-                        *[fake.http_error(self.MANIFEST, 429)] * 3)
+        self.cannot_run(self.registry, self.registry, *[fake.http_error(self.MANIFEST, 429)] * 3)
 
     def test_a_ref_the_registry_does_not_have_is_a_finding(self):
         files = self.read(ref="falco-rules:99")
@@ -233,25 +239,34 @@ class ReadingARuleSetThroughTheSharedClient(unittest.TestCase):
         """Only a 404 says the ref is not there. A 403 or a 500 says nothing about it."""
         for code in (403, 500):
             with self.subTest(code=code):
-                self.cannot_run(self.registry, self.registry,
-                                self.authorised(fake.http_error(self.MANIFEST, code)))
+                self.cannot_run(
+                    self.registry,
+                    self.registry,
+                    self.authorised(fake.http_error(self.MANIFEST, code)),
+                )
 
     def test_a_manifest_cut_off_mid_body_cannot_run(self):
         """http.client.IncompleteRead is no OSError; READ_FAILURES is what catches it."""
-        self.cannot_run(self.registry, self.registry,
-                        self.authorised(http.client.IncompleteRead(b"{")))
+        self.cannot_run(
+            self.registry, self.registry, self.authorised(http.client.IncompleteRead(b"{"))
+        )
 
     def test_a_manifest_that_is_not_json_cannot_run(self):
         self.cannot_run(self.registry, self.registry, self.authorised(b"<html>"))
 
     def test_a_layer_the_registry_refuses_cannot_run(self):
         blob = f"{self.BASE}/blobs/{self.digest}"
-        self.cannot_run(self.registry, self.registry, self.registry,
-                        self.authorised(fake.http_error(blob, 403)))
+        self.cannot_run(
+            self.registry, self.registry, self.registry, self.authorised(fake.http_error(blob, 403))
+        )
 
     def test_a_layer_cut_off_mid_body_cannot_run(self):
-        self.cannot_run(self.registry, self.registry, self.registry,
-                        self.authorised(http.client.IncompleteRead(b"")))
+        self.cannot_run(
+            self.registry,
+            self.registry,
+            self.registry,
+            self.authorised(http.client.IncompleteRead(b"")),
+        )
 
     def test_a_layer_that_does_not_match_its_digest_cannot_run(self):
         self.layer, good = b"tampered", self.layer
@@ -273,8 +288,9 @@ class ReadingARuleSetThroughTheSharedClient(unittest.TestCase):
         for label, manifest in shapes.items():
             with self.subTest(label):
                 gate.failures.clear()
-                self.cannot_run(self.registry, self.registry,
-                                self.authorised(json.dumps(manifest).encode()))
+                self.cannot_run(
+                    self.registry, self.registry, self.authorised(json.dumps(manifest).encode())
+                )
 
     def test_a_layer_that_is_not_a_rule_set_archive_cannot_run(self):
         """It matches its digest, so it is what upstream published; it is still
@@ -285,10 +301,12 @@ class ReadingARuleSetThroughTheSharedClient(unittest.TestCase):
 
     def test_a_404_from_the_token_realm_cannot_run(self):
         """The realm issues tokens; its 404 says nothing about whether the ref resolves."""
+
         def realm_404(req):
             if req.full_url.startswith("https://ghcr.io/token?"):
                 return fake.http_error(req.full_url, 404)
             return self.registry(req)
+
         self.cannot_run(realm_404, realm_404)
 
     def test_an_artifact_that_is_not_a_rulesfile_installs_no_rules(self):

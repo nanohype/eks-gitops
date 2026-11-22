@@ -95,7 +95,9 @@ EPHEMERAL = "pods/ephemeralcontainers"
 # prerelease-check.yml on any tag. Trusting another identity is an edit to this
 # constant, which scripts/tests/test_image_verification.py holds to the two
 # subject lists below.
-SUBJECT_REGEXP = r"^https://github\.com/nanohype/[^/]+/\.github/workflows/release\.ya?ml@refs/tags/.+$"
+SUBJECT_REGEXP = (
+    r"^https://github\.com/nanohype/[^/]+/\.github/workflows/release\.ya?ml@refs/tags/.+$"
+)
 
 # Certificate subjects as Fulcio writes them for a GitHub Actions run
 # (<repository URL>/<workflow path>@<ref>). The release identity accepts the
@@ -142,8 +144,7 @@ REFUSED_SUBJECTS = (
 # belongs.
 _IMAGES = "(" + " + ".join(f"images.{f}" for f in CONTAINER_FIELDS) + ")"
 SIGNATURE_VALIDATION = (
-    _IMAGES + ".map(image, verifyImageSignatures(image, [attestors.{attestor}]))"
-    ".all(e, e > 0)"
+    _IMAGES + ".map(image, verifyImageSignatures(image, [attestors.{attestor}])).all(e, e > 0)"
 )
 ATTESTATION_VALIDATION = (
     _IMAGES + ".map(image, verifyAttestationSignatures(image, attestations.{attestation}, "
@@ -169,71 +170,102 @@ def check_scope(spec: dict) -> None:
         if glob is None:
             fail(f"matchImageReferences entry {ref!r} is not a glob — scope it to {SCOPE}")
         if glob.strip() == "*":
-            fail("matchImageReferences contains a bare '*' — signature demanded on every image; "
-                 f"scope it to {SCOPE}")
+            fail(
+                "matchImageReferences contains a bare '*' — signature demanded on every image; "
+                f"scope it to {SCOPE}"
+            )
         if not glob.startswith(REGISTRY_PREFIX):
             fail(f"matchImageReferences glob {glob!r} is not scoped to {SCOPE}")
         globs.add(glob)
     if globs != {SCOPE}:
-        fail(f"matchImageReferences is {sorted(globs)}, expected exactly ['{SCOPE}'] — a "
-             f"narrower glob leaves every other nanohype image unverified while both "
-             f"fixtures still decide as before")
+        fail(
+            f"matchImageReferences is {sorted(globs)}, expected exactly ['{SCOPE}'] — a "
+            f"narrower glob leaves every other nanohype image unverified while both "
+            f"fixtures still decide as before"
+        )
 
     if spec.get("failurePolicy") == "Ignore":
-        fail("failurePolicy is Ignore — a webhook timeout or a Kyverno outage would admit "
-             "every image unverified")
+        fail(
+            "failurePolicy is Ignore — a webhook timeout or a Kyverno outage would admit "
+            "every image unverified"
+        )
 
     evaluation = spec.get("evaluation") or {}
     if (evaluation.get("admission") or {}).get("enabled") is False:
-        fail("evaluation.admission.enabled is false — the policy never runs at admission, "
-             "so no pod is verified or pinned")
+        fail(
+            "evaluation.admission.enabled is false — the policy never runs at admission, "
+            "so no pod is verified or pinned"
+        )
     if evaluation.get("mode", "Kubernetes") != "Kubernetes":
-        fail(f"evaluation.mode is {evaluation.get('mode')!r}, not Kubernetes — the policy "
-             f"evaluates another kind of payload and no pod admission reaches it")
+        fail(
+            f"evaluation.mode is {evaluation.get('mode')!r}, not Kubernetes — the policy "
+            f"evaluates another kind of payload and no pod admission reaches it"
+        )
 
     extractors = {(e or {}).get("name") for e in spec.get("images") or []}
     shadowing = [f for f in CONTAINER_FIELDS if f in extractors]
     if shadowing:
-        fail(f"spec.images declares an extractor named {shadowing} — it replaces the "
-             f"built-in list the validations read, so they verify what it returns")
+        fail(
+            f"spec.images declares an extractor named {shadowing} — it replaces the "
+            f"built-in list the validations read, so they verify what it returns"
+        )
 
     mc = spec.get("matchConstraints") or {}
     for narrowing in ("objectSelector", "excludeResourceRules"):
         if mc.get(narrowing):
-            fail(f"matchConstraints.{narrowing} is set — pods can opt out of verification "
-                 f"through it")
+            fail(
+                f"matchConstraints.{narrowing} is set — pods can opt out of verification through it"
+            )
     if spec.get("matchConditions"):
         fail("matchConditions is set — a pod failing one is never verified")
 
     rules = mc.get("resourceRules") or []
-    pod_ops = {op for r in rules if "pods" in (r.get("resources") or [])
-               for op in (r.get("operations") or [])}
+    pod_ops = {
+        op
+        for r in rules
+        if "pods" in (r.get("resources") or [])
+        for op in (r.get("operations") or [])
+    }
     if not {"CREATE", "UPDATE"} <= pod_ops:
-        fail(f"resourceRules match pods on {sorted(pod_ops)} — CREATE and UPDATE are both "
-             f"required, or a pod admitted one way swaps its image the other")
-    ephemeral_ops = {op for r in rules if EPHEMERAL in (r.get("resources") or [])
-                     for op in (r.get("operations") or [])}
+        fail(
+            f"resourceRules match pods on {sorted(pod_ops)} — CREATE and UPDATE are both "
+            f"required, or a pod admitted one way swaps its image the other"
+        )
+    ephemeral_ops = {
+        op
+        for r in rules
+        if EPHEMERAL in (r.get("resources") or [])
+        for op in (r.get("operations") or [])
+    }
     if "UPDATE" not in ephemeral_ops:
-        fail(f"resourceRules do not match {EPHEMERAL} on UPDATE — an ephemeral container "
-             f"is added through that subresource and no other request, so its image runs "
-             f"unverified whatever the validations read from images.ephemeralContainers")
+        fail(
+            f"resourceRules do not match {EPHEMERAL} on UPDATE — an ephemeral container "
+            f"is added through that subresource and no other request, so its image runs "
+            f"unverified whatever the validations read from images.ephemeralContainers"
+        )
 
     exprs = ((mc.get("namespaceSelector") or {}).get("matchExpressions")) or []
     excluded = set()
     for e in exprs:
         if e.get("key") != "kubernetes.io/metadata.name" or e.get("operator") != "NotIn":
-            fail(f"namespaceSelector expression {e!r} is not a NotIn on "
-                 f"kubernetes.io/metadata.name — the exclusion must name namespaces")
+            fail(
+                f"namespaceSelector expression {e!r} is not a NotIn on "
+                f"kubernetes.io/metadata.name — the exclusion must name namespaces"
+            )
         excluded |= set(e.get("values") or [])
     if excluded != SYSTEM_NS:
-        fail(f"namespaceSelector excludes {sorted(excluded)}, expected exactly "
-             f"{sorted(SYSTEM_NS)} — a workload namespace on this list runs unverified images")
+        fail(
+            f"namespaceSelector excludes {sorted(excluded)}, expected exactly "
+            f"{sorted(SYSTEM_NS)} — a workload namespace on this list runs unverified images"
+        )
 
     controllers = ((spec.get("autogen") or {}).get("podControllers") or {}).get("controllers")
     if controllers != []:
-        fail(f"autogen.podControllers.controllers is {controllers!r}, not [] — a rule "
-             f"Kyverno generates for a pod controller pins the digest into its pod "
-             f"template, which ArgoCD compares with git and reports as drift on every sync")
+        fail(
+            f"autogen.podControllers.controllers is {controllers!r}, not [] — a rule "
+            f"Kyverno generates for a pod controller pins the digest into its pod "
+            f"template, which ArgoCD compares with git and reports as drift on every sync"
+        )
 
 
 def check_validation_config(spec: dict) -> None:
@@ -257,50 +289,70 @@ def check_attestors(spec: dict) -> set[str]:
         cosign = att.get("cosign") or {}
         keyless = cosign.get("keyless")
         if not keyless:
-            fail(f"attestor {name!r} is not keyless Cosign — the release workflows sign "
-                 f"keyless (Fulcio + Rekor), and any other attestor admits a second signer")
+            fail(
+                f"attestor {name!r} is not keyless Cosign — the release workflows sign "
+                f"keyless (Fulcio + Rekor), and any other attestor admits a second signer"
+            )
         if set(cosign) - {"keyless", "ctlog"}:
-            fail(f"attestor {name!r} sets {sorted(set(cosign) - {'keyless', 'ctlog'})} — only "
-                 f"keyless identities and the transparency log are part of the contract")
+            fail(
+                f"attestor {name!r} sets {sorted(set(cosign) - {'keyless', 'ctlog'})} — only "
+                f"keyless identities and the transparency log are part of the contract"
+            )
         if set(keyless) - {"identities"}:
-            fail(f"attestor {name!r} keyless sets {sorted(set(keyless) - {'identities'})} — "
-                 f"a root bundle of its own verifies certificates no Fulcio issued, and "
-                 f"the contract is the public Sigstore roots")
+            fail(
+                f"attestor {name!r} keyless sets {sorted(set(keyless) - {'identities'})} — "
+                f"a root bundle of its own verifies certificates no Fulcio issued, and "
+                f"the contract is the public Sigstore roots"
+            )
         ctlog = cosign.get("ctlog") or {}
         if not ctlog.get("url"):
             fail(f"attestor {name!r} names no transparency log (ctlog.url)")
         for flag in ("insecureIgnoreTlog", "insecureIgnoreSCT"):
             if ctlog.get(flag):
-                fail(f"attestor {name!r} sets ctlog.{flag} — signatures absent from the "
-                     f"public log would verify")
+                fail(
+                    f"attestor {name!r} sets ctlog.{flag} — signatures absent from the "
+                    f"public log would verify"
+                )
         if set(ctlog) - {"url"}:
-            fail(f"attestor {name!r} ctlog sets {sorted(set(ctlog) - {'url'})} — a log key "
-                 f"or timestamp chain of its own trusts entries the public Rekor never "
-                 f"recorded")
+            fail(
+                f"attestor {name!r} ctlog sets {sorted(set(ctlog) - {'url'})} — a log key "
+                f"or timestamp chain of its own trusts entries the public Rekor never "
+                f"recorded"
+            )
         if ctlog["url"] != REKOR_URL:
-            fail(f"attestor {name!r} ctlog.url is {ctlog['url']!r}, expected {REKOR_URL!r} — "
-                 f"another log holds whatever its operator writes to it")
+            fail(
+                f"attestor {name!r} ctlog.url is {ctlog['url']!r}, expected {REKOR_URL!r} — "
+                f"another log holds whatever its operator writes to it"
+            )
         identities = keyless.get("identities") or []
         if not identities:
             fail(f"attestor {name!r} has no keyless identities")
         for ident in identities:
             for loose in ("issuerRegExp", "subject", "subjectExpression"):
                 if ident.get(loose):
-                    fail(f"attestor {name!r} identity sets {loose} — the contract is one "
-                         f"exact issuer and one anchored subjectRegExp")
+                    fail(
+                        f"attestor {name!r} identity sets {loose} — the contract is one "
+                        f"exact issuer and one anchored subjectRegExp"
+                    )
             if set(ident) - {"issuer", "subjectRegExp"}:
-                fail(f"attestor {name!r} identity sets "
-                     f"{sorted(set(ident) - {'issuer', 'subjectRegExp'})} — the contract is "
-                     f"one exact issuer and one anchored subjectRegExp")
+                fail(
+                    f"attestor {name!r} identity sets "
+                    f"{sorted(set(ident) - {'issuer', 'subjectRegExp'})} — the contract is "
+                    f"one exact issuer and one anchored subjectRegExp"
+                )
             issuer = ident.get("issuer")
             if issuer != EXPECTED_ISSUER:
                 fail(f"keyless issuer is {issuer!r}, expected {EXPECTED_ISSUER!r}")
             subj = ident.get("subjectRegExp")
             if not subj:
-                fail("keyless identity has no subjectRegExp — any signer from the issuer would pass")
+                fail(
+                    "keyless identity has no subjectRegExp — any signer from the issuer would pass"
+                )
             if subj != SUBJECT_REGEXP:
-                fail(f"subjectRegExp '{subj}' is not the release identity '{SUBJECT_REGEXP}'."
-                     + "".join(f"\n  {line}" for line in subject_difference(subj)))
+                fail(
+                    f"subjectRegExp '{subj}' is not the release identity '{SUBJECT_REGEXP}'."
+                    + "".join(f"\n  {line}" for line in subject_difference(subj))
+                )
         names.add(name)
     return names
 
@@ -321,17 +373,21 @@ def subject_difference(subj: str) -> list[str]:
     refused = [f"It refuses {s}" for s in ACCEPTED_SUBJECTS if not pattern.search(s)]
     if admitted or refused:
         return admitted + refused
-    return ["It decides every subject in the corpus the way the release identity does, "
-            "which shows only that the corpus does not tell the two apart. Trusting "
-            "another identity is a change to SUBJECT_REGEXP and the corpus together."]
+    return [
+        "It decides every subject in the corpus the way the release identity does, "
+        "which shows only that the corpus does not tell the two apart. Trusting "
+        "another identity is a change to SUBJECT_REGEXP and the corpus together."
+    ]
 
 
 def check_attestations(spec: dict) -> str:
     for att in spec.get("attestations") or []:
         if ((att.get("intoto") or {}).get("type")) == EXPECTED_SBOM_TYPE:
             return att["name"]
-    fail(f"no attestation of in-toto type {EXPECTED_SBOM_TYPE!r} — the SBOM the release "
-         f"workflows attest is never required")
+    fail(
+        f"no attestation of in-toto type {EXPECTED_SBOM_TYPE!r} — the SBOM the release "
+        f"workflows attest is never required"
+    )
 
 
 def canonical(expr: str) -> str:
@@ -343,10 +399,18 @@ def check_validations(spec: dict, attestors: set[str], sbom: str) -> None:
     present = {canonical(e) for e in exprs}
 
     for what, template, call, why in (
-        ("signature", SIGNATURE_VALIDATION, "verifyImageSignatures(",
-         "signatures are never checked"),
-        ("SBOM", ATTESTATION_VALIDATION, "verifyAttestationSignatures(",
-         f"the attestations.{sbom} SBOM is declared and never required"),
+        (
+            "signature",
+            SIGNATURE_VALIDATION,
+            "verifyImageSignatures(",
+            "signatures are never checked",
+        ),
+        (
+            "SBOM",
+            ATTESTATION_VALIDATION,
+            "verifyAttestationSignatures(",
+            f"the attestations.{sbom} SBOM is declared and never required",
+        ),
     ):
         expected = [template.format(attestor=n, attestation=sbom) for n in sorted(attestors)]
         if any(canonical(x) in present for x in expected):
@@ -354,15 +418,19 @@ def check_validations(spec: dict, attestors: set[str], sbom: str) -> None:
         calling = [" ".join(e.split()) for e in exprs if call in e]
         if not calling:
             fail(f"no validation calls {call[:-1]} — {why}")
-        fail(f"the {what} validation is not the expected expression, compared whole: "
-             f"found {calling[0]!r}, expected {expected[0]!r}. An expression naming the "
-             f"call and every container field can still pass every image")
+        fail(
+            f"the {what} validation is not the expected expression, compared whole: "
+            f"found {calling[0]!r}, expected {expected[0]!r}. An expression naming the "
+            f"call and every container field can still pass every image"
+        )
 
 
 def check_contract(doc: dict) -> None:
     if doc.get("apiVersion") != EXPECTED_API or doc.get("kind") != EXPECTED_KIND:
-        fail(f"it is {doc.get('apiVersion')}/{doc.get('kind')}, expected "
-             f"{EXPECTED_API}/{EXPECTED_KIND}")
+        fail(
+            f"it is {doc.get('apiVersion')}/{doc.get('kind')}, expected "
+            f"{EXPECTED_API}/{EXPECTED_KIND}"
+        )
     spec = doc.get("spec") or {}
 
     check_scope(spec)
@@ -375,9 +443,11 @@ def check_contract(doc: dict) -> None:
 def check_actions(env: str, doc: dict) -> None:
     actions = (doc.get("spec") or {}).get("validationActions") or []
     if sorted(actions) != sorted(EXPECTED_ACTIONS[env]):
-        fail(f"validationActions is {actions}, expected {EXPECTED_ACTIONS[env]} for "
-             f"{env} — the tier would {'report' if 'Deny' not in actions else 'block'} "
-             f"an image failing verification")
+        fail(
+            f"validationActions is {actions}, expected {EXPECTED_ACTIONS[env]} for "
+            f"{env} — the tier would {'report' if 'Deny' not in actions else 'block'} "
+            f"an image failing verification"
+        )
 
 
 def cannot_run(msg: str) -> NoReturn:
@@ -394,32 +464,46 @@ def rel(path: Path) -> str:
 def render(overlay: Path) -> dict:
     """The verify-images document `kustomize build` writes for one overlay."""
     try:
-        build = subprocess.run(["kustomize", "build", str(overlay)], capture_output=True,
-                               text=True, timeout=LOCAL_TIMEOUT)
+        build = subprocess.run(
+            ["kustomize", "build", str(overlay)],
+            capture_output=True,
+            text=True,
+            timeout=LOCAL_TIMEOUT,
+        )
     except subprocess.TimeoutExpired:
         cannot_run(f"kustomize build {rel(overlay)} ran past {LOCAL_TIMEOUT}s")
     if build.returncode != 0:
         fail(f"it does not render — {(build.stderr.strip().splitlines() or ['?'])[0]}")
     for doc in yaml.safe_load_all(build.stdout):
-        if (isinstance(doc, dict) and doc.get("kind") == EXPECTED_KIND
-                and (doc.get("metadata") or {}).get("name") == POLICY_NAME):
+        if (
+            isinstance(doc, dict)
+            and doc.get("kind") == EXPECTED_KIND
+            and (doc.get("metadata") or {}).get("name") == POLICY_NAME
+        ):
             return doc
-    fail(f"it renders no {EXPECTED_KIND} named {POLICY_NAME} — that tier installs no "
-         f"signature verification")
+    fail(
+        f"it renders no {EXPECTED_KIND} named {POLICY_NAME} — that tier installs no "
+        f"signature verification"
+    )
 
 
 def overlay_dirs() -> list[Path]:
     """Every supply-chain overlay, held to the environments EXPECTED_ACTIONS names."""
-    overlays = sorted(p for p in (GROUP / "overlays").glob("*")
-                      if (p / "kustomization.yaml").is_file())
+    overlays = sorted(
+        p for p in (GROUP / "overlays").glob("*") if (p / "kustomization.yaml").is_file()
+    )
     unexpected = sorted({p.name for p in overlays} - set(EXPECTED_ACTIONS))
     if unexpected:
-        fail(f"overlay(s) {unexpected} carry no entry in EXPECTED_ACTIONS — whether that "
-             f"tier blocks or reports a failed verification is a decision to record there")
+        fail(
+            f"overlay(s) {unexpected} carry no entry in EXPECTED_ACTIONS — whether that "
+            f"tier blocks or reports a failed verification is a decision to record there"
+        )
     absent = sorted(set(EXPECTED_ACTIONS) - {p.name for p in overlays})
     if absent:
-        fail(f"no overlay for {absent} — a tier this gate does not render is a tier it "
-             f"does not check")
+        fail(
+            f"no overlay for {absent} — a tier this gate does not render is a tier it "
+            f"does not check"
+        )
     return overlays
 
 
@@ -444,11 +528,13 @@ def main() -> None:
         sys.exit(1)
 
     tiers = ", ".join(f"{p.name} {'+'.join(EXPECTED_ACTIONS[p.name])}" for p in overlays)
-    print(f"verify-images identity contract OK on the base and {len(overlays)} rendered "
-          f"overlay(s) ({tiers}): {SCOPE} scope, admission-time Kubernetes evaluation, "
-          f"system-only namespace exclusion, required + pinned digest, GitHub OIDC issuer, "
-          f"the release-on-tag subjectRegExp, public Rekor, both validations compared "
-          f"whole, SPDX attestation required")
+    print(
+        f"verify-images identity contract OK on the base and {len(overlays)} rendered "
+        f"overlay(s) ({tiers}): {SCOPE} scope, admission-time Kubernetes evaluation, "
+        f"system-only namespace exclusion, required + pinned digest, GitHub OIDC issuer, "
+        f"the release-on-tag subjectRegExp, public Rekor, both validations compared "
+        f"whole, SPDX attestation required"
+    )
 
 
 if __name__ == "__main__":

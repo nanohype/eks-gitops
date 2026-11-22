@@ -114,14 +114,21 @@ def chart_pin() -> dict:
             if el.get("appName") == ADDON_NAME:
                 missing = [k for k in ("chartRepo", "chart", "chartVersion") if not el.get(k)]
                 if missing:
-                    die(f"{APPSET.relative_to(ROOT)} names {ADDON_NAME} without "
+                    die(
+                        f"{APPSET.relative_to(ROOT)} names {ADDON_NAME} without "
                         f"{', '.join(missing)} — the version this gate reads the "
-                        f"controller at is not in the tree.")
-                return {"chartRepo": str(el["chartRepo"]), "chart": str(el["chart"]),
-                        "chartVersion": str(el["chartVersion"])}
-    die(f"{APPSET.relative_to(ROOT)} carries no {ADDON_NAME} element, so this gate has "
+                        f"controller at is not in the tree."
+                    )
+                return {
+                    "chartRepo": str(el["chartRepo"]),
+                    "chart": str(el["chart"]),
+                    "chartVersion": str(el["chartVersion"]),
+                }
+    die(
+        f"{APPSET.relative_to(ROOT)} carries no {ADDON_NAME} element, so this gate has "
         f"no controller version to derive against. It examined nothing, which is not "
-        f"the same as finding nothing.")
+        f"the same as finding nothing."
+    )
     raise AssertionError("unreachable")
 
 
@@ -137,8 +144,10 @@ def app_version(pin: dict) -> str:
         gatelib.refuse_chart(pin["chart"], pin["chartVersion"], pin["chartRepo"], exc)
     version = str(meta.get("appVersion") or "").strip()
     if not version:
-        die(f"{pin['chart']} {pin['chartVersion']} publishes no appVersion, so which "
-            f"controller source to read is unknown.")
+        die(
+            f"{pin['chart']} {pin['chartVersion']} publishes no appVersion, so which "
+            f"controller source to read is unknown."
+        )
     return version
 
 
@@ -148,14 +157,29 @@ def rendered_flags(pin: dict) -> dict:
     archive = gatelib.chart_archive_or_exit(pin["chartRepo"], pin["chart"], pin["chartVersion"])
     values = [str(ADDON / "values.yaml")]
     proc = subprocess.run(
-        ["helm", "template", ADDON_NAME, str(archive), "-n", "kube-system",
-         *sum((["-f", v] for v in values), []), "--set", "clusterName=fixture"],
-        capture_output=True, text=True, timeout=RENDER_TIMEOUT)
+        [
+            "helm",
+            "template",
+            ADDON_NAME,
+            str(archive),
+            "-n",
+            "kube-system",
+            *sum((["-f", v] for v in values), []),
+            "--set",
+            "clusterName=fixture",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=RENDER_TIMEOUT,
+    )
     if proc.returncode != 0:
         last = ((proc.stderr or "") + (proc.stdout or "")).strip().splitlines()
-        die(f"the controller chart would not render with this catalog's values — "
-            f"{last[-1][:200] if last else 'no output'}")
+        die(
+            f"the controller chart would not render with this catalog's values — "
+            f"{last[-1][:200] if last else 'no output'}"
+        )
     import yaml
+
     args: list[str] = []
     mutates_services = False
     for doc in yaml.safe_load_all(proc.stdout):
@@ -193,10 +217,12 @@ def fetch(ref: str, path: str, get: registry.Getter = registry.http_get) -> str:
         return get(url, {}, None).decode("utf-8")
     except registry.READ_FAILURES as exc:
         if isinstance(exc, urllib.error.HTTPError) and exc.code == 404:
-            die(f"{path} is not in the controller source at {ref}: {url} answered HTTP "
+            die(
+                f"{path} is not in the controller source at {ref}: {url} answered HTTP "
                 f"404. The controller's repository has no such ref, or the file has "
                 f"moved, and a derivation without it must not report that everything "
-                f"is accounted for.")
+                f"is accounted for."
+            )
         sys.exit(gatelib.cannot_read(url, [f"{type(exc).__name__}: {exc}"]))
 
 
@@ -215,8 +241,8 @@ def function_body(src: str, name: str) -> str | None:
         return None
     line = m.group(0)
     if line.rstrip().endswith("}") and "{" in line:
-        return line[line.index("{") + 1:line.rstrip().rindex("}")]
-    rest = src[m.end():]
+        return line[line.index("{") + 1 : line.rstrip().rindex("}")]
+    rest = src[m.end() :]
     end = rest.find("\n}\n")
     return rest[:end] if end != -1 else None
 
@@ -259,35 +285,46 @@ def symbols(ref: str) -> dict[str, dict]:
     }
     for kind, prefix in prefixes.items():
         if not prefix:
-            die(f"the controller source at {ref} declares no annotation prefix for "
+            die(
+                f"the controller source at {ref} declares no annotation prefix for "
                 f"{kind}, so a suffix constant cannot be turned into the annotation "
-                f"a policy would read.")
+                f"a policy would read."
+            )
 
     found: dict[str, dict] = {}
     for decides, kind, path, entry in ENTRY_POINTS:
         src = fetch(ref, path)
         walked = reachable(src, entry)
         if not walked:
-            die(f"{path} at {ref} declares no {entry} — the function this gate derives "
+            die(
+                f"{path} at {ref} declares no {entry} — the function this gate derives "
                 f"from has moved or been renamed, and a walk that found it missing "
-                f"must not report that everything is accounted for.")
+                f"must not report that everything is accounted for."
+            )
         text = "\n".join(body for _, body in walked)
 
         for ident in sorted(set(re.findall(r"\bannotations\.(\w+)", text))):
             suffix = consts.get(ident)
             if suffix is None:
-                die(f"{entry} consults annotations.{ident}, which none of "
+                die(
+                    f"{entry} consults annotations.{ident}, which none of "
                     f"{', '.join(LOOKUP_FILES)} declares. The annotation it names "
-                    f"cannot be resolved, so whether the policy reads it is unknown.")
+                    f"cannot be resolved, so whether the policy reads it is unknown."
+                )
             name = suffix if "/" in suffix else f"{prefixes[kind]}/{suffix}"
             found[f"{kind}.annotations.{ident}"] = {
-                "decides": decides, "kind": kind, "annotation": name}
+                "decides": decides,
+                "kind": kind,
+                "annotation": name,
+            }
         for field in sorted(set(re.findall(r"\.Spec\.(\w+)", text))):
-            found[f"{kind}.Spec.{field}"] = {
-                "decides": decides, "kind": kind, "annotation": None}
+            found[f"{kind}.Spec.{field}"] = {"decides": decides, "kind": kind, "annotation": None}
         for field in sorted(set(re.findall(r"\b[a-z]\.(\w+)\b(?!\()", text))):
             found[f"{kind}.{entry}.{field}"] = {
-                "decides": decides, "kind": kind, "annotation": None}
+                "decides": decides,
+                "kind": kind,
+                "annotation": None,
+            }
     return found
 
 
@@ -315,9 +352,11 @@ def mentions(policy: str, text: str) -> bool:
 
 def policy_text() -> str:
     if not POLICY.is_file():
-        print(f"Cannot run: {POLICY.relative_to(ROOT)} does not exist. This gate "
-              f"examined no policy, which is not the same as finding nothing wrong "
-              f"with one.")
+        print(
+            f"Cannot run: {POLICY.relative_to(ROOT)} does not exist. This gate "
+            f"examined no policy, which is not the same as finding nothing wrong "
+            f"with one."
+        )
         sys.exit(gatelib.CANNOT_RUN)
     return POLICY.read_text(encoding="utf-8")
 
@@ -337,63 +376,77 @@ def check_offline(record: dict, pin: dict, policy: str) -> int:
                 f"the controller is pinned at {field}={value} and "
                 f"{RECORDS.relative_to(ROOT)} was derived at "
                 f"{controller.get(field)!r}. Everything below was read out of a "
-                f"different version of the controller. Run --sync.")
+                f"different version of the controller. Run --sync."
+            )
     if not controller.get("sourceRef"):
         problems.append(
             f"{RECORDS.relative_to(ROOT)} names no sourceRef, so which controller "
-            f"source the symbols came from is unknown.")
+            f"source the symbols came from is unknown."
+        )
 
     if not recorded_symbols:
-        die(f"{RECORDS.relative_to(ROOT)} records no symbol at all. A run over an "
-            f"empty derivation reports the same thing as a run over a complete one.")
+        die(
+            f"{RECORDS.relative_to(ROOT)} records no symbol at all. A run over an "
+            f"empty derivation reports the same thing as a run over a complete one."
+        )
 
     for decides, kind, _, _ in ENTRY_POINTS:
-        if not any(s.get("decides") == decides and s.get("kind") == kind
-                   for s in recorded_symbols.values()):
+        if not any(
+            s.get("decides") == decides and s.get("kind") == kind for s in recorded_symbols.values()
+        ):
             problems.append(
                 f"nothing is recorded for what decides {kind} {decides}, so that "
-                f"question was derived from nothing.")
+                f"question was derived from nothing."
+            )
 
     for key, rec in sorted(recorded_symbols.items()):
         status = rec.get("status")
         if status not in STATUSES:
             problems.append(
                 f"{key} is recorded with status {status!r}, which is not one of "
-                f"{', '.join(STATUSES)} — it has not been decided about.")
+                f"{', '.join(STATUSES)} — it has not been decided about."
+            )
             continue
         if status == "read":
             evidence = rec.get("evidence") or rec.get("annotation")
             if not evidence:
                 problems.append(
                     f"{key} is recorded as read with nothing naming where the policy "
-                    f"reads it, so the claim rests on the record agreeing with itself.")
+                    f"reads it, so the claim rests on the record agreeing with itself."
+                )
             elif not mentions(policy, evidence):
                 problems.append(
                     f"{key} is recorded as read, and {POLICY.relative_to(ROOT)} does "
                     f"not contain {evidence!r}. The policy stopped reading an input "
-                    f"the controller still decides on.")
+                    f"the controller still decides on."
+                )
         elif not rec.get("note"):
             problems.append(
                 f"{key} is recorded as {status} with no reason. An input nobody read "
-                f"and nobody excused is the gap this gate exists to close.")
+                f"and nobody excused is the gap this gate exists to close."
+            )
 
     if not literals:
         problems.append(
             f"{RECORDS.relative_to(ROOT)} records no literal, so the strings the "
-            f"policy compares against are held equal to nothing.")
+            f"policy compares against are held equal to nothing."
+        )
     for value, why in sorted(literals.items()):
         if not mentions(policy, value):
             problems.append(
                 f"{POLICY.relative_to(ROOT)} does not contain {value!r} ({why}). The "
                 f"policy and the controller disagree about a value one of them "
-                f"decides on.")
+                f"decides on."
+            )
 
     counts: dict[str, int] = {}
     for rec in recorded_symbols.values():
         counts[rec.get("status", "?")] = counts.get(rec.get("status", "?"), 0) + 1
-    print(f"        {len(recorded_symbols)} symbol(s) derived from "
-          f"{controller.get('sourceRef')}: "
-          + ", ".join(f"{n} {s}" for s, n in sorted(counts.items())))
+    print(
+        f"        {len(recorded_symbols)} symbol(s) derived from "
+        f"{controller.get('sourceRef')}: "
+        + ", ".join(f"{n} {s}" for s, n in sorted(counts.items()))
+    )
     for key, rec in sorted(recorded_symbols.items()):
         if rec.get("status") != "read":
             print(f"        {rec.get('status'):9} {key}")
@@ -403,8 +456,10 @@ def check_offline(record: dict, pin: dict, policy: str) -> int:
         for p in problems:
             print(f"        {p}")
         return 1
-    print(f"OK    {len(recorded_symbols)} deciding symbol(s) and {len(literals)} "
-          f"literal(s) accounted for against the pinned controller.")
+    print(
+        f"OK    {len(recorded_symbols)} deciding symbol(s) and {len(literals)} "
+        f"literal(s) accounted for against the pinned controller."
+    )
     return 0
 
 
@@ -421,16 +476,19 @@ def check_live(record: dict, pin: dict) -> int:
     for key in sorted(set(derived) - set(recorded)):
         problems.append(
             f"{key} decides {derived[key]['kind']} {derived[key]['decides']} and is in "
-            f"no record. Run --sync and decide what the policy does about it.")
+            f"no record. Run --sync and decide what the policy does about it."
+        )
     for key in sorted(set(recorded) - set(derived)):
         problems.append(
             f"{key} is recorded and the controller at {ref} no longer consults it — "
-            f"drop it, or find out what replaced it.")
+            f"drop it, or find out what replaced it."
+        )
     for key in sorted(set(recorded) & set(derived)):
         if recorded[key].get("annotation") != derived[key]["annotation"]:
             problems.append(
                 f"{key} resolves to annotation {derived[key]['annotation']!r} and is "
-                f"recorded as {recorded[key].get('annotation')!r}.")
+                f"recorded as {recorded[key].get('annotation')!r}."
+            )
 
     flags = rendered_flags(pin)
     expected = record.get("controllerConfig") or {}
@@ -438,22 +496,25 @@ def check_live(record: dict, pin: dict) -> int:
         got = flags["args"].get(name, want if name not in flags["args"] else "")
         if name in flags["args"] and got != want:
             problems.append(
-                f"the chart renders --{name}={got!r} and the policy is written for "
-                f"{want!r}.")
+                f"the chart renders --{name}={got!r} and the policy is written for {want!r}."
+            )
     if flags["serviceMutatorWebhook"] != expected.get("serviceMutatorWebhook"):
         problems.append(
             f"the chart renders serviceMutatorWebhook="
             f"{flags['serviceMutatorWebhook']} and the record says "
             f"{expected.get('serviceMutatorWebhook')}. Which Services carry a "
-            f"loadBalancerClass depends on it.")
+            f"loadBalancerClass depends on it."
+        )
 
     if problems:
         print(f"FAIL  {len(problems)} problem(s) against the controller at {ref}:")
         for p in problems:
             print(f"        {p}")
         return 1
-    print(f"OK    {len(derived)} deciding symbol(s) at {ref} match the record, and the "
-          f"rendered controller matches the configuration the policy is written for.")
+    print(
+        f"OK    {len(derived)} deciding symbol(s) at {ref} match the record, and the "
+        f"rendered controller matches the configuration the policy is written for."
+    )
     return 0
 
 
@@ -479,24 +540,33 @@ def sync(record: dict, pin: dict) -> int:
             undecided.append(key)
         out[key] = entry
     if undecided:
-        die(f"the controller at {ref} consults {len(undecided)} symbol(s) nothing has "
-            f"decided about:\n  " + "\n  ".join(undecided) +
-            f"\nAdd each to {RECORDS.relative_to(ROOT)} with a status of "
+        die(
+            f"the controller at {ref} consults {len(undecided)} symbol(s) nothing has "
+            f"decided about:\n  "
+            + "\n  ".join(undecided)
+            + f"\nAdd each to {RECORDS.relative_to(ROOT)} with a status of "
             f"{'/'.join(STATUSES)} and, unless it is read, the reason. A new deciding "
-            f"input is a decision, not a record to regenerate.")
+            f"input is a decision, not a record to regenerate."
+        )
 
     flags = rendered_flags(pin)
     config = record.get("controllerConfig") or {}
     config["args"] = {k: flags["args"].get(k, v) for k, v in (config.get("args") or {}).items()}
     config["serviceMutatorWebhook"] = flags["serviceMutatorWebhook"]
 
-    RECORDS.write_text(json.dumps({
-        "_README": README,
-        "controller": {**pin, "sourceRef": ref},
-        "controllerConfig": config,
-        "literals": record.get("literals") or {},
-        "symbols": out,
-    }, indent=2) + "\n")
+    RECORDS.write_text(
+        json.dumps(
+            {
+                "_README": README,
+                "controller": {**pin, "sourceRef": ref},
+                "controllerConfig": config,
+                "literals": record.get("literals") or {},
+                "symbols": out,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
     print(f"wrote {RECORDS.relative_to(ROOT)} ({len(out)} symbol(s) at {ref})")
     return 0
 
@@ -530,10 +600,12 @@ def self_test() -> int:
         with contextlib.redirect_stdout(io.StringIO()):
             return check_offline(r, p, t)
 
-    key = sorted(k for k, v in (record.get("symbols") or {}).items()
-                 if v.get("status") == "read")[0]
-    unread = sorted(k for k, v in (record.get("symbols") or {}).items()
-                    if v.get("status") != "read")[0]
+    key = sorted(k for k, v in (record.get("symbols") or {}).items() if v.get("status") == "read")[
+        0
+    ]
+    unread = sorted(
+        k for k, v in (record.get("symbols") or {}).items() if v.get("status") != "read"
+    )[0]
 
     breaks = []
 
@@ -562,8 +634,14 @@ def self_test() -> int:
     breaks.append(("a policy whose literals are held equal to nothing", r, pin, policy))
 
     literal = sorted(record.get("literals") or {})[0]
-    breaks.append((f"a policy that stopped naming {literal!r}",
-                   record, pin, policy.replace(literal, "something-else")))
+    breaks.append(
+        (
+            f"a policy that stopped naming {literal!r}",
+            record,
+            pin,
+            policy.replace(literal, "something-else"),
+        )
+    )
 
     failures = []
     for label, r, p, t in breaks:
@@ -577,8 +655,10 @@ def self_test() -> int:
         failures.append("the shipped policy does not pass")
         print("  ACCEPTED  (control) the shipped policy is rejected")
     else:
-        print(f"  passed    (control) the shipped policy, "
-              f"{len(record.get('symbols') or {})} symbol(s)")
+        print(
+            f"  passed    (control) the shipped policy, "
+            f"{len(record.get('symbols') or {})} symbol(s)"
+        )
 
     if failures:
         print(f"\nFAIL  {len(failures)} break(s) not caught.")
@@ -589,12 +669,21 @@ def self_test() -> int:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--live", action="store_true",
-                    help="re-derive from the controller source and the rendered chart")
-    ap.add_argument("--sync", action="store_true",
-                    help="rewrite the record from the pinned controller (network)")
-    ap.add_argument("--self-test", action="store_true",
-                    help="break the offline gate's inputs and confirm each is caught")
+    ap.add_argument(
+        "--live",
+        action="store_true",
+        help="re-derive from the controller source and the rendered chart",
+    )
+    ap.add_argument(
+        "--sync",
+        action="store_true",
+        help="rewrite the record from the pinned controller (network)",
+    )
+    ap.add_argument(
+        "--self-test",
+        action="store_true",
+        help="break the offline gate's inputs and confirm each is caught",
+    )
     args = ap.parse_args(argv)
 
     if args.self_test:

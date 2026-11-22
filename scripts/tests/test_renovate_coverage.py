@@ -44,13 +44,11 @@ class SubstringFalsePositive(unittest.TestCase):
 
     def setUp(self):
         self.managers = cov.load_custom_managers()
-        self.assertTrue(self.managers, "no customManagers loaded — this suite "
-                                       "would pass vacuously")
+        self.assertTrue(self.managers, "no customManagers loaded — this suite would pass vacuously")
 
     def test_exact_chart_is_covered(self):
         self.assertIsNotNone(
-            cov.covered_by_custom(self.PINNED_LONGER, "loki-distributed", "1.2.3",
-                                  self.managers)
+            cov.covered_by_custom(self.PINNED_LONGER, "loki-distributed", "1.2.3", self.managers)
         )
 
     def test_the_matching_manager_is_returned_not_a_yes(self):
@@ -60,12 +58,12 @@ class SubstringFalsePositive(unittest.TestCase):
         assertion downstream would then have to pick a manager to ask about —
         which is the attribution this gate exists to stop accepting.
         """
-        cm = cov.covered_by_custom(self.PINNED_LONGER, "loki-distributed", "1.2.3",
-                                   self.managers)
+        cm = cov.covered_by_custom(self.PINNED_LONGER, "loki-distributed", "1.2.3", self.managers)
         self.assertIsInstance(cm, cov.CustomManager)
         self.assertIn(cm, self.managers)
-        self.assertTrue(cm.file_patterns,
-                        f"{cm.where} matched a pin and states no managerFilePatterns")
+        self.assertTrue(
+            cm.file_patterns, f"{cm.where} matched a pin and states no managerFilePatterns"
+        )
 
     def test_substring_chart_is_not_covered(self):
         self.assertIsNone(
@@ -76,8 +74,7 @@ class SubstringFalsePositive(unittest.TestCase):
 
     def test_version_mismatch_is_not_covered(self):
         self.assertIsNone(
-            cov.covered_by_custom(self.PINNED_LONGER, "loki-distributed", "9.9.9",
-                                  self.managers)
+            cov.covered_by_custom(self.PINNED_LONGER, "loki-distributed", "9.9.9", self.managers)
         )
 
 
@@ -105,8 +102,7 @@ class OciRepoUrlShape(unittest.TestCase):
     """
 
     def _pin(self, repo, chart, matrix):
-        return cov.Pin("probe.yaml", "applicationsets/probe.yaml", "", repo, chart,
-                       "1.0.0", matrix)
+        return cov.Pin("probe.yaml", "applicationsets/probe.yaml", "", repo, chart, "1.0.0", matrix)
 
     def _verdict(self, pins):
         """Run the shape check in isolation; return (examined, failures)."""
@@ -117,8 +113,7 @@ class OciRepoUrlShape(unittest.TestCase):
         return seen, list(cov.failures)
 
     def test_pin_as_written_is_accepted(self):
-        pin = self._pin("oci://ghcr.io/n/eks-agent-platform/charts/operator",
-                        "operator", False)
+        pin = self._pin("oci://ghcr.io/n/eks-agent-platform/charts/operator", "operator", False)
         seen, failures = self._verdict([pin])
         self.assertEqual((seen, failures), (1, []))
 
@@ -156,8 +151,10 @@ class OciRepoUrlShape(unittest.TestCase):
         https = self._pin("https://charts.example.com", "anything", True)
         seen, failures = self._verdict([https])
         self.assertEqual(seen, 0)
-        self.assertTrue(any("found no OCI pins" in f for f in failures),
-                        f"a run that examined no OCI pin reported success: {failures}")
+        self.assertTrue(
+            any("found no OCI pins" in f for f in failures),
+            f"a run that examined no OCI pin reported success: {failures}",
+        )
 
     def test_every_oci_pin_in_the_catalog_is_examined(self):
         """The count the check reports must be the whole OCI population.
@@ -169,12 +166,15 @@ class OciRepoUrlShape(unittest.TestCase):
         pins = cov.rendered_pins()
         expected = sum(1 for p in pins if p.is_oci)
         self.assertGreater(expected, 0, "no OCI pin derived — this asserts nothing")
-        self.assertTrue([p for p in pins if p.is_oci and p.matrix],
-                        "no OCI pin is written as a matrix element, so the shape "
-                        "this test exists for is absent from the catalog")
+        self.assertTrue(
+            [p for p in pins if p.is_oci and p.matrix],
+            "no OCI pin is written as a matrix element, so the shape "
+            "this test exists for is absent from the catalog",
+        )
         seen, failures = self._verdict(pins)
-        self.assertEqual(seen, expected,
-                         "the shape check examined fewer OCI pins than the catalog has")
+        self.assertEqual(
+            seen, expected, "the shape check examined fewer OCI pins than the catalog has"
+        )
         self.assertEqual(failures, [], f"the shipped catalog should pass: {failures}")
 
 
@@ -211,8 +211,10 @@ class RenderedPinDerivation(unittest.TestCase):
     def test_floor_rejects_a_walk_that_lost_pins(self):
         kept = [p for p in self.pins if not p.matrix]
         failures = self._isolated(lambda: cov.assert_corpus_floor(kept))
-        self.assertTrue(any("dropped out of the walk" in f for f in failures),
-                        f"a walk missing every matrix pin was accepted: {failures}")
+        self.assertTrue(
+            any("dropped out of the walk" in f for f in failures),
+            f"a walk missing every matrix pin was accepted: {failures}",
+        )
 
     def test_floor_names_the_file_that_lost_a_pin(self):
         """A per-file floor, so slack in one file cannot pay for a drop in another.
@@ -223,8 +225,10 @@ class RenderedPinDerivation(unittest.TestCase):
         victim = next(p for p in self.pins if p.matrix)
         kept = [p for p in self.pins if p is not victim]
         failures = self._isolated(lambda: cov.assert_corpus_floor(kept))
-        self.assertTrue(any(victim.appset in f for f in failures),
-                        f"the file that lost a pin was not named: {failures}")
+        self.assertTrue(
+            any(victim.appset in f for f in failures),
+            f"the file that lost a pin was not named: {failures}",
+        )
 
 
 class UnrenderableCoordinates(unittest.TestCase):
@@ -272,18 +276,23 @@ class EveryChartSourceIsRead(unittest.TestCase):
 
     TWO = {
         "sources": [
-            {"repoURL": "https://charts.example.com", "chart": "alpha",
-             "targetRevision": "1.0.0"},
-            {"chart": "beta", "repoURL": "oci://registry.example.com/wrongnamespace",
-             "targetRevision": "2.0.0"},
+            {"repoURL": "https://charts.example.com", "chart": "alpha", "targetRevision": "1.0.0"},
+            {
+                "chart": "beta",
+                "repoURL": "oci://registry.example.com/wrongnamespace",
+                "targetRevision": "2.0.0",
+            },
             {"repoURL": "https://github.com/x/y", "targetRevision": "main"},
         ]
     }
 
     def test_both_chart_sources_are_returned(self):
         got = cov._chart_sources(self.TWO, "applicationsets/probe.yaml")
-        self.assertEqual([s["chart"] for s in got], ["alpha", "beta"],
-                         "a chart source after the first was dropped")
+        self.assertEqual(
+            [s["chart"] for s in got],
+            ["alpha", "beta"],
+            "a chart source after the first was dropped",
+        )
 
     def test_a_source_without_a_chart_is_not_one(self):
         got = cov._chart_sources(self.TWO, "applicationsets/probe.yaml")
@@ -320,14 +329,17 @@ class VersionsAreNotCoerced(unittest.TestCase):
     def test_an_absent_field_is_reported_as_absent(self):
         got, failures = self._literal(None)
         self.assertIsNone(got)
-        self.assertTrue(any("has no targetRevision" in f for f in failures),
-                        f"an absent field was not named as absent: {failures}")
+        self.assertTrue(
+            any("has no targetRevision" in f for f in failures),
+            f"an absent field was not named as absent: {failures}",
+        )
 
     def test_present_but_numeric_is_not_reported_as_absent(self):
         _, failures = self._literal(4.2)
-        self.assertFalse(any("has no targetRevision" in f for f in failures),
-                         "a present field was reported as missing, sending the "
-                         "reader to the wrong line")
+        self.assertFalse(
+            any("has no targetRevision" in f for f in failures),
+            "a present field was reported as missing, sending the reader to the wrong line",
+        )
 
 
 class DerivingTheToolchainPins(unittest.TestCase):
@@ -362,9 +374,10 @@ class DerivingTheToolchainPins(unittest.TestCase):
 
     def test_an_action_reference_is_a_pin(self):
         pins = self.pins(self.steps({"uses": "actions/checkout@" + "a" * 40}))
-        self.assertEqual([(p.family, p.manager, p.dep, p.version) for p in pins],
-                         [("GitHub Action", "github-actions", "actions/checkout",
-                           "a" * 40)])
+        self.assertEqual(
+            [(p.family, p.manager, p.dep, p.version) for p in pins],
+            [("GitHub Action", "github-actions", "actions/checkout", "a" * 40)],
+        )
 
     def test_an_action_in_a_subdirectory_keeps_its_path(self):
         """`owner/repo/path@ref` is how a composite action inside a repo is named."""
@@ -382,8 +395,7 @@ class DerivingTheToolchainPins(unittest.TestCase):
         — and the claim check would then report the repo unwatched for a step
         Renovate's github-actions manager never looks up as an action.
         """
-        self.assertEqual(
-            self.pins(self.steps({"uses": "docker://alpine@sha256:" + "0" * 64})), [])
+        self.assertEqual(self.pins(self.steps({"uses": "docker://alpine@sha256:" + "0" * 64})), [])
 
     def test_a_step_with_no_uses_contributes_nothing(self):
         self.assertEqual(self.pins(self.steps({"run": "echo hi"})), [])
@@ -391,50 +403,62 @@ class DerivingTheToolchainPins(unittest.TestCase):
     def test_a_python_version_file_is_the_interpreter_pin(self):
         """setup-python installs what the file says, so the file is the pin."""
         pins = self.pins(
-            self.steps({"uses": "actions/setup-python@" + "b" * 40,
-                        "with": {"python-version-file": ".python-version"}}),
-            {".python-version": "3.13\n"})
+            self.steps(
+                {
+                    "uses": "actions/setup-python@" + "b" * 40,
+                    "with": {"python-version-file": ".python-version"},
+                }
+            ),
+            {".python-version": "3.13\n"},
+        )
         interpreter = [p for p in pins if p.family == "Python interpreter"]
         self.assertEqual(len(interpreter), 1)
-        self.assertEqual((interpreter[0].manager, interpreter[0].dep,
-                          interpreter[0].version), ("pyenv", "python", "3.13"))
+        self.assertEqual(
+            (interpreter[0].manager, interpreter[0].dep, interpreter[0].version),
+            ("pyenv", "python", "3.13"),
+        )
 
     def test_a_go_version_file_is_the_toolchain_pin(self):
         pins = self.pins(
-            self.steps({"uses": "actions/setup-go@" + "c" * 40,
-                        "with": {"go-version-file": "go.mod"}}),
-            {"go.mod": "module x\n\ngo 1.26.3\n"})
+            self.steps(
+                {"uses": "actions/setup-go@" + "c" * 40, "with": {"go-version-file": "go.mod"}}
+            ),
+            {"go.mod": "module x\n\ngo 1.26.3\n"},
+        )
         toolchain = [p for p in pins if p.family == "Go toolchain"]
-        self.assertEqual([(p.manager, p.dep, p.version) for p in toolchain],
-                         [("gomod", "go", "1.26.3")])
+        self.assertEqual(
+            [(p.manager, p.dep, p.version) for p in toolchain], [("gomod", "go", "1.26.3")]
+        )
 
     def test_an_installed_lockfile_contributes_every_distribution(self):
         pins = self.pins(
             self.steps({"run": "pip install --require-hashes -r requirements.txt"}),
-            {"requirements.txt": "pyyaml==6.0.2 \\\n    --hash=sha256:aa\nruff==0.9.1\n"})
-        packages = sorted((p.dep, p.version) for p in pins
-                          if p.family == "Python package")
+            {"requirements.txt": "pyyaml==6.0.2 \\\n    --hash=sha256:aa\nruff==0.9.1\n"},
+        )
+        packages = sorted((p.dep, p.version) for p in pins if p.family == "Python package")
         self.assertEqual(packages, [("pyyaml", "6.0.2"), ("ruff", "0.9.1")])
 
     def test_one_pin_resolved_by_many_steps_is_one_pin(self):
         """Twelve jobs asking for the same interpreter is one thing to watch."""
-        step = {"uses": "actions/setup-python@" + "b" * 40,
-                "with": {"python-version-file": ".python-version"}}
+        step = {
+            "uses": "actions/setup-python@" + "b" * 40,
+            "with": {"python-version-file": ".python-version"},
+        }
         pins = self.pins(self.steps(step, step, step), {".python-version": "3.13\n"})
         self.assertEqual(len([p for p in pins if p.family == "Python interpreter"]), 1)
 
     def test_a_version_file_that_does_not_exist_refuses_to_run(self):
         """What that step installs is unknown, which is not the same as unpinned."""
-        with self.assertRaises(SystemExit) as caught, \
-                contextlib.redirect_stdout(io.StringIO()):
+        with self.assertRaises(SystemExit) as caught, contextlib.redirect_stdout(io.StringIO()):
             self.pins(self.steps({"with": {"python-version-file": ".gone"}}))
         self.assertEqual(caught.exception.code, cov.gatelib.CANNOT_RUN)
 
     def test_a_lockfile_with_no_pins_refuses_to_run(self):
-        with self.assertRaises(SystemExit) as caught, \
-                contextlib.redirect_stdout(io.StringIO()):
-            self.pins(self.steps({"run": "pip install -r requirements.txt"}),
-                      {"requirements.txt": "# nothing pinned here\n"})
+        with self.assertRaises(SystemExit) as caught, contextlib.redirect_stdout(io.StringIO()):
+            self.pins(
+                self.steps({"run": "pip install -r requirements.txt"}),
+                {"requirements.txt": "# nothing pinned here\n"},
+            )
         self.assertEqual(caught.exception.code, cov.gatelib.CANNOT_RUN)
 
 
@@ -447,15 +471,21 @@ class ClaimingEveryDerivedPin(unittest.TestCase):
     version that never moves.
     """
 
-    def pin(self, manager="github-actions", family="GitHub Action",
-            dep="actions/checkout", version="a" * 40,
-            source=".github/workflows/ci.yml"):
+    def pin(
+        self,
+        manager="github-actions",
+        family="GitHub Action",
+        dep="actions/checkout",
+        version="a" * 40,
+        source=".github/workflows/ci.yml",
+    ):
         return cov.DerivedPin(family, manager, source, f"uses: {dep}", dep, version)
 
     def package(self, dep, version="1.0.0", source="requirements.txt"):
         """A distribution pin, which lives in the lockfile rather than the workflow."""
-        return cov.DerivedPin("Python package", "pip-compile", source,
-                              "pip install -r", dep, version)
+        return cov.DerivedPin(
+            "Python package", "pip-compile", source, "pip install -r", dep, version
+        )
 
     def verdict(self, pins, enabled, config=None):
         root = pathlib.Path(tempfile.mkdtemp())
@@ -481,20 +511,18 @@ class ClaimingEveryDerivedPin(unittest.TestCase):
     def test_a_pin_whose_manager_is_not_enabled_is_reported(self):
         """The `.python-version` shape: a real pin, and no manager reads the file."""
         _, failures = self.verdict(
-            [self.pin(manager="pyenv", family="Python interpreter",
-                      dep="python", version="3.13")],
-            ["github-actions"])
+            [self.pin(manager="pyenv", family="Python interpreter", dep="python", version="3.13")],
+            ["github-actions"],
+        )
         self.assertEqual(len(failures), 2)
         joined = " ".join(failures)
-        self.assertIn("needs the pyenv manager, which renovate.json does not enable",
-                      joined)
+        self.assertIn("needs the pyenv manager, which renovate.json does not enable", joined)
         self.assertIn("watched by nothing", joined)
 
     def test_a_manager_no_pin_claims_is_reported(self):
         _, failures = self.verdict([self.pin()], ["github-actions", "npm"])
         self.assertEqual(len(failures), 1)
-        self.assertIn("enables the npm manager and no pin in this repo is attributed",
-                      failures[0])
+        self.assertIn("enables the npm manager and no pin in this repo is attributed", failures[0])
 
     def test_an_empty_manager_list_is_reported(self):
         _, failures = self.verdict([self.pin()], [])
@@ -517,8 +545,10 @@ class ClaimingEveryDerivedPin(unittest.TestCase):
 
     def test_configuring_the_patterns_clears_it(self):
         count, failures = self.verdict(
-            [self.package("pyyaml", "6.0.2")], ["pip-compile"],
-            {"pip-compile": {"managerFilePatterns": ["/^requirements\\.txt$/"]}})
+            [self.package("pyyaml", "6.0.2")],
+            ["pip-compile"],
+            {"pip-compile": {"managerFilePatterns": ["/^requirements\\.txt$/"]}},
+        )
         self.assertEqual(failures, [])
         self.assertEqual(count, 1)
 
@@ -532,11 +562,12 @@ class ClaimingEveryDerivedPin(unittest.TestCase):
         no one — while a rule reading the manager's NAME reports it covered.
         """
         _, failures = self.verdict(
-            [self.package("pyyaml", "6.0.2")], ["pip-compile"],
-            {"pip-compile": {"managerFilePatterns": ["/^locks/requirements\\.txt$/"]}})
+            [self.package("pyyaml", "6.0.2")],
+            ["pip-compile"],
+            {"pip-compile": {"managerFilePatterns": ["/^locks/requirements\\.txt$/"]}},
+        )
         self.assertEqual(len(failures), 1)
-        self.assertIn("none of the managerFilePatterns it runs with reaches that file",
-                      failures[0])
+        self.assertIn("none of the managerFilePatterns it runs with reaches that file", failures[0])
 
     def test_the_unreached_report_names_the_patterns_and_where_they_came_from(self):
         """Two different repairs, so the message has to say which one applies.
@@ -547,13 +578,14 @@ class ClaimingEveryDerivedPin(unittest.TestCase):
         file name alone.
         """
         _, failures = self.verdict(
-            [self.package("pyyaml", "6.0.2")], ["pip-compile"],
-            {"pip-compile": {"managerFilePatterns": ["/^locks/requirements\\.txt$/"]}})
+            [self.package("pyyaml", "6.0.2")],
+            ["pip-compile"],
+            {"pip-compile": {"managerFilePatterns": ["/^locks/requirements\\.txt$/"]}},
+        )
         self.assertIn("/^locks/requirements\\.txt$/", failures[0])
         self.assertIn("from renovate.json", failures[0])
 
-        _, defaulted = self.verdict(
-            [self.pin(source="tools/ci.yml")], ["github-actions"])
+        _, defaulted = self.verdict([self.pin(source="tools/ci.yml")], ["github-actions"])
         self.assertEqual(len(defaulted), 1)
         self.assertIn("from the recorded default", defaulted[0])
 
@@ -566,15 +598,16 @@ class ClaimingEveryDerivedPin(unittest.TestCase):
         """
         packages = [self.package(f"dist{i}", "1.0.0") for i in range(12)]
         _, failures = self.verdict(
-            packages, ["pip-compile"],
-            {"pip-compile": {"managerFilePatterns": ["/^locks/requirements\\.txt$/"]}})
+            packages,
+            ["pip-compile"],
+            {"pip-compile": {"managerFilePatterns": ["/^locks/requirements\\.txt$/"]}},
+        )
         self.assertEqual(len(failures), 12)
 
     def test_the_generic_managers_are_not_required_to_claim_a_derived_pin(self):
         """argocd reads chart pins and custom.regex the annotated env block; both
         are asserted over their own populations rather than this one."""
-        _, failures = self.verdict([self.pin()],
-                                   ["github-actions", "argocd", "custom.regex"])
+        _, failures = self.verdict([self.pin()], ["github-actions", "argocd", "custom.regex"])
         self.assertEqual(failures, [])
 
 
@@ -593,10 +626,12 @@ class TheShippedToolchainIsWatched(unittest.TestCase):
     def test_the_interpreter_every_python_job_runs_on_is_a_derived_pin(self):
         pins = cov.workflow_pins()
         interpreter = [p for p in pins if p.family == "Python interpreter"]
-        self.assertTrue(interpreter,
-                        "no workflow step names a python-version-file, so the "
-                        "interpreter every Python job runs on is outside this "
-                        "gate's population")
+        self.assertTrue(
+            interpreter,
+            "no workflow step names a python-version-file, so the "
+            "interpreter every Python job runs on is outside this "
+            "gate's population",
+        )
 
     def test_every_action_the_workflows_use_is_a_derived_pin(self):
         """Counted against the files rather than a number, so a workflow added
@@ -630,7 +665,8 @@ class TheFilePatternForm(unittest.TestCase):
         """The shipped github-actions pattern, which is the shape this gate has
         to read correctly for every action pin in the repository."""
         rx = cov.compile_file_pattern(
-            r"/(^|/)(workflow-templates|\.(?:github|gitea|forgejo)/(?:workflows|actions))/.+\.ya?ml$/")
+            r"/(^|/)(workflow-templates|\.(?:github|gitea|forgejo)/(?:workflows|actions))/.+\.ya?ml$/"
+        )
         self.assertTrue(rx.search(".github/workflows/ci.yml"))
         self.assertTrue(rx.search(".github/workflows/ci.yaml"))
         self.assertFalse(rx.search("tools/ci.yml"))
@@ -640,8 +676,10 @@ class TheFilePatternForm(unittest.TestCase):
         self.assertFalse(cov.compile_file_pattern(r"/^GO\.MOD$/").search("go.mod"))
 
     def _cannot_run(self, raw):
-        with self.assertRaises(SystemExit) as caught, \
-                contextlib.redirect_stdout(io.StringIO()) as out:
+        with (
+            self.assertRaises(SystemExit) as caught,
+            contextlib.redirect_stdout(io.StringIO()) as out,
+        ):
             cov.compile_file_pattern(raw)
         self.assertEqual(caught.exception.code, cov.gatelib.CANNOT_RUN)
         return out.getvalue()
@@ -674,7 +712,8 @@ class WhichPatternsAManagerRunsWith(unittest.TestCase):
 
     def test_a_configured_pattern_replaces_the_default(self):
         found = cov.manager_file_patterns(
-            {"gomod": {"managerFilePatterns": ["/^tools/go\\.mod$/"]}}, "gomod")
+            {"gomod": {"managerFilePatterns": ["/^tools/go\\.mod$/"]}}, "gomod"
+        )
         self.assertEqual(found, cov.FilePatterns(["/^tools/go\\.mod$/"], "renovate.json"))
         self.assertNotIn(r"/(^|/)go\.mod$/", found.patterns)
 
@@ -687,15 +726,18 @@ class WhichPatternsAManagerRunsWith(unittest.TestCase):
         """`managerFilePatterns: []` is not "this manager reads no file" — Renovate
         drops an empty list and runs the default, so reading it as a narrowing
         would report an unreachable pin the deployment actually watches."""
-        self.assertEqual(cov.manager_file_patterns({"gomod": {"managerFilePatterns": []}},
-                                                   "gomod").origin,
-                         "the recorded default")
+        self.assertEqual(
+            cov.manager_file_patterns({"gomod": {"managerFilePatterns": []}}, "gomod").origin,
+            "the recorded default",
+        )
 
     def test_a_manager_absent_from_the_record_refuses_to_run(self):
-        """"No pattern recorded" and "reads every file" are opposite answers and
+        """ "No pattern recorded" and "reads every file" are opposite answers and
         only one of them is safe to guess."""
-        with self.assertRaises(SystemExit) as caught, \
-                contextlib.redirect_stdout(io.StringIO()) as out:
+        with (
+            self.assertRaises(SystemExit) as caught,
+            contextlib.redirect_stdout(io.StringIO()) as out,
+        ):
             cov.manager_file_patterns({}, "npm")
         self.assertEqual(caught.exception.code, cov.gatelib.CANNOT_RUN)
         self.assertIn("records no default for the npm manager", out.getvalue())
@@ -705,11 +747,13 @@ class WhichPatternsAManagerRunsWith(unittest.TestCase):
         default fails here rather than at the next run of the gate."""
         cfg = json.loads((ROOT / "renovate.json").read_text())
         for manager in cfg["enabledManagers"]:
-            if manager == "custom.regex":     # each customManager states its own
+            if manager == "custom.regex":  # each customManager states its own
                 continue
             with self.subTest(manager=manager):
-                self.assertTrue(cov.manager_file_patterns(cfg, manager).patterns,
-                                f"{manager} runs with no file pattern at all")
+                self.assertTrue(
+                    cov.manager_file_patterns(cfg, manager).patterns,
+                    f"{manager} runs with no file pattern at all",
+                )
 
 
 class ReachIsAsserted(unittest.TestCase):
@@ -730,21 +774,34 @@ class ReachIsAsserted(unittest.TestCase):
             self.addCleanup(tally.clear)
 
     def test_a_pattern_that_reaches_the_file_certifies(self):
-        cov.assert_reach("gomod", cov.FilePatterns([r"/(^|/)go\.mod$/"], "renovate.json"),
-                         "applicationsets/rendertest/go.mod", "Go module pin x v1")
+        cov.assert_reach(
+            "gomod",
+            cov.FilePatterns([r"/(^|/)go\.mod$/"], "renovate.json"),
+            "applicationsets/rendertest/go.mod",
+            "Go module pin x v1",
+        )
         self.assertEqual(cov.failures, [])
 
     def test_a_pattern_that_does_not_reach_the_file_fails(self):
-        cov.assert_reach("gomod", cov.FilePatterns([r"/^go\.mod$/"], "renovate.json"),
-                         "applicationsets/rendertest/go.mod", "Go module pin x v1")
+        cov.assert_reach(
+            "gomod",
+            cov.FilePatterns([r"/^go\.mod$/"], "renovate.json"),
+            "applicationsets/rendertest/go.mod",
+            "Go module pin x v1",
+        )
         self.assertEqual(len(cov.failures), 1)
-        self.assertIn("none of the managerFilePatterns it runs with reaches that file",
-                      cov.failures[0])
+        self.assertIn(
+            "none of the managerFilePatterns it runs with reaches that file", cov.failures[0]
+        )
 
     def test_an_empty_pattern_set_fails_with_no_pattern_to_point_at(self):
         """argocd and pip-compile both ship one, so this is a live shape."""
-        cov.assert_reach("pip-compile", cov.FilePatterns([], "the recorded default"),
-                         "requirements.txt", "Python package pyyaml 6.0.2")
+        cov.assert_reach(
+            "pip-compile",
+            cov.FilePatterns([], "the recorded default"),
+            "requirements.txt",
+            "Python package pyyaml 6.0.2",
+        )
         self.assertEqual(len(cov.failures), 1)
         self.assertIn("has no file patterns at all", cov.failures[0])
 
@@ -753,8 +810,7 @@ class ReachIsAsserted(unittest.TestCase):
         configures is a decision made here; a recorded default moves when
         Renovate does, without this repository changing."""
         cov.assert_reach("a", cov.FilePatterns(["/^x$/"], "renovate.json"), "x", "pin")
-        cov.assert_reach("b", cov.FilePatterns(["/^y$/"], "the recorded default"),
-                         "y", "pin")
+        cov.assert_reach("b", cov.FilePatterns(["/^y$/"], "the recorded default"), "y", "pin")
         self.assertEqual(cov.reach_configured, [("a", "x")])
         self.assertEqual(cov.reach_recorded, [("b", "y")])
 
@@ -820,10 +876,13 @@ class RepointingAnyManagerInTheShippedConfig(unittest.TestCase):
             self.assertIn(fam.label, first)
 
     def test_repointing_any_configured_manager_is_caught(self):
-        blocks = [k for k, v in self.cfg.items()
-                  if isinstance(v, dict) and "managerFilePatterns" in v]
-        self.assertTrue(blocks, "no manager block configures managerFilePatterns — "
-                                "this test would sweep nothing")
+        blocks = [
+            k for k, v in self.cfg.items() if isinstance(v, dict) and "managerFilePatterns" in v
+        ]
+        self.assertTrue(
+            blocks,
+            "no manager block configures managerFilePatterns — this test would sweep nothing",
+        )
         for manager in blocks:
             with self.subTest(manager=manager):
                 cfg = json.loads(json.dumps(self.cfg))
@@ -832,8 +891,8 @@ class RepointingAnyManagerInTheShippedConfig(unittest.TestCase):
                 self.assertEqual(rc, 1)
                 self.assertTrue(
                     any("reaches that file" in f for f in cov.failures),
-                    f"{manager} repointed at nothing and the gate did not say so: "
-                    f"{cov.failures}")
+                    f"{manager} repointed at nothing and the gate did not say so: {cov.failures}",
+                )
 
     def test_repointing_any_custom_manager_is_caught(self):
         """Each one separately: repointing all five at once is a failure any
@@ -849,16 +908,20 @@ class RepointingAnyManagerInTheShippedConfig(unittest.TestCase):
                 self.assertTrue(
                     any("reaches that file" in f for f in cov.failures),
                     f"customManagers[{i}] repointed at nothing and the gate did not "
-                    f"say so: {cov.failures}")
+                    f"say so: {cov.failures}",
+                )
 
     def test_repointing_a_manager_that_rests_on_its_recorded_default_is_caught(self):
         """The managers with no block in renovate.json are covered by the record,
         and configuring one is how a repository narrows what it reads — so the
         same mistake is available to them and is caught the same way."""
-        resting = [m for m in self.cfg["enabledManagers"]
-                   if m != "custom.regex" and m not in self.cfg]
-        self.assertTrue(resting, "every enabled manager configures its own patterns — "
-                                 "this test would sweep nothing")
+        resting = [
+            m for m in self.cfg["enabledManagers"] if m != "custom.regex" and m not in self.cfg
+        ]
+        self.assertTrue(
+            resting,
+            "every enabled manager configures its own patterns — this test would sweep nothing",
+        )
         for manager in resting:
             with self.subTest(manager=manager):
                 cfg = json.loads(json.dumps(self.cfg))
@@ -867,8 +930,8 @@ class RepointingAnyManagerInTheShippedConfig(unittest.TestCase):
                 self.assertEqual(rc, 1)
                 self.assertTrue(
                     any("reaches that file" in f for f in cov.failures),
-                    f"{manager} repointed at nothing and the gate did not say so: "
-                    f"{cov.failures}")
+                    f"{manager} repointed at nothing and the gate did not say so: {cov.failures}",
+                )
 
 
 class TheAppsetCorpusReadsBothSpellings(unittest.TestCase):
@@ -902,8 +965,7 @@ class TheAppsetCorpusReadsBothSpellings(unittest.TestCase):
         original = cov.APPSETS
         cov.APPSETS = pathlib.Path(tempfile.mkdtemp()) / "gone"
         try:
-            with self.assertRaises(SystemExit) as caught, \
-                    contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(SystemExit) as caught, contextlib.redirect_stdout(io.StringIO()):
                 cov.appset_files()
             self.assertEqual(caught.exception.code, cov.gatelib.CANNOT_RUN)
         finally:
@@ -920,8 +982,10 @@ class AJobThatCallsAWorkflowIsAPin(unittest.TestCase):
 
     def test_a_called_workflow_is_yielded(self):
         doc = {"jobs": {"gate": {"uses": "nanohype/.github/.github/workflows/x.yml@v1"}}}
-        self.assertEqual(list(cov._called_workflows(doc)),
-                         [("gate", "nanohype/.github/.github/workflows/x.yml@v1")])
+        self.assertEqual(
+            list(cov._called_workflows(doc)),
+            [("gate", "nanohype/.github/.github/workflows/x.yml@v1")],
+        )
 
     def test_the_step_walker_does_not_see_it(self):
         """Stated as a test because it is the reason the second walk exists."""
@@ -935,16 +999,27 @@ class AJobThatCallsAWorkflowIsAPin(unittest.TestCase):
     def test_a_called_workflow_becomes_a_derived_pin(self):
         root = pathlib.Path(tempfile.mkdtemp())
         (root / ".github" / "workflows").mkdir(parents=True)
-        (root / ".github" / "workflows" / "ci.yml").write_text(yaml.safe_dump(
-            {"jobs": {"gate": {"uses": "owner/repo/.github/workflows/x.yml@v1.2.3"}}}))
+        (root / ".github" / "workflows" / "ci.yml").write_text(
+            yaml.safe_dump(
+                {"jobs": {"gate": {"uses": "owner/repo/.github/workflows/x.yml@v1.2.3"}}}
+            )
+        )
         original, cov.ROOT = cov.ROOT, root
         try:
             pins = cov.workflow_pins()
         finally:
             cov.ROOT = original
-        self.assertEqual([(p.family, p.manager, p.dep, p.version) for p in pins],
-                         [("Reusable workflow", "github-actions",
-                           "owner/repo/.github/workflows/x.yml", "v1.2.3")])
+        self.assertEqual(
+            [(p.family, p.manager, p.dep, p.version) for p in pins],
+            [
+                (
+                    "Reusable workflow",
+                    "github-actions",
+                    "owner/repo/.github/workflows/x.yml",
+                    "v1.2.3",
+                )
+            ],
+        )
 
     def test_every_called_workflow_in_this_repo_is_a_derived_pin(self):
         seen = {p.dep for p in cov.workflow_pins()}
@@ -968,10 +1043,18 @@ class AVersionFileRuntimeNobodyWroteAReaderFor(unittest.TestCase):
     def workspace(self, with_):
         root = pathlib.Path(tempfile.mkdtemp())
         (root / ".github" / "workflows").mkdir(parents=True)
-        (root / ".github" / "workflows" / "ci.yml").write_text(yaml.safe_dump(
-            {"jobs": {"a": {"runs-on": "ubuntu-latest",
-                            "steps": [{"uses": "actions/setup-x@" + "a" * 40,
-                                       "with": with_}]}}}))
+        (root / ".github" / "workflows" / "ci.yml").write_text(
+            yaml.safe_dump(
+                {
+                    "jobs": {
+                        "a": {
+                            "runs-on": "ubuntu-latest",
+                            "steps": [{"uses": "actions/setup-x@" + "a" * 40, "with": with_}],
+                        }
+                    }
+                }
+            )
+        )
         (root / ".ruby-version").write_text("3.4.1\n")
         return root
 
@@ -984,17 +1067,19 @@ class AVersionFileRuntimeNobodyWroteAReaderFor(unittest.TestCase):
         runtime some workflow here installs; one that stops being installed is
         removed with its reader, and this case keeps holding.
         """
-        original, cov.ROOT = cov.ROOT, self.workspace(
-            {"ruby-version-file": ".ruby-version"})
+        original, cov.ROOT = cov.ROOT, self.workspace({"ruby-version-file": ".ruby-version"})
         try:
-            with self.assertRaises(SystemExit) as caught, \
-                    contextlib.redirect_stdout(io.StringIO()) as out:
+            with (
+                self.assertRaises(SystemExit) as caught,
+                contextlib.redirect_stdout(io.StringIO()) as out,
+            ):
                 cov.workflow_pins()
         finally:
             cov.ROOT = original
         self.assertEqual(caught.exception.code, cov.gatelib.CANNOT_RUN)
-        self.assertIn("which Renovate manager reads a ruby version file is not known",
-                      out.getvalue())
+        self.assertIn(
+            "which Renovate manager reads a ruby version file is not known", out.getvalue()
+        )
 
     SOURCES = {
         "python": (".python-version", "3.13\n"),
@@ -1010,9 +1095,12 @@ class AVersionFileRuntimeNobodyWroteAReaderFor(unittest.TestCase):
         the pin — the reader is where the wrong name was written.
         """
         enabled = set(json.loads((ROOT / "renovate.json").read_text())["enabledManagers"])
-        self.assertEqual(set(cov.VERSION_FILE_RUNTIMES), set(self.SOURCES),
-                         "a runtime gained or lost a reader and this case did not "
-                         "gain or lose the file it reads")
+        self.assertEqual(
+            set(cov.VERSION_FILE_RUNTIMES),
+            set(self.SOURCES),
+            "a runtime gained or lost a reader and this case did not "
+            "gain or lose the file it reads",
+        )
         root = pathlib.Path(tempfile.mkdtemp())
         original, cov.ROOT = cov.ROOT, root
         try:
@@ -1022,10 +1110,13 @@ class AVersionFileRuntimeNobodyWroteAReaderFor(unittest.TestCase):
                 with self.subTest(runtime=runtime):
                     pins = reader(".github/workflows/ci.yml", rel)
                     self.assertEqual(len(pins), 1)
-                    self.assertIn(pins[0].manager, enabled,
-                                  f"the {runtime} reader attributes its pin to the "
-                                  f"{pins[0].manager} manager, which renovate.json "
-                                  f"does not enable")
+                    self.assertIn(
+                        pins[0].manager,
+                        enabled,
+                        f"the {runtime} reader attributes its pin to the "
+                        f"{pins[0].manager} manager, which renovate.json "
+                        f"does not enable",
+                    )
                     self.assertEqual(pins[0].source, rel)
         finally:
             cov.ROOT = original
@@ -1040,8 +1131,7 @@ class AVersionFileRuntimeNobodyWroteAReaderFor(unittest.TestCase):
             pins = cov.workflow_pins()
         finally:
             cov.ROOT = original
-        self.assertIn(("Python interpreter", "3.13"),
-                      [(p.family, p.version) for p in pins])
+        self.assertIn(("Python interpreter", "3.13"), [(p.family, p.version) for p in pins])
 
 
 class TheNonChartPinFamilies(unittest.TestCase):
@@ -1054,31 +1144,35 @@ class TheNonChartPinFamilies(unittest.TestCase):
     ANNOTATED_CI = (
         "env:\n"
         "  # renovate: datasource=github-releases depName=kyverno/kyverno\n"
-        "  KYVERNO_VERSION: \"1.18.2\"\n"
+        '  KYVERNO_VERSION: "1.18.2"\n'
     )
 
-    CRDS = ("        repoURL: https://github.com/kubernetes-sigs/gateway-api\n"
-            "        targetRevision: v1.2.1\n")
+    CRDS = (
+        "        repoURL: https://github.com/kubernetes-sigs/gateway-api\n"
+        "        targetRevision: v1.2.1\n"
+    )
 
     GOMOD = "module x\n\ngo 1.26.3\n\nrequire (\n\tgithub.com/x/y v1.2.3\n)\n"
 
-    SCAN = ("# renovate: datasource=git-refs depName=example/catalog "
-            "packageName=https://github.com/example/catalog branch=main\n"
-            "CATALOG_REF=\"0123456789abcdef0123456789abcdef01234567\"\n")
+    SCAN = (
+        "# renovate: datasource=git-refs depName=example/catalog "
+        "packageName=https://github.com/example/catalog branch=main\n"
+        'CATALOG_REF="0123456789abcdef0123456789abcdef01234567"\n'
+    )
 
     def workspace(self, cfg, ci=None, crds=None, gomod=None, no_pins=True):
         root = pathlib.Path(tempfile.mkdtemp())
         (root / "renovate.json").write_text(json.dumps(cfg))
-        for rel, body in ((".github/workflows/ci.yml", ci if ci is not None else self.ANNOTATED_CI),
-                          # The other two workflows whose env blocks the CI tool
-                          # family reads, each with its own annotated pin.
-                          (".github/workflows/chart-provenance.yml", self.ANNOTATED_CI),
-                          (".github/workflows/diff.yml", self.ANNOTATED_CI),
-                          ("applicationsets/gateway-api-crds.yaml",
-                           crds if crds is not None else self.CRDS),
-                          ("applicationsets/rendertest/go.mod",
-                           gomod if gomod is not None else self.GOMOD),
-                          ("scripts/kubeconform-scan.sh", self.SCAN)):
+        for rel, body in (
+            (".github/workflows/ci.yml", ci if ci is not None else self.ANNOTATED_CI),
+            # The other two workflows whose env blocks the CI tool
+            # family reads, each with its own annotated pin.
+            (".github/workflows/chart-provenance.yml", self.ANNOTATED_CI),
+            (".github/workflows/diff.yml", self.ANNOTATED_CI),
+            ("applicationsets/gateway-api-crds.yaml", crds if crds is not None else self.CRDS),
+            ("applicationsets/rendertest/go.mod", gomod if gomod is not None else self.GOMOD),
+            ("scripts/kubeconform-scan.sh", self.SCAN),
+        ):
             path = root / rel
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(body)
@@ -1095,8 +1189,7 @@ class TheNonChartPinFamilies(unittest.TestCase):
         for tally in (cov.reach_configured, cov.reach_recorded):
             tally.clear()
         try:
-            managers = (cov.load_custom_managers() if custom_managers is None
-                        else custom_managers)
+            managers = cov.load_custom_managers() if custom_managers is None else custom_managers
             seen = cov.check_other_families(managers)
         finally:
             cov.ROOT = original
@@ -1134,21 +1227,22 @@ class TheNonChartPinFamilies(unittest.TestCase):
         cfg["enabledManagers"] = [m for m in cfg["enabledManagers"] if m != "gomod"]
         _, failures = self.verdict(self.workspace(cfg))
         self.assertEqual(len(failures), 1)
-        self.assertIn("gomod manager is not in renovate.json's enabledManagers",
-                      failures[0])
+        self.assertIn("gomod manager is not in renovate.json's enabledManagers", failures[0])
 
     def test_the_go_module_needs_gomods_patterns_to_reach_go_mod(self):
         """Enabled and unreached: the manager runs, opens no such file, and the
         config reads as coverage."""
-        _, failures = self.verdict(self.workspace(
-            self.config(gomod={"managerFilePatterns": ["/^go\\.mod$/"]})))
+        _, failures = self.verdict(
+            self.workspace(self.config(gomod={"managerFilePatterns": ["/^go\\.mod$/"]}))
+        )
         self.assertEqual(len(failures), 1)
         self.assertIn("reaches that file", failures[0])
 
     def test_a_crd_pin_no_custom_manager_matches_is_reported(self):
         cfg = self.config()
-        cfg["customManagers"] = [m for m in cfg["customManagers"]
-                                 if "gateway-api" not in json.dumps(m)]
+        cfg["customManagers"] = [
+            m for m in cfg["customManagers"] if "gateway-api" not in json.dumps(m)
+        ]
         _, failures = self.verdict(self.workspace(cfg))
         self.assertEqual(len(failures), 1)
         self.assertIn("matched by no customManager", failures[0])
@@ -1198,15 +1292,17 @@ class EveryCiToolPinCarriesItsOwnAnnotation(unittest.TestCase):
         count = ci.check(ci, text, hits, self.managers if managers is None else managers)
         return count, list(cov.failures)
 
-    ANNOTATED = ("  # renovate: datasource=github-releases depName=kyverno/kyverno\n"
-                 "  KYVERNO_VERSION: \"1.18.2\"\n")
+    ANNOTATED = (
+        "  # renovate: datasource=github-releases depName=kyverno/kyverno\n"
+        '  KYVERNO_VERSION: "1.18.2"\n'
+    )
 
     def test_an_annotated_and_reached_pin_passes(self):
         count, failures = self.verdict(self.ANNOTATED)
         self.assertEqual((count, failures), (1, []))
 
     def test_an_unannotated_pin_is_reported(self):
-        _, failures = self.verdict("  KYVERNO_VERSION: \"1.18.2\"\n")
+        _, failures = self.verdict('  KYVERNO_VERSION: "1.18.2"\n')
         self.assertEqual(len(failures), 1)
         self.assertIn("no `# renovate:` annotation", failures[0])
 
@@ -1218,8 +1314,7 @@ class EveryCiToolPinCarriesItsOwnAnnotation(unittest.TestCase):
         of it. A gate keyed on the annotation alone would report the whole block
         covered, which is the reading that leaves the un-annotated pin invisible.
         """
-        count, failures = self.verdict(
-            self.ANNOTATED + "  GITLEAKS_VERSION: \"8.28.0\"\n")
+        count, failures = self.verdict(self.ANNOTATED + '  GITLEAKS_VERSION: "8.28.0"\n')
         self.assertEqual(count, 2)
         self.assertEqual(len(failures), 1)
         self.assertIn("GITLEAKS_VERSION", failures[0])
@@ -1231,8 +1326,7 @@ class EveryCiToolPinCarriesItsOwnAnnotation(unittest.TestCase):
         self.assertIn("matched by no customManager", failures[0])
 
     def test_an_annotated_pin_whose_manager_cannot_reach_ci_yml_is_reported(self):
-        repointed = [cm._replace(file_patterns=["/^no/such/file$/"])
-                     for cm in self.managers]
+        repointed = [cm._replace(file_patterns=["/^no/such/file$/"]) for cm in self.managers]
         _, failures = self.verdict(self.ANNOTATED, managers=repointed)
         self.assertEqual(len(failures), 1)
         self.assertIn("reaches that file", failures[0])
@@ -1268,8 +1362,7 @@ class SchemaCatalogRefs(unittest.TestCase):
         return self.family.check(self.family, text, hits, self.managers)
 
     def test_an_annotated_ref_is_claimed_by_the_git_refs_manager(self):
-        cm = cov.covered_by_custom(self.ANNOTATED, "example/catalog", self.SHA,
-                                   self.managers)
+        cm = cov.covered_by_custom(self.ANNOTATED, "example/catalog", self.SHA, self.managers)
         self.assertIsNotNone(cm)
         self.assertEqual(self.check(self.ANNOTATED), 1)
         self.assertEqual(cov.failures, [])
@@ -1277,9 +1370,14 @@ class SchemaCatalogRefs(unittest.TestCase):
     def test_the_branch_is_not_mistaken_for_the_pin(self):
         """currentValue is the tracked branch; matching on it would certify a
         ref whatever commit it named."""
-        self.assertIsNone(cov.covered_by_custom(
-            self.ANNOTATED.replace(self.SHA, "f" * 40), "example/catalog", self.SHA,
-            self.managers))
+        self.assertIsNone(
+            cov.covered_by_custom(
+                self.ANNOTATED.replace(self.SHA, "f" * 40),
+                "example/catalog",
+                self.SHA,
+                self.managers,
+            )
+        )
 
     def test_a_ref_with_no_annotation_is_reported(self):
         self.assertEqual(self.check(f'CATALOG_REF="{self.SHA}"\n'), 1)
@@ -1348,21 +1446,24 @@ class EachFamilyRunsItsOwnChecker(unittest.TestCase):
             "git-pinned manifest directory",
             "        repoURL: https://github.com/kubernetes-sigs/gateway-api\n"
             "        targetRevision: v1.2.1\n",
-            managers=[])
+            managers=[],
+        )
         self.assertEqual(count, 1)
         self.assertEqual(len(failures), 1)
-        self.assertIn("git-pinned manifest directory pin kubernetes-sigs/gateway-api "
-                      "v1.2.1 is matched by no customManager", failures[0])
+        self.assertIn(
+            "git-pinned manifest directory pin kubernetes-sigs/gateway-api "
+            "v1.2.1 is matched by no customManager",
+            failures[0],
+        )
         self.assertIn("Nothing opens a currency PR", failures[0])
 
     def test_a_ci_tool_binary_needs_its_own_annotation(self):
         count, failures = self.run_family(
-            "CI tool binary", '  KYVERNO_VERSION: "1.18.2"\n',
-            managers=cov.load_custom_managers())
+            "CI tool binary", '  KYVERNO_VERSION: "1.18.2"\n', managers=cov.load_custom_managers()
+        )
         self.assertEqual(count, 1)
         self.assertEqual(len(failures), 1)
-        self.assertIn("KYVERNO_VERSION pins 1.18.2 with no `# renovate:` annotation",
-                      failures[0])
+        self.assertIn("KYVERNO_VERSION pins 1.18.2 with no `# renovate:` annotation", failures[0])
         self.assertIn("this CI tool binary is watched by nothing", failures[0])
 
     def test_a_go_module_needs_the_gomod_manager(self):
@@ -1373,22 +1474,26 @@ class EachFamilyRunsItsOwnChecker(unittest.TestCase):
         original, cov.ROOT = cov.ROOT, root
         self.addCleanup(setattr, cov, "ROOT", original)
         count, failures = self.run_family(
-            "Go module", "require (\n\tgithub.com/x/y v1.2.3\n)\n",
-            managers=cov.load_custom_managers())
+            "Go module",
+            "require (\n\tgithub.com/x/y v1.2.3\n)\n",
+            managers=cov.load_custom_managers(),
+        )
         self.assertEqual(count, 1)
         self.assertEqual(len(failures), 1)
-        self.assertIn("the gomod manager is not in renovate.json's enabledManagers, so "
-                      "github.com/x/y v1.2.3 is watched by nothing", failures[0])
+        self.assertIn(
+            "the gomod manager is not in renovate.json's enabledManagers, so "
+            "github.com/x/y v1.2.3 is watched by nothing",
+            failures[0],
+        )
 
     def test_a_schema_catalog_ref_needs_its_own_annotation(self):
         sha = "0123456789abcdef0123456789abcdef01234567"
         count, failures = self.run_family(
-            "schema catalog ref", f'CATALOG_REF="{sha}"\n',
-            managers=cov.load_custom_managers())
+            "schema catalog ref", f'CATALOG_REF="{sha}"\n', managers=cov.load_custom_managers()
+        )
         self.assertEqual(count, 1)
         self.assertEqual(len(failures), 1)
-        self.assertIn(f"CATALOG_REF pins {sha} with no `# renovate:` annotation",
-                      failures[0])
+        self.assertIn(f"CATALOG_REF pins {sha} with no `# renovate:` annotation", failures[0])
         self.assertIn("this schema catalog ref is watched by nothing", failures[0])
 
 

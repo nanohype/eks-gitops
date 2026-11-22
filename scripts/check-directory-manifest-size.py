@@ -108,8 +108,19 @@ NETWORK_TIMEOUT = 300
 # one as the other understates the ceiling, which is the direction that lets a
 # source through.
 SUFFIXES = {
-    "": 1, "k": 10**3, "M": 10**6, "G": 10**9, "T": 10**12, "P": 10**15, "E": 10**18,
-    "Ki": 2**10, "Mi": 2**20, "Gi": 2**30, "Ti": 2**40, "Pi": 2**50, "Ei": 2**60,
+    "": 1,
+    "k": 10**3,
+    "M": 10**6,
+    "G": 10**9,
+    "T": 10**12,
+    "P": 10**15,
+    "E": 10**18,
+    "Ki": 2**10,
+    "Mi": 2**20,
+    "Gi": 2**30,
+    "Ti": 2**40,
+    "Pi": 2**50,
+    "Ei": 2**60,
 }
 QUANTITY = re.compile(r"^(?P<num>\d+)(?P<suffix>[kMGTPE]|[KMGTPE]i|)$")
 
@@ -123,8 +134,10 @@ def quantity(text: str, where: str) -> int:
     """A k8s resource.Quantity as a byte count, or exit 2 naming where it came from."""
     m = QUANTITY.fullmatch(str(text).strip())
     if not m:
-        print(f"Cannot run: {where} holds {text!r}, which is not a quantity "
-              f"argocd-repo-server would accept for its combined-manifest ceiling.")
+        print(
+            f"Cannot run: {where} holds {text!r}, which is not a quantity "
+            f"argocd-repo-server would accept for its combined-manifest ceiling."
+        )
         sys.exit(gatelib.CANNOT_RUN)
     return int(m.group("num")) * SUFFIXES[m.group("suffix")]
 
@@ -219,8 +232,10 @@ def environments() -> list[str]:
     found = {p.name for p in ROOT.glob("addons/*/*/overlays/*") if p.is_dir()}
     found |= {p.name for p in ROOT.glob("policies/*/*/overlays/*") if p.is_dir()}
     if not found:
-        print("Cannot run: no overlay directories under addons/ or policies/, so the "
-              "environments a templated source path expands over are unknown.")
+        print(
+            "Cannot run: no overlay directories under addons/ or policies/, so the "
+            "environments a templated source path expands over are unknown."
+        )
         sys.exit(gatelib.CANNOT_RUN)
     return sorted(found)
 
@@ -228,8 +243,10 @@ def environments() -> list[str]:
 def directory_sources() -> list[Source]:
     """Every applied source ArgoCD would classify as a Directory, derived from the tree."""
     if not APPSETS.is_dir():
-        print(f"Cannot run: {APPSETS} is not a directory. This gate examined nothing, "
-              f"which is not the same as finding nothing.")
+        print(
+            f"Cannot run: {APPSETS} is not a directory. This gate examined nothing, "
+            f"which is not the same as finding nothing."
+        )
         sys.exit(gatelib.CANNOT_RUN)
 
     envs = environments()
@@ -264,9 +281,11 @@ def directory_sources() -> list[Source]:
                     expanded = expansions(template, doc, envs)
                     existing = [ROOT / e for e in expanded if "{{" not in e and (ROOT / e).is_dir()]
                     if expanded and not existing:
-                        die(f"{name} ({path.name}) sources {template!r} from this catalog "
+                        die(
+                            f"{name} ({path.name}) sources {template!r} from this catalog "
                             f"and it resolves to no directory in the tree — this gate "
-                            f"cannot classify a source it cannot find.")
+                            f"cannot classify a source it cannot find."
+                        )
                     locals_ = list(existing) or [None]
 
                 for local in locals_:
@@ -278,26 +297,32 @@ def directory_sources() -> list[Source]:
                     undecidable = verdict is None and local is None
                     if verdict != "Directory" and not undecidable:
                         continue
-                    found.append(Source(
-                        appset=name,
-                        file=path.name,
-                        repo_url=repo_url,
-                        target_revision=revision,
-                        path=str(local.relative_to(ROOT)) if local else template,
-                        recurse=bool(directory.get("recurse", False)),
-                        include=str(directory.get("include", "")),
-                        exclude=str(directory.get("exclude", "")),
-                        local=local,
-                    ))
+                    found.append(
+                        Source(
+                            appset=name,
+                            file=path.name,
+                            repo_url=repo_url,
+                            target_revision=revision,
+                            path=str(local.relative_to(ROOT)) if local else template,
+                            recurse=bool(directory.get("recurse", False)),
+                            include=str(directory.get("include", "")),
+                            exclude=str(directory.get("exclude", "")),
+                            local=local,
+                        )
+                    )
 
     if not appsets:
-        die(f"read no ApplicationSet out of {APPSETS.relative_to(ROOT)} — the parser "
+        die(
+            f"read no ApplicationSet out of {APPSETS.relative_to(ROOT)} — the parser "
             f"and the catalog disagree, and a run that examined nothing must not "
-            f"report that nothing is wrong.")
+            f"report that nothing is wrong."
+        )
     if not considered:
-        die(f"read {appsets} ApplicationSet(s) out of {APPSETS.relative_to(ROOT)} and "
+        die(
+            f"read {appsets} ApplicationSet(s) out of {APPSETS.relative_to(ROOT)} and "
             f"not one source with a path. Every source in this catalog carries one, "
-            f"so the walk stopped seeing them rather than the catalog changing.")
+            f"so the walk stopped seeing them rather than the catalog changing."
+        )
     return found
 
 
@@ -306,8 +331,7 @@ def keyed(sources: list[Source]) -> dict[str, Source]:
     counts: dict[str, int] = {}
     for s in sources:
         counts[s.appset] = counts.get(s.appset, 0) + 1
-    return {(s.appset if counts[s.appset] == 1 else f"{s.appset}#{s.path}"): s
-            for s in sources}
+    return {(s.appset if counts[s.appset] == 1 else f"{s.appset}#{s.path}"): s for s in sources}
 
 
 # ----------------------------------------------------------------- measurement
@@ -339,7 +363,7 @@ def measure(root: pathlib.Path, recurse: bool, include: str, exclude: str) -> tu
             if include and not fnmatch.fnmatch(rel, include):
                 continue
             if not path.is_file():
-                continue        # a symlink to something that is not a regular file
+                continue  # a symlink to something that is not a regular file
             files += 1
             if name.endswith(".jsonnet"):
                 continue
@@ -351,24 +375,39 @@ def clone(src: Source, into: pathlib.Path) -> pathlib.Path:
     """The pinned source directory, checked out. Exits 1 naming what would not resolve."""
     gatelib.require("git")
     proc = subprocess.run(
-        ["git", "clone", "--quiet", "--depth", "1", "--branch", src.target_revision,
-         src.repo_url, str(into)],
-        capture_output=True, text=True, timeout=NETWORK_TIMEOUT)
+        [
+            "git",
+            "clone",
+            "--quiet",
+            "--depth",
+            "1",
+            "--branch",
+            src.target_revision,
+            src.repo_url,
+            str(into),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=NETWORK_TIMEOUT,
+    )
     if proc.returncode != 0:
         last = ((proc.stderr or "") + (proc.stdout or "")).strip().splitlines()
-        die(f"{src.appset}: {src.repo_url} at {src.target_revision} would not clone — "
-            f"{last[-1][:200] if last else 'no output'}")
+        die(
+            f"{src.appset}: {src.repo_url} at {src.target_revision} would not clone — "
+            f"{last[-1][:200] if last else 'no output'}"
+        )
     resolved = into / src.path
     if not resolved.is_dir():
-        die(f"{src.appset}: {src.repo_url} at {src.target_revision} has no {src.path}/. "
-            f"A source path that is not there generates nothing.")
+        die(
+            f"{src.appset}: {src.repo_url} at {src.target_revision} has no {src.path}/. "
+            f"A source path that is not there generates nothing."
+        )
     return resolved
 
 
 def remeasure(src: Source) -> tuple[int, int]:
     with tempfile.TemporaryDirectory() as tmp:
-        return measure(clone(src, pathlib.Path(tmp) / "src"),
-                       src.recurse, src.include, src.exclude)
+        return measure(clone(src, pathlib.Path(tmp) / "src"), src.recurse, src.include, src.exclude)
 
 
 # ------------------------------------------------------------------- the parts
@@ -377,9 +416,11 @@ def remeasure(src: Source) -> tuple[int, int]:
 def load_contract() -> dict:
     doc = gatelib.read_json(CONTRACT)
     if "maxCombinedDirectoryManifestsSize" not in doc:
-        print(f"Cannot run: {CONTRACT.relative_to(ROOT)} declares no "
-              f"maxCombinedDirectoryManifestsSize, so this gate has no ceiling to "
-              f"measure against and would report every source as fitting.")
+        print(
+            f"Cannot run: {CONTRACT.relative_to(ROOT)} declares no "
+            f"maxCombinedDirectoryManifestsSize, so this gate has no ceiling to "
+            f"measure against and would report every source as fitting."
+        )
         sys.exit(gatelib.CANNOT_RUN)
     return doc
 
@@ -394,9 +435,14 @@ COORDINATES = ("repoURL", "targetRevision", "path", "recurse", "include", "exclu
 
 
 def coordinates(src: Source) -> dict:
-    return {"repoURL": src.repo_url, "targetRevision": src.target_revision,
-            "path": src.path, "recurse": src.recurse,
-            "include": src.include, "exclude": src.exclude}
+    return {
+        "repoURL": src.repo_url,
+        "targetRevision": src.target_revision,
+        "path": src.path,
+        "recurse": src.recurse,
+        "include": src.include,
+        "exclude": src.exclude,
+    }
 
 
 # ---------------------------------------------------------------- offline gate
@@ -404,14 +450,19 @@ def coordinates(src: Source) -> dict:
 
 def check_offline(sources: list[Source], recorded: dict, contract: dict) -> int:
     if "maxCombinedDirectoryManifestsSize" not in contract:
-        print(f"Cannot run: {CONTRACT.relative_to(ROOT)} declares no "
-              f"maxCombinedDirectoryManifestsSize, so this gate has no ceiling to "
-              f"measure against and would report every source as fitting.")
+        print(
+            f"Cannot run: {CONTRACT.relative_to(ROOT)} declares no "
+            f"maxCombinedDirectoryManifestsSize, so this gate has no ceiling to "
+            f"measure against and would report every source as fitting."
+        )
         sys.exit(gatelib.CANNOT_RUN)
-    ceiling = quantity(contract["maxCombinedDirectoryManifestsSize"],
-                       f"{CONTRACT.relative_to(ROOT)} maxCombinedDirectoryManifestsSize")
-    stock = quantity(contract.get("argoCdDefault", "10M"),
-                     f"{CONTRACT.relative_to(ROOT)} argoCdDefault")
+    ceiling = quantity(
+        contract["maxCombinedDirectoryManifestsSize"],
+        f"{CONTRACT.relative_to(ROOT)} maxCombinedDirectoryManifestsSize",
+    )
+    stock = quantity(
+        contract.get("argoCdDefault", "10M"), f"{CONTRACT.relative_to(ROOT)} argoCdDefault"
+    )
 
     problems: list[str] = []
     lines: list[str] = []
@@ -424,17 +475,21 @@ def check_offline(sources: list[Source], recorded: dict, contract: dict) -> int:
                 problems.append(
                     f"{key} sources {src.path}/ from this catalog and it holds no "
                     f"manifest file. A directory source that generates nothing is not "
-                    f"a directory source under the limit.")
+                    f"a directory source under the limit."
+                )
                 continue
-            lines.append(f"{key:24} {human(size):>9}  {100 * size / ceiling:5.1f}% of ceiling  "
-                         f"{files:3} file(s)  in-tree")
+            lines.append(
+                f"{key:24} {human(size):>9}  {100 * size / ceiling:5.1f}% of ceiling  "
+                f"{files:3} file(s)  in-tree"
+            )
             if size > ceiling:
                 problems.append(
                     f"{key} is {human(size)}, over the "
                     f"{contract['maxCombinedDirectoryManifestsSize']} ceiling "
                     f"{CONTRACT.relative_to(ROOT)} records. The repo-server refuses to "
                     f"generate it and the Application reports ComparisonError, not "
-                    f"OutOfSync — the sync column reads Unknown.")
+                    f"OutOfSync — the sync column reads Unknown."
+                )
             continue
 
         rec = recorded.get(key)
@@ -442,14 +497,16 @@ def check_offline(sources: list[Source], recorded: dict, contract: dict) -> int:
             problems.append(
                 f"{key} ({src.file}) is a directory source with no entry in "
                 f"{RECORDS.relative_to(ROOT)}. Nothing bounds what it asks the "
-                f"repo-server to combine. Run --sync.")
+                f"repo-server to combine. Run --sync."
+            )
             continue
         drift = [f for f in COORDINATES if rec.get(f) != coordinates(src)[f]]
         if drift:
             problems.append(
                 f"{key} is pinned at coordinates {RECORDS.relative_to(ROOT)} was not "
                 f"measured against ({', '.join(drift)}), so the recorded size is a "
-                f"measurement of something else. Re-measure with --sync.")
+                f"measurement of something else. Re-measure with --sync."
+            )
             continue
         if rec.get("bytes") is None:
             if not rec.get("unbounded"):
@@ -457,7 +514,8 @@ def check_offline(sources: list[Source], recorded: dict, contract: dict) -> int:
                     f"{key} has an entry in {RECORDS.relative_to(ROOT)} with no size "
                     f"and no stated reason it cannot have one. A source nothing "
                     f"measured and nothing excused is the gap this gate exists to "
-                    f"close.")
+                    f"close."
+                )
                 continue
             lines.append(f"{key:24} {'unbounded':>9}  {rec['unbounded']}")
             continue
@@ -466,24 +524,29 @@ def check_offline(sources: list[Source], recorded: dict, contract: dict) -> int:
             problems.append(
                 f"{key} is recorded in {RECORDS.relative_to(ROOT)} as {size} byte(s) "
                 f"across {files} file(s). A measurement of nothing recorded as a pass "
-                f"is the defect, not the evidence.")
+                f"is the defect, not the evidence."
+            )
             continue
         note = "  EXCEEDS A STOCK REPO-SERVER" if size > stock else ""
-        lines.append(f"{key:24} {human(size):>9}  {100 * size / ceiling:5.1f}% of ceiling  "
-                     f"{files:3} file(s)  {src.target_revision}{note}")
+        lines.append(
+            f"{key:24} {human(size):>9}  {100 * size / ceiling:5.1f}% of ceiling  "
+            f"{files:3} file(s)  {src.target_revision}{note}"
+        )
         if size > ceiling:
             problems.append(
                 f"{key} measures {human(size)} at {src.target_revision}, over the "
                 f"{contract['maxCombinedDirectoryManifestsSize']} ceiling "
                 f"{CONTRACT.relative_to(ROOT)} records. The repo-server refuses to "
                 f"generate it and the Application reports ComparisonError, not "
-                f"OutOfSync — the sync column reads Unknown.")
+                f"OutOfSync — the sync column reads Unknown."
+            )
 
     for key in sorted(set(recorded) - set(corpus)):
         problems.append(
             f"{key} has an entry in {RECORDS.relative_to(ROOT)} and is no longer a "
             f"directory source in the catalog — drop it, or find out what "
-            f"reclassified the source.")
+            f"reclassified the source."
+        )
 
     for line in lines:
         print(f"        {line}")
@@ -492,9 +555,11 @@ def check_offline(sources: list[Source], recorded: dict, contract: dict) -> int:
         for p in problems:
             print(f"        {p}")
         return 1
-    print(f"OK    {len(corpus)} directory source(s), each under the "
-          f"{contract['maxCombinedDirectoryManifestsSize']} ceiling "
-          f"{CONTRACT.relative_to(ROOT)} records.")
+    print(
+        f"OK    {len(corpus)} directory source(s), each under the "
+        f"{contract['maxCombinedDirectoryManifestsSize']} ceiling "
+        f"{CONTRACT.relative_to(ROOT)} records."
+    )
     return 0
 
 
@@ -502,8 +567,10 @@ def check_offline(sources: list[Source], recorded: dict, contract: dict) -> int:
 
 
 def check_live(sources: list[Source], recorded: dict, contract: dict) -> int:
-    ceiling = quantity(contract["maxCombinedDirectoryManifestsSize"],
-                       f"{CONTRACT.relative_to(ROOT)} maxCombinedDirectoryManifestsSize")
+    ceiling = quantity(
+        contract["maxCombinedDirectoryManifestsSize"],
+        f"{CONTRACT.relative_to(ROOT)} maxCombinedDirectoryManifestsSize",
+    )
     problems: list[str] = []
     checked = 0
 
@@ -515,7 +582,8 @@ def check_live(sources: list[Source], recorded: dict, contract: dict) -> int:
         if files == 0:
             problems.append(
                 f"{key}: {src.repo_url} at {src.target_revision} has {src.path}/ but no "
-                f"manifest file in it. That source generates nothing.")
+                f"manifest file in it. That source generates nothing."
+            )
             continue
         print(f"        {key:24} {human(size):>9}  {files:3} file(s)  {src.target_revision}")
         rec = recorded.get(key) or {}
@@ -524,17 +592,21 @@ def check_live(sources: list[Source], recorded: dict, contract: dict) -> int:
                 f"{key} measures {size} byte(s) at {src.target_revision} and "
                 f"{RECORDS.relative_to(ROOT)} says {rec['bytes']}. The pin did not "
                 f"move, so the tag did — read what changed upstream before running "
-                f"--sync.")
+                f"--sync."
+            )
         if size > ceiling:
             problems.append(
                 f"{key} measures {human(size)}, over the "
                 f"{contract['maxCombinedDirectoryManifestsSize']} ceiling "
-                f"{CONTRACT.relative_to(ROOT)} records.")
+                f"{CONTRACT.relative_to(ROOT)} records."
+            )
 
     if not checked:
-        die("resolved no pinned directory source, so this run measured nothing. "
+        die(
+            "resolved no pinned directory source, so this run measured nothing. "
             "The offline gate reads the same corpus — if it finds sources and this "
-            "does not, the coordinates stopped resolving.")
+            "does not, the coordinates stopped resolving."
+        )
     if problems:
         print(f"FAIL  {len(problems)} problem(s) across {checked} pinned source(s):")
         for p in problems:
@@ -551,7 +623,7 @@ def sync(sources: list[Source], recorded: dict) -> int:
     out: dict[str, dict] = {}
     for key, src in sorted(keyed(sources).items()):
         if src.local is not None:
-            continue        # measured on every offline run; a record would go stale
+            continue  # measured on every offline run; a record would go stale
         rec = dict(coordinates(src))
         if src.templated:
             was = recorded.get(key) or {}
@@ -559,20 +631,23 @@ def sync(sources: list[Source], recorded: dict) -> int:
             rec["files"] = None
             rec["unbounded"] = was.get("unbounded", "")
             if not rec["unbounded"]:
-                die(f"{key} resolves its coordinates from a cluster annotation, so "
+                die(
+                    f"{key} resolves its coordinates from a cluster annotation, so "
                     f"nothing here can measure it. Add an `unbounded` note to "
                     f"{RECORDS.relative_to(ROOT)} saying what bounds it instead, then "
-                    f"re-run --sync.")
+                    f"re-run --sync."
+                )
             print(f"  recorded {key:24} unbounded")
         else:
             size, files = remeasure(src)
             if files == 0:
-                die(f"{key}: {src.path}/ at {src.target_revision} holds no manifest "
+                die(
+                    f"{key}: {src.path}/ at {src.target_revision} holds no manifest "
                     f"file. Recording a zero would make an unmeasured source look "
-                    f"like a small one.")
+                    f"like a small one."
+                )
             rec["bytes"], rec["files"] = size, files
-            print(f"  recorded {key:24} {human(size):>9}  {files:3} file(s)  "
-                  f"{src.target_revision}")
+            print(f"  recorded {key:24} {human(size):>9}  {files:3} file(s)  {src.target_revision}")
         out[key] = rec
 
     RECORDS.write_text(json.dumps({"_README": README, "sources": out}, indent=2) + "\n")
@@ -611,11 +686,14 @@ def self_test() -> int:
 
     remote = [s for s in real_sources if s.local is None and not s.templated]
     if not remote:
-        print("FAIL  no pinned directory source to break — the corpus this self-test "
-              "reasons about is not there.")
+        print(
+            "FAIL  no pinned directory source to break — the corpus this self-test "
+            "reasons about is not there."
+        )
         return 1
-    pinned = sorted(k for k, s in keyed(real_sources).items()
-                    if s.local is None and not s.templated)[0]
+    pinned = sorted(
+        k for k, s in keyed(real_sources).items() if s.local is None and not s.templated
+    )[0]
 
     breaks = []
 
@@ -623,8 +701,9 @@ def self_test() -> int:
     # comparison that was never made: crds/full does not fit a stock repo-server.
     stock = dict(real_contract)
     stock["maxCombinedDirectoryManifestsSize"] = real_contract.get("argoCdDefault", "10M")
-    breaks.append(("a source measured against the stock ArgoCD ceiling",
-                   real_sources, real_records, stock))
+    breaks.append(
+        ("a source measured against the stock ArgoCD ceiling", real_sources, real_records, stock)
+    )
 
     # A directory source nobody measured.
     r = copy.deepcopy(real_records)
@@ -633,28 +712,36 @@ def self_test() -> int:
 
     # A record for a source the catalog no longer has.
     r = copy.deepcopy(real_records)
-    r["retired-source"] = {"repoURL": "https://example.invalid", "targetRevision": "v0",
-                           "path": "crds", "recurse": False, "include": "", "exclude": "",
-                           "bytes": 1, "files": 1}
+    r["retired-source"] = {
+        "repoURL": "https://example.invalid",
+        "targetRevision": "v0",
+        "path": "crds",
+        "recurse": False,
+        "include": "",
+        "exclude": "",
+        "bytes": 1,
+        "files": 1,
+    }
     breaks.append(("a record no directory source claims", real_sources, r, real_contract))
 
     # The pin moved and the measurement did not.
     r = copy.deepcopy(real_records)
     r[pinned]["targetRevision"] = "some-other-tag"
-    breaks.append(("a record measured at a revision nothing pins",
-                   real_sources, r, real_contract))
+    breaks.append(("a record measured at a revision nothing pins", real_sources, r, real_contract))
 
     # A measurement of nothing, recorded as a pass.
     r = copy.deepcopy(real_records)
     r[pinned]["bytes"], r[pinned]["files"] = 0, 0
-    breaks.append(("a source recorded as zero bytes over zero files",
-                   real_sources, r, real_contract))
+    breaks.append(
+        ("a source recorded as zero bytes over zero files", real_sources, r, real_contract)
+    )
 
     # An unmeasurable source with no stated reason.
     r = copy.deepcopy(real_records)
     r[pinned]["bytes"] = None
-    breaks.append(("a source with no size and no reason it has none",
-                   real_sources, r, real_contract))
+    breaks.append(
+        ("a source with no size and no reason it has none", real_sources, r, real_contract)
+    )
 
     failures = []
     for label, s, r, c in breaks:
@@ -679,12 +766,17 @@ def self_test() -> int:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--live", action="store_true",
-                    help="clone each pinned source and re-measure it (network)")
-    ap.add_argument("--sync", action="store_true",
-                    help="rewrite the size records from upstream (network)")
-    ap.add_argument("--self-test", action="store_true",
-                    help="break the offline gate's inputs and confirm each is caught")
+    ap.add_argument(
+        "--live", action="store_true", help="clone each pinned source and re-measure it (network)"
+    )
+    ap.add_argument(
+        "--sync", action="store_true", help="rewrite the size records from upstream (network)"
+    )
+    ap.add_argument(
+        "--self-test",
+        action="store_true",
+        help="break the offline gate's inputs and confirm each is caught",
+    )
     args = ap.parse_args(argv)
 
     if args.self_test:

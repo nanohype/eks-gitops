@@ -48,7 +48,10 @@ Verdict = tuple[int, list[str]]
 # through this one pattern: a phrase only one of them knew would be an outage
 # that one reports as a run that could not verify and the other as a verdict on
 # a signature. Matched ignoring case.
-TRANSPORT_FAILURE = re.compile(r"dial tcp|no such host|i/o timeout|connection refused|connection reset|broken pipe|TLS handshake timeout|context deadline exceeded|Client\.Timeout exceeded|unexpected EOF|tuf: failed to download|unexpected status code (?:429|5[0-9][0-9])|toomanyrequests|\]\[(?:429|5[0-9][0-9])\]", re.IGNORECASE)
+TRANSPORT_FAILURE = re.compile(
+    r"dial tcp|no such host|i/o timeout|connection refused|connection reset|broken pipe|TLS handshake timeout|context deadline exceeded|Client\.Timeout exceeded|unexpected EOF|tuf: failed to download|unexpected status code (?:429|5[0-9][0-9])|toomanyrequests|\]\[(?:429|5[0-9][0-9])\]",
+    re.IGNORECASE,
+)
 
 # The terminal colour codes zerolog's console writer, which the verifier logs
 # through, wraps field names and values in.
@@ -88,7 +91,7 @@ def transport_failures(text: str) -> list[str]:
         found = TRANSPORT_FAILURE.search(line)
         if found is None:
             continue
-        excerpt = line[max(0, found.start() - CONTEXT):][:WIDTH]
+        excerpt = line[max(0, found.start() - CONTEXT) :][:WIDTH]
         if excerpt in quoted:
             continue
         quoted.append(excerpt)
@@ -209,8 +212,9 @@ class Refusal:
 
 def shown(refusal: Refusal) -> list[str]:
     """The refusal as a diagnostic quotes it, with the checkout's path elided."""
-    return [f"{INDENT}{line.replace(refusal.root + '/', '')}"[:WIDTH]
-            for line in lines_of(refusal.text)]
+    return [
+        f"{INDENT}{line.replace(refusal.root + '/', '')}"[:WIDTH] for line in lines_of(refusal.text)
+    ]
 
 
 def verifier_lines(log: str) -> list[str]:
@@ -233,18 +237,24 @@ def broken_link(refusal: Refusal) -> str:
     the verifier's reads of the registry, the trusted root and Rekor.
     """
     if not ANSWERED.search(refusal.text):
-        return (f"{refusal.overlay}: kubectl's request for {refusal.what} ended with no answer "
-                f"from the API server:\nits {refusal.request_timeout}s bound passed or its "
-                f"connection failed.")
+        return (
+            f"{refusal.overlay}: kubectl's request for {refusal.what} ended with no answer "
+            f"from the API server:\nits {refusal.request_timeout}s bound passed or its "
+            f"connection failed."
+        )
     if WEBHOOK_UNANSWERED in refusal.text:
-        return (f"{refusal.overlay}: the API server got no answer from Kyverno's admission "
-                f"webhook for {refusal.what}.")
+        return (
+            f"{refusal.overlay}: the API server got no answer from Kyverno's admission "
+            f"webhook for {refusal.what}."
+        )
     return unreachable(refusal)
 
 
 def unreachable(refusal: Refusal) -> str:
-    return (f"{refusal.overlay} could not reach the registry, the Sigstore trusted root or "
-            f"Rekor for {refusal.what}.")
+    return (
+        f"{refusal.overlay} could not reach the registry, the Sigstore trusted root or "
+        f"Rekor for {refusal.what}."
+    )
 
 
 def refusal_cause(refusal: Refusal) -> Verdict:
@@ -268,15 +278,21 @@ def refusal_cause(refusal: Refusal) -> Verdict:
     """
     cause = transport_failures(refusal.text)
     if cause:
-        return CANNOT_RUN, [*shown(refusal), *(f"{INDENT}{c}" for c in cause),
-                            f"Cannot run: {broken_link(refusal)}"]
+        return CANNOT_RUN, [
+            *shown(refusal),
+            *(f"{INDENT}{c}" for c in cause),
+            f"Cannot run: {broken_link(refusal)}",
+        ]
     if refusal.log is None:
         return AGAIN, []
     lines = verifier_lines(refusal.log)
     cause = transport_failures("\n".join(lines))
     if cause:
-        return CANNOT_RUN, [*shown(refusal), *(f"{INDENT}{c}" for c in cause),
-                            f"Cannot run: {unreachable(refusal)}"]
+        return CANNOT_RUN, [
+            *shown(refusal),
+            *(f"{INDENT}{c}" for c in cause),
+            f"Cannot run: {unreachable(refusal)}",
+        ]
     if IDENTITY_MESSAGE in refusal.text and not lines:
         return CANNOT_RUN, [
             *shown(refusal),
@@ -316,12 +332,15 @@ def foreign_identity(refusal: Refusal, admitted: bool, actions: str) -> Verdict:
     if status != HOLDS:
         return status, said
     if IDENTITY_MESSAGE not in refusal.text:
-        return FINDING, [f"  FAIL  {refusal.what} was refused for a reason other than its "
-                         f"identity:", *shown(refusal)]
+        return FINDING, [
+            f"  FAIL  {refusal.what} was refused for a reason other than its identity:",
+            *shown(refusal),
+        ]
     if blocks:
         return HOLDS, [f"  ok    denied {refusal.what}: {IDENTITY_MESSAGE}"]
-    return FINDING, [f"  FAIL  denied {refusal.what} under {actions}, which reports and does "
-                     f"not block."]
+    return FINDING, [
+        f"  FAIL  denied {refusal.what} under {actions}, which reports and does not block."
+    ]
 
 
 # Verification and execution resolve a tag separately, so a tag admitted without
@@ -338,10 +357,13 @@ PIN_SITES: dict[str, tuple[str, tuple[str, ...]]] = {
     "init-container": ("{tagged} in the init container", RESOLVED_TWICE),
     "container": ("{tagged} in the container", RESOLVED_TWICE),
     "ephemeral-container": ("{tagged} as an ephemeral container", ()),
-    "deployment-pod": ("the Deployment's pod", (
-        "        A controller-created pod is the one that runs, and it must carry the",
-        "        digest admission verified.",
-    )),
+    "deployment-pod": (
+        "the Deployment's pod",
+        (
+            "        A controller-created pod is the one that runs, and it must carry the",
+            "        digest admission verified.",
+        ),
+    ),
 }
 
 
@@ -356,8 +378,10 @@ def pin(site: str, tagged: str, image: str) -> Verdict:
     subject = subject.format(tagged=tagged)
     if pinned(tagged, image):
         return HOLDS, [f"  ok    admitted {subject} as {image}"]
-    return FINDING, [f"  FAIL  admitted {subject} as '{image}', with no digest joined to the "
-                     f"tag.", *costs]
+    return FINDING, [
+        f"  FAIL  admitted {subject} as '{image}', with no digest joined to the tag.",
+        *costs,
+    ]
 
 
 # ── Command line ─────────────────────────────────────────────────────────────
@@ -377,8 +401,14 @@ def refusal_of(args: argparse.Namespace) -> Refusal:
     log = None
     if args.log is not None:
         log = read(args.log)
-    return Refusal(what=args.what, overlay=args.overlay, root=args.root,
-                   request_timeout=args.request_timeout, text=read(args.refusal), log=log)
+    return Refusal(
+        what=args.what,
+        overlay=args.overlay,
+        root=args.root,
+        request_timeout=args.request_timeout,
+        text=read(args.refusal),
+        log=log,
+    )
 
 
 def answer_bound(args: argparse.Namespace) -> Verdict:
@@ -411,23 +441,35 @@ def answer_foreign_identity(args: argparse.Namespace) -> Verdict:
 def parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="verdicts.py",
-        description="Every verdict the two gates on the image-verification path reach.")
+        description="Every verdict the two gates on the image-verification path reach.",
+    )
     questions = ap.add_subparsers(dest="question", required=True)
 
     # What a question about a refusal is read beside.
     refused = argparse.ArgumentParser(add_help=False)
     refused.add_argument("--what", required=True, help="what was refused")
-    refused.add_argument("--overlay", required=True,
-                         help="the overlay the request went through, relative to the checkout")
-    refused.add_argument("--root", required=True,
-                         help="the checkout, as the paths in the refusal spell it")
-    refused.add_argument("--request-timeout", type=int, required=True,
-                         help="the seconds kubectl's request was bounded by")
+    refused.add_argument(
+        "--overlay",
+        required=True,
+        help="the overlay the request went through, relative to the checkout",
+    )
+    refused.add_argument(
+        "--root", required=True, help="the checkout, as the paths in the refusal spell it"
+    )
+    refused.add_argument(
+        "--request-timeout",
+        type=int,
+        required=True,
+        help="the seconds kubectl's request was bounded by",
+    )
     refused.add_argument("--refusal", required=True, help="a file holding the refusal")
     refused.add_argument("--log", help="a file holding what the admission controller logged")
 
-    def ask(name: str, answer: Callable[[argparse.Namespace], Verdict],
-            parents: Sequence[argparse.ArgumentParser] = ()) -> argparse.ArgumentParser:
+    def ask(
+        name: str,
+        answer: Callable[[argparse.Namespace], Verdict],
+        parents: Sequence[argparse.ArgumentParser] = (),
+    ) -> argparse.ArgumentParser:
         sub = questions.add_parser(name, parents=list(parents))
         sub.set_defaults(answer=answer)
         return sub

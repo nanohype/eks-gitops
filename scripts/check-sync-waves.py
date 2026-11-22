@@ -142,17 +142,15 @@ CRD_PRECEDENCE: dict[str, dict[str, Any]] = {
         "consumers": {
             # `kustomize build` of every policies/kyverno overlay renders
             # ValidatingPolicy, MutatingPolicy and ImageValidatingPolicy.
-            "kyverno-policies.yaml":
-                "policies/kyverno renders ValidatingPolicy, MutatingPolicy and "
-                "ImageValidatingPolicy (policies.kyverno.io/v1)",
+            "kyverno-policies.yaml": "policies/kyverno renders ValidatingPolicy, MutatingPolicy and "
+            "ImageValidatingPolicy (policies.kyverno.io/v1)",
         },
     },
     "argo-workflows-crds.yaml": {
         "group": "argoproj.io",
         "consumers": {
             # `helm template op charts/operator` renders kind: WorkflowTemplate.
-            "addons-agent-operator.yaml":
-                "charts/operator renders a WorkflowTemplate (eks-agent-platform)",
+            "addons-agent-operator.yaml": "charts/operator renders a WorkflowTemplate (eks-agent-platform)",
         },
         # These CRDs are sourced from argoproj/argo-workflows at the tag of the
         # controller the chart installs, so the two must move together.
@@ -180,9 +178,8 @@ CRD_PRECEDENCE: dict[str, dict[str, Any]] = {
         "consumers": {
             # `kustomize build addons/ai-platform/gateway-classes/overlays/<env>`
             # renders kind: GatewayClass (gateway.networking.k8s.io/v1).
-            "addons-ai-platform-kustomize.yaml":
-                "addons/ai-platform/gateway-classes renders the envoy-ai-gateway "
-                "GatewayClass (gateway.networking.k8s.io/v1)",
+            "addons-ai-platform-kustomize.yaml": "addons/ai-platform/gateway-classes renders the envoy-ai-gateway "
+            "GatewayClass (gateway.networking.k8s.io/v1)",
         },
         # The other Gateway API users are controllers, not consumers in this
         # sense: gateway-helm and ai-gateway-helm render no Gateway API object
@@ -209,16 +206,19 @@ def chart_locks() -> list[str]:
     """Every CHART_LOCKS pair whose two pins disagree, or cannot be read."""
     problems = []
     for appset, controller, crds in CHART_LOCKS:
-        got = {chart: _chart_version(APPSET_DIR / appset, chart)
-               for chart in (controller, crds)}
+        got = {chart: _chart_version(APPSET_DIR / appset, chart) for chart in (controller, crds)}
         missing = [chart for chart, version in got.items() if version is None]
         if missing:
-            problems.append(f"chart lock: {', '.join(missing)} not pinned in {appset} "
-                            f"— the lock cannot be evaluated")
+            problems.append(
+                f"chart lock: {', '.join(missing)} not pinned in {appset} "
+                f"— the lock cannot be evaluated"
+            )
         elif got[controller] != got[crds]:
-            problems.append(f"chart lock: {appset} pins {controller} {got[controller]} "
-                            f"but {crds} {got[crds]} — the controller and its CRDs "
-                            f"move together")
+            problems.append(
+                f"chart lock: {appset} pins {controller} {got[controller]} "
+                f"but {crds} {got[crds]} — the controller and its CRDs "
+                f"move together"
+            )
     return problems
 
 
@@ -245,8 +245,9 @@ def _target_revision(appset_file: pathlib.Path) -> str | None:
     """The git targetRevision of a single-source (manifest directory) appset."""
     docs = gatelib.read_yaml_all(appset_file)
     doc = docs[0] if docs else {}
-    for src in (doc["spec"]["template"]["spec"].get("sources")
-                or [doc["spec"]["template"]["spec"].get("source") or {}]):
+    for src in doc["spec"]["template"]["spec"].get("sources") or [
+        doc["spec"]["template"]["spec"].get("source") or {}
+    ]:
         if src.get("repoURL", "").startswith("https://github.com/"):
             return src.get("targetRevision")
     return None
@@ -256,7 +257,7 @@ def _chart_version(appset_file: pathlib.Path, chart: str) -> str | None:
     """The pinned version of `chart` in a Helm-sourced appset."""
     docs = gatelib.read_yaml_all(appset_file)
     doc = docs[0] if docs else {}
-    for src in (doc["spec"]["template"]["spec"].get("sources") or []):
+    for src in doc["spec"]["template"]["spec"].get("sources") or []:
         if src.get("chart") == chart:
             return str(src.get("targetRevision"))
     for el in _list_elements(doc["spec"]):
@@ -274,7 +275,6 @@ def _single_path(spec: dict) -> str | None:
         if src.get("path") and "{{" not in src["path"]:
             return src["path"]
     return None
-
 
 
 # The README publishes a sync-wave table. It is the first thing a reader consults
@@ -344,9 +344,7 @@ def main() -> int:
         else:
             path = _single_path(spec)
             cat = _category(name, path)
-            tmpl_ann = (
-                spec.get("template", {}).get("metadata", {}).get("annotations", {}) or {}
-            )
+            tmpl_ann = spec.get("template", {}).get("metadata", {}).get("annotations", {}) or {}
             wave = tmpl_ann.get(WAVE_ANNOTATION, ann.get(WAVE_ANNOTATION))
             addon = (path or name).rsplit("/", 1)[-1]
             if wave is None:
@@ -367,7 +365,9 @@ def main() -> int:
     prev_cat, prev_wave = None, None
     for cat, primary in PRIMARY_ORDER:
         if primary not in appset_waves:
-            errors.append(f"category '{cat}': primary appset {primary} not found or has no sync-wave")
+            errors.append(
+                f"category '{cat}': primary appset {primary} not found or has no sync-wave"
+            )
             continue
         wave = appset_waves[primary]
         marker = "ok"
@@ -394,9 +394,7 @@ def main() -> int:
             continue
         lo, hi = BANDS[cat]
         if not lo <= wave <= hi:
-            errors.append(
-                f"{name}: {addon} wave {wave} outside {cat} band [{lo}, {hi}]"
-            )
+            errors.append(f"{name}: {addon} wave {wave} outside {cat} band [{lo}, {hi}]")
             print(f"  CONFLICT  {cat:15} {addon:24} wave {wave:>3}  (band [{lo}, {hi}])")
 
     # C. CRD precedence — the ordering A and B structurally cannot see.
@@ -431,8 +429,10 @@ def main() -> int:
                 )
                 print(f"  UNEXPLAINED {group:28} {provider} @{pw}")
             else:
-                print(f"  none      {group:28} {provider} @{pw} "
-                      f"(no ApplicationSet renders this group)")
+                print(
+                    f"  none      {group:28} {provider} @{pw} "
+                    f"(no ApplicationSet renders this group)"
+                )
             continue
         for consumer, evidence in sorted(edge["consumers"].items()):
             if consumer not in appset_waves:
@@ -449,11 +449,9 @@ def main() -> int:
                     f"manifests but {provider} installs those CRDs at wave {pw} "
                     f"— the CRDs must exist first ({evidence})"
                 )
-                print(f"  CONFLICT  {group:28} {provider} @{pw} -> "
-                      f"{consumer} @{cw}")
+                print(f"  CONFLICT  {group:28} {provider} @{pw} -> {consumer} @{cw}")
             else:
-                print(f"  ok        {group:28} {provider} @{pw} -> "
-                      f"{consumer} @{cw}")
+                print(f"  ok        {group:28} {provider} @{pw} -> {consumer} @{cw}")
 
         lock = edge.get("version_lock")
         if not lock:
@@ -475,8 +473,10 @@ def main() -> int:
                 f"--version {chart_ver}`, record its appVersion here, and move "
                 f"{provider} to that tag in the same commit"
             )
-            print(f"  STALE     version lock  records {lock['chart']} "
-                  f"{lock['chart_version']}, pin is {chart_ver}")
+            print(
+                f"  STALE     version lock  records {lock['chart']} "
+                f"{lock['chart_version']}, pin is {chart_ver}"
+            )
             continue
         want = lock["app_version"]
         if got != want:
@@ -488,8 +488,9 @@ def main() -> int:
             )
             print(f"  CONFLICT  version lock  {got} != {want}")
         else:
-            print(f"  ok        version lock  {provider} @ {got} tracks "
-                  f"{lock['chart']} {chart_ver}")
+            print(
+                f"  ok        version lock  {provider} @ {got} tracks {lock['chart']} {chart_ver}"
+            )
 
     print("\nChart locks (a controller and its CRD chart at one version):")
     lock_problems = chart_locks()

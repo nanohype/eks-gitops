@@ -36,27 +36,32 @@ HAS_KUSTOMIZE = shutil.which("kustomize") is not None
 
 
 def rule_group(name, *rules):
-    return {"apiVersion": "grafana.integreatly.org/v1beta1",
-            "kind": "GrafanaAlertRuleGroup",
-            "metadata": {"name": name},
-            "spec": {"rules": [{"title": t, "labels": labels}
-                               for t, labels in rules]}}
+    return {
+        "apiVersion": "grafana.integreatly.org/v1beta1",
+        "kind": "GrafanaAlertRuleGroup",
+        "metadata": {"name": name},
+        "spec": {"rules": [{"title": t, "labels": labels} for t, labels in rules]},
+    }
 
 
 def contact_point(name):
-    return {"apiVersion": "grafana.integreatly.org/v1beta1",
-            "kind": "GrafanaContactPoint",
-            "metadata": {"name": name},
-            "spec": {"name": name, "receivers": []}}
+    return {
+        "apiVersion": "grafana.integreatly.org/v1beta1",
+        "kind": "GrafanaContactPoint",
+        "metadata": {"name": name},
+        "spec": {"name": name, "receivers": []},
+    }
 
 
 def policy(route, name="routes"):
     """`name` is a parameter because the render rejects two objects sharing one:
     the two-policy case has to plant two distinct resources to reach the gate."""
-    return {"apiVersion": "grafana.integreatly.org/v1beta1",
-            "kind": "GrafanaNotificationPolicy",
-            "metadata": {"name": name},
-            "spec": {"route": route}}
+    return {
+        "apiVersion": "grafana.integreatly.org/v1beta1",
+        "kind": "GrafanaNotificationPolicy",
+        "metadata": {"name": name},
+        "spec": {"route": route},
+    }
 
 
 def exact(key, value):
@@ -86,7 +91,8 @@ class TheVerdict(unittest.TestCase):
                 resources.append(f"  - alerting/{name}")
         (base / "kustomization.yaml").write_text(
             "apiVersion: kustomize.config.k8s.io/v1beta1\n"
-            "kind: Kustomization\nresources:\n" + "\n".join(resources) + "\n")
+            "kind: Kustomization\nresources:\n" + "\n".join(resources) + "\n"
+        )
         saved = (gate.ROOT, gate.ALERTING, gate.KUSTOMIZE_ROOT)
         gate.ROOT, gate.ALERTING, gate.KUSTOMIZE_ROOT = root, alerting, base
         try:
@@ -96,14 +102,25 @@ class TheVerdict(unittest.TestCase):
             gate.ROOT, gate.ALERTING, gate.KUSTOMIZE_ROOT = saved
         return rc, out.getvalue()
 
-    ROUTED = policy({"receiver": "low",
-                     "routes": [{"receiver": "urgent", "matchers": [exact("severity", "page")]},
-                                {"receiver": "low", "matchers": [exact("severity", "ticket")]}]})
+    ROUTED = policy(
+        {
+            "receiver": "low",
+            "routes": [
+                {"receiver": "urgent", "matchers": [exact("severity", "page")]},
+                {"receiver": "low", "matchers": [exact("severity", "ticket")]},
+            ],
+        }
+    )
 
     def healthy(self):
-        return (self.ROUTED, contact_point("urgent"), contact_point("low"),
-                rule_group("g", ("Paging", {"severity": "page"}),
-                           ("Ticketing", {"severity": "ticket"})))
+        return (
+            self.ROUTED,
+            contact_point("urgent"),
+            contact_point("low"),
+            rule_group(
+                "g", ("Paging", {"severity": "page"}), ("Ticketing", {"severity": "ticket"})
+            ),
+        )
 
     def test_a_routed_catalog_passes(self):
         """The control. Without it every case below could be failing for a
@@ -115,8 +132,11 @@ class TheVerdict(unittest.TestCase):
         """The defect, exactly: the rule parses, evaluates and changes state,
         and its label selects no route."""
         rc, out = self.verdict(
-            self.ROUTED, contact_point("urgent"), contact_point("low"),
-            rule_group("g", ("Loud", {"severity": "critical"})))
+            self.ROUTED,
+            contact_point("urgent"),
+            contact_point("low"),
+            rule_group("g", ("Loud", {"severity": "critical"})),
+        )
         self.assertEqual(rc, 1)
         self.assertIn("severity=critical", out)
         self.assertIn("root receiver", out)
@@ -125,8 +145,11 @@ class TheVerdict(unittest.TestCase):
         """Same bucket by a different path: no label at all takes the root
         route as surely as an unrouted value does."""
         rc, out = self.verdict(
-            self.ROUTED, contact_point("urgent"), contact_point("low"),
-            rule_group("g", ("Silent", {"service": "portal"})))
+            self.ROUTED,
+            contact_point("urgent"),
+            contact_point("low"),
+            rule_group("g", ("Silent", {"service": "portal"})),
+        )
         self.assertEqual(rc, 1)
         self.assertIn("carries no 'severity' label", out)
 
@@ -140,25 +163,34 @@ class TheVerdict(unittest.TestCase):
     def test_two_policies_are_reported(self):
         """Grafana keeps one tree per instance, so a second is not additional
         routing — it is whichever reconciled last."""
-        rc, out = self.verdict(self.ROUTED, policy({"receiver": "low"}, "second"),
-                               contact_point("low"),
-                               rule_group("g", ("Paging", {"severity": "page"})))
+        rc, out = self.verdict(
+            self.ROUTED,
+            policy({"receiver": "low"}, "second"),
+            contact_point("low"),
+            rule_group("g", ("Paging", {"severity": "page"})),
+        )
         self.assertEqual(rc, 1)
         self.assertIn("2 GrafanaNotificationPolicy", out)
 
     def test_a_policy_matching_on_nothing_is_reported(self):
         """A tree with no matcher routes everything to the root, so the
         severities the rules carry decide nothing."""
-        rc, out = self.verdict(policy({"receiver": "low"}), contact_point("low"),
-                               rule_group("g", ("Paging", {"severity": "page"})))
+        rc, out = self.verdict(
+            policy({"receiver": "low"}),
+            contact_point("low"),
+            rule_group("g", ("Paging", {"severity": "page"})),
+        )
         self.assertEqual(rc, 1)
         self.assertIn("matches on no label at all", out)
 
     def test_a_route_to_an_undeclared_receiver_is_reported(self):
         rc, out = self.verdict(
-            self.ROUTED, contact_point("low"),
-            rule_group("g", ("Paging", {"severity": "page"}),
-                       ("Ticketing", {"severity": "ticket"})))
+            self.ROUTED,
+            contact_point("low"),
+            rule_group(
+                "g", ("Paging", {"severity": "page"}), ("Ticketing", {"severity": "ticket"})
+            ),
+        )
         self.assertEqual(rc, 1)
         self.assertIn("receiver 'urgent'", out)
         self.assertIn("nowhere to deliver", out)
@@ -168,18 +200,21 @@ class TheVerdict(unittest.TestCase):
         declaration nobody re-reads, and it widens the same way an unused
         exemption does."""
         rc, out = self.verdict(
-            self.ROUTED, contact_point("urgent"), contact_point("low"),
+            self.ROUTED,
+            contact_point("urgent"),
+            contact_point("low"),
             contact_point("orphan"),
-            rule_group("g", ("Paging", {"severity": "page"}),
-                       ("Ticketing", {"severity": "ticket"})))
+            rule_group(
+                "g", ("Paging", {"severity": "page"}), ("Ticketing", {"severity": "ticket"})
+            ),
+        )
         self.assertEqual(rc, 1)
         self.assertIn("'orphan'", out)
 
     def test_no_rule_group_at_all_cannot_run(self):
         """Exit 2. A directory with no rules is a gate that examined nothing,
         which reports the same as a catalog whose rules are all routed."""
-        rc, out = self.verdict(self.ROUTED, contact_point("urgent"),
-                               contact_point("low"))
+        rc, out = self.verdict(self.ROUTED, contact_point("urgent"), contact_point("low"))
         self.assertEqual(rc, gate.gatelib.CANNOT_RUN)
         self.assertIn("examined no rule", out)
 
@@ -187,8 +222,7 @@ class TheVerdict(unittest.TestCase):
         saved = gate.ALERTING
         gate.ALERTING = pathlib.Path(tempfile.mkdtemp()) / "gone"
         try:
-            with self.assertRaises(SystemExit) as caught, \
-                    contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(SystemExit) as caught, contextlib.redirect_stdout(io.StringIO()):
                 gate.documents(gate.ALERTING)
             self.assertEqual(caught.exception.code, gate.gatelib.CANNOT_RUN)
         finally:
@@ -252,11 +286,13 @@ class WhatShipsDecides(unittest.TestCase):
             (alerting / name).write_text(yaml.safe_dump(doc))
             resources.append(f"  - alerting/{name}")
         (base / "elsewhere.yaml").write_text(
-            yaml.safe_dump(policy({"receiver": "low"}, "second-tree")))
+            yaml.safe_dump(policy({"receiver": "low"}, "second-tree"))
+        )
         resources.append("  - elsewhere.yaml")
         (base / "kustomization.yaml").write_text(
             "apiVersion: kustomize.config.k8s.io/v1beta1\n"
-            "kind: Kustomization\nresources:\n" + "\n".join(resources) + "\n")
+            "kind: Kustomization\nresources:\n" + "\n".join(resources) + "\n"
+        )
         saved = (gate.ROOT, gate.ALERTING, gate.KUSTOMIZE_ROOT)
         gate.ROOT, gate.ALERTING, gate.KUSTOMIZE_ROOT = root, alerting, base
         try:
@@ -275,9 +311,12 @@ class WhatShipsDecides(unittest.TestCase):
         base.mkdir(parents=True)
         (base / "kustomization.yaml").write_text(
             "apiVersion: kustomize.config.k8s.io/v1beta1\n"
-            "kind: Kustomization\nresources:\n  - alerting/gone.yaml\n")
-        with self.assertRaises(SystemExit) as caught, \
-                contextlib.redirect_stdout(io.StringIO()) as out:
+            "kind: Kustomization\nresources:\n  - alerting/gone.yaml\n"
+        )
+        with (
+            self.assertRaises(SystemExit) as caught,
+            contextlib.redirect_stdout(io.StringIO()) as out,
+        ):
             gate.shipped(base)
         self.assertEqual(caught.exception.code, gate.gatelib.CANNOT_RUN)
         self.assertIn("could not be read", out.getvalue())
@@ -308,36 +347,58 @@ class TheShippedRootIsTheOneDelivered(unittest.TestCase):
                 continue
             for el in gate.gatelib.list_elements(doc):
                 if el.get("path"):
-                    delivered.add(
-                        source_path.replace("{{ .path }}", str(el["path"])).strip("/"))
-        self.assertIn(want, delivered,
-                      f"{want} is the root this gate renders and no ApplicationSet "
-                      f"delivers it, so the gate is asserting over a tree that "
-                      f"reaches no cluster")
+                    delivered.add(source_path.replace("{{ .path }}", str(el["path"])).strip("/"))
+        self.assertIn(
+            want,
+            delivered,
+            f"{want} is the root this gate renders and no ApplicationSet "
+            f"delivers it, so the gate is asserting over a tree that "
+            f"reaches no cluster",
+        )
 
 
 class TheKeysComeFromThePolicy(unittest.TestCase):
     """Not from a list here, so a routing decision added later is covered."""
 
     def test_a_key_other_than_severity_is_required_of_every_rule(self):
-        keys = gate.routing_keys({"receiver": "r", "routes": [
-            {"receiver": "r", "matchers": [exact("team", "platform")]}]})
+        keys = gate.routing_keys(
+            {
+                "receiver": "r",
+                "routes": [{"receiver": "r", "matchers": [exact("team", "platform")]}],
+            }
+        )
         self.assertEqual(keys, {"team"})
 
     def test_every_key_the_tree_matches_on_is_collected(self):
-        keys = gate.routing_keys({"receiver": "r", "routes": [
-            {"receiver": "a", "matchers": [exact("severity", "page")]},
-            {"receiver": "b", "matchers": [exact("team", "platform")],
-             "routes": [{"receiver": "c", "matchers": [exact("region", "us-west-2")]}]}]})
+        keys = gate.routing_keys(
+            {
+                "receiver": "r",
+                "routes": [
+                    {"receiver": "a", "matchers": [exact("severity", "page")]},
+                    {
+                        "receiver": "b",
+                        "matchers": [exact("team", "platform")],
+                        "routes": [{"receiver": "c", "matchers": [exact("region", "us-west-2")]}],
+                    },
+                ],
+            }
+        )
         self.assertEqual(keys, {"severity", "team", "region"})
 
     def test_a_nested_route_is_a_delivery_decision_too(self):
         """`routes` nests, and a child route delivers as much as a top-level
         one — walking only the first level reports a nested destination as
         absent."""
-        root = {"receiver": "r", "routes": [
-            {"receiver": "a", "matchers": [exact("severity", "page")],
-             "routes": [{"receiver": "deep", "matchers": [exact("severity", "urgent")]}]}]}
+        root = {
+            "receiver": "r",
+            "routes": [
+                {
+                    "receiver": "a",
+                    "matchers": [exact("severity", "page")],
+                    "routes": [{"receiver": "deep", "matchers": [exact("severity", "urgent")]}],
+                }
+            ],
+        }
         self.assertEqual(len(list(gate.routes_of(root))), 3)
         self.assertIn("deep", {n.get("receiver") for n in gate.routes_of(root)})
 
@@ -345,8 +406,10 @@ class TheKeysComeFromThePolicy(unittest.TestCase):
         """Deciding which values a pattern admits means running the pattern, and
         a gate reporting a value as routed because it looked like it might match
         would be asserting the thing it exists to check."""
-        node = {"receiver": "r", "matchers": [
-            {"name": "severity", "value": "page|ticket", "isRegex": True}]}
+        node = {
+            "receiver": "r",
+            "matchers": [{"name": "severity", "value": "page|ticket", "isRegex": True}],
+        }
         self.assertEqual(gate.routing_keys(node), {"severity"})
         self.assertEqual(gate.matcher_pairs(node), [])
 
@@ -362,9 +425,12 @@ class TheShippedCatalogRoutes(unittest.TestCase):
         """A catalog using one severity would pass a gate that routed only that
         one, so the corpus this runs over is asserted rather than assumed."""
         docs = gate.documents(gate.ALERTING)
-        severities = {str(labels.get("severity"))
-                      for _, d in docs if d.get("kind") == gate.RULE_GROUP
-                      for _, labels in gate.rule_labels(d)}
+        severities = {
+            str(labels.get("severity"))
+            for _, d in docs
+            if d.get("kind") == gate.RULE_GROUP
+            for _, labels in gate.rule_labels(d)
+        }
         self.assertGreaterEqual(len(severities), 2, severities)
 
     def test_every_declared_contact_point_takes_its_secret_from_a_reference(self):
@@ -375,9 +441,11 @@ class TheShippedCatalogRoutes(unittest.TestCase):
                 continue
             for receiver in (doc.get("spec") or {}).get("receivers") or []:
                 with self.subTest(contact_point=path.name, type=receiver.get("type")):
-                    self.assertTrue(receiver.get("valuesFrom"),
-                                    "this receiver carries no valuesFrom, so whatever "
-                                    "it authenticates with is committed here")
+                    self.assertTrue(
+                        receiver.get("valuesFrom"),
+                        "this receiver carries no valuesFrom, so whatever "
+                        "it authenticates with is committed here",
+                    )
 
 
 if __name__ == "__main__":

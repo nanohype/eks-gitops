@@ -72,11 +72,11 @@ def is_helm_template(path: pathlib.Path) -> bool:
 
 def docs(path: pathlib.Path) -> list[dict]:
     try:
-        return [d for d in yaml.safe_load_all(path.read_text(encoding="utf-8")) if isinstance(d, dict)]
+        return [
+            d for d in yaml.safe_load_all(path.read_text(encoding="utf-8")) if isinstance(d, dict)
+        ]
     except yaml.YAMLError as err:
-        raise SystemExit(
-            f"FAIL  {path.relative_to(ROOT)} is not parseable YAML: {err}"
-        ) from err
+        raise SystemExit(f"FAIL  {path.relative_to(ROOT)} is not parseable YAML: {err}") from err
 
 
 def key_paths(es: dict) -> list[str]:
@@ -84,10 +84,18 @@ def key_paths(es: dict) -> list[str]:
     spec = es.get("spec") or {}
     out = []
     for i, entry in enumerate(spec.get("dataFrom") or []):
-        if isinstance(entry, dict) and isinstance(entry.get("extract"), dict) and "key" in entry["extract"]:
+        if (
+            isinstance(entry, dict)
+            and isinstance(entry.get("extract"), dict)
+            and "key" in entry["extract"]
+        ):
             out.append(f"/spec/dataFrom/{i}/extract/key")
     for i, entry in enumerate(spec.get("data") or []):
-        if isinstance(entry, dict) and isinstance(entry.get("remoteRef"), dict) and "key" in entry["remoteRef"]:
+        if (
+            isinstance(entry, dict)
+            and isinstance(entry.get("remoteRef"), dict)
+            and "key" in entry["remoteRef"]
+        ):
             out.append(f"/spec/data/{i}/remoteRef/key")
     return out
 
@@ -140,9 +148,7 @@ def delivered_dirs(appset: dict) -> list[str]:
     if not PATH_TOKEN.search(template_path):
         return [template_path.strip("/")]
     return [
-        PATH_TOKEN.sub(str(e["path"]), template_path).strip("/")
-        for e in elements
-        if e.get("path")
+        PATH_TOKEN.sub(str(e["path"]), template_path).strip("/") for e in elements if e.get("path")
     ]
 
 
@@ -179,10 +185,16 @@ def patched_paths() -> dict[str, dict[str, set[str]]]:
                     # lost a member — and the gate reports on a delivery it
                     # never read. The parser's mark is relative to the patch
                     # body, so name the appset and the target too.
-                    first = str(exc).strip().splitlines()[0] if str(exc).strip() else exc.__class__.__name__
+                    first = (
+                        str(exc).strip().splitlines()[0]
+                        if str(exc).strip()
+                        else exc.__class__.__name__
+                    )
                     tgt = patch.get("target") or {}
-                    print(f"Cannot run: an inline kustomize patch in {path} is not parseable "
-                          f"YAML — {first}")
+                    print(
+                        f"Cannot run: an inline kustomize patch in {path} is not parseable "
+                        f"YAML — {first}"
+                    )
                     print(f"  target: {tgt or '(none declared)'}")
                     print("  The patch's replace ops decide which remote secret this gate")
                     print("  asserts against, so dropping it would check a delivery it never read.")
@@ -192,7 +204,9 @@ def patched_paths() -> dict[str, dict[str, set[str]]]:
                 for op in ops:
                     if isinstance(op, dict) and op.get("op") == "replace" and op.get("path"):
                         for dirname in dirs:
-                            out.setdefault(dirname, {}).setdefault(target["name"], set()).add(op["path"])
+                            out.setdefault(dirname, {}).setdefault(target["name"], set()).add(
+                                op["path"]
+                            )
     return out
 
 

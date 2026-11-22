@@ -66,21 +66,21 @@ ALERT_DIR = REPO_ROOT / "dashboards" / "base" / "alerting"
 # Keyed by (file, rule title, field). Every entry must name a rule that exists,
 # so a rename cannot leave a stale exemption quietly satisfying the check.
 ZERO_IS_HEALTHY = {
-    ("agent-platform.yaml", "AgentKillSwitchFired", "killSwitchFiredAt"):
-        "zero means the kill switch has never fired, which is the normal state "
-        "of every healthy BudgetPolicy — the guard selects the alert condition "
-        "rather than excluding a broken one",
+    (
+        "agent-platform.yaml",
+        "AgentKillSwitchFired",
+        "killSwitchFiredAt",
+    ): "zero means the kill switch has never fired, which is the normal state "
+    "of every healthy BudgetPolicy — the guard selects the alert condition "
+    "rather than excluding a broken one",
 }
 
 # kube_customresource_status_field{...} != 0   — the exclusion
-GUARD = re.compile(
-    r"(kube_customresource_status_field\{[^}]*\})\s*!=\s*0")
+GUARD = re.compile(r"(kube_customresource_status_field\{[^}]*\})\s*!=\s*0")
 # kube_customresource_status_field{...} == bool 0   — the coverage
-COVER = re.compile(
-    r"(kube_customresource_status_field\{[^}]*\})\s*==\s*bool\s+0")
+COVER = re.compile(r"(kube_customresource_status_field\{[^}]*\})\s*==\s*bool\s+0")
 # The same, but without the bool modifier — matches the series, never fires.
-COVER_NO_BOOL = re.compile(
-    r"(kube_customresource_status_field\{[^}]*\})\s*==\s*0(?!\s*\))")
+COVER_NO_BOOL = re.compile(r"(kube_customresource_status_field\{[^}]*\})\s*==\s*0(?!\s*\))")
 
 
 def selectors(text: str, pattern: re.Pattern) -> set[str]:
@@ -109,8 +109,11 @@ def main() -> int:
     print("── Alert state coverage ──")
 
     for path in files:
-        groups = [d for d in yaml.safe_load_all(path.read_text())
-                  if isinstance(d, dict) and d.get("kind") == "GrafanaAlertRuleGroup"]
+        groups = [
+            d
+            for d in yaml.safe_load_all(path.read_text())
+            if isinstance(d, dict) and d.get("kind") == "GrafanaAlertRuleGroup"
+        ]
         for group in groups:
             exprs = rule_exprs(group)
             if not exprs:
@@ -136,12 +139,16 @@ def main() -> int:
                     field = re.search(r'field="([^"]+)"', sel)
                     key = (path.name, title, field.group(1) if field else "")
                     if key in ZERO_IS_HEALTHY:
-                        print(f"  healthy   {title}: zero is the healthy state "
-                              f"({key[2]}), no coverage required")
+                        print(
+                            f"  healthy   {title}: zero is the healthy state "
+                            f"({key[2]}), no coverage required"
+                        )
                         continue
                     if sel in covered:
-                        print(f"  ok        {title}: `!= 0` guard on "
-                              f"{sel[:56]}… is covered by a `== bool 0` rule")
+                        print(
+                            f"  ok        {title}: `!= 0` guard on "
+                            f"{sel[:56]}… is covered by a `== bool 0` rule"
+                        )
                     elif sel in covered_no_bool:
                         errors.append(
                             f"{name}: the rule covering the excluded zero state "
@@ -160,8 +167,10 @@ def main() -> int:
                         print(f"  UNCOVERED {title}: `!= 0` on {sel[:56]}…")
 
     if not guards_seen:
-        print("  FAIL  no `!= 0` guards found — this gate would pass vacuously; "
-              "if the idiom is gone, delete the gate")
+        print(
+            "  FAIL  no `!= 0` guards found — this gate would pass vacuously; "
+            "if the idiom is gone, delete the gate"
+        )
         return 1
 
     if errors:

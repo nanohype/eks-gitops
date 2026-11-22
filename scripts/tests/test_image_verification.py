@@ -94,14 +94,18 @@ def run_gate(doc, overlays=None, envs=None, kustomize=None) -> tuple[int, str]:
             d = group / "overlays" / env
             d.mkdir(parents=True)
             (d / "kustomization.yaml").write_text("resources: [../../base]\n")
-            answers[env] = tier(doc, env) if env in gate.EXPECTED_ACTIONS else tier(doc, "production")
+            answers[env] = (
+                tier(doc, env) if env in gate.EXPECTED_ACTIONS else tier(doc, "production")
+            )
         answers.update(overlays or {})
         stub = kustomize or Kustomize(answers)
         buf = io.StringIO()
-        with mock.patch.multiple(gate, ROOT=root, GROUP=group, POLICY=base), \
-             mock.patch.object(gate.gatelib, "require"), \
-             mock.patch.object(gate.subprocess, "run", stub), \
-             contextlib.redirect_stdout(buf):
+        with (
+            mock.patch.multiple(gate, ROOT=root, GROUP=group, POLICY=base),
+            mock.patch.object(gate.gatelib, "require"),
+            mock.patch.object(gate.subprocess, "run", stub),
+            contextlib.redirect_stdout(buf),
+        ):
             try:
                 gate.main()
             except SystemExit as exc:
@@ -132,19 +136,24 @@ def identity(spec) -> dict:
 # is what `cosign verify --certificate-identity <subject>
 # --certificate-oidc-issuer https://token.actions.githubusercontent.com <image>`
 # accepts for that image.
-_RELEASE = "https://github.com/nanohype/eks-agent-platform/.github/workflows/release.yaml@refs/tags/"
+_RELEASE = (
+    "https://github.com/nanohype/eks-agent-platform/.github/workflows/release.yaml@refs/tags/"
+)
 # cosign's legacy .sig/.att format.
 LEGACY_SIGNED_FIXTURES = {
     "ghcr.io/nanohype/eks-agent-platform/operator@sha256:"
-    "06a465237e0caeb3fecfd46ae7cd143c7dc27b7164143bb8fde7127081392549": _RELEASE + "operator-v0.6.1",
+    "06a465237e0caeb3fecfd46ae7cd143c7dc27b7164143bb8fde7127081392549": _RELEASE
+    + "operator-v0.6.1",
 }
 # Sigstore bundles, attached as OCI referrers. These must be the images the
 # pinned operator chart renders, so an operator chart bump moves them.
 BUNDLE_SIGNED_FIXTURES = {
     "ghcr.io/nanohype/eks-agent-platform/operator@sha256:"
-    "1e7d4ce9edbf602edc8cf72ca8dbff278b241122b56139a77f67eabe474d93ee": _RELEASE + "operator-v0.7.0",
+    "1e7d4ce9edbf602edc8cf72ca8dbff278b241122b56139a77f67eabe474d93ee": _RELEASE
+    + "operator-v0.7.0",
     "ghcr.io/nanohype/eks-agent-platform/eval-runner@sha256:"
-    "674c0120c381c9b7ab01289e1ed875607864e976d3407734f9eb5be2e65b37dd": _RELEASE + "eval-runner-v0.1.2",
+    "674c0120c381c9b7ab01289e1ed875607864e976d3407734f9eb5be2e65b37dd": _RELEASE
+    + "eval-runner-v0.1.2",
 }
 RELEASE_SIGNED_FIXTURES = {**LEGACY_SIGNED_FIXTURES, **BUNDLE_SIGNED_FIXTURES}
 SUITE = gate.ROOT / "policies" / "kyverno" / "tests"
@@ -156,9 +165,12 @@ def admitted_nanohype_images() -> set[str]:
     """Every ghcr.io/nanohype image in the container fields of a suite resource
     whose name a `pass` verify-images row lists."""
     manifest = yaml.safe_load((SUITE / "kyverno-test.yaml").read_text())
-    admitted = {name for row in manifest["results"]
-                if row.get("policy") == gate.POLICY_NAME and row.get("result") == "pass"
-                for name in row.get("resources") or []}
+    admitted = {
+        name
+        for row in manifest["results"]
+        if row.get("policy") == gate.POLICY_NAME and row.get("result") == "pass"
+        for name in row.get("resources") or []
+    }
     images = set()
     for rel in manifest["resources"]:
         for doc in yaml.safe_load_all((SUITE / rel).read_text()):
@@ -166,8 +178,11 @@ def admitted_nanohype_images() -> set[str]:
                 continue
             spec = doc.get("spec") or {}
             for field in gate.CONTAINER_FIELDS:
-                images |= {c["image"] for c in spec.get(field) or []
-                           if c["image"].startswith(gate.REGISTRY_PREFIX)}
+                images |= {
+                    c["image"]
+                    for c in spec.get(field) or []
+                    if c["image"].startswith(gate.REGISTRY_PREFIX)
+                }
     return images
 
 
@@ -191,13 +206,19 @@ def tag_pinned_releases() -> dict[str, str]:
     admission = load("check-policy-admission")
     docs = [yaml.safe_load(admission.RUNTIME_POD_MANIFEST)]
     manifest = yaml.safe_load((SUITE / "kyverno-test.yaml").read_text())
-    for path in [SUITE / rel for rel in manifest["resources"]] + sorted(DIGEST_SUITE.glob("*.yaml")):
+    for path in [SUITE / rel for rel in manifest["resources"]] + sorted(
+        DIGEST_SUITE.glob("*.yaml")
+    ):
         docs += [d for d in yaml.safe_load_all(path.read_text()) if d]
-    refs = {ref for doc in docs for ref in images_in(doc)
-            if ref.startswith(EKS_AGENT_PLATFORM) and "@" not in ref}
+    refs = {
+        ref
+        for doc in docs
+        for ref in images_in(doc)
+        if ref.startswith(EKS_AGENT_PLATFORM) and "@" not in ref
+    }
     releases = {}
     for ref in refs:
-        name, version = ref[len(EKS_AGENT_PLATFORM):].rsplit(":", 1)
+        name, version = ref[len(EKS_AGENT_PLATFORM) :].rsplit(":", 1)
         releases[ref] = _RELEASE + f"{name}-v{version}"
     return releases
 
@@ -206,8 +227,11 @@ class TheShippedPolicy(unittest.TestCase):
     def test_it_satisfies_the_contract(self):
         code, out = run_gate(copy.deepcopy(SHIPPED))
         self.assertEqual(code, 0, out)
-        self.assertIn("identity contract OK on the base and 3 rendered overlay(s) "
-                      "(development Audit, production Deny, staging Deny)", out)
+        self.assertIn(
+            "identity contract OK on the base and 3 rendered overlay(s) "
+            "(development Audit, production Deny, staging Deny)",
+            out,
+        )
 
     def test_its_subject_is_the_release_identity(self):
         """The constant and the policy name one expression; the gate compares them."""
@@ -234,9 +258,12 @@ class TheReleaseIdentity(unittest.TestCase):
     def test_the_branch_signed_fixture_subject_is_refused(self):
         """The identity on ghcr.io/nanohype/fab@sha256:9e415943…, the suite's
         branch-signed fixture."""
-        self.assertIsNone(re.search(
-            gate.SUBJECT_REGEXP,
-            "https://github.com/nanohype/fab/.github/workflows/ci.yml@refs/heads/main"))
+        self.assertIsNone(
+            re.search(
+                gate.SUBJECT_REGEXP,
+                "https://github.com/nanohype/fab/.github/workflows/ci.yml@refs/heads/main",
+            )
+        )
 
     def test_the_release_signed_fixture_subjects_are_accepted(self):
         """The subject recorded for each release-signed fixture, legacy and bundle
@@ -268,13 +295,17 @@ class TheTagPinnedFixtures(unittest.TestCase):
     renders, so one moved without the others fails here."""
 
     def test_both_images_are_named_by_tag(self):
-        names = {ref[len(EKS_AGENT_PLATFORM):].rsplit(":", 1)[0] for ref in tag_pinned_releases()}
+        names = {ref[len(EKS_AGENT_PLATFORM) :].rsplit(":", 1)[0] for ref in tag_pinned_releases()}
         self.assertEqual(names, {"operator", "eval-runner"})
 
     def test_every_tag_names_a_bundle_signed_release(self):
         bundles = set(BUNDLE_SIGNED_FIXTURES.values())
-        stray = sorted(ref for ref, release in tag_pinned_releases().items() if release not in bundles)
-        self.assertFalse(stray, f"tag-pinned images naming no bundle-signed fixture's release: {stray}")
+        stray = sorted(
+            ref for ref, release in tag_pinned_releases().items() if release not in bundles
+        )
+        self.assertFalse(
+            stray, f"tag-pinned images naming no bundle-signed fixture's release: {stray}"
+        )
 
     def test_every_bundle_signed_release_is_named_by_a_tag(self):
         unnamed = sorted(set(BUNDLE_SIGNED_FIXTURES.values()) - set(tag_pinned_releases().values()))
@@ -288,6 +319,7 @@ class AWidenedSubjectIsRefused(unittest.TestCase):
     def assertRefused(self, subject, admits):
         def edit(spec):
             identity(spec)["subjectRegExp"] = subject
+
         code, out = mutated(edit)
         self.assertEqual(code, 1, out)
         self.assertIn("is not the release identity", out)
@@ -296,27 +328,32 @@ class AWidenedSubjectIsRefused(unittest.TestCase):
     def test_release_anywhere_in_the_workflow_name(self):
         self.assertRefused(
             r"^https://github\.com/nanohype/.+release.+@refs/tags/.+$",
-            "https://github.com/nanohype/fab/.github/workflows/prerelease-check.yml@refs/tags/v1.0.0")
+            "https://github.com/nanohype/fab/.github/workflows/prerelease-check.yml@refs/tags/v1.0.0",
+        )
 
     def test_an_unescaped_dot_in_the_host(self):
         self.assertRefused(
             r"^https://github.com/nanohype/[^/]+/\.github/workflows/release\.ya?ml@refs/tags/.+$",
-            "https://githubxcom/nanohype/fab/.github/workflows/release.yml@refs/tags/v1.0.0")
+            "https://githubxcom/nanohype/fab/.github/workflows/release.yml@refs/tags/v1.0.0",
+        )
 
     def test_a_missing_start_anchor(self):
         self.assertRefused(
             r"https://github\.com/nanohype/[^/]+/\.github/workflows/release\.ya?ml@refs/tags/.+$",
-            "prefix-https://github.com/nanohype/fab/.github/workflows/release.yml@refs/tags/v1.0.0")
+            "prefix-https://github.com/nanohype/fab/.github/workflows/release.yml@refs/tags/v1.0.0",
+        )
 
     def test_any_ref(self):
         self.assertRefused(
             r"^https://github\.com/nanohype/[^/]+/\.github/workflows/release\.ya?ml@refs/.+$",
-            "https://github.com/nanohype/fab/.github/workflows/release.yml@refs/heads/main")
+            "https://github.com/nanohype/fab/.github/workflows/release.yml@refs/heads/main",
+        )
 
     def test_any_org(self):
         self.assertRefused(
             r"^https://github\.com/[^/]+/[^/]+/\.github/workflows/release\.ya?ml@refs/tags/.+$",
-            "https://github.com/example/fab/.github/workflows/release.yml@refs/tags/v1.0.0")
+            "https://github.com/example/fab/.github/workflows/release.yml@refs/tags/v1.0.0",
+        )
 
     def test_a_wildcard(self):
         self.assertRefused(".*", gate.REFUSED_SUBJECTS[0])
@@ -326,11 +363,13 @@ class ADifferentSubjectIsRefusedWhateverItAdmits(unittest.TestCase):
     def subject(self, value):
         def edit(spec):
             identity(spec)["subjectRegExp"] = value
+
         return mutated(edit)
 
     def test_a_narrower_expression_names_the_release_it_refuses(self):
         code, out = self.subject(
-            r"^https://github\.com/nanohype/fab/\.github/workflows/release\.yml@refs/tags/.+$")
+            r"^https://github\.com/nanohype/fab/\.github/workflows/release\.yml@refs/tags/.+$"
+        )
         self.assertEqual(code, 1, out)
         self.assertIn("It refuses https://github.com/nanohype/eks-agent-platform/", out)
 
@@ -363,64 +402,80 @@ class TheAttestor(unittest.TestCase):
     def test_a_key_based_attestor(self):
         def edit(spec):
             spec["attestors"][0]["cosign"] = {"key": {"data": "PEM"}}
+
         self.refused(edit, "is not keyless Cosign")
 
     def test_a_field_beside_keyless(self):
         def edit(spec):
             spec["attestors"][0]["cosign"]["tuf"] = {"root": {}}
+
         self.refused(edit, "sets ['tuf']")
 
     def test_no_transparency_log(self):
         def edit(spec):
             del spec["attestors"][0]["cosign"]["ctlog"]
+
         self.refused(edit, "names no transparency log")
 
     def test_a_root_bundle_of_its_own(self):
         def edit(spec):
             spec["attestors"][0]["cosign"]["keyless"]["roots"] = "PEM"
+
         self.refused(edit, "keyless sets ['roots']")
 
     def test_a_log_key_or_timestamp_chain_of_its_own(self):
         for field in ("rekorPubKey", "ctLogPubKey", "tsaCertChain"):
             with self.subTest(field=field):
+
                 def edit(spec, field=field):
                     spec["attestors"][0]["cosign"]["ctlog"][field] = "PEM"
+
                 self.refused(edit, f"ctlog sets ['{field}']")
 
     def test_another_transparency_log(self):
         def edit(spec):
             spec["attestors"][0]["cosign"]["ctlog"]["url"] = "https://rekor.example.net"
-        self.refused(edit, "ctlog.url is 'https://rekor.example.net', expected "
-                           "'https://rekor.sigstore.dev'")
+
+        self.refused(
+            edit, "ctlog.url is 'https://rekor.example.net', expected 'https://rekor.sigstore.dev'"
+        )
 
     def test_an_identity_field_outside_the_contract(self):
         """An empty loose field passes the by-name check; the allowlist still names it."""
+
         def edit(spec):
             identity(spec)["issuerRegExp"] = ""
+
         self.refused(edit, "identity sets ['issuerRegExp']")
 
     def test_the_transparency_log_ignored(self):
         for flag in ("insecureIgnoreTlog", "insecureIgnoreSCT"):
             with self.subTest(flag=flag):
+
                 def edit(spec, flag=flag):
                     spec["attestors"][0]["cosign"]["ctlog"][flag] = True
+
                 self.refused(edit, f"sets ctlog.{flag}")
 
     def test_no_identity(self):
         def edit(spec):
             spec["attestors"][0]["cosign"]["keyless"]["identities"] = []
+
         self.refused(edit, "has no keyless identities")
 
     def test_a_loose_identity_field(self):
         for loose in ("issuerRegExp", "subject", "subjectExpression"):
             with self.subTest(field=loose):
+
                 def edit(spec, loose=loose):
                     identity(spec)[loose] = ".*"
+
                 self.refused(edit, f"identity sets {loose}")
 
     def test_another_issuer(self):
         def edit(spec):
             identity(spec)["issuer"] = "https://accounts.google.com"
+
         self.refused(edit, "keyless issuer is 'https://accounts.google.com'")
 
     def test_a_second_attestor_is_held_to_the_same_contract(self):
@@ -429,6 +484,7 @@ class TheAttestor(unittest.TestCase):
             second["name"] = "second"
             second["cosign"]["keyless"]["identities"][0]["subjectRegExp"] = ".*"
             spec["attestors"].append(second)
+
         self.refused(edit, "subjectRegExp '.*' is not the release identity")
 
     def test_a_second_attestor_meeting_the_contract_passes(self):
@@ -436,6 +492,7 @@ class TheAttestor(unittest.TestCase):
             second = copy.deepcopy(spec["attestors"][0])
             second["name"] = "second"
             spec["attestors"].append(second)
+
         code, out = mutated(edit)
         self.assertEqual(code, 0, out)
 
@@ -450,34 +507,50 @@ class TheScope(unittest.TestCase):
         self.refused(lambda s: s.update(matchImageReferences=[]), "selects no image")
 
     def test_a_reference_that_is_not_a_glob(self):
-        self.refused(lambda s: s.update(matchImageReferences=[{"expression": "true"}]),
-                     "is not a glob")
+        self.refused(
+            lambda s: s.update(matchImageReferences=[{"expression": "true"}]), "is not a glob"
+        )
 
     def test_a_bare_wildcard(self):
         self.refused(lambda s: s.update(matchImageReferences=[{"glob": "*"}]), "bare '*'")
 
     def test_another_registry(self):
-        self.refused(lambda s: s.update(matchImageReferences=[{"glob": "ghcr.io/*"}]),
-                     "is not scoped to ghcr.io/nanohype/*")
+        self.refused(
+            lambda s: s.update(matchImageReferences=[{"glob": "ghcr.io/*"}]),
+            "is not scoped to ghcr.io/nanohype/*",
+        )
 
     def test_a_narrower_nanohype_glob(self):
         """Both fixtures still match, so kyverno test decides as before."""
-        globs = [{"glob": "ghcr.io/nanohype/eks-agent-platform*"}, {"glob": "ghcr.io/nanohype/fab*"}]
-        self.refused(lambda s: s.update(matchImageReferences=globs),
-                     "expected exactly ['ghcr.io/nanohype/*']")
+        globs = [
+            {"glob": "ghcr.io/nanohype/eks-agent-platform*"},
+            {"glob": "ghcr.io/nanohype/fab*"},
+        ]
+        self.refused(
+            lambda s: s.update(matchImageReferences=globs),
+            "expected exactly ['ghcr.io/nanohype/*']",
+        )
 
     def test_admission_evaluation_switched_off(self):
-        self.refused(lambda s: s.update(evaluation={"admission": {"enabled": False}}),
-                     "evaluation.admission.enabled is false")
+        self.refused(
+            lambda s: s.update(evaluation={"admission": {"enabled": False}}),
+            "evaluation.admission.enabled is false",
+        )
 
     def test_another_evaluation_mode(self):
-        self.refused(lambda s: s.update(evaluation={"mode": "HTTP"}),
-                     "evaluation.mode is 'HTTP', not Kubernetes")
+        self.refused(
+            lambda s: s.update(evaluation={"mode": "HTTP"}),
+            "evaluation.mode is 'HTTP', not Kubernetes",
+        )
 
     def test_kubernetes_mode_and_admission_spelled_out_pass(self):
         def edit(spec):
-            spec["evaluation"] = {"mode": "Kubernetes", "admission": {"enabled": True},
-                                  "background": {"enabled": False}}
+            spec["evaluation"] = {
+                "mode": "Kubernetes",
+                "admission": {"enabled": True},
+                "background": {"enabled": False},
+            }
+
         code, out = mutated(edit)
         self.assertEqual(code, 0, out)
 
@@ -485,20 +558,21 @@ class TheScope(unittest.TestCase):
         """A custom extractor of the same name replaces the built-in one."""
         for field in gate.CONTAINER_FIELDS:
             with self.subTest(field=field):
-                self.refused(lambda s, field=field: s.update(
-                    images=[{"name": field, "expression": "[]"}]),
-                    f"spec.images declares an extractor named ['{field}']")
+                self.refused(
+                    lambda s, field=field: s.update(images=[{"name": field, "expression": "[]"}]),
+                    f"spec.images declares an extractor named ['{field}']",
+                )
 
     def test_an_extractor_of_another_name_passes(self):
         def edit(spec):
             spec["images"] = [{"name": "sidecars", "expression": "[]"}]
+
         code, out = mutated(edit)
         self.assertEqual(code, 0, out)
 
     def test_every_reference_is_checked(self):
         refs = [{"glob": "ghcr.io/nanohype/*"}, {"glob": "docker.io/*"}]
-        self.refused(lambda s: s.update(matchImageReferences=refs),
-                     "'docker.io/*' is not scoped")
+        self.refused(lambda s: s.update(matchImageReferences=refs), "'docker.io/*' is not scoped")
 
     def test_a_policy_that_fails_open(self):
         self.refused(lambda s: s.update(failurePolicy="Ignore"), "failurePolicy is Ignore")
@@ -506,67 +580,102 @@ class TheScope(unittest.TestCase):
     def test_a_selector_pods_can_opt_out_through(self):
         for narrowing in ("objectSelector", "excludeResourceRules"):
             with self.subTest(field=narrowing):
+
                 def edit(spec, narrowing=narrowing):
                     spec["matchConstraints"][narrowing] = {"matchLabels": {"skip": "true"}}
+
                 self.refused(edit, f"matchConstraints.{narrowing} is set")
 
     def test_a_match_condition(self):
-        self.refused(lambda s: s.update(matchConditions=[{"name": "c", "expression": "false"}]),
-                     "matchConditions is set")
+        self.refused(
+            lambda s: s.update(matchConditions=[{"name": "c", "expression": "false"}]),
+            "matchConditions is set",
+        )
 
     def test_pods_matched_on_create_only(self):
         def edit(spec):
             spec["matchConstraints"]["resourceRules"] = [
-                {"apiGroups": [""], "apiVersions": ["v1"], "operations": ["CREATE"],
-                 "resources": ["pods"]},
-                {"apiGroups": ["apps"], "apiVersions": ["v1"], "operations": ["UPDATE"],
-                 "resources": ["deployments"]},
+                {
+                    "apiGroups": [""],
+                    "apiVersions": ["v1"],
+                    "operations": ["CREATE"],
+                    "resources": ["pods"],
+                },
+                {
+                    "apiGroups": ["apps"],
+                    "apiVersions": ["v1"],
+                    "operations": ["UPDATE"],
+                    "resources": ["deployments"],
+                },
             ]
+
         self.refused(edit, "match pods on ['CREATE']")
 
     def test_the_ephemeral_container_subresource_unmatched(self):
         """`kubectl debug` adds its container through the subresource alone, so a
         policy matching pods sees an empty images.ephemeralContainers forever."""
+
         def edit(spec):
             spec["matchConstraints"]["resourceRules"][0]["resources"] = ["pods"]
+
         self.refused(edit, "do not match pods/ephemeralcontainers on UPDATE")
 
     def test_the_ephemeral_container_subresource_matched_in_a_rule_of_its_own(self):
         def edit(spec):
             spec["matchConstraints"]["resourceRules"] = [
-                {"apiGroups": [""], "apiVersions": ["v1"], "operations": ["CREATE", "UPDATE"],
-                 "resources": ["pods"]},
-                {"apiGroups": [""], "apiVersions": ["v1"], "operations": ["UPDATE"],
-                 "resources": ["pods/ephemeralcontainers"]},
+                {
+                    "apiGroups": [""],
+                    "apiVersions": ["v1"],
+                    "operations": ["CREATE", "UPDATE"],
+                    "resources": ["pods"],
+                },
+                {
+                    "apiGroups": [""],
+                    "apiVersions": ["v1"],
+                    "operations": ["UPDATE"],
+                    "resources": ["pods/ephemeralcontainers"],
+                },
             ]
+
         code, out = mutated(edit)
         self.assertEqual(code, 0, out)
 
     def test_a_namespace_selector_that_does_not_name_namespaces(self):
         def edit(spec):
             spec["matchConstraints"]["namespaceSelector"]["matchExpressions"].append(
-                {"key": "team", "operator": "NotIn", "values": ["x"]})
+                {"key": "team", "operator": "NotIn", "values": ["x"]}
+            )
+
         self.refused(edit, "is not a NotIn on kubernetes.io/metadata.name")
 
     def test_a_workload_namespace_excluded(self):
         def edit(spec):
-            spec["matchConstraints"]["namespaceSelector"]["matchExpressions"][0][
-                "values"].append("workloads")
+            spec["matchConstraints"]["namespaceSelector"]["matchExpressions"][0]["values"].append(
+                "workloads"
+            )
+
         self.refused(edit, "a workload namespace on this list runs unverified images")
 
     def test_rules_generated_for_pod_controllers(self):
         """A generated rule pins the digest into a template ArgoCD compares with git."""
-        for autogen in ({}, {"podControllers": {}},
-                        {"podControllers": {"controllers": ["deployments"]}}):
+        for autogen in (
+            {},
+            {"podControllers": {}},
+            {"podControllers": {"controllers": ["deployments"]}},
+        ):
             with self.subTest(autogen=autogen):
+
                 def edit(spec, autogen=autogen):
                     spec["autogen"] = autogen
+
                 self.refused(edit, "autogen.podControllers.controllers is")
 
     def test_no_namespace_exclusion(self):
         """Excluding nothing is a different set from SYSTEM_NS, and refused."""
+
         def edit(spec):
             spec["matchConstraints"]["namespaceSelector"] = {}
+
         self.refused(edit, "namespaceSelector excludes []")
 
 
@@ -574,8 +683,10 @@ class TheValidationConfiguration(unittest.TestCase):
     def test_each_field_must_be_true(self):
         for field in ("required", "mutateDigest", "verifyDigest"):
             with self.subTest(field=field):
+
                 def edit(spec, field=field):
                     spec["validationConfigurations"][field] = False
+
                 code, out = mutated(edit)
                 self.assertEqual(code, 1, out)
                 self.assertIn(f"validationConfigurations.{field} must be true", out)
@@ -589,63 +700,84 @@ class TheAttestationAndValidations(unittest.TestCase):
 
     def test_no_spdx_attestation(self):
         def edit(spec):
-            spec["attestations"] = [{"name": "prov",
-                                     "intoto": {"type": "https://slsa.dev/provenance/v1"}}]
+            spec["attestations"] = [
+                {"name": "prov", "intoto": {"type": "https://slsa.dev/provenance/v1"}}
+            ]
+
         self.refused(edit, "no attestation of in-toto type")
 
     def test_the_spdx_attestation_found_among_others(self):
         def edit(spec):
             spec["attestations"].insert(
-                0, {"name": "prov", "intoto": {"type": "https://slsa.dev/provenance/v1"}})
+                0, {"name": "prov", "intoto": {"type": "https://slsa.dev/provenance/v1"}}
+            )
+
         code, out = mutated(edit)
         self.assertEqual(code, 0, out)
 
     def test_no_signature_validation(self):
         def edit(spec):
-            spec["validations"] = [v for v in spec["validations"]
-                                   if "verifyImageSignatures(" not in v["expression"]]
+            spec["validations"] = [
+                v for v in spec["validations"] if "verifyImageSignatures(" not in v["expression"]
+            ]
+
         self.refused(edit, "no validation calls verifyImageSignatures")
 
     def test_a_signature_validation_over_containers_only(self):
         def edit(spec):
             v = spec["validations"][0]
-            v["expression"] = ("images.containers.map(image, verifyImageSignatures("
-                               "image, [attestors.release])).all(e, e > 0)")
+            v["expression"] = (
+                "images.containers.map(image, verifyImageSignatures("
+                "image, [attestors.release])).all(e, e > 0)"
+            )
+
         self.refused(edit, "the signature validation is not the expected expression")
 
     def test_no_attestation_validation(self):
         def edit(spec):
-            spec["validations"] = [v for v in spec["validations"]
-                                   if "verifyAttestationSignatures(" not in v["expression"]]
+            spec["validations"] = [
+                v
+                for v in spec["validations"]
+                if "verifyAttestationSignatures(" not in v["expression"]
+            ]
+
         self.refused(edit, "no validation calls verifyAttestationSignatures")
 
     def test_an_attestation_validation_over_containers_only(self):
         def edit(spec):
             v = spec["validations"][1]
-            v["expression"] = ("images.containers.map(image, verifyAttestationSignatures("
-                               "image, attestations.sbom, [attestors.release])).all(e, e > 0)")
+            v["expression"] = (
+                "images.containers.map(image, verifyAttestationSignatures("
+                "image, attestations.sbom, [attestors.release])).all(e, e > 0)"
+            )
+
         self.refused(edit, "the SBOM validation is not the expected expression")
 
     def test_a_validation_neutralised_with_or_true(self):
         """Every field and the call are still named, so a check made of parts passes it."""
         for index, what in ((0, "signature"), (1, "SBOM")):
             with self.subTest(validation=what):
+
                 def edit(spec, index=index):
                     spec["validations"][index]["expression"] += " || true"
+
                 self.refused(edit, f"the {what} validation is not the expected expression")
 
     def test_a_count_that_passes_an_unverified_image(self):
         for old, new in (("e > 0", "e >= 0"), (".all(", ".exists(")):
             with self.subTest(change=new):
+
                 def edit(spec, old=old, new=new):
                     v = spec["validations"][0]
                     v["expression"] = v["expression"].replace(old, new)
+
                 self.refused(edit, "the signature validation is not the expected expression")
 
     def test_the_same_expression_wrapped_differently_passes(self):
         def edit(spec):
             for v in spec["validations"]:
                 v["expression"] = "\n  ".join(v["expression"].replace("(", "( ").split(" "))
+
         code, out = mutated(edit)
         self.assertEqual(code, 0, out)
 
@@ -654,6 +786,7 @@ class TheAttestationAndValidations(unittest.TestCase):
             spec["attestors"][0]["name"] = "signer"
             for v in spec["validations"]:
                 v["expression"] = v["expression"].replace("attestors.release", "attestors.signer")
+
         code, out = mutated(edit)
         self.assertEqual(code, 0, out)
 
@@ -682,7 +815,6 @@ class ThePolicyFile(unittest.TestCase):
         self.assertIn("selects no image", out)
 
 
-
 class TheRenderedOverlays(unittest.TestCase):
     """What a cluster installs is the overlay, and a patch there can undo the base."""
 
@@ -695,33 +827,44 @@ class TheRenderedOverlays(unittest.TestCase):
     def test_an_overlay_widening_the_subject(self):
         def edit(spec):
             identity(spec)["subjectRegExp"] = r"^https://github\.com/nanohype/.+@refs/tags/.+$"
+
         self.refused("production", edit, "is not the release identity")
 
     def test_an_overlay_swapping_the_issuer(self):
         def edit(spec):
             identity(spec)["issuer"] = "https://accounts.google.com"
+
         self.refused("staging", edit, "keyless issuer is 'https://accounts.google.com'")
 
     def test_an_overlay_growing_the_namespace_exclusion(self):
         def edit(spec):
-            spec["matchConstraints"]["namespaceSelector"]["matchExpressions"][0][
-                "values"].append("workloads")
+            spec["matchConstraints"]["namespaceSelector"]["matchExpressions"][0]["values"].append(
+                "workloads"
+            )
+
         self.refused("development", edit, "a workload namespace on this list runs unverified")
 
     def test_an_overlay_making_verification_optional(self):
         def edit(spec):
             spec["validationConfigurations"]["required"] = False
+
         self.refused("production", edit, "validationConfigurations.required must be true")
 
     def test_an_enforcing_tier_that_only_reports(self):
         for env in ("staging", "production"):
             with self.subTest(env=env):
-                self.refused(env, lambda s: s.update(validationActions=["Audit"]),
-                             f"validationActions is ['Audit'], expected ['Deny'] for {env}")
+                self.refused(
+                    env,
+                    lambda s: s.update(validationActions=["Audit"]),
+                    f"validationActions is ['Audit'], expected ['Deny'] for {env}",
+                )
 
     def test_a_reporting_tier_that_blocks(self):
-        self.refused("development", lambda s: s.update(validationActions=["Deny"]),
-                     "expected ['Audit'] for development — the tier would block")
+        self.refused(
+            "development",
+            lambda s: s.update(validationActions=["Deny"]),
+            "expected ['Audit'] for development — the tier would block",
+        )
 
     def test_every_overlay_is_rendered(self):
         stub = Kustomize({env: tier(SHIPPED, env) for env in gate.EXPECTED_ACTIONS})
@@ -733,14 +876,17 @@ class TheRenderedOverlays(unittest.TestCase):
         broken = subprocess.CompletedProcess([], 1, "", "Error: accumulating resources\nmore")
         code, out = run_gate(copy.deepcopy(SHIPPED), overlays={"staging": broken})
         self.assertEqual(code, 1, out)
-        self.assertIn("overlays/staging: it does not render — Error: accumulating resources",
-                      out)
+        self.assertIn("overlays/staging: it does not render — Error: accumulating resources", out)
 
     def test_an_overlay_rendering_no_verify_images(self):
         renamed = tier(SHIPPED, "production")
         renamed["metadata"]["name"] = "verify-images-off"
-        for answer in ("", [{"kind": "ConfigMap", "metadata": {"name": "verify-images"}}],
-                       renamed, "--- just a string\n"):
+        for answer in (
+            "",
+            [{"kind": "ConfigMap", "metadata": {"name": "verify-images"}}],
+            renamed,
+            "--- just a string\n",
+        ):
             with self.subTest(answer=str(answer)[:40]):
                 code, out = run_gate(copy.deepcopy(SHIPPED), overlays={"production": answer})
                 self.assertEqual(code, 1, out)
@@ -780,8 +926,9 @@ class TheShippedTree(unittest.TestCase):
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             gate.main()
-        self.assertIn("rendered overlay(s) (development Audit, production Deny, "
-                      "staging Deny)", buf.getvalue())
+        self.assertIn(
+            "rendered overlay(s) (development Audit, production Deny, staging Deny)", buf.getvalue()
+        )
 
 
 if __name__ == "__main__":

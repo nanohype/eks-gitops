@@ -35,8 +35,11 @@ def account(name: str) -> dict:
 
 
 def deployment(sa: str | None) -> dict:
-    return {"kind": "Deployment", "metadata": {"name": "d"},
-            "spec": {"template": {"spec": pod(sa)}}}
+    return {
+        "kind": "Deployment",
+        "metadata": {"name": "d"},
+        "spec": {"template": {"spec": pod(sa)}},
+    }
 
 
 class PodSpecs(unittest.TestCase):
@@ -50,12 +53,15 @@ class PodSpecs(unittest.TestCase):
     def test_every_controller_carries_its_template(self):
         for kind in ("Deployment", "StatefulSet", "DaemonSet", "ReplicaSet", "Job"):
             with self.subTest(kind=kind):
-                self.assertEqual(self.names({"kind": kind,
-                                             "spec": {"template": {"spec": pod("a")}}}), {"a"})
+                self.assertEqual(
+                    self.names({"kind": kind, "spec": {"template": {"spec": pod("a")}}}), {"a"}
+                )
 
     def test_a_cronjob_carries_its_job_templates(self):
-        doc = {"kind": "CronJob",
-               "spec": {"jobTemplate": {"spec": {"template": {"spec": pod("a")}}}}}
+        doc = {
+            "kind": "CronJob",
+            "spec": {"jobTemplate": {"spec": {"template": {"spec": pod("a")}}}},
+        }
         self.assertEqual(self.names(doc), {"a"})
 
     def test_a_bare_podspec_alike_is_read(self):
@@ -75,9 +81,11 @@ class Charts(unittest.TestCase):
         self.rendered: dict[str, list[dict] | None] = {}
         self.commands: list[list[str]] = []
         # The gate finds charts relative to its own file, so it is pointed at the tree.
-        patches = [mock.patch.object(gate, "__file__", str(self.root / "scripts" / "gate.py")),
-                   mock.patch.object(gate.gatelib, "require", lambda *tools: None),
-                   mock.patch.object(gate.subprocess, "run", self.helm)]
+        patches = [
+            mock.patch.object(gate, "__file__", str(self.root / "scripts" / "gate.py")),
+            mock.patch.object(gate.gatelib, "require", lambda *tools: None),
+            mock.patch.object(gate.subprocess, "run", self.helm),
+        ]
         for p in patches:
             p.start()
             self.addCleanup(p.stop)
@@ -123,13 +131,13 @@ class Charts(unittest.TestCase):
         self.assertIn("1 ServiceAccount binding problem(s).", said)
 
     def test_an_account_with_a_named_external_consumer_passes(self):
-        (chart, sa), = gate.EXTERNAL_CONSUMERS
+        ((chart, sa),) = gate.EXTERNAL_CONSUMERS
         self.chart(chart, account(sa), account("app"), deployment("app"))
         rc, said = self.check()
         self.assertEqual(rc, 0, said)
 
     def test_the_exemption_is_keyed_on_the_chart(self):
-        (_, sa), = gate.EXTERNAL_CONSUMERS
+        ((_, sa),) = gate.EXTERNAL_CONSUMERS
         self.chart("other", account(sa), account("app"), deployment("app"))
         rc, said = self.check()
         self.assertEqual(rc, 1, said)
@@ -151,8 +159,14 @@ class Charts(unittest.TestCase):
         self.check()
         druid, plain = self.commands
         self.assertEqual(druid[:3], ["helm", "template", "druid"])
-        self.assertEqual(druid[4:], ["-f", str(self.root / "catalog" / "druid" / "values.yaml"),
-                                     *gate.RENDER_VALUES["druid"]])
+        self.assertEqual(
+            druid[4:],
+            [
+                "-f",
+                str(self.root / "catalog" / "druid" / "values.yaml"),
+                *gate.RENDER_VALUES["druid"],
+            ],
+        )
         self.assertEqual(plain[3:], [str(self.root / "catalog" / "plain" / "chart")])
 
     def test_no_chart_is_a_gate_that_verified_nothing(self):

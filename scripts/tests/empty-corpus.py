@@ -77,9 +77,20 @@ CORPUS_DIRS = ("applicationsets", "addons", "policies", "dashboards", "catalog",
 # proof the fleet renders.
 COMMAND_GATES = {
     "kyverno test": (["./scripts/kyverno-test.sh"], "policies"),
-    "trivy config": (["trivy", "config", "--exit-code", "1", "--severity",
-                      "MEDIUM,HIGH,CRITICAL", "--ignorefile", ".trivyignore.yaml",
-                      "rendered"], "rendered"),
+    "trivy config": (
+        [
+            "trivy",
+            "config",
+            "--exit-code",
+            "1",
+            "--severity",
+            "MEDIUM,HIGH,CRITICAL",
+            "--ignorefile",
+            ".trivyignore.yaml",
+            "rendered",
+        ],
+        "rendered",
+    ),
     "kustomize build loop": (["task", "kustomize:build"], "addons"),
 }
 
@@ -128,8 +139,11 @@ CRASH_MARKERS = ("Traceback (most recent call last)", "\npanic: ")
 def gate_files() -> list[pathlib.Path]:
     """Every executable gate, from the tree rather than a list here."""
     return sorted(
-        p for p in SCRIPTS.rglob("*")
-        if p.is_file() and os.access(p, os.X_OK) and p.suffix in {".py", ".sh"}
+        p
+        for p in SCRIPTS.rglob("*")
+        if p.is_file()
+        and os.access(p, os.X_OK)
+        and p.suffix in {".py", ".sh"}
         and p.parent != SCRIPTS / "tests"
     )
 
@@ -141,8 +155,9 @@ def tracked_files() -> list[str]:
     uncommitted scratch file would be copied into the probe and then fail the
     staging below, and none of them is part of what a gate examines.
     """
-    proc = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True,
-                          text=True, timeout=GATE_TIMEOUT)
+    proc = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, text=True, timeout=GATE_TIMEOUT
+    )
     if proc.returncode != 0:
         print(f"Cannot run: `git ls-files` failed in {ROOT} — {proc.stderr.strip()}")
         sys.exit(2)
@@ -170,10 +185,18 @@ def emptied_tree(dest: pathlib.Path, keep: tuple[str, ...] = ()) -> int:
     # uninitialised directory makes them exit 2 for that reason instead of for
     # the corpus being empty — which would score a pass this harness did not earn.
     subprocess.run(["git", "init", "-q"], cwd=dest, check=True, timeout=GATE_TIMEOUT)
-    survivors = sorted(str(p.relative_to(dest)) for p in dest.rglob("*")
-                       if p.is_file() and not str(p.relative_to(dest)).startswith(".git/"))
-    subprocess.run(["git", "add", "--", *survivors], cwd=dest, check=True,
-                   timeout=GATE_TIMEOUT, capture_output=True)
+    survivors = sorted(
+        str(p.relative_to(dest))
+        for p in dest.rglob("*")
+        if p.is_file() and not str(p.relative_to(dest)).startswith(".git/")
+    )
+    subprocess.run(
+        ["git", "add", "--", *survivors],
+        cwd=dest,
+        check=True,
+        timeout=GATE_TIMEOUT,
+        capture_output=True,
+    )
     return removed
 
 
@@ -187,30 +210,39 @@ def probe(gate: pathlib.Path, tree: pathlib.Path) -> tuple[bool, str, bool]:
     """
     rel = gate.relative_to(SCRIPTS)
     try:
-        proc = subprocess.run([str(tree / "scripts" / rel), *GATE_ARGS.get(gate.name, [])],
-                              cwd=tree, capture_output=True, text=True,
-                              timeout=GATE_TIMEOUT, env={**os.environ,
-                                                         "KUBECONFORM_SKIP": ""})
+        proc = subprocess.run(
+            [str(tree / "scripts" / rel), *GATE_ARGS.get(gate.name, [])],
+            cwd=tree,
+            capture_output=True,
+            text=True,
+            timeout=GATE_TIMEOUT,
+            env={**os.environ, "KUBECONFORM_SKIP": ""},
+        )
     except subprocess.TimeoutExpired:
         return False, f"did not finish in {GATE_TIMEOUT}s against an empty corpus", False
     out = proc.stdout + proc.stderr
     if any(marker in out for marker in CRASH_MARKERS):
-        first = next((ln for ln in out.splitlines() if "Error" in ln or "panic:" in ln),
-                     "").strip()
-        return False, (f"CRASHED rather than refusing (exit {proc.returncode}) — "
-                       f"{first[:120]}. A crash exits non-zero, so by status alone it "
-                       f"is a finding; the traceback then names a library internal "
-                       f"rather than the input that is absent"), False
+        first = next((ln for ln in out.splitlines() if "Error" in ln or "panic:" in ln), "").strip()
+        return (
+            False,
+            (
+                f"CRASHED rather than refusing (exit {proc.returncode}) — "
+                f"{first[:120]}. A crash exits non-zero, so by status alone it "
+                f"is a finding; the traceback then names a library internal "
+                f"rather than the input that is absent"
+            ),
+            False,
+        )
     if proc.returncode == 0:
         last = out.strip().splitlines()[-1][:120] if out.strip() else "silently"
         return False, f"exited 0 over an empty corpus — {last}", False
-    on_derivation = (proc.returncode == gatelib_cannot_run()
-                     and any(f"{d}/" in out for d in CORPUS_DIRS))
+    on_derivation = proc.returncode == gatelib_cannot_run() and any(
+        f"{d}/" in out for d in CORPUS_DIRS
+    )
     return True, "", on_derivation
 
 
-def probe_command(label: str, argv: list[str], corpus: str,
-                  tree: pathlib.Path) -> tuple[bool, str]:
+def probe_command(label: str, argv: list[str], corpus: str, tree: pathlib.Path) -> tuple[bool, str]:
     """Whether a command this repo runs as a gate refuses its corpus emptied.
 
     Not an executable under scripts/, so it carries none of the conventions the
@@ -218,10 +250,9 @@ def probe_command(label: str, argv: list[str], corpus: str,
     the same one: does it report success having read nothing.
     """
     if shutil.which(argv[0]) is None:
-        return True, ""            # the tool is absent; that is not a verdict
+        return True, ""  # the tool is absent; that is not a verdict
     try:
-        proc = subprocess.run(argv, cwd=tree, capture_output=True, text=True,
-                              timeout=GATE_TIMEOUT)
+        proc = subprocess.run(argv, cwd=tree, capture_output=True, text=True, timeout=GATE_TIMEOUT)
     except subprocess.TimeoutExpired:
         return False, f"did not finish in {GATE_TIMEOUT}s"
     out = proc.stdout + proc.stderr
@@ -250,13 +281,17 @@ def main() -> int:
     problems: list[str] = []
     for name, subject in sorted(OTHER_SUBJECT.items()):
         if not any(g.name == name for g in gates):
-            problems.append(f"{name} is exempted as answering about {subject} rather "
-                            f"than the catalog, but no such gate exists under scripts/ "
-                            f"— the exemption outlived its file.")
+            problems.append(
+                f"{name} is exempted as answering about {subject} rather "
+                f"than the catalog, but no such gate exists under scripts/ "
+                f"— the exemption outlived its file."
+            )
         elif not (ROOT / subject).is_dir():
-            problems.append(f"{name} is exempted as answering about {subject}, which "
-                            f"is not a directory in this tree — the exemption names a "
-                            f"subject the repo does not have.")
+            problems.append(
+                f"{name} is exempted as answering about {subject}, which "
+                f"is not a directory in this tree — the exemption names a "
+                f"subject the repo does not have."
+            )
 
     probed = 0
     with tempfile.TemporaryDirectory() as tmp:
@@ -266,20 +301,26 @@ def main() -> int:
             print("FAIL  emptying the corpus removed no file, so every gate below was")
             print("      run against the real tree and refusing it would prove nothing.")
             return 2
-        print(f"── {len(gates)} gate(s) against a tree with {removed} corpus file(s) "
-              f"removed ──\n")
+        print(f"── {len(gates)} gate(s) against a tree with {removed} corpus file(s) removed ──\n")
 
         for gate in gates:
             if gate.name in OTHER_SUBJECT:
-                print(f"  skip  {gate.name}: answers about {OTHER_SUBJECT[gate.name]}, "
-                      f"which this probe does not empty")
+                print(
+                    f"  skip  {gate.name}: answers about {OTHER_SUBJECT[gate.name]}, "
+                    f"which this probe does not empty"
+                )
                 continue
             probed += 1
             ok, why, on_derivation = probe(gate, tree)
             if ok:
-                print(f"  ok    {gate.name}"
-                      + ("  (refused on a derivation input, not on its corpus)"
-                         if on_derivation else ""))
+                print(
+                    f"  ok    {gate.name}"
+                    + (
+                        "  (refused on a derivation input, not on its corpus)"
+                        if on_derivation
+                        else ""
+                    )
+                )
             else:
                 print(f"  FAIL  {gate.name}: {why}")
                 problems.append(f"{gate.name} {why}")
@@ -287,8 +328,7 @@ def main() -> int:
         for label, (argv, corpus) in sorted(COMMAND_GATES.items()):
             probed += 1
             ok, why = probe_command(label, argv, corpus, tree)
-            print(f"  {'ok  ' if ok else 'FAIL'}  {label}"
-                  + ("" if ok else f": {why}"))
+            print(f"  {'ok  ' if ok else 'FAIL'}  {label}" + ("" if ok else f": {why}"))
             if not ok:
                 problems.append(f"{label} {why}")
     print()
@@ -299,16 +339,20 @@ def main() -> int:
         problems.append(
             f"MIN_PROBED is {MIN_PROBED}, so this harness would report every gate "
             f"refusing an empty corpus over a population of none. A floor of zero is "
-            f"the shape this harness exists to reject.")
+            f"the shape this harness exists to reject."
+        )
     elif len(gates) < MIN_PROBED:
         problems.append(
             f"MIN_PROBED is {MIN_PROBED} and scripts/ holds {len(gates)} gate(s), so "
             f"this harness cannot pass on any tree. A floor above its corpus fails "
-            f"every run, which is the other way a floor is wrong.")
+            f"every run, which is the other way a floor is wrong."
+        )
     if probed < MIN_PROBED:
-        problems.append(f"only {probed} gate(s) were probed, under the floor of "
-                        f"{MIN_PROBED} — the population this harness reads shrank, and "
-                        f"a clean run over it says nothing about the rest.")
+        problems.append(
+            f"only {probed} gate(s) were probed, under the floor of "
+            f"{MIN_PROBED} — the population this harness reads shrank, and "
+            f"a clean run over it says nothing about the rest."
+        )
 
     print()
     if problems:
@@ -319,8 +363,7 @@ def main() -> int:
         print("  or make the absent input exit 2 with the file named.")
         return 1
 
-    print(f"✓ all {probed} probed gate(s) refuse an empty corpus, and none does it by "
-          f"crashing")
+    print(f"✓ all {probed} probed gate(s) refuse an empty corpus, and none does it by crashing")
     return 0
 
 

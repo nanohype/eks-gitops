@@ -73,23 +73,28 @@ class EveryFloorIsBelowTheCorpusItGuards(unittest.TestCase):
                 if not isinstance(doc, dict):
                     continue
                 api = str(doc.get("apiVersion", ""))
-                if (api.endswith("/" + platform_crs.CRD_VERSION)
-                        and api.split("/", 1)[0].endswith(
-                            platform_crs.OPERATOR_API_SUFFIX)):
+                if api.endswith("/" + platform_crs.CRD_VERSION) and api.split("/", 1)[0].endswith(
+                    platform_crs.OPERATOR_API_SUFFIX
+                ):
                     found += 1
-        self.assertGreater(found, platform_crs.MIN_CRS,
-                           f"MIN_CRS is {platform_crs.MIN_CRS} and this tree holds "
-                           f"{found} platform CR(s), so the gate exits 2 on every run")
+        self.assertGreater(
+            found,
+            platform_crs.MIN_CRS,
+            f"MIN_CRS is {platform_crs.MIN_CRS} and this tree holds "
+            f"{found} platform CR(s), so the gate exits 2 on every run",
+        )
 
     def test_the_render_clears_the_policy_admission_floor(self):
         """Bounded by units times the ENFORCE environments — staging and
         production, not all four: doubling the ceiling lets any floor in 66..127
         pass here while making the gate red on every run."""
-        units = [u for u in policy_admission.discover()
-                 if u.chart not in policy_admission.SKIP_CHARTS]
+        units = [
+            u for u in policy_admission.discover() if u.chart not in policy_admission.SKIP_CHARTS
+        ]
         self.assertGreater(len(units), 0)
-        self.assertLess(policy_admission.MIN_RENDERED,
-                        len(units) * len(policy_admission.ENFORCE_ENVS))
+        self.assertLess(
+            policy_admission.MIN_RENDERED, len(units) * len(policy_admission.ENFORCE_ENVS)
+        )
 
     def test_the_policy_admission_floor_exceeds_a_degenerate_render(self):
         """The other bound, and the reason the floor is not merely > 0.
@@ -99,8 +104,9 @@ class EveryFloorIsBelowTheCorpusItGuards(unittest.TestCase):
         it — between the degenerate render and the largest one, not merely
         somewhere above zero.
         """
-        units = [u for u in policy_admission.discover()
-                 if u.chart not in policy_admission.SKIP_CHARTS]
+        units = [
+            u for u in policy_admission.discover() if u.chart not in policy_admission.SKIP_CHARTS
+        ]
         self.assertGreaterEqual(policy_admission.MIN_RENDERED, len(units))
 
     def test_the_dashboards_clear_their_floor(self):
@@ -117,9 +123,12 @@ class EveryFloorIsBelowTheCorpusItGuards(unittest.TestCase):
         charts = {u.chart for u in render_addons.discover()}
         for chart in image_pins.IMAGELESS_CHARTS:
             with self.subTest(chart=chart):
-                self.assertIn(chart, charts,
-                              f"{chart} is declared to render no image but the fleet "
-                              f"does not pin it — the entry outlived its chart")
+                self.assertIn(
+                    chart,
+                    charts,
+                    f"{chart} is declared to render no image but the fleet "
+                    f"does not pin it — the entry outlived its chart",
+                )
 
 
 class TheFloorsGuardTheRightQuantity(unittest.TestCase):
@@ -134,8 +143,7 @@ class TheFloorsGuardTheRightQuantity(unittest.TestCase):
             ("scripts/check-hardcoded-org.py", "if len(files) < MIN_APPSETS:"),
             ("scripts/check-platform-crs.py", "if len(candidates) < MIN_CRS:"),
             ("scripts/check-policy-admission.py", "if count < MIN_RENDERED:"),
-            ("scripts/validate-dashboards.py",
-             "if 0 < len(refs) < MIN_DASHBOARD_REFS:"),
+            ("scripts/validate-dashboards.py", "if 0 < len(refs) < MIN_DASHBOARD_REFS:"),
         ):
             with self.subTest(gate=rel):
                 self.assertIn(expr, (ROOT / rel).read_text())
@@ -147,9 +155,12 @@ class TheFloorsGuardTheRightQuantity(unittest.TestCase):
         source = (ROOT / "scripts" / "check-image-vulnerabilities.py").read_text()
         self.assertIn("coverage = image_pins.chart_coverage(images, units, seen)", source)
         self.assertIn("if len(images) < len(units):", source)
-        self.assertNotIn("MIN_IMAGES", source,
-                         "the picked constant is back; the per-chart derivation is "
-                         "what catches an extractor that stopped seeing a shape")
+        self.assertNotIn(
+            "MIN_IMAGES",
+            source,
+            "the picked constant is back; the per-chart derivation is "
+            "what catches an extractor that stopped seeing a shape",
+        )
 
 
 if __name__ == "__main__":

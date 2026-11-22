@@ -35,9 +35,11 @@ def verifier_line(error: str, tail: str = "") -> str:
     `tail` follows the attestor field: the admission controller names the image
     there, and the CLI at -v 1 ends the line at the attestor.
     """
-    line = (f"2026-01-01T00:00:00Z {ESC}[31mERR{ESC}[0m github.com/kyverno/kyverno/pkg/image/"
-            f"verifiers/ivpol/cosign/verifier.go:281 > image verification failed "
-            f"{ESC}[36merror={ESC}[0m{ESC}[31m\"{error}\"{ESC}[0m attestor=release")
+    line = (
+        f"2026-01-01T00:00:00Z {ESC}[31mERR{ESC}[0m github.com/kyverno/kyverno/pkg/image/"
+        f"verifiers/ivpol/cosign/verifier.go:281 > image verification failed "
+        f'{ESC}[36merror={ESC}[0m{ESC}[31m"{error}"{ESC}[0m attestor=release'
+    )
     return f"{line} {tail}" if tail else line
 
 
