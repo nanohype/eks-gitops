@@ -195,8 +195,17 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace("               if not _is_canary(r) and not _is_runtime_pod(r)",
-              "               if not _is_canary(r)", 1)
+m = s.replace(
+    (
+        '        r\n'
+        '        for r in results\n'
+        '        if not _is_canary(r)\n'
+        '        and not _is_runtime_pod(r)\n'
+        '        and r.get("result") in ("fail", "warn", "error")\n'
+    ),
+    '        r for r in results if not _is_canary(r) and r.get("result") in ("fail", "warn", "error")\n',
+    1,
+)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
@@ -260,10 +269,11 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('''              f"An unreadable pin is not the same as a catalog with no CRs in it.")
-        sys.exit(gatelib.CANNOT_RUN)''',
-              '''              f"An unreadable pin is not the same as a catalog with no CRs in it.")
-        sys.exit(1)''', 1)
+m = s.replace(
+    '        sys.exit(gatelib.CANNOT_RUN)\n',
+    '        sys.exit(1)\n',
+    1,
+)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
@@ -388,8 +398,17 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace("            for u in units if u.chart not in SKIP_CHARTS}",
-              "            for u in units}", 1)
+m = s.replace(
+    (
+        '    kept = {\n'
+        '        gatelib.chart_archive_or_exit(u.source, u.chart, u.version)\n'
+        '        for u in units\n'
+        '        if u.chart not in SKIP_CHARTS\n'
+        '    }\n'
+    ),
+    '    kept = {gatelib.chart_archive_or_exit(u.source, u.chart, u.version) for u in units}\n',
+    1,
+)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
@@ -463,8 +482,15 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('                                       cache=pathlib.Path(empty), credentials={})',
-              '                                       cache=pathlib.Path(empty))', 1)
+m = s.replace(
+    (
+        '                registry.chart_archive(\n'
+        '                    u.source, u.chart, u.version, cache=pathlib.Path(empty), credentials={}\n'
+        '                )\n'
+    ),
+    '                registry.chart_archive(u.source, u.chart, u.version, cache=pathlib.Path(empty))\n',
+    1,
+)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
@@ -476,8 +502,15 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('                                       cache=pathlib.Path(empty), credentials={})',
-              '                                       credentials={})', 1)
+m = s.replace(
+    (
+        '                registry.chart_archive(\n'
+        '                    u.source, u.chart, u.version, cache=pathlib.Path(empty), credentials={}\n'
+        '                )\n'
+    ),
+    '                registry.chart_archive(u.source, u.chart, u.version, credentials={})\n',
+    1,
+)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
@@ -611,8 +644,14 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('                                clock())\n            err.close()\n',
-              '                                clock())\n', 1)
+m = s.replace(
+    (
+        '            asked = retry_after(err.headers.get("Retry-After") if err.headers else None, clock())\n'
+        '            err.close()\n'
+    ),
+    '            asked = retry_after(err.headers.get("Retry-After") if err.headers else None, clock())\n',
+    1,
+)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
@@ -729,8 +768,11 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('                                                registry=self.host,\n',
-              '                                                registry=None,\n', 1)
+m = s.replace(
+    '            www_authenticate, self.path, get, registry=self.host, credentials=self._credentials\n',
+    '            www_authenticate, self.path, get, registry=None, credentials=self._credentials\n',
+    1,
+)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
@@ -925,7 +967,17 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('    _say_once(f"  {host} refused the login', '    (lambda _: None)(f"  {host} refused the login', 1)
+m = s.replace(
+    (
+        '    _REFUSED_LOGINS.add(host)\n'
+        '    _say_once(\n'
+    ),
+    (
+        '    _REFUSED_LOGINS.add(host)\n'
+        '    (lambda _: None)(\n'
+    ),
+    1,
+)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
@@ -1099,11 +1151,30 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('    if not digest:\n        raise ChartUnavailable(f"{index} publishes no digest',
-              '    if False:\n        raise ChartUnavailable(f"{index} publishes no digest', 1)
-m = m.replace('    if hashlib.sha256(data).hexdigest() != digest:',
-              '    if digest and hashlib.sha256(data).hexdigest() != digest:', 1)
-assert m.count("    if False:\n") == 1 and "if digest and hashlib" in m, "mutation did not land"
+m = s.replace(
+    (
+        '    if not digest:\n'
+        '        raise ChartUnavailable(\n'
+        '            f"{index} publishes no digest for {chart} {version}, so "\n'
+        '            f"its archive could not be checked",\n'
+        '            answered=True,\n'
+        '        )\n'
+        '    data = get(urllib.parse.urljoin(repo.rstrip("/") + "/", str(urls[0])), {}, None)\n'
+        '    if hashlib.sha256(data).hexdigest() != digest:\n'
+    ),
+    (
+        '    if False:\n'
+        '        raise ChartUnavailable(\n'
+        '            f"{index} publishes no digest for {chart} {version}, so "\n'
+        '            f"its archive could not be checked",\n'
+        '            answered=True,\n'
+        '        )\n'
+        '    data = get(urllib.parse.urljoin(repo.rstrip("/") + "/", str(urls[0])), {}, None)\n'
+        '    if digest and hashlib.sha256(data).hexdigest() != digest:\n'
+    ),
+    1,
+)
+assert m != s, "mutation did not land"
 p.write_text(m)
 PY
 rejects "digest: keep an archive its index publishes no digest for" test_registry \
@@ -1167,8 +1238,14 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('    + (RETRY_ATTEMPTS - 1) * (1 + RETRY_JITTER)\n',
-              '    + (RETRY_ATTEMPTS - 1)\n', 1)
+m = s.replace(
+    (
+        '    RETRY_ATTEMPTS * HTTP_TIMEOUT\n'
+        '    + (RETRY_ATTEMPTS - 1) * (1 + RETRY_JITTER) * RETRY_MAX_WAIT_SECONDS\n'
+    ),
+    '    RETRY_ATTEMPTS * HTTP_TIMEOUT + (RETRY_ATTEMPTS - 1) * RETRY_MAX_WAIT_SECONDS\n',
+    1,
+)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
@@ -1404,8 +1481,14 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('file=sys.stderr)\n            sleep(wait)\n',
-              'file=sys.stderr)\n            sleep(wait)\n            last_sent[host] = timer()\n', 1)
+m = s.replace(
+    '            sleep(wait)\n',
+    (
+        '            sleep(wait)\n'
+        '            last_sent[host] = timer()\n'
+    ),
+    1,
+)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
@@ -2038,7 +2121,15 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace(r': |unexpected status code (?:429|5\d\d)\b")', r': ")', 1)
+m = s.replace(
+    (
+        'REFUSED_FOR_NOW = re.compile(\n'
+        '    r"\\b(?:TOOMANYREQUESTS|UNAVAILABLE): |unexpected status code (?:429|5\\d\\d)\\b"\n'
+        ')\n'
+    ),
+    'REFUSED_FOR_NOW = re.compile(r"\\b(?:TOOMANYREQUESTS|UNAVAILABLE): ")\n',
+    1,
+)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
@@ -2108,7 +2199,15 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('                *(f"{indent}  {line}" for line in said)]\n', '                ]\n', 1)
+m = s.replace(
+    '        return [f"{indent}{self}; trivy\'s stderr ends:", *(f"{indent}  {line}" for line in said)]\n',
+    (
+        '        return [\n'
+        '            f"{indent}{self}; trivy\'s stderr ends:",\n'
+        '        ]\n'
+    ),
+    1,
+)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
@@ -2144,8 +2243,11 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('                              exc.stderr) from exc\n',
-              '                              None) from exc\n', 1)
+m = s.replace(
+    '                f"trivy ran past the {SCAN_TIMEOUT}s one scan is allowed", exc.stderr\n',
+    '                f"trivy ran past the {SCAN_TIMEOUT}s one scan is allowed", None\n',
+    1,
+)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
@@ -2635,7 +2737,14 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace('\\]\\[(?:429|5[0-9][0-9])\\]", re.IGNORECASE)', '\\]\\[(?:429|5[0-9][0-9])\\]")', 1)
+m = s.replace(
+    (
+        '    r"dial tcp|no such host|i/o timeout|connection refused|connection reset|broken pipe|TLS handshake timeout|context deadline exceeded|Client\\.Timeout exceeded|unexpected EOF|tuf: failed to download|unexpected status code (?:429|5[0-9][0-9])|toomanyrequests|\\]\\[(?:429|5[0-9][0-9])\\]",\n'
+        '    re.IGNORECASE,\n'
+    ),
+    '    r"dial tcp|no such host|i/o timeout|connection refused|connection reset|broken pipe|TLS handshake timeout|context deadline exceeded|Client\\.Timeout exceeded|unexpected EOF|tuf: failed to download|unexpected status code (?:429|5[0-9][0-9])|toomanyrequests|\\]\\[(?:429|5[0-9][0-9])\\]"\n',
+    1,
+)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
@@ -2659,8 +2768,11 @@ res $F
 edit $F <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace("        excerpt = line[max(0, found.start() - CONTEXT):][:WIDTH]\n",
-              "        excerpt = line[:WIDTH]\n", 1)
+m = s.replace(
+    '        excerpt = line[max(0, found.start() - CONTEXT) :][:WIDTH]\n',
+    '        excerpt = line[:WIDTH]\n',
+    1,
+)
 assert m != s, "mutation did not land"
 p.write_text(m)
 PY
