@@ -734,13 +734,13 @@ class WhatTheInventoryRenders(unittest.TestCase):
             gate.ROOT,
             gate.render_addons.discover,
             gate.registry.chart_archive,
-            gate.subprocess.run,
+            gate.gatelib.subprocess.run,
             gate.gatelib.require,
         )
         gate.ROOT = root
         gate.render_addons.discover = lambda *a, **k: [self.Unit()]
         gate.registry.chart_archive = chart_archive
-        gate.subprocess.run = run
+        gate.gatelib.subprocess.run = run
         gate.gatelib.require = lambda *a, **k: None
         try:
             return gate.inventory("production"), archive, unit_dir
@@ -749,7 +749,7 @@ class WhatTheInventoryRenders(unittest.TestCase):
                 gate.ROOT,
                 gate.render_addons.discover,
                 gate.registry.chart_archive,
-                gate.subprocess.run,
+                gate.gatelib.subprocess.run,
                 gate.gatelib.require,
             ) = saved
 

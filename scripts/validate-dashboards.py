@@ -57,6 +57,8 @@ import time
 import urllib.error
 import urllib.request
 
+import gatelib
+
 API = "https://grafana.com/api/dashboards"
 RETRIES = 3
 BACKOFF = 2.0  # seconds, multiplied by attempt number
@@ -521,11 +523,24 @@ def main() -> int:
     return 0
 
 
-if __name__ == "__main__":
+def entry() -> int:
+    """main(), with a grafana.com that stayed unreachable read as CANNOT_RUN.
+
+    fetch() raises RuntimeError once every retry has failed. That is a fact
+    about the network, not about a dashboard, so it earns CANNOT_RUN rather than
+    the 1 a finding earns. It is still non-zero, because an unverified catalog is
+    not a green one.
+    """
     try:
-        sys.exit(main())
+        return main()
     except RuntimeError as e:
-        # Network unreachable after retries — infrastructure problem, not a
-        # bad dashboard. Still non-zero: an unverified catalog is not a green one.
-        print(f"ERROR: {e}", file=sys.stderr)
-        sys.exit(1)
+        print(f"Cannot run: {e}", file=sys.stderr)
+        print(
+            "What could not be read was not examined, which is not the same as nothing being wrong.",
+            file=sys.stderr,
+        )
+        return gatelib.CANNOT_RUN
+
+
+if __name__ == "__main__":
+    sys.exit(entry())

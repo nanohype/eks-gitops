@@ -10,9 +10,11 @@ The registry client is tested in test_registry; the exit status and the words
 a read that failed earns are held here.
 """
 
+import ast
 import contextlib
 import io
 import pathlib
+import sys
 import unittest
 from unittest import mock
 
@@ -207,6 +209,141 @@ class AReadThatFailed(unittest.TestCase):
         archive = pathlib.Path("/cache/c-1.0.0.tgz")
         with mock.patch.object(registry, "chart_archive", return_value=archive):
             self.assertEqual(gatelib.chart_archive_or_exit(self.REPO, "c", "1.0.0"), archive)
+
+
+class AProgramUnderABound(unittest.TestCase):
+    """A program that did not finish decided nothing, so it is CANNOT_RUN, not 1.
+
+    A gate that lets `subprocess.TimeoutExpired` escape exits 1 through the
+    traceback, which is the status a finding earns, and a slow renderer or a
+    stalled clone then reads as a defect in this repository.
+    """
+
+    def outcome(self, cmd, **kwargs):
+        with (
+            contextlib.redirect_stdout(io.StringIO()) as out,
+            self.assertRaises(SystemExit) as caught,
+        ):
+            gatelib.run(cmd, what="the render", **kwargs)
+        return caught.exception.code, out.getvalue()
+
+    def test_a_program_that_finishes_is_returned_with_its_output(self):
+        proc = gatelib.run(
+            [sys.executable, "-c", "import sys; print('out'); sys.exit(3)"],
+            timeout=60,
+            what="a probe",
+        )
+        self.assertEqual((proc.returncode, proc.stdout), (3, "out\n"))
+
+    def test_a_program_that_runs_out_its_bound_cannot_run(self):
+        code, said = self.outcome(
+            [sys.executable, "-c", "import time; time.sleep(30)"], timeout=0.2
+        )
+        self.assertEqual(code, gatelib.CANNOT_RUN)
+        self.assertIn("Cannot run: the render did not finish within 0.2s: ", said)
+        self.assertIn("time.sleep(30)", said)
+        self.assertIn("not the same as nothing being wrong", said)
+
+    def test_a_program_that_cannot_start_cannot_run(self):
+        code, said = self.outcome(["no-such-binary-anywhere", "build"], timeout=60)
+        self.assertEqual(code, gatelib.CANNOT_RUN)
+        self.assertIn("Cannot run: the render could not start: ", said)
+        self.assertIn("no-such-binary-anywhere", said)
+
+    def test_the_caller_keeps_the_say_over_capture(self):
+        with mock.patch.object(gatelib.subprocess, "run") as run:
+            gatelib.run(["tool", pathlib.Path("x")], timeout=5, what="w", capture_output=False)
+        run.assert_called_once_with(["tool", "x"], timeout=5, capture_output=False, text=True)
+
+
+SCRIPTS = pathlib.Path(__file__).resolve().parent.parent
+RUNNERS = {
+    "subprocess.run",
+    "subprocess.check_output",
+    "subprocess.check_call",
+    "subprocess.call",
+    "subprocess.Popen",
+}
+
+
+def unbounded_calls(source: str) -> list[str]:
+    """Each call in `source` that starts a program or reads a URL with no bound.
+
+    A program runs bounded when the call carries `timeout` and sits in a `try`
+    that handles `subprocess.TimeoutExpired`, the shape gatelib.run has. A URL
+    read is bounded when the call carries `timeout`.
+    """
+    tree = ast.parse(source)
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+
+    def handles_timeout(node: ast.AST) -> bool:
+        while node in parents:
+            parent = parents[node]
+            if isinstance(parent, ast.Try) and node in parent.body:
+                for handler in parent.handlers:
+                    if handler.type is not None and "TimeoutExpired" in ast.unparse(handler.type):
+                        return True
+            node = parent
+        return False
+
+    found = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = ast.unparse(node.func)
+        bounded = any(k.arg == "timeout" for k in node.keywords)
+        if (
+            name in RUNNERS
+            and not (bounded and handles_timeout(node))
+            or name.endswith("urlopen")
+            and not bounded
+        ):
+            found.append(f"line {node.lineno}: {name}")
+    return found
+
+
+class EveryProgramAGateRunsIsBounded(unittest.TestCase):
+    """gatelib.run is how a gate runs a program; anything else carries its own bound.
+
+    A call with no bound can hold a CI job until the job's own timeout, and one
+    whose expiry escapes exits 1, the status a finding earns.
+    """
+
+    def test_the_gates_run_programs_only_under_a_bound(self):
+        offenders = {
+            path.name: calls
+            for path in sorted(SCRIPTS.glob("*.py"))
+            if (calls := unbounded_calls(path.read_text(encoding="utf-8")))
+        }
+        self.assertEqual(offenders, {}, "run these through gatelib.run")
+
+    def test_the_reader_sees_an_unbounded_run(self):
+        self.assertEqual(
+            unbounded_calls("import subprocess\nsubprocess.run(['git', 'ls-files'])\n"),
+            ["line 2: subprocess.run"],
+        )
+
+    def test_the_reader_sees_a_bound_whose_expiry_escapes(self):
+        self.assertEqual(
+            unbounded_calls("import subprocess\nsubprocess.run(['git'], timeout=5)\n"),
+            ["line 2: subprocess.run"],
+        )
+
+    def test_the_reader_sees_an_unbounded_url_read(self):
+        self.assertEqual(
+            unbounded_calls("import urllib.request\nurllib.request.urlopen('https://x')\n"),
+            ["line 2: urllib.request.urlopen"],
+        )
+
+    def test_a_bound_whose_expiry_is_handled_passes(self):
+        source = (
+            "import subprocess\n"
+            "try:\n"
+            "    subprocess.run(['git'], timeout=5)\n"
+            "except subprocess.TimeoutExpired:\n"
+            "    pass\n"
+        )
+        self.assertEqual(unbounded_calls(source), [])
 
 
 if __name__ == "__main__":

@@ -12,6 +12,7 @@ of those places gets a fixture that moves it.
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import io
 import json
@@ -103,6 +104,24 @@ def dashboard(name, *exprs):
 NUMERATOR = 'svc_request_duration_seconds_bucket{job="svc",le="1"}'
 DENOMINATOR = 'svc_request_duration_seconds_count{job="svc"}'
 PANELS = (f"sum(rate({NUMERATOR}[30d])) / sum(rate({DENOMINATOR}[30d]))",)
+
+
+def runs_kustomize_build(source: str) -> bool:
+    """Whether the gate's source runs `kustomize build` through gatelib.run.
+
+    Read from the syntax tree, so the formatter's wrapping of the call cannot
+    make the answer change.
+    """
+    for node in ast.walk(ast.parse(source)):
+        if (
+            isinstance(node, ast.Call)
+            and ast.unparse(node.func) == "gatelib.run"
+            and node.args
+            and isinstance(node.args[0], ast.List)
+            and [ast.unparse(e) for e in node.args[0].elts[:2]] == ["'kustomize'", "'build'"]
+        ):
+            return True
+    return False
 
 
 class ReadingTheExpression(unittest.TestCase):
@@ -409,7 +428,9 @@ class TheShippedCatalog(unittest.TestCase):
         source = (ROOT / "scripts" / "check-burn-rate-budgets.py").read_text()
         self.assertNotIn("2592000", source)
         self.assertNotIn('"30d"', source)
-        self.assertIn('subprocess.run(["kustomize", "build"', source)
+        self.assertTrue(
+            runs_kustomize_build(source), "the gate reads its panels from a kustomize build"
+        )
 
 
 if __name__ == "__main__":

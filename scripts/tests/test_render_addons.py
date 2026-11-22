@@ -203,7 +203,7 @@ class WhatARenderIsHanded(unittest.TestCase):
         with (
             mock.patch.object(gate, "REPO_ROOT", root),
             mock.patch.object(gate.gatelib, "chart_archive_or_exit", fetch),
-            mock.patch.object(gate.subprocess, "run", ran),
+            mock.patch.object(gate.gatelib.subprocess, "run", ran),
         ):
             result = gate.render(unit, env, objects)
         return result, fetch, ran, archive, unit_dir

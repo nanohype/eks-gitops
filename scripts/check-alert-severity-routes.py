@@ -59,7 +59,6 @@ half that lives here. A green run is not an assertion that a page arrived.
 from __future__ import annotations
 
 import pathlib
-import subprocess
 import sys
 
 import gatelib
@@ -71,6 +70,9 @@ ALERTING = ROOT / "dashboards" / "base" / "alerting"
 # cluster receives. Derived from the alerting directory rather than named
 # again, so the two readings below cannot come to describe different trees.
 KUSTOMIZE_ROOT = ALERTING.parent
+# The bound on the kustomize build this gate reads its corpus from. A build that
+# runs it out produced nothing to read, so it is CANNOT_RUN (gatelib.run).
+RENDER_TIMEOUT = 300
 
 RULE_GROUP = "GrafanaAlertRuleGroup"
 POLICY = "GrafanaNotificationPolicy"
@@ -131,7 +133,11 @@ def shipped(root: pathlib.Path) -> set[tuple[str, str]]:
     both readings are taken and disagreement between them is itself a finding.
     """
     gatelib.require("kustomize")
-    proc = subprocess.run(["kustomize", "build", str(root)], capture_output=True, text=True)
+    proc = gatelib.run(
+        ["kustomize", "build", str(root)],
+        timeout=RENDER_TIMEOUT,
+        what=f"kustomize build {under_root(root)}",
+    )
     if proc.returncode != 0:
         print(
             f"Cannot run: kustomize build {under_root(root)} failed, so what "

@@ -57,7 +57,6 @@ import argparse
 import json
 import pathlib
 import re
-import subprocess
 import sys
 import urllib.error
 from typing import NoReturn
@@ -156,7 +155,7 @@ def rendered_flags(pin: dict) -> dict:
     gatelib.require("helm")
     archive = gatelib.chart_archive_or_exit(pin["chartRepo"], pin["chart"], pin["chartVersion"])
     values = [str(ADDON / "values.yaml")]
-    proc = subprocess.run(
+    proc = gatelib.run(
         [
             "helm",
             "template",
@@ -168,9 +167,8 @@ def rendered_flags(pin: dict) -> dict:
             "--set",
             "clusterName=fixture",
         ],
-        capture_output=True,
-        text=True,
         timeout=RENDER_TIMEOUT,
+        what=f"helm template of {ADDON_NAME}",
     )
     if proc.returncode != 0:
         last = ((proc.stderr or "") + (proc.stdout or "")).strip().splitlines()

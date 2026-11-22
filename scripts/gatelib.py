@@ -3,11 +3,12 @@
 Small on purpose. The gates are standalone executables and mostly should stay
 that way; what belongs here is the handful of things that are wrong in the same
 way when each gate does them itself: reading the manifest a gate derives from,
-requiring a tool, walking an ApplicationSet's generators, telling chart source
-from a manifest, and the exit status that says a gate could not run, a registry
-that could not be read among them. Reading a registry is a client rather than a
-helper, so it lives beside this file in registry.py, and raises; the status a
-failed read earns, and the words that say so, are decided here.
+requiring a tool, running one under a bound, walking an ApplicationSet's
+generators, telling chart source from a manifest, and the exit status that says
+a gate could not run, a registry that could not be read or a program that did
+not finish among them. Reading a registry is a client rather than a helper, so
+it lives beside this file in registry.py, and raises; the status a failed read
+earns, and the words that say so, are decided here.
 
 Loading it: `import gatelib`, and `import registry` for the client. Python puts
 a script's own directory first on sys.path whichever directory it is run from,
@@ -22,10 +23,12 @@ from __future__ import annotations
 
 import json
 import pathlib
+import shlex
 import shutil
+import subprocess
 import sys
-from collections.abc import Iterable
-from typing import TYPE_CHECKING, NoReturn
+from collections.abc import Iterable, Sequence
+from typing import TYPE_CHECKING, Any, NoReturn
 
 if TYPE_CHECKING:
     import registry
@@ -126,6 +129,35 @@ def require(*tools: str) -> None:
     print("This gate has NOT checked anything — that is different from finding")
     print("nothing. Install the tool(s) and re-run; the versions CI pins are in")
     print("the env block at the top of .github/workflows/ci.yml.")
+    sys.exit(CANNOT_RUN)
+
+
+def run(
+    cmd: Sequence[Any], *, timeout: float, what: str, **kwargs: Any
+) -> subprocess.CompletedProcess:
+    """`subprocess.run` under `timeout`, or exit CANNOT_RUN saying what did not finish.
+
+    Every program a gate runs — a renderer, a scanner, git, a clone — runs
+    under a bound. A call that runs out its bound, or that cannot start, has
+    produced nothing for the gate to read, so it decided nothing about the tree.
+    Left to escape, `subprocess.TimeoutExpired` ends the gate through the
+    interpreter's traceback with status 1, the status every gate here gives a
+    finding, and a slow network reads as a defect in this repository.
+
+    `what` names the call in the sentence a reader acts on. Output is captured
+    as text unless the caller says otherwise, and every other keyword goes to
+    `subprocess.run` as given, so a non-zero exit is still the caller's to read.
+    """
+    argv = [str(part) for part in cmd]
+    kwargs.setdefault("capture_output", True)
+    kwargs.setdefault("text", True)
+    try:
+        return subprocess.run(argv, timeout=timeout, **kwargs)
+    except subprocess.TimeoutExpired:
+        print(f"Cannot run: {what} did not finish within {timeout:g}s: {shlex.join(argv)}")
+    except FileNotFoundError as exc:
+        print(f"Cannot run: {what} could not start: {exc}")
+    print("What it was to produce was not examined, which is not the same as nothing being wrong.")
     sys.exit(CANNOT_RUN)
 
 

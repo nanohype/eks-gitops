@@ -69,7 +69,6 @@ import argparse
 import importlib.util
 import pathlib
 import re
-import subprocess
 import sys
 from collections.abc import Collection
 
@@ -187,7 +186,9 @@ def inventory(
         for name, value in u.params:
             cmd += ["--set", f"{name}={value}"]
         cmd += vf
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=RENDER_TIMEOUT)
+        proc = gatelib.run(
+            cmd, timeout=RENDER_TIMEOUT, what=f"helm template of {u.chart} ({u.path})"
+        )
         if proc.returncode != 0:
             unrendered.append((u.path, (proc.stderr.strip() or proc.stdout.strip())[:200]))
             continue

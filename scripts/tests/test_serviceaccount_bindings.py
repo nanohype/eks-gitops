@@ -84,7 +84,7 @@ class Charts(unittest.TestCase):
         for patch in (
             mock.patch.object(gate, "__file__", str(self.root / "scripts" / "gate.py")),
             mock.patch.object(gate.gatelib, "require", lambda *tools: None),
-            mock.patch.object(gate.subprocess, "run", self.helm),
+            mock.patch.object(gate.gatelib.subprocess, "run", self.helm),
         ):
             patch.start()
             self.addCleanup(patch.stop)

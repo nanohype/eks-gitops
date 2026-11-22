@@ -14,6 +14,7 @@ what separates deriving the keys from listing them.
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import io
 import pathlib
@@ -66,6 +67,24 @@ def policy(route, name="routes"):
 
 def exact(key, value):
     return {"name": key, "value": value, "isEqual": True, "isRegex": False}
+
+
+def runs_kustomize_build(source: str) -> bool:
+    """Whether the gate's source runs `kustomize build` through gatelib.run.
+
+    Read from the syntax tree, so the formatter's wrapping of the call cannot
+    make the answer change.
+    """
+    for node in ast.walk(ast.parse(source)):
+        if (
+            isinstance(node, ast.Call)
+            and ast.unparse(node.func) == "gatelib.run"
+            and node.args
+            and isinstance(node.args[0], ast.List)
+            and [ast.unparse(e) for e in node.args[0].elts[:2]] == ["'kustomize'", "'build'"]
+        ):
+            return True
+    return False
 
 
 class PlantedAlerting:
@@ -325,7 +344,9 @@ class WhatShipsDecides(PlantedAlerting, unittest.TestCase):
         """The gate would pass every case above by globbing the same directory
         twice. What separates the two readings is that one shells out."""
         source = (ROOT / "scripts" / "check-alert-severity-routes.py").read_text()
-        self.assertIn('subprocess.run(["kustomize", "build"', source)
+        self.assertTrue(
+            runs_kustomize_build(source), "the gate reads its corpus from a kustomize build"
+        )
 
 
 class TheShippedRootIsTheOneDelivered(unittest.TestCase):

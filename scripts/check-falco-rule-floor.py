@@ -52,7 +52,6 @@ from __future__ import annotations
 
 import io
 import pathlib
-import subprocess
 import sys
 import tarfile
 import urllib.error
@@ -158,7 +157,7 @@ def render(archive: pathlib.Path, env: str) -> tuple[dict, dict]:
         "-f",
         str(ADDON / f"values-{env}.yaml"),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=RENDER_TIMEOUT)
+    proc = gatelib.run(cmd, timeout=RENDER_TIMEOUT, what=f"helm template of falco for {env}")
     if proc.returncode != 0:
         cannot_run(
             f"Cannot run: helm could not render falco for {env}.",
