@@ -28,7 +28,7 @@ URL = '{{ index .metadata.annotations "gitops/repo-url" }}'
 REVISION = '{{ index .metadata.annotations "gitops/repo-branch" }}'
 
 
-def appset(*sources: dict, single: dict | None = None, name: str = "addons") -> dict:
+def appset(*sources: object, single: dict | None = None, name: str = "addons") -> dict:
     spec: dict = {}
     if sources:
         spec["sources"] = list(sources)

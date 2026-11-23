@@ -17,6 +17,7 @@ import io
 import pathlib
 import tempfile
 import unittest
+from collections.abc import Sequence
 from unittest import mock
 
 import yaml
@@ -52,7 +53,7 @@ def replace(*paths: str) -> str:
     )
 
 
-def appset(path: str, *patches: dict, elements: list[dict] | None = None) -> dict:
+def appset(path: str, *patches: dict, elements: Sequence[object] | None = None) -> dict:
     gens = [{"list": {"elements": elements}}] if elements is not None else []
     return {
         "apiVersion": "argoproj.io/v1alpha1",

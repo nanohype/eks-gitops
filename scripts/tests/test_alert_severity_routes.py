@@ -68,9 +68,8 @@ def exact(key, value):
     return {"name": key, "value": value, "isEqual": True, "isRegex": False}
 
 
-@unittest.skipUnless(HAS_KUSTOMIZE, "kustomize is not on PATH")
-class TheVerdict(unittest.TestCase):
-    """main() over a planted alerting directory."""
+class PlantedAlerting:
+    """An alerting directory planted for main(), and a catalog that routes."""
 
     def verdict(self, *docs, unshipped=()):
         """main() over a planted tree, rendered the way the real one is.
@@ -121,6 +120,11 @@ class TheVerdict(unittest.TestCase):
                 "g", ("Paging", {"severity": "page"}), ("Ticketing", {"severity": "ticket"})
             ),
         )
+
+
+@unittest.skipUnless(HAS_KUSTOMIZE, "kustomize is not on PATH")
+class TheVerdict(PlantedAlerting, unittest.TestCase):
+    """main() over a planted alerting directory."""
 
     def test_a_routed_catalog_passes(self):
         """The control. Without it every case below could be failing for a
@@ -230,7 +234,7 @@ class TheVerdict(unittest.TestCase):
 
 
 @unittest.skipUnless(HAS_KUSTOMIZE, "kustomize is not on PATH")
-class WhatShipsDecides(unittest.TestCase):
+class WhatShipsDecides(PlantedAlerting, unittest.TestCase):
     """The routing this gate reads has to be routing a cluster receives.
 
     `resources` is an explicit list, so every object here can stop being
@@ -239,10 +243,6 @@ class WhatShipsDecides(unittest.TestCase):
     for a pager with nothing to match them against — a green gate over the
     exact state it exists to refuse.
     """
-
-    verdict = TheVerdict.verdict
-    ROUTED = TheVerdict.ROUTED
-    healthy = TheVerdict.healthy
 
     def test_a_routing_tree_left_out_of_the_kustomization_is_reported(self):
         docs = self.healthy()
@@ -281,7 +281,7 @@ class WhatShipsDecides(unittest.TestCase):
         alerting = base / "alerting"
         alerting.mkdir(parents=True)
         resources = []
-        for i, doc in enumerate(TheVerdict.healthy(self)):
+        for i, doc in enumerate(self.healthy()):
             name = f"{i:02d}-{doc['kind']}.yaml"
             (alerting / name).write_text(yaml.safe_dump(doc))
             resources.append(f"  - alerting/{name}")
