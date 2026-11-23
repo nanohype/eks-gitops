@@ -163,6 +163,12 @@ necessary but not sufficient:
   both directions: a runtime below it cannot run (exit 2), and a `.node-version`
   below it is a finding (exit 1), so the next CI run failing is reported by the
   run before it.
+
+  The same script hands every lock file the pip-compile manager reads to the
+  package's own `extractHeaderCommand`. The manager rebuilds the compile command
+  from that header, and one carrying an option it does not support is skipped
+  with a warning and nothing else, so every distribution in the file stops
+  moving. A header the reader rejects fails the job instead.
 - **Kyverno unit tests + verify-images signing-identity contract** —
   `scripts/kyverno-test.sh policies/kyverno/tests` and
   `scripts/check-image-verification.py` (CI job `kyverno`). The verify-images

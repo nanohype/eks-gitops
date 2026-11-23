@@ -17,8 +17,13 @@
 // enabled with nothing recorded for it, a recording that outlived its manager,
 // and a record written against a version other than the one installed.
 //
-// Exit 1 for a record that disagrees with the package. Exit 2 for a package this
-// cannot import — that is a run that checked nothing, which is not a pass.
+// It also hands every lock file the pip-compile manager reads to the package's
+// own header reader (PIP-COMPILE HEADERS below), because a header that reader
+// rejects stops Renovate reading the file without failing anything.
+//
+// Exit 1 for a record that disagrees with the package, or a lock file whose
+// header it rejects. Exit 2 for a package this cannot import — that is a run
+// that checked nothing, which is not a pass.
 //
 // WHERE THE ANSWER COMES FROM
 //
@@ -37,6 +42,7 @@
 // this package avoids the floor, so a supported Node is the precondition and
 // not a property of how the import is spelled.
 
+import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -249,6 +255,96 @@ for (const manager of Object.keys(recorded)) {
   }
 }
 
+// PIP-COMPILE HEADERS
+//
+// The pip-compile manager rebuilds the compile command from the header of each
+// lock file it reads, and refuses a header carrying an option outside the list
+// it supports. The refusal is not a failure anywhere a reader looks:
+// extractAllPackageFiles logs it at warn and skips the file, so every
+// distribution in it stops moving and the Dependency Dashboard shows no
+// pip-compile section at all. `--no-index` in requirements.txt's header did
+// exactly that for three months. So each lock file the manager reads goes
+// through the package's own reader, and a header it rejects is a finding here.
+//
+// The files are the tracked ones its managerFilePatterns match. A pattern in
+// `/…/` form is a regular expression and is matched here; a glob is matched by a
+// library this script does not load, so one refuses rather than being guessed at.
+const PIP_COMPILE = "renovate/dist/modules/manager/pip-compile/common.js";
+// The reader logs at trace and debug. Renovate initialises its logger before any
+// manager runs, and a log call ahead of that prints a note calling itself a bug,
+// so the logger is initialised first, at LOG_LEVEL as Renovate itself reads it.
+const LOGGER = "renovate/dist/logger/index.js";
+const SLASHED = /^\/(?<body>.*)\/(?<flags>[a-z]*)$/s;
+const headersRead = [];
+if (enabled.includes("pip-compile")) {
+  const patterns = config["pip-compile"]?.managerFilePatterns ?? shipped["pip-compile"] ?? [];
+  const regexes = [];
+  for (const pattern of patterns) {
+    const m = SLASHED.exec(pattern);
+    if (!m) {
+      console.error(
+        `Cannot run: pip-compile's managerFilePatterns holds ${JSON.stringify(pattern)}, ` +
+          `a glob, and this script matches only /regex/ patterns.`
+      );
+      console.error("No lock file header was read, which is not the same as one that parses.");
+      process.exit(2);
+    }
+    regexes.push(new RegExp(m.groups.body, m.groups.flags));
+  }
+  let tracked;
+  try {
+    tracked = execFileSync("git", ["-C", ROOT, "ls-files", "-z"], {
+      encoding: "utf8",
+      timeout: 120_000,
+    })
+      .split("\0")
+      .filter(Boolean);
+  } catch (err) {
+    console.error(`Cannot run: git ls-files did not list ${ROOT} — ${err.message.split("\n")[0]}.`);
+    console.error("No lock file header was read, which is not the same as one that parses.");
+    process.exit(2);
+  }
+  const lockFiles = tracked.filter((file) => regexes.some((re) => re.test(file)));
+  let reader;
+  try {
+    await (await import(LOGGER)).init();
+    reader = (await import(PIP_COMPILE)).extractHeaderCommand;
+  } catch (err) {
+    console.error(
+      `Cannot run: ${LOGGER} or ${PIP_COMPILE} is not importable — ` +
+        `${err.message.split("\n")[0]}.`
+    );
+    console.error("No lock file header was read, which is not the same as one that parses.");
+    process.exit(2);
+  }
+  if (typeof reader !== "function") {
+    console.error(
+      `Cannot run: ${PIP_COMPILE} exports no extractHeaderCommand, so the reader ` +
+        `this checks headers with moved.`
+    );
+    console.error("No lock file header was read, which is not the same as one that parses.");
+    process.exit(2);
+  }
+  if (lockFiles.length === 0) {
+    problems.push(
+      `pip-compile is enabled and its managerFilePatterns match no tracked file, so ` +
+        `no lock file header was read and nothing the manager watches was checked.`
+    );
+  }
+  for (const file of lockFiles) {
+    try {
+      reader(readFileSync(join(ROOT, file), "utf8"), file);
+      headersRead.push(file);
+    } catch (err) {
+      problems.push(
+        `${file}: renovate ${installed}'s pip-compile manager rejects this header — ` +
+          `${err.message.split("\n")[0]}. It logs that at warn and skips the file, so ` +
+          `nothing in it is updated. Recompile with options the manager accepts.`
+      );
+    }
+  }
+}
+
 if (problems.length > 0) {
   for (const p of problems) console.error(`FAIL  ${p}`);
   process.exit(1);
@@ -257,6 +353,12 @@ console.log(
   `renovate manager defaults OK: ${Object.keys(shipped).length} enabled manager(s) ` +
     `match scripts/renovate-manager-defaults.json`
 );
+if (headersRead.length > 0) {
+  console.log(
+    `pip-compile headers OK: ${headersRead.length} lock file(s) parse as renovate ` +
+      `${installed} reads them (${headersRead.join(", ")})`
+  );
+}
 if (floor) {
   console.log(
     `node OK: .node-version pins ${pinnedNode}, which satisfies the engines.node ` +
