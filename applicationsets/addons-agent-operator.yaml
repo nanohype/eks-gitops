@@ -64,7 +64,7 @@ spec:
         # note in policies/kyverno/tests/resources.yaml names each one.
         - repoURL: oci://ghcr.io/nanohype/eks-agent-platform/charts/operator
           chart: operator
-          targetRevision: 0.7.1
+          targetRevision: 0.7.5
           helm:
             # Matches the Application name above so Application == release ==
             # Deployment (eks-agent-platform-operator) — one fully-qualified name
