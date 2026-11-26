@@ -86,6 +86,7 @@ IDENTIFIES = {
     # The mask script's control weakens the script and runs its own --self-test,
     # whose verdict names the cases that stopped holding, not a file.
     "mask-aws-ids.sh": "mask-aws-ids self-test FAILED",
+    "mask-aws-ids.py": "mask-aws-ids self-test FAILED",
 }
 
 
@@ -686,15 +687,16 @@ def m_mask_aws_ids(root):
 
     The mask script's self-test is the only thing proving it masks every
     twelve-digit window; a run of twelve digits slipping past `{13,}` is an
-    account id printed in the clear. The control runs the script's --self-test
+    account id printed in the clear. The pattern lives in the core the script
+    runs, scripts/mask-aws-ids.py. The control runs the script's --self-test
     (GATE_ARGS) and requires it to fail.
     """
     return _sub(
         root,
-        "scripts/mask-aws-ids.sh",
-        "grep -oE '[0-9]{12,}'",
-        "grep -oE '[0-9]{13,}'",
-        marker="grep -oE '[0-9]{13,}'",
+        "scripts/mask-aws-ids.py",
+        'DIGIT_RUN = re.compile(r"[0-9]{12,}")',
+        'DIGIT_RUN = re.compile(r"[0-9]{13,}")',
+        marker='DIGIT_RUN = re.compile(r"[0-9]{13,}")',
     )
 
 
@@ -716,6 +718,9 @@ def m_env_coverage(root):
 CONTROLS = {
     "check-workflow-id-masking.py": ("a role ARN read from a variable", m_workflow_id_masking),
     "mask-aws-ids.sh": ("a mask script that no longer masks a twelve-digit id", m_mask_aws_ids),
+    # The core the script runs, through its own --self-test: the same weakened
+    # pattern, refused by both entry points.
+    "mask-aws-ids.py": ("a mask core that no longer masks a twelve-digit id", m_mask_aws_ids),
     "check-env-coverage.py": (
         "an addon selected for an environment it cannot render",
         m_env_coverage,
@@ -827,6 +832,7 @@ GATE_ARGS = {
     # The mask script's verdict on itself; without it the script reads
     # no variable names and exits on a usage error.
     "mask-aws-ids.sh": ["--self-test"],
+    "mask-aws-ids.py": ["--self-test"],
 }
 
 

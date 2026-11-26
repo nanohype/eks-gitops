@@ -248,10 +248,12 @@ PER_GATE_FLOORS: dict[str, tuple[int, int]] = {
     "scripts/check-lb-scheme-inputs.py": (69, 73),
     # Both verdicts over stubbed reads, --sync and --self-test.
     "scripts/check-chart-deprecation.py": (86, 80),
-    # The account-id gate, ported from landing-zone. Its --self-test runs under
-    # the suite and plants every rule; the uncovered remainder is the defensive
-    # branches of the expression reader over YAML shapes no workflow here has.
-    "scripts/check-workflow-id-masking.py": (93, 88),
+    # The account-id gate and the mask script's core, vendored from landing-zone
+    # (scripts/vendored.json). Their self-tests run under the suite, the gate's
+    # over this repository's workflows and scripts/workflow-id-masking.toml; the
+    # floors are what those self-tests reach here.
+    "scripts/check-workflow-id-masking.py": (98, 97),
+    "scripts/mask-aws-ids.py": (99, 98),
 }
 
 

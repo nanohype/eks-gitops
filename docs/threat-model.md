@@ -70,8 +70,9 @@ customer fork ──ArgoCD app-of-apps──► ApplicationSets ──► fleet 
   as its first command so the id and the ARN are masked for the rest of the
   job, configure-aws-credentials runs with `mask-aws-account-id: true`, and the
   step fails while the name still exists as a variable.
-  `scripts/check-workflow-id-masking.py` holds every workflow to that shape and
-  the mask script to the landing-zone bytes `scripts/vendored.json` records.
+  `scripts/check-workflow-id-masking.py` holds every workflow to that shape, and
+  itself, the mask script and its core to the landing-zone bytes
+  `scripts/vendored.json` records.
 - **Residual (account ids)** — with debug logging on, the runner traces the
   value it reads for the leftover-variable guard before comparing it, unmasked,
   so a re-run with debug logging while the variable exists prints it; the

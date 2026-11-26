@@ -3805,30 +3805,12 @@ rejects "serviceaccount-bindings: let a pod name an account nothing creates" tes
   test_a_pod_naming_an_account_the_chart_does_not_create_fails
 res $F
 
-F=scripts/check-workflow-id-masking.py
-
-edit $F <<'PY'
-import pathlib, sys
-p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace("    res.findings.extend(vendored_findings(root))\n", "", 1)
-assert m != s, "mutation did not land"
-p.write_text(m)
-PY
-rejects "workflow-id-masking: stop holding the mask script to its record" test_workflow_id_masking \
-  test_an_edited_script_is_refused_naming_the_source
-res $F
-
-edit $F <<'PY'
-import pathlib, sys
-p = pathlib.Path(sys.argv[1]); s = p.read_text()
-m = s.replace("    if res.workflows < MIN_WORKFLOWS or res.mask_steps < MIN_MASK_STEPS or unseen:\n",
-              "    if res.workflows < MIN_WORKFLOWS and res.mask_steps < MIN_MASK_STEPS and unseen:\n", 1)
-assert m != s, "mutation did not land"
-p.write_text(m)
-PY
-rejects "workflow-id-masking: pass a tree that stopped reading the secret" test_workflow_id_masking \
-  test_a_tree_that_stopped_reading_the_secret_is_under_the_floor
-res $F
+# scripts/check-workflow-id-masking.py and scripts/mask-aws-ids.py carry no
+# probe here. Both are vendored (scripts/vendored.json): an edit to either is
+# refused by the record check before any rule is reached, so a probe planted in
+# one proves only the digest. Each rule's planted-defect proof is the gate's own
+# self-test, kept in landing-zone, which test_workflow_id_masking runs here over
+# this repository's workflows and policy.
 
 echo
 echo "── Restored tree must be green again ──"
