@@ -39,7 +39,12 @@ class Corpus(unittest.TestCase):
         )
 
     def test_every_policy_path_exists(self):
-        for rel in self.spec.get("policies") or []:
+        policies = self.spec.get("policies") or []
+        self.assertTrue(
+            policies,
+            "the suite names no policies — every path check below would pass over none",
+        )
+        for rel in policies:
             self.assertTrue(
                 (TESTS / rel).resolve().exists(), f"policy {rel} named by the suite does not exist"
             )

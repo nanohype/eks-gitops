@@ -45,6 +45,7 @@ EXPECTED = (
     "test_renovate_defaults",
     "test_label_values",
     "test_sync_waves",
+    "test_hardcoded_org",
     "test_kyverno_corpus",
     "test_named_things",
     "test_falco_rule_floor",
@@ -220,6 +221,9 @@ BRANCH_FLOOR = 60
 # and raising one is what lands with the tests that earn it. A file with no
 # branches reads as covering all of them.
 PER_GATE_FLOORS: dict[str, tuple[int, int]] = {
+    # The fork-safety gate blocks in CI, and its unit tests reach every line and
+    # branch of it: the pattern, the floor, and the blocking and report-only modes.
+    "scripts/check-hardcoded-org.py": (100, 100),
     "scripts/check-named-things.py": (42, 34),
     "scripts/check-renovate-coverage.py": (90, 84),
     "scripts/check-label-values.py": (56, 54),

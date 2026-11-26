@@ -78,6 +78,7 @@ import argparse
 import pathlib
 import re
 import sys
+from collections.abc import Sequence
 
 ORG = "nanohype"
 CATALOG = "eks-gitops"  # THIS repo — the vended catalog. NOT the product repos.
@@ -100,7 +101,7 @@ CATALOG_REPO_URL = re.compile(
 )
 
 
-def main() -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
         "--root",
@@ -113,7 +114,7 @@ def main() -> int:
         action="store_true",
         help="exit 1 on violations (without this flag: report and exit 0)",
     )
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     appsets = args.root / "applicationsets"
     if not appsets.is_dir():
