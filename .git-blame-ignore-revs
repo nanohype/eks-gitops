@@ -1,0 +1,9 @@
+# Commits whose diff is layout, listed so that blame names the commit that
+# wrote a line rather than the one that re-laid it. GitHub's blame view reads
+# this file. For local blame, run once per clone:
+#
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# build(gates): lint, format and typecheck the gate scripts at Python 3.15
+# ruff format over scripts/, whose output ruff checks parses to the same AST.
+0ceefb36859351355d6990588e6cfd97a1ef637b
