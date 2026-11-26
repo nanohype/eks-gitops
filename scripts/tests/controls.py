@@ -7,12 +7,18 @@ still contains comments, collapse a search error into a clean result, or iterate
 an empty enumeration, and every one of those failures prints success.
 
 So each gate here ships a control that introduces the exact violation the gate
-names, and the gate must exit non-zero on it. Four properties make that proof
-rather than ceremony:
+names, and the gate must reject it: exit 1, the status every gate gives a
+violation. Five properties make that proof rather than ceremony:
 
   * **Clean before mutating.** The control asserts the gate passes on the
     unmodified tree first. Without that, a non-zero exit afterwards proves only
     that the gate was already failing.
+
+  * **A rejection is exit 1, and nothing else is.** Exit 2 (CANNOT_RUN) says
+    the gate reached no verdict on the mutated tree, the opposite of having
+    judged the mutation; counted as a rejection, it let a gate that read its
+    tool's findings as a failed run pass the control it was failing. A status
+    outside the taxonomy the gates share (scripts/gatelib.py) proves neither.
 
   * **The mutation is verified by inspecting the mutated text, not the verdict.**
     A mutation that silently fails to apply hands the gate an unchanged fixture,
@@ -1316,6 +1322,19 @@ def run_control(gate: str, what: str, mutate) -> tuple[bool, str]:
             return False, (
                 f"gate ACCEPTED {what} — it cannot reject the violation it exists "
                 f"to catch.\n{(dirty.stdout + dirty.stderr).strip()[:600]}"
+            )
+        if dirty.returncode == CANNOT_RUN:
+            return False, (
+                f"gate could not run on the tree holding {what} (exit {CANNOT_RUN}), so "
+                f"the mutation was never judged; could-not-run is not a rejection.\n"
+                f"{(dirty.stdout + dirty.stderr).strip()[:600]}"
+            )
+        if dirty.returncode != 1:
+            return False, (
+                f"gate exited {dirty.returncode} on the tree holding {what}, which is "
+                f"neither a rejection (1) nor could-not-run ({CANNOT_RUN}); a status "
+                f"outside the taxonomy the gates share says nothing about the "
+                f"mutation.\n{(dirty.stdout + dirty.stderr).strip()[:600]}"
             )
 
         # The rejection must NAME what was mutated. A non-zero exit alone only

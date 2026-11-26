@@ -32,8 +32,9 @@ GATE = pathlib.Path(gate.__file__)
 class Unit:
     """The fields chart_coverage reads off a render unit."""
 
-    def __init__(self, chart: str):
+    def __init__(self, chart: str, path: str | None = None):
         self.chart = chart
+        self.path = path or f"addons/fixture/{chart}"
 
 
 def render(*docs: str) -> str:
@@ -275,7 +276,7 @@ data:
 class EveryChartContributesAnImage(unittest.TestCase):
     """A per-chart floor, because a total cannot see two charts falling out."""
 
-    def coverage(self, images, charts, seen=None):
+    def coverage(self, images, charts, seen=None, unrendered=()):
         """Every declared imageless chart is rendered, and every declared image
         is seen, unless a case says otherwise — so a fixture does not trip a rot
         rule it is not about.
@@ -285,7 +286,7 @@ class EveryChartContributesAnImage(unittest.TestCase):
         ]
         if seen is None:
             seen = set(gate.CONTROLLER_IMAGES) | set(gate.NOT_A_CONTAINER)
-        return gate.chart_coverage(images, units, seen)
+        return gate.chart_coverage(images, units, seen, unrendered=unrendered)
 
     def test_declaration_rot_reaches_the_verdict(self):
         """chart_coverage is where the rot rule is consulted, so gutting the call
@@ -322,6 +323,30 @@ class EveryChartContributesAnImage(unittest.TestCase):
         """The vacuous case: no images at all is not a fleet with no images."""
         problems = self.coverage({}, ["a", "b"])
         self.assertEqual(len(problems), 2)
+
+    def test_a_chart_that_did_not_render_is_not_reported_as_contributing_nothing(self):
+        """An unreachable registry is a run over part of the fleet, which main
+        reports as CANNOT_RUN. Counted here, every unfetched chart was a chart that
+        "rendered and contributed no image" and the run exited 1."""
+        problems = self.coverage({"x:1": {"a"}}, ["a", "b"], unrendered={Unit("b").path})
+        self.assertEqual(problems, [])
+
+    def test_a_chart_with_one_unit_rendered_is_still_held_to_the_floor(self):
+        """Keyed by chart name, with units per path: one unit of a chart that did
+        not render excuses the chart only while none of its units rendered."""
+        units = [Unit("b", "addons/one/b"), Unit("b", "addons/two/b")]
+        seen = set(gate.CONTROLLER_IMAGES) | set(gate.NOT_A_CONTAINER)
+        units += [Unit(c) for c in gate.IMAGELESS_CHARTS]
+        problems = gate.chart_coverage({"x:1": {"a"}}, units, seen, unrendered={"addons/one/b"})
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("b rendered and contributed no image", problems[0])
+
+    def test_a_declared_imageless_chart_that_did_not_render_has_not_outlived_it(self):
+        """An entry has outlived its chart when nothing pins the chart; one that
+        failed to render this run was pinned and not examined."""
+        declared = next(iter(gate.IMAGELESS_CHARTS))
+        problems = self.coverage({"x:1": {"a"}}, ["a"], unrendered={Unit(declared).path})
+        self.assertEqual(problems, [])
 
 
 if __name__ == "__main__":
@@ -621,6 +646,38 @@ class WhatCannotBeReadReachesAVerdict(unittest.TestCase):
         rc, out = self.verdict({}, unrendered=[("addons/x", "helm failed")])
         self.assertEqual(rc, gate.gatelib.CANNOT_RUN)
         self.assertIn("rendered no images at all", out)
+
+    def test_an_unfetched_chart_is_could_not_run_through_the_real_coverage_check(self):
+        """verdict() neutralises chart_coverage, and that is how an unreachable
+        registry reached main as one "rendered and contributed no image" finding
+        per unfetched chart and exit 1. Here the real check runs over a discovery
+        that pins the chart whose only unit did not render."""
+        units = [Unit("a", "addons/a"), Unit("b", "addons/b")]
+        units += [Unit(c) for c in gate.IMAGELESS_CHARTS]
+
+        def inventory(env, seen=None):
+            seen.update(gate.CONTROLLER_IMAGES, gate.NOT_A_CONTAINER)
+            return (
+                self.IMAGES | {"ghcr.io/example/a:1.0.0": {"a"}},
+                [("addons/b", "fetch failed")],
+                [],
+            )
+
+        saved = (gate.inventory, gate.render_addons.discover, dict(gate.ALLOWED_MUTABLE), sys.argv)
+        gate.inventory = inventory
+        gate.render_addons.discover = lambda *a, **k: units
+        gate.ALLOWED_MUTABLE.clear()
+        sys.argv = ["check-image-pins.py"]
+        try:
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                rc = gate.main()
+        finally:
+            gate.inventory, gate.render_addons.discover, argv = saved[0], saved[1], saved[3]
+            gate.ALLOWED_MUTABLE.update(saved[2])
+            sys.argv = argv
+        self.assertEqual(rc, gate.gatelib.CANNOT_RUN, out.getvalue())
+        self.assertNotIn("contributed no image", out.getvalue())
+        self.assertIn("addons/b", out.getvalue())
 
 
 class WhatTheInventoryRenders(unittest.TestCase):

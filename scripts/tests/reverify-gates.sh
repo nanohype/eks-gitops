@@ -652,7 +652,25 @@ jobs:
     steps:
       - uses: actions/checkout@main
 YAML
-run nonzero "zizmor: unpinned action" ./scripts/check-workflows.sh "$SP/wbad/.github/workflows"
+run 1 "zizmor: unpinned action" ./scripts/check-workflows.sh "$SP/wbad/.github/workflows"
+
+# A finding whose highest severity is medium: a pinned checkout that persists the
+# job token. zizmor exits 13 for it, not 14, and a wrapper that read only 14 as
+# findings reported this as a run that never audited (exit 2) instead of the
+# blocking finding it is.
+mkdir -p "$SP/wmedium/.github/workflows"
+cat > "$SP/wmedium/.github/workflows/medium.yml" <<'YAML'
+on: push
+permissions:
+  contents: read
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+YAML
+run 1 "zizmor: a medium finding alone" ./scripts/check-workflows.sh "$SP/wmedium/.github/workflows"
 
 # A workflow-level id-token grant hands every job the OIDC token, and only the
 # auditor persona's excessive-permissions audit sees it. Everything else in the
