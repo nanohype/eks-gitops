@@ -93,23 +93,35 @@ def check_policy_drift() -> tuple[list[str], str]:
             doc = gatelib.read_json(path)
             models = doc["content"]["models"]
         except (ValueError, KeyError) as exc:
-            return ([f"{path} is not a readable llm-policy standard ({exc}). The "
-                     f"snapshot in this file could not be checked for drift."],
-                    f"unreadable: {path}")
+            return (
+                [
+                    f"{path} is not a readable llm-policy standard ({exc}). The "
+                    f"snapshot in this file could not be checked for drift."
+                ],
+                f"unreadable: {path}",
+            )
         want = {v: k for k, v in models.items()}
         if want != POLICY_MODELS:
             only_std = sorted(set(want) - set(POLICY_MODELS))
             only_here = sorted(set(POLICY_MODELS) - set(want))
-            return ([f"POLICY_MODELS has drifted from {path}. "
-                     f"In the standard and not here: {only_std or 'none'}. "
-                     f"Here and not in the standard: {only_here or 'none'}. "
-                     f"Update the snapshot in this file to match."],
-                    f"compared against {path}")
+            return (
+                [
+                    f"POLICY_MODELS has drifted from {path}. "
+                    f"In the standard and not here: {only_std or 'none'}. "
+                    f"Here and not in the standard: {only_here or 'none'}. "
+                    f"Update the snapshot in this file to match."
+                ],
+                f"compared against {path}",
+            )
         return ([], f"matches {path}")
 
-    return ([], "NOT COMPARED — the published standard resolves nowhere on this "
-                "machine, so the snapshot is unverified here. The tier check "
-                "still ran.")
+    return (
+        [],
+        "NOT COMPARED — the published standard resolves nowhere on this "
+        "machine, so the snapshot is unverified here. The tier check "
+        "still ran.",
+    )
+
 
 # The geo prefix the policy names, matching its single preferred region. A
 # `global.` profile resolves and routes anywhere, which is the reason it is
@@ -154,9 +166,11 @@ def main() -> int:
     gateways = [(p, d) for p, d in docs if d["kind"] == "ModelGateway"]
 
     if not platforms:
-        print("FAIL  found no Platform CRs under addons/ai-platform/ — the AI control "
-              "plane is either gone or this gate stopped matching it, and both report "
-              "the same clean result.")
+        print(
+            "FAIL  found no Platform CRs under addons/ai-platform/ — the AI control "
+            "plane is either gone or this gate stopped matching it, and both report "
+            "the same clean result."
+        )
         return 2
 
     failures, drift_note = check_policy_drift()
@@ -170,22 +184,27 @@ def main() -> int:
         for where, mid in model_ids(doc):
             checked += 1
             loc = f"{rel(path)} {doc['kind']}/{doc['metadata']['name']} {where}"
-            if "." not in mid.split(".", 1)[0] and not mid.startswith(("us.", "eu.", "apac.", "global.")):
+            if "." not in mid.split(".", 1)[0] and not mid.startswith(
+                ("us.", "eu.", "apac.", "global.")
+            ):
                 failures.append(
                     f"{loc}: {mid!r} is a bare foundation-model id. Bedrock reports "
                     f"INFERENCE_PROFILE-only for this family, so the first call is a "
-                    f"ValidationException.")
+                    f"ValidationException."
+                )
                 continue
             if not mid.startswith(GEO_PREFIX):
                 failures.append(
                     f"{loc}: {mid!r} does not carry the {GEO_PREFIX!r} geo prefix. The "
                     f"prefix must match the deploy region — a global profile may route "
-                    f"outside the jurisdiction the account's SCP bounds.")
+                    f"outside the jurisdiction the account's SCP bounds."
+                )
                 continue
             if mid not in POLICY_MODELS:
                 failures.append(
                     f"{loc}: {mid!r} is not one of the tiers llm-policy names "
-                    f"({', '.join(sorted(POLICY_MODELS))}).")
+                    f"({', '.join(sorted(POLICY_MODELS))})."
+                )
 
     # ── internal references ──────────────────────────────────────────────────
     for path, doc in gateways:
@@ -196,10 +215,12 @@ def main() -> int:
         if ref not in platforms:
             failures.append(
                 f"{rel(path)} ModelGateway/{name}: platformRef names {ref!r}, which no "
-                f"Platform in this overlay defines.")
+                f"Platform in this overlay defines."
+            )
             continue
-        allowed = set(((platforms[ref][1].get("spec") or {}).get("identity") or {})
-                      .get("allowedModels") or [])
+        allowed = set(
+            ((platforms[ref][1].get("spec") or {}).get("identity") or {}).get("allowedModels") or []
+        )
         for route in spec.get("routes") or []:
             checked += 1
             mid = route.get("modelId")
@@ -207,7 +228,8 @@ def main() -> int:
                 failures.append(
                     f"{rel(path)} ModelGateway/{name} route {route.get('name')!r}: "
                     f"modelId {mid!r} is absent from Platform/{ref}'s allowedModels, so "
-                    f"the route resolves and every invocation is denied by IAM.")
+                    f"the route resolves and every invocation is denied by IAM."
+                )
 
     for name, (path, doc) in sorted(platforms.items()):
         spec = doc.get("spec") or {}
@@ -216,22 +238,26 @@ def main() -> int:
         if tenant not in tenants:
             failures.append(
                 f"{rel(path)} Platform/{name}: tenant {tenant!r} names no Tenant CR in "
-                f"this overlay.")
+                f"this overlay."
+            )
         budget = (spec.get("budget") or {}).get("name")
         checked += 1
         if not budget:
             failures.append(
                 f"{rel(path)} Platform/{name}: carries no budget reference, so nothing "
-                f"bounds its spend.")
+                f"bounds its spend."
+            )
         elif budget not in budgets:
             failures.append(
                 f"{rel(path)} Platform/{name}: budget {budget!r} names no BudgetPolicy, "
                 f"so the kill-switch has nothing to suspend and a budget that cannot "
-                f"fire is indistinguishable from one that has not.")
+                f"fire is indistinguishable from one that has not."
+            )
         elif not budgets[budget].get("spec", {}).get("killSwitchEnabled"):
             failures.append(
                 f"{rel(path)} BudgetPolicy/{budget}: killSwitchEnabled is not set. A "
-                f"spend ceiling nothing enforces is a dashboard.")
+                f"spend ceiling nothing enforces is a dashboard."
+            )
 
     for name, doc in sorted(budgets.items()):
         checked += 1
@@ -239,19 +265,24 @@ def main() -> int:
         if ref not in platforms:
             failures.append(
                 f"BudgetPolicy/{name}: platformRef names {ref!r}, which no Platform "
-                f"defines — the policy applies to nothing.")
+                f"defines — the policy applies to nothing."
+            )
 
     if failures:
-        print(f"AI control-plane configuration has {len(failures)} problem(s) "
-              f"({checked} assertion(s) over {len(docs)} CR(s)):\n")
+        print(
+            f"AI control-plane configuration has {len(failures)} problem(s) "
+            f"({checked} assertion(s) over {len(docs)} CR(s)):\n"
+        )
         for f in failures:
             print(f"  {f}")
         return 1
 
     print(f"  llm-policy snapshot: {drift_note}")
-    print(f"✓ {checked} assertion(s) over {len(docs)} AI control-plane CR(s): every model "
-          f"id is a {GEO_PREFIX}-prefixed inference profile at an llm-policy tier, every "
-          f"route is allowlisted, and every Platform has an enforcing budget")
+    print(
+        f"✓ {checked} assertion(s) over {len(docs)} AI control-plane CR(s): every model "
+        f"id is a {GEO_PREFIX}-prefixed inference profile at an llm-policy tier, every "
+        f"route is allowlisted, and every Platform has an enforcing budget"
+    )
     return 0
 
 

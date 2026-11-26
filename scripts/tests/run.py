@@ -122,6 +122,9 @@ EXPECTED = (
     # The workflows as YAML: a timeout on every job, a bound on every download,
     # and the conditions deciding which key the chart cache is kept under.
     "test_workflows",
+    # ruff's target, mypy's and the lock's interpreter, each held to the release
+    # .python-version pins and every Python CI job installs.
+    "test_toolchain",
     # The AI control plane held to llm-policy and to itself: model ids Bedrock
     # accepts, routes IAM allows, and a budget the kill switch can act on.
     "test_ai_config",
@@ -256,23 +259,26 @@ PER_GATE_FLOORS: dict[str, tuple[int, int]] = {
 def main() -> int:
     missing = [m for m in EXPECTED if not (HERE / f"{m}.py").exists()]
     if missing:
-        print(f"FAIL  expected test modules are absent: {', '.join(missing)} — "
-              f"coverage was removed without the suite failing.")
+        print(
+            f"FAIL  expected test modules are absent: {', '.join(missing)} — "
+            f"coverage was removed without the suite failing."
+        )
         return 1
 
     suite = unittest.defaultTestLoader.discover(str(HERE), pattern="test_*.py")
     result = unittest.TextTestRunner(verbosity=2).run(suite)
 
     if result.testsRun < MIN_TESTS:
-        print(f"FAIL  only {result.testsRun} tests ran, expected at least "
-              f"{MIN_TESTS} — discovery is matching almost nothing, which passes "
-              f"on some interpreters and proves nothing on any.")
+        print(
+            f"FAIL  only {result.testsRun} tests ran, expected at least "
+            f"{MIN_TESTS} — discovery is matching almost nothing, which passes "
+            f"on some interpreters and proves nothing on any."
+        )
         return 1
     if not result.wasSuccessful():
         return 1
 
-    print(f"gate-script tests OK: {result.testsRun} tests across "
-          f"{len(EXPECTED)} modules")
+    print(f"gate-script tests OK: {result.testsRun} tests across {len(EXPECTED)} modules")
     return check_coverage()
 
 
@@ -295,14 +301,18 @@ def control_exempt_gates() -> tuple[list[str], str]:
         sys.modules["controls"] = module
         spec.loader.exec_module(module)
         exempt = sorted(module.NEEDS_NETWORK_PY)
-    except Exception as exc:                    # noqa: BLE001 — reported, not raised
-        return [], (f"{path.name} could not be read for its control exemptions "
-                    f"({type(exc).__name__}: {exc}), so no gate could be checked for "
-                    f"having neither kind of proof")
+    except Exception as exc:  # noqa: BLE001 — reported, not raised
+        return [], (
+            f"{path.name} could not be read for its control exemptions "
+            f"({type(exc).__name__}: {exc}), so no gate could be checked for "
+            f"having neither kind of proof"
+        )
     if not exempt:
-        return [], (f"{path.name} exempts no gate from a positive control, so the "
-                    f"assertion that every exempt gate carries unit tests holds over "
-                    f"an empty set and states nothing")
+        return [], (
+            f"{path.name} exempts no gate from a positive control, so the "
+            f"assertion that every exempt gate carries unit tests holds over "
+            f"an empty set and states nothing"
+        )
     return exempt, ""
 
 
@@ -347,8 +357,10 @@ def coverage_figures(cov) -> tuple[dict[pathlib.Path, Figures], Figures]:
     with contextlib.redirect_stdout(out):
         cov.json_report(outfile="-")
     report = json.loads(out.getvalue())
-    files = {(STARTED_IN / name).resolve(): Figures.of(entry["summary"])
-             for name, entry in report["files"].items()}
+    files = {
+        (STARTED_IN / name).resolve(): Figures.of(entry["summary"])
+        for name, entry in report["files"].items()
+    }
     return files, Figures.of(report["totals"])
 
 
@@ -372,53 +384,68 @@ def check_coverage() -> int:
         import coverage
     except ImportError:
         if required:
-            print("FAIL  COVERAGE_REQUIRED=1 but the coverage package is not "
-                  "importable — the floors were not checked, which is not a pass.")
+            print(
+                "FAIL  COVERAGE_REQUIRED=1 but the coverage package is not "
+                "importable — the floors were not checked, which is not a pass."
+            )
             return 1
         return 0
 
     cov = coverage.Coverage.current()
     if cov is None:
         if required:
-            print("FAIL  COVERAGE_REQUIRED=1 but this process is not running under "
-                  "coverage — invoke it as `coverage run --rcfile=.coveragerc "
-                  "scripts/tests/run.py`. The floors were not checked.")
+            print(
+                "FAIL  COVERAGE_REQUIRED=1 but this process is not running under "
+                "coverage — invoke it as `coverage run --rcfile=.coveragerc "
+                "scripts/tests/run.py`. The floors were not checked."
+            )
             return 1
         return 0
 
     cov.stop()
     cov.save()
     if not cov.get_data().measured_files():
-        print("FAIL  coverage collected no data — the run was measured and saw "
-              "nothing, which reports the same as full coverage of an empty set.")
+        print(
+            "FAIL  coverage collected no data — the run was measured and saw "
+            "nothing, which reports the same as full coverage of an empty set."
+        )
         return 1
 
     files, total = coverage_figures(cov)
 
     failures = []
-    for what, pct, floor in (("line", total.lines, LINE_FLOOR),
-                             ("branch", total.branches, BRANCH_FLOOR)):
+    for what, pct, floor in (
+        ("line", total.lines, LINE_FLOOR),
+        ("branch", total.branches, BRANCH_FLOOR),
+    ):
         if pct < floor:
-            failures.append(f"{what} coverage over the gate scripts is {shown(pct)}, below "
-                            f"testing-rubric's {floor}% floor")
+            failures.append(
+                f"{what} coverage over the gate scripts is {shown(pct)}, below "
+                f"testing-rubric's {floor}% floor"
+            )
 
     root = HERE.parent.parent
     for rel, (line_floor, branch_floor) in sorted(PER_GATE_FLOORS.items()):
         figures = files.get(root / rel)
         if figures is None or figures.covered_lines == 0:
-            failures.append(f"{rel} carries a coverage floor but was not measured — "
-                            f"the gate was renamed, or its tests stopped importing it")
+            failures.append(
+                f"{rel} carries a coverage floor but was not measured — "
+                f"the gate was renamed, or its tests stopped importing it"
+            )
             continue
-        for what, pct, floor in (("lines", figures.lines, line_floor),
-                                 ("branches", figures.branches, branch_floor)):
+        for what, pct, floor in (
+            ("lines", figures.lines, line_floor),
+            ("branches", figures.branches, branch_floor),
+        ):
             if pct < floor:
                 failures.append(f"{rel}: {what} at {shown(pct)} are below its {floor}% floor")
 
     # Read from every Python file in scripts/, so a gate added tomorrow is in
     # the population without anyone remembering to add it.
     gates = sorted((root / "scripts").glob("*.py"))
-    unexecuted = [g.name for g in gates
-                  if (figures := files.get(g)) is None or figures.covered_lines == 0]
+    unexecuted = [
+        g.name for g in gates if (figures := files.get(g)) is None or figures.covered_lines == 0
+    ]
     if unexecuted:
         failures.append(
             f"{len(unexecuted)} Python file(s) in scripts/ are never executed by the suite: "
@@ -449,17 +476,23 @@ def check_coverage() -> int:
         print()
         for f in failures:
             print(f"FAIL  {f}")
-        print("\n  Add the tests that restore a figure, or move a per-file ratchet"
-              "\n  deliberately in scripts/tests/run.py with the reason. LINE_FLOOR and"
-              "\n  BRANCH_FLOOR are testing-rubric's, and move only with it.")
+        print(
+            "\n  Add the tests that restore a figure, or move a per-file ratchet"
+            "\n  deliberately in scripts/tests/run.py with the reason. LINE_FLOOR and"
+            "\n  BRANCH_FLOOR are testing-rubric's, and move only with it."
+        )
         return 1
 
-    print(f"coverage OK: lines {shown(total.lines)} (floor {LINE_FLOOR}%), branches "
-          f"{shown(total.branches)} (floor {BRANCH_FLOOR}%), {len(PER_GATE_FLOORS)} "
-          f"per-file floor(s) held, all {len(gates)} Python file(s) in scripts/ executed.")
-    print(f"control-exempt gates: all {len(exempt)} carry unit coverage and a floor of "
-          f"their own. scripts/tests/controls.py holds the other half of the claim — "
-          f"that every gate it does NOT exempt rejects the violation it names.")
+    print(
+        f"coverage OK: lines {shown(total.lines)} (floor {LINE_FLOOR}%), branches "
+        f"{shown(total.branches)} (floor {BRANCH_FLOOR}%), {len(PER_GATE_FLOORS)} "
+        f"per-file floor(s) held, all {len(gates)} Python file(s) in scripts/ executed."
+    )
+    print(
+        f"control-exempt gates: all {len(exempt)} carry unit coverage and a floor of "
+        f"their own. scripts/tests/controls.py holds the other half of the claim — "
+        f"that every gate it does NOT exempt rejects the violation it names."
+    )
     return 0
 
 

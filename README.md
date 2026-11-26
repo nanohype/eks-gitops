@@ -206,6 +206,8 @@ Infrastructure prerequisites (deployed by landing-zone):
 ```bash
 task                          # Show all available tasks
 task lint:yaml                # Lint all YAML files
+task lint:python              # Lint and format-check the gate scripts
+task typecheck                # Typecheck the gate scripts
 task kustomize:build          # Build all overlays (all environments)
 task kustomize:build:env      # Build overlays for ENVIRONMENT (default: development)
 task validate                 # Run all validations (lint + build)

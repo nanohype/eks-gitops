@@ -104,10 +104,12 @@ def appset_files() -> list[pathlib.Path]:
     once, and the run prints the success it printed the day before.
     """
     if not APPSETS.is_dir():
-        _cannot_run("applicationsets/", "does not exist, so the chart-pin corpus "
-                                        "this gate reports on is not there at all")
-    return sorted(p for p in APPSETS.iterdir()
-                  if p.is_file() and p.suffix in {".yaml", ".yml"})
+        _cannot_run(
+            "applicationsets/",
+            "does not exist, so the chart-pin corpus this gate reports on is not there at all",
+        )
+    return sorted(p for p in APPSETS.iterdir() if p.is_file() and p.suffix in {".yaml", ".yml"})
+
 
 # Valid in Python's re, absent from RE2. A pattern using one of these would pass
 # locally and match nothing when Renovate runs it.
@@ -153,7 +155,7 @@ class CustomManager(NamedTuple):
     leaves every pin it read still reported as covered.
     """
 
-    where: str                          # how renovate.json identifies it
+    where: str  # how renovate.json identifies it
     file_patterns: list[str]
     matchers: list[re.Pattern[str]]
 
@@ -162,8 +164,10 @@ def load_custom_managers() -> list[CustomManager]:
     cfg = gatelib.read_json(ROOT / "renovate.json")
     managers = cfg.get("customManagers") or []
     if not managers:
-        fail("renovate.json declares no customManagers, so no chart pin in "
-             "applicationsets/ is watched by anything.")
+        fail(
+            "renovate.json declares no customManagers, so no chart pin in "
+            "applicationsets/ is watched by anything."
+        )
         return []
 
     out: list[CustomManager] = []
@@ -173,8 +177,10 @@ def load_custom_managers() -> list[CustomManager]:
         for s in m.get("matchStrings") or []:
             for probe, label in RE2_UNSUPPORTED:
                 if re.search(probe, s):
-                    fail(f"{where}: matchString uses {label}, which RE2 does not "
-                         f"support. Renovate would match nothing:\n      {s}")
+                    fail(
+                        f"{where}: matchString uses {label}, which RE2 does not "
+                        f"support. Renovate would match nothing:\n      {s}"
+                    )
                     break
             else:
                 # RE2 and Python spell named groups differently: `(?<name>)` vs
@@ -187,8 +193,9 @@ def load_custom_managers() -> list[CustomManager]:
                 except re.error as exc:
                     fail(f"{where}: matchString is not a valid regex ({exc}):\n      {s}")
         patterns = m.get("managerFilePatterns")
-        out.append(CustomManager(
-            where, list(patterns) if isinstance(patterns, list) else [], matchers))
+        out.append(
+            CustomManager(where, list(patterns) if isinstance(patterns, list) else [], matchers)
+        )
     return out
 
 
@@ -232,8 +239,7 @@ def _cannot_run(rel, detail: str) -> NoReturn:
     this file rather than the manifest to fix.
     """
     print(f"Cannot run: {rel} — {detail}")
-    print("This gate examined nothing past that file, which is not the same as "
-          "finding nothing.")
+    print("This gate examined nothing past that file, which is not the same as finding nothing.")
     sys.exit(gatelib.CANNOT_RUN)
 
 
@@ -250,8 +256,7 @@ def _chart_sources(tspec: dict, rel) -> list[dict]:
         one = tspec.get("source")
         sources = [one] if isinstance(one, dict) else []
     if not isinstance(sources, list):
-        _cannot_run(rel, f"spec.template.spec.sources is {type(sources).__name__}, "
-                         f"not a list")
+        _cannot_run(rel, f"spec.template.spec.sources is {type(sources).__name__}, not a list")
     return [s for s in sources if isinstance(s, dict) and "chart" in s]
 
 
@@ -269,8 +274,7 @@ def _list_elements(spec: dict, rel) -> list[dict]:
     found: list[dict] = []
     for gen in spec.get("generators") or []:
         if not isinstance(gen, dict):
-            _cannot_run(rel, f"a spec.generators entry is {type(gen).__name__}, "
-                             f"not a mapping")
+            _cannot_run(rel, f"a spec.generators entry is {type(gen).__name__}, not a mapping")
         for inner in (gen.get("matrix") or {}).get("generators") or []:
             if not isinstance(inner, dict):
                 _cannot_run(rel, "a matrix generator entry is not a mapping")
@@ -294,10 +298,12 @@ def _templated_keys(src: dict, rel) -> dict[str, str]:
             continue
         m = TEMPLATED_KEY.match(value)
         if not m:
-            fail(f"{rel}: {field} is templated as {value!r}, a form this cannot "
-                 f"render. Its coordinates are unknown, so the pin would be walked "
-                 f"as though {value!r} were a registry path and asserted about "
-                 f"nothing.")
+            fail(
+                f"{rel}: {field} is templated as {value!r}, a form this cannot "
+                f"render. Its coordinates are unknown, so the pin would be walked "
+                f"as though {value!r} were a registry path and asserted about "
+                f"nothing."
+            )
             continue
         keys[field] = m.group(1)
     return keys
@@ -306,14 +312,18 @@ def _templated_keys(src: dict, rel) -> dict[str, str]:
 def _literal(field: str, value, rel, what: str) -> str | None:
     """A coordinate written inline, rejected rather than coerced when it is not text."""
     if value is None:
-        fail(f"{rel}: {what} has no {field}, so its chart coordinates cannot be "
-             f"reconstructed and the pin would drop out of this walk unexamined.")
+        fail(
+            f"{rel}: {what} has no {field}, so its chart coordinates cannot be "
+            f"reconstructed and the pin would drop out of this walk unexamined."
+        )
         return None
     if not isinstance(value, str):
-        fail(f"{rel}: {what} sets {field} to {value!r}, which YAML parsed as "
-             f"{type(value).__name__} rather than text. Quote it: a version read as "
-             f"a number does not round-trip ('1.10' becomes '1.1'), so the pin would "
-             f"be compared against a string that appears nowhere in the repo.")
+        fail(
+            f"{rel}: {what} sets {field} to {value!r}, which YAML parsed as "
+            f"{type(value).__name__} rather than text. Quote it: a version read as "
+            f"a number does not round-trip ('1.10' becomes '1.1'), so the pin would "
+            f"be compared against a string that appears nowhere in the repo."
+        )
         return None
     return value
 
@@ -347,17 +357,18 @@ def rendered_pins() -> list[Pin]:
                 keys = _templated_keys(src, rel)
                 if not keys:
                     what = "its chart source"
-                    repo, chart, ver = (_literal(f, src.get(f), rel, what)
-                                        for f in COORDS)
+                    repo, chart, ver = (_literal(f, src.get(f), rel, what) for f in COORDS)
                     if None not in (repo, chart, ver):
                         pins.append(Pin(path.name, rel, text, repo, chart, ver, False))
                     continue
 
                 elements = _list_elements(spec, rel)
                 if not elements:
-                    fail(f"{rel}: its source templates {', '.join(sorted(keys))} but no "
-                         f"list generator supplies elements, so its pins are invisible "
-                         f"here.")
+                    fail(
+                        f"{rel}: its source templates {', '.join(sorted(keys))} but no "
+                        f"list generator supplies elements, so its pins are invisible "
+                        f"here."
+                    )
                     continue
                 for el in elements:
                     have = [k for k in keys.values() if k in el]
@@ -366,9 +377,11 @@ def rendered_pins() -> list[Pin]:
                     what = f"list element {el.get('appName', el)!r}"
                     if len(have) != len(keys):
                         missing = sorted(set(keys.values()) - set(have))
-                        fail(f"{rel}: {what} sets {', '.join(sorted(have))} but not "
-                             f"{', '.join(missing)}, so it is a chart-bearing element "
-                             f"whose coordinates cannot be completed.")
+                        fail(
+                            f"{rel}: {what} sets {', '.join(sorted(have))} but not "
+                            f"{', '.join(missing)}, so it is a chart-bearing element "
+                            f"whose coordinates cannot be completed."
+                        )
                         continue
                     vals = []
                     for field in COORDS:
@@ -397,15 +410,16 @@ def assert_corpus_floor(pins: list[Pin]) -> None:
     """
     for path in appset_files():
         text = path.read_text()
-        for label, rx, matrix in (("matrix-list", MATRIX, True),
-                                  ("direct-source", DIRECT, False)):
+        for label, rx, matrix in (("matrix-list", MATRIX, True), ("direct-source", DIRECT, False)):
             literal = len(rx.findall(text))
             walked = sum(1 for p in pins if p.appset == path.name and p.matrix is matrix)
             if walked < literal:
-                fail(f"{path.relative_to(ROOT)}: the rendered walk found {walked} "
-                     f"{label} pin(s) where the literal {label} shape appears "
-                     f"{literal} time(s). Pins dropped out of the walk, which reports "
-                     f"the same success as a file with none missing.")
+                fail(
+                    f"{path.relative_to(ROOT)}: the rendered walk found {walked} "
+                    f"{label} pin(s) where the literal {label} shape appears "
+                    f"{literal} time(s). Pins dropped out of the walk, which reports "
+                    f"the same success as a file with none missing."
+                )
 
 
 # ── Reach: whether the manager attributed to a pin opens the pin's file ──────
@@ -425,28 +439,35 @@ def compile_file_pattern(raw: str) -> re.Pattern[str]:
         return _file_patterns[raw]
     m = FILE_PATTERN.match(raw)
     if not m:
-        _cannot_run("renovate.json",
-                    f"sets the managerFilePattern {raw!r}, which is not the /regex/ "
-                    f"form. Renovate reads a bare value as a minimatch glob, this "
-                    f"gate implements only the regex form, and which files that "
-                    f"pattern reaches is therefore unknown here")
+        _cannot_run(
+            "renovate.json",
+            f"sets the managerFilePattern {raw!r}, which is not the /regex/ "
+            f"form. Renovate reads a bare value as a minimatch glob, this "
+            f"gate implements only the regex form, and which files that "
+            f"pattern reaches is therefore unknown here",
+        )
     body, flags = m.group("body"), m.group("flags")
     for probe, label in RE2_UNSUPPORTED:
         if re.search(probe, body):
-            _cannot_run("renovate.json",
-                        f"sets the managerFilePattern {raw!r}, which uses {label}. "
-                        f"RE2 does not support it, so Renovate opens no file with it")
+            _cannot_run(
+                "renovate.json",
+                f"sets the managerFilePattern {raw!r}, which uses {label}. "
+                f"RE2 does not support it, so Renovate opens no file with it",
+            )
     unknown = [f for f in flags if f not in FILE_PATTERN_FLAGS]
     if unknown:
-        _cannot_run("renovate.json",
-                    f"sets the managerFilePattern {raw!r} with flag {''.join(unknown)!r}, "
-                    f"which this gate does not implement")
+        _cannot_run(
+            "renovate.json",
+            f"sets the managerFilePattern {raw!r} with flag {''.join(unknown)!r}, "
+            f"which this gate does not implement",
+        )
     try:
         compiled = re.compile(body, sum(FILE_PATTERN_FLAGS[f] for f in flags) if flags else 0)
     except re.error as exc:
-        _cannot_run("renovate.json",
-                    f"sets the managerFilePattern {raw!r}, which is not a valid "
-                    f"regex ({exc})")
+        _cannot_run(
+            "renovate.json",
+            f"sets the managerFilePattern {raw!r}, which is not a valid regex ({exc})",
+        )
     _file_patterns[raw] = compiled
     return compiled
 
@@ -490,13 +511,14 @@ def manager_file_patterns(cfg, manager: str) -> FilePatterns:
 
     record = gatelib.read_json(RECORDED_DEFAULTS).get("managers") or {}
     if manager not in record:
-        _cannot_run(RECORDED_DEFAULTS.relative_to(ROOT),
-                    f"records no default for the {manager} manager, which renovate.json "
-                    f"enables and configures no managerFilePatterns for. Re-record with "
-                    f"`node scripts/check-renovate-defaults.mjs --write`")
+        _cannot_run(
+            RECORDED_DEFAULTS.relative_to(ROOT),
+            f"records no default for the {manager} manager, which renovate.json "
+            f"enables and configures no managerFilePatterns for. Re-record with "
+            f"`node scripts/check-renovate-defaults.mjs --write`",
+        )
     default = record[manager]
-    return FilePatterns(list(default) if isinstance(default, list) else [],
-                        "the recorded default")
+    return FilePatterns(list(default) if isinstance(default, list) else [], "the recorded default")
 
 
 def assert_reach(manager: str, found: FilePatterns, source: str, what: str) -> None:
@@ -516,22 +538,27 @@ def assert_reach(manager: str, found: FilePatterns, source: str, what: str) -> N
     """
     patterns, origin = found
     if not patterns:
-        fail(f"{source}: {what} is attributed to the {manager} manager, which has no "
-             f"file patterns at all — renovate.json configures none and the manager's "
-             f"own default is empty. It opens no file, so nothing looks the pin up.")
+        fail(
+            f"{source}: {what} is attributed to the {manager} manager, which has no "
+            f"file patterns at all — renovate.json configures none and the manager's "
+            f"own default is empty. It opens no file, so nothing looks the pin up."
+        )
         return
     if any(compile_file_pattern(raw).search(source) for raw in patterns):
         tally = reach_configured if origin == "renovate.json" else reach_recorded
         tally.append((manager, source))
         return
-    fail(f"{source}: {what} is attributed to the {manager} manager and none of the "
-         f"managerFilePatterns it runs with reaches that file — {', '.join(patterns)}, "
-         f"from {origin}. Renovate runs the manager, the manager opens no such file, "
-         f"and the config reads as coverage.")
+    fail(
+        f"{source}: {what} is attributed to the {manager} manager and none of the "
+        f"managerFilePatterns it runs with reaches that file — {', '.join(patterns)}, "
+        f"from {origin}. Renovate runs the manager, the manager opens no such file, "
+        f"and the config reads as coverage."
+    )
 
 
-def covered_by_custom(text: str, chart: str, ver: str,
-                      managers: list[CustomManager]) -> CustomManager | None:
+def covered_by_custom(
+    text: str, chart: str, ver: str, managers: list[CustomManager]
+) -> CustomManager | None:
     """The customManager matching this exact pin (identified by chart + version).
 
     The manager rather than a yes: which one matched is what decides whose
@@ -613,15 +640,14 @@ GO_DIRECTIVE = re.compile(r"^go\s+(?P<ver>[0-9]+\.[0-9]+(?:\.[0-9]+)?)\s*$", re.
 class DerivedPin(NamedTuple):
     family: str
     manager: str
-    source: str   # the file the pin is written in
-    via: str      # the workflow step or key that resolves it
+    source: str  # the file the pin is written in
+    via: str  # the workflow step or key that resolves it
     dep: str
     version: str
 
 
 def workflow_files() -> list[pathlib.Path]:
-    return sorted(p for p in (ROOT / ".github" / "workflows").glob("*.y*ml")
-                  if p.is_file())
+    return sorted(p for p in (ROOT / ".github" / "workflows").glob("*.y*ml") if p.is_file())
 
 
 # A `with:` key naming a file whose contents ARE the version a setup step
@@ -669,18 +695,32 @@ def workflow_pins() -> list[DerivedPin]:
         for job_id, uses in _called_workflows(doc):
             m = USES_PIN.match(uses.strip())
             if m:
-                pins.append(DerivedPin(
-                    "Reusable workflow", "github-actions", rel,
-                    f"job {job_id} uses:", m.group("dep"), m.group("ver")))
+                pins.append(
+                    DerivedPin(
+                        "Reusable workflow",
+                        "github-actions",
+                        rel,
+                        f"job {job_id} uses:",
+                        m.group("dep"),
+                        m.group("ver"),
+                    )
+                )
 
         for step in _steps(doc):
             uses = step.get("uses")
             if isinstance(uses, str):
                 m = USES_PIN.match(uses.strip())
                 if m:
-                    pins.append(DerivedPin(
-                        "GitHub Action", "github-actions", rel,
-                        f"uses: {m.group('dep')}", m.group("dep"), m.group("ver")))
+                    pins.append(
+                        DerivedPin(
+                            "GitHub Action",
+                            "github-actions",
+                            rel,
+                            f"uses: {m.group('dep')}",
+                            m.group("dep"),
+                            m.group("ver"),
+                        )
+                    )
 
             with_ = step.get("with") or {}
             if isinstance(with_, dict):
@@ -692,11 +732,13 @@ def workflow_pins() -> list[DerivedPin]:
                     reader = VERSION_FILE_RUNTIMES.get(runtime)
                     if reader is None:
                         _toolchain_cannot_run(
-                            rel, f"has a step with `{key}: {value}`, and which Renovate "
-                                 f"manager reads a {runtime} version file is not known "
-                                 f"here. A version file attributed to nothing is a pin "
-                                 f"whose watcher is unknown, so this refuses rather "
-                                 f"than passing over it")
+                            rel,
+                            f"has a step with `{key}: {value}`, and which Renovate "
+                            f"manager reads a {runtime} version file is not known "
+                            f"here. A version file attributed to nothing is a pin "
+                            f"whose watcher is unknown, so this refuses rather "
+                            f"than passing over it",
+                        )
                     pins.extend(reader(rel, value))
 
             # `run:` is arbitrary shell, so this reads the one install shape the
@@ -723,8 +765,11 @@ def workflow_pins() -> list[DerivedPin]:
 def _read_pin_source(workflow_rel: str, rel: str) -> str:
     path = ROOT / rel
     if not path.is_file():
-        _toolchain_cannot_run(workflow_rel, f"names {rel} as a version source and no such file "
-                                  f"exists, so what that step installs is unknown")
+        _toolchain_cannot_run(
+            workflow_rel,
+            f"names {rel} as a version source and no such file "
+            f"exists, so what that step installs is unknown",
+        )
     return path.read_text()
 
 
@@ -732,21 +777,41 @@ def _interpreter_pins(workflow_rel: str, rel: str) -> list[DerivedPin]:
     """The interpreter setup-python installs, read from the file the step names."""
     version = _read_pin_source(workflow_rel, rel).strip()
     if not version:
-        _toolchain_cannot_run(workflow_rel, f"names {rel} as its python-version-file and that "
-                                  f"file is empty")
-    return [DerivedPin("Python interpreter", "pyenv", rel,
-                       f"{workflow_rel} python-version-file", "python", version)]
+        _toolchain_cannot_run(
+            workflow_rel, f"names {rel} as its python-version-file and that file is empty"
+        )
+    return [
+        DerivedPin(
+            "Python interpreter",
+            "pyenv",
+            rel,
+            f"{workflow_rel} python-version-file",
+            "python",
+            version,
+        )
+    ]
 
 
 def _python_package_pins(workflow_rel: str, rel: str) -> list[DerivedPin]:
     """Every distribution the job installs, read from the lockfile it names."""
     text = _read_pin_source(workflow_rel, rel)
-    pins = [DerivedPin("Python package", "pip-compile", rel,
-                       f"{workflow_rel} pip install -r", m.group("dep"), m.group("ver"))
-            for m in PIP_PIN.finditer(text)]
+    pins = [
+        DerivedPin(
+            "Python package",
+            "pip-compile",
+            rel,
+            f"{workflow_rel} pip install -r",
+            m.group("dep"),
+            m.group("ver"),
+        )
+        for m in PIP_PIN.finditer(text)
+    ]
     if not pins:
-        _toolchain_cannot_run(workflow_rel, f"installs from {rel} and no pinned distribution was "
-                                  f"found in it, so the job's dependencies are unknown")
+        _toolchain_cannot_run(
+            workflow_rel,
+            f"installs from {rel} and no pinned distribution was "
+            f"found in it, so the job's dependencies are unknown",
+        )
     return pins
 
 
@@ -754,20 +819,29 @@ def _node_toolchain_pins(workflow_rel: str, rel: str) -> list[DerivedPin]:
     """The Node runtime setup-node installs, read from the file the step names."""
     version = _read_pin_source(workflow_rel, rel).strip().lstrip("v")
     if not version:
-        _toolchain_cannot_run(workflow_rel, f"names {rel} as its node-version-file and "
-                                            f"that file is empty")
-    return [DerivedPin("Node runtime", "nodenv", rel,
-                       f"{workflow_rel} node-version-file", "node", version)]
+        _toolchain_cannot_run(
+            workflow_rel, f"names {rel} as its node-version-file and that file is empty"
+        )
+    return [
+        DerivedPin(
+            "Node runtime", "nodenv", rel, f"{workflow_rel} node-version-file", "node", version
+        )
+    ]
 
 
 def _go_toolchain_pins(workflow_rel: str, rel: str) -> list[DerivedPin]:
     """The Go toolchain setup-go installs, read from the go.mod the step names."""
     m = GO_DIRECTIVE.search(_read_pin_source(workflow_rel, rel))
     if not m:
-        _toolchain_cannot_run(workflow_rel, f"names {rel} as its go-version-file and that file "
-                                  f"carries no `go` directive")
-    return [DerivedPin("Go toolchain", "gomod", rel,
-                       f"{workflow_rel} go-version-file", "go", m.group("ver"))]
+        _toolchain_cannot_run(
+            workflow_rel,
+            f"names {rel} as its go-version-file and that file carries no `go` directive",
+        )
+    return [
+        DerivedPin(
+            "Go toolchain", "gomod", rel, f"{workflow_rel} go-version-file", "go", m.group("ver")
+        )
+    ]
 
 
 # Which reader turns a `<runtime>-version-file` into pins. A runtime absent from
@@ -800,35 +874,47 @@ def check_derived_pins(pins: list[DerivedPin]) -> int:
     """
     enabled = enabled_managers()
     if not enabled:
-        fail("renovate.json declares no enabledManagers, so no manager reads "
-             "anything and every pin below is unwatched.")
+        fail(
+            "renovate.json declares no enabledManagers, so no manager reads "
+            "anything and every pin below is unwatched."
+        )
         return 0
     if not pins:
-        fail("no toolchain pin was derived from any workflow — no step carries a "
-             "`uses:`, a version-file or a pip install, so this gate's claim over "
-             "the toolchain is vacuous.")
+        fail(
+            "no toolchain pin was derived from any workflow — no step carries a "
+            "`uses:`, a version-file or a pip install, so this gate's claim over "
+            "the toolchain is vacuous."
+        )
         return 0
 
     cfg = gatelib.read_json(ROOT / "renovate.json")
     claimed: set[str] = set()
     for pin in pins:
         if pin.manager not in enabled:
-            fail(f"{pin.source}: {pin.family} {pin.dep} {pin.version} needs the "
-                 f"{pin.manager} manager, which renovate.json does not enable. "
-                 f"Resolved by {pin.via}, and watched by nothing.")
+            fail(
+                f"{pin.source}: {pin.family} {pin.dep} {pin.version} needs the "
+                f"{pin.manager} manager, which renovate.json does not enable. "
+                f"Resolved by {pin.via}, and watched by nothing."
+            )
             continue
         claimed.add(pin.manager)
-        assert_reach(pin.manager, manager_file_patterns(cfg, pin.manager), pin.source,
-                     f"{pin.family} {pin.dep} {pin.version}")
+        assert_reach(
+            pin.manager,
+            manager_file_patterns(cfg, pin.manager),
+            pin.source,
+            f"{pin.family} {pin.dep} {pin.version}",
+        )
 
     # A manager reading nothing is the same defect one layer up, and it is the
     # one an enabledManagers allowlist makes easy: the name stays after the thing
     # it read is gone.
     unclaimed = sorted(enabled - claimed - {"argocd", "custom.regex"})
     for manager in unclaimed:
-        fail(f"renovate.json enables the {manager} manager and no pin in this repo is "
-             f"attributed to it. A manager that reads nothing is config that reads as "
-             f"coverage.")
+        fail(
+            f"renovate.json enables the {manager} manager and no pin in this repo is "
+            f"attributed to it. A manager that reads nothing is config that reads as "
+            f"coverage."
+        )
     return len(pins)
 
 
@@ -842,6 +928,7 @@ def check_derived_pins(pins: list[DerivedPin]) -> int:
 # scanned and read as true of the repo. The git-pinned CRDs, the CI tool
 # binaries and the Go module were all watched, by managers nothing asserted:
 # deleting one left the gate printing the same success.
+
 
 class Family(NamedTuple):
     """One non-chart pin family: where its pins live and what certifies them.
@@ -858,24 +945,32 @@ class Family(NamedTuple):
     check: Callable[[Family, str, list[re.Match[str]], list[CustomManager]], int]
 
 
-def check_git_pins(family: Family, text: str, hits: list[re.Match[str]],
-                   managers: list[CustomManager]) -> int:
+def check_git_pins(
+    family: Family, text: str, hits: list[re.Match[str]], managers: list[CustomManager]
+) -> int:
     """Every `repo` + `ver` pin is matched by a customManager that reaches the file."""
     for m in hits:
         repo, ver = m.group("repo"), m.group("ver")
         what = f"{family.label} pin {repo} {ver}"
         cm = covered_by_custom(text, repo, ver, managers)
         if cm is None:
-            fail(f"{family.rel}: {what} is matched by no customManager. Nothing opens "
-                 f"a currency PR for it.")
+            fail(
+                f"{family.rel}: {what} is matched by no customManager. Nothing opens "
+                f"a currency PR for it."
+            )
         else:
-            assert_reach(f"custom.regex {cm.where}",
-                         FilePatterns(cm.file_patterns, "renovate.json"), family.rel, what)
+            assert_reach(
+                f"custom.regex {cm.where}",
+                FilePatterns(cm.file_patterns, "renovate.json"),
+                family.rel,
+                what,
+            )
     return len(hits)
 
 
-def check_gomod_pins(family: Family, text: str, hits: list[re.Match[str]],
-                     managers: list[CustomManager]) -> int:
+def check_gomod_pins(
+    family: Family, text: str, hits: list[re.Match[str]], managers: list[CustomManager]
+) -> int:
     """Every require is read by the built-in gomod manager, enabled and reaching the file.
 
     The gomod manager reads go.mod wholesale, so there is no per-pin annotation to
@@ -885,9 +980,11 @@ def check_gomod_pins(family: Family, text: str, hits: list[re.Match[str]],
     for m in hits:
         what = f"{family.label} pin {m.group('repo')} {m.group('ver')}"
         if "gomod" not in enabled_managers():
-            fail(f"{family.rel}: the gomod manager is not in renovate.json's "
-                 f"enabledManagers, so {m.group('repo')} {m.group('ver')} is watched by "
-                 f"nothing.")
+            fail(
+                f"{family.rel}: the gomod manager is not in renovate.json's "
+                f"enabledManagers, so {m.group('repo')} {m.group('ver')} is watched by "
+                f"nothing."
+            )
         else:
             assert_reach("gomod", manager_file_patterns(cfg, "gomod"), family.rel, what)
     return len(hits)
@@ -899,13 +996,15 @@ def check_gomod_pins(family: Family, text: str, hits: list[re.Match[str]],
 # not adopt the versions added under it, and each of those needs its own.
 ANNOTATED = re.compile(
     r"#\s*renovate:\s*datasource=(?P<ds>[a-z-]+)\s+depName=(?P<dep>\S+)\s*\n"
-    r"\s*(?P<var>[A-Z][A-Z0-9_]*_VERSION):")
+    r"\s*(?P<var>[A-Z][A-Z0-9_]*_VERSION):"
+)
 
 # The annotation over one schema catalog ref. A commit carries no name, so the
 # repository it belongs to is read from this line rather than from the pin.
 ANNOTATED_REF = re.compile(
     r"#\s*renovate:\s*datasource=(?P<ds>[a-z-]+)\s+depName=(?P<dep>\S+)[^\n]*\n"
-    r"(?P<var>[A-Z][A-Z0-9_]*_REF)=")
+    r"(?P<var>[A-Z][A-Z0-9_]*_REF)="
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -923,32 +1022,40 @@ class AnnotatedPins:
 
     annotation: re.Pattern[str]
 
-    def __call__(self, family: Family, text: str, hits: list[re.Match[str]],
-                 managers: list[CustomManager]) -> int:
-        annotated = {m.group("var"): m.group("dep")
-                     for m in self.annotation.finditer(text)}
+    def __call__(
+        self, family: Family, text: str, hits: list[re.Match[str]], managers: list[CustomManager]
+    ) -> int:
+        annotated = {m.group("var"): m.group("dep") for m in self.annotation.finditer(text)}
         for m in hits:
             var, ver = m.group("var"), m.group("ver")
             dep = annotated.get(var)
             if dep is None:
-                fail(f"{family.rel}: {var} pins {ver} with no `# renovate:` annotation "
-                     f"on the line above it. The customManager keys on that annotation, "
-                     f"so this {family.label} is watched by nothing and never moves.")
+                fail(
+                    f"{family.rel}: {var} pins {ver} with no `# renovate:` annotation "
+                    f"on the line above it. The customManager keys on that annotation, "
+                    f"so this {family.label} is watched by nothing and never moves."
+                )
                 continue
             cm = covered_by_custom(text, dep, ver, managers)
             if cm is None:
-                fail(f"{family.rel}: {var} ({dep} {ver}) is annotated but matched by no "
-                     f"customManager, so nothing opens a pull request when {dep} moves.")
+                fail(
+                    f"{family.rel}: {var} ({dep} {ver}) is annotated but matched by no "
+                    f"customManager, so nothing opens a pull request when {dep} moves."
+                )
             else:
-                assert_reach(f"custom.regex {cm.where}",
-                             FilePatterns(cm.file_patterns, "renovate.json"), family.rel,
-                             f"{family.label} {var} ({dep} {ver})")
+                assert_reach(
+                    f"custom.regex {cm.where}",
+                    FilePatterns(cm.file_patterns, "renovate.json"),
+                    family.rel,
+                    f"{family.label} {var} ({dep} {ver})",
+                )
         return len(hits)
 
 
 # A CI tool pin in a workflow's top-level env block (two-space indent).
-CI_TOOL_PIN = re.compile(r"^  (?P<var>[A-Z][A-Z0-9_]*_VERSION):\s*\"?(?P<ver>[^\"\s]+)\"?\s*$",
-                         re.M)
+CI_TOOL_PIN = re.compile(
+    r"^  (?P<var>[A-Z][A-Z0-9_]*_VERSION):\s*\"?(?P<ver>[^\"\s]+)\"?\s*$", re.M
+)
 
 
 OTHER_FAMILIES = [
@@ -958,8 +1065,10 @@ OTHER_FAMILIES = [
         # depName as the shipped manager spells it: the org/repo pair, not the
         # URL it is embedded in. Matching the URL would compare a string the
         # manager never produces and report a watched pin as unwatched.
-        re.compile(r"repoURL:\s*https://github\.com/(?P<repo>[^\s/]+/[^\s/]+)\s*\n\s*"
-                   r"targetRevision:\s*(?P<ver>v[0-9]\S*)"),
+        re.compile(
+            r"repoURL:\s*https://github\.com/(?P<repo>[^\s/]+/[^\s/]+)\s*\n\s*"
+            r"targetRevision:\s*(?P<ver>v[0-9]\S*)"
+        ),
         check_git_pins,
     ),
     Family(
@@ -985,8 +1094,7 @@ OTHER_FAMILIES = [
             CI_TOOL_PIN,
             AnnotatedPins(ANNOTATED),
         )
-        for rel in (".github/workflows/chart-provenance.yml",
-                    ".github/workflows/diff.yml")
+        for rel in (".github/workflows/chart-provenance.yml", ".github/workflows/diff.yml")
     ),
     Family(
         "Go module",
@@ -1024,14 +1132,18 @@ def check_other_families(managers: list[CustomManager]) -> int:
     for family in OTHER_FAMILIES:
         path = ROOT / family.rel
         if not path.exists():
-            fail(f"{family.rel} does not exist, but this gate asserts a {family.label} "
-                 f"pin lives there — the reference outlived the file.")
+            fail(
+                f"{family.rel} does not exist, but this gate asserts a {family.label} "
+                f"pin lives there — the reference outlived the file."
+            )
             continue
         text = path.read_text()
         hits = list(family.pattern.finditer(text))
         if not hits:
-            fail(f"{family.rel}: found no {family.label} pin. The shape this gate looks "
-                 f"for is gone, so its coverage claim over that family is vacuous.")
+            fail(
+                f"{family.rel}: found no {family.label} pin. The shape this gate looks "
+                f"for is gone, so its coverage claim over that family is vacuous."
+            )
             continue
         seen += family.check(family, text, hits, managers)
 
@@ -1044,10 +1156,12 @@ def check_other_families(managers: list[CustomManager]) -> int:
             fail(f"{rel} is asserted to carry no version pin but does not exist.")
             continue
         for m in PIN_SHAPED.finditer(path.read_text()):
-            fail(f"{rel}: carries a literal version {m.group('ver')!r}. This file is "
-                 f"asserted to pin nothing — its revision comes from a cluster-Secret "
-                 f"annotation — so a literal here is both an unwatched pin and a "
-                 f"hardcoded reference a fork would inherit.")
+            fail(
+                f"{rel}: carries a literal version {m.group('ver')!r}. This file is "
+                f"asserted to pin nothing — its revision comes from a cluster-Secret "
+                f"annotation — so a literal here is both an unwatched pin and a "
+                f"hardcoded reference a fork would inherit."
+            )
     return seen
 
 
@@ -1078,15 +1192,19 @@ def check_oci_repourl_shape(pins: list[Pin]) -> int:
         if not pin.is_oci:
             continue
         seen += 1
-        last = pin.repo[len("oci://"):].rstrip("/").rsplit("/", 1)[-1]
+        last = pin.repo[len("oci://") :].rstrip("/").rsplit("/", 1)[-1]
         if last != pin.chart:
-            fail(f"{pin.rel}: repoURL renders to one ending in {last!r} but chart is "
-                 f"{pin.chart!r}. ArgoCD resolves the OCI digest from repoURL "
-                 f"alone, so it would request .../{last}/manifests/<version>, which "
-                 f"is not a package, and manifest generation fails at sync.")
+            fail(
+                f"{pin.rel}: repoURL renders to one ending in {last!r} but chart is "
+                f"{pin.chart!r}. ArgoCD resolves the OCI digest from repoURL "
+                f"alone, so it would request .../{last}/manifests/<version>, which "
+                f"is not a package, and manifest generation fails at sync."
+            )
     if not seen:
-        fail("found no OCI pins in applicationsets/ — this repo carries several, so "
-             "the derivation stopped seeing them and the repoURL shape is unasserted.")
+        fail(
+            "found no OCI pins in applicationsets/ — this repo carries several, so "
+            "the derivation stopped seeing them and the repoURL shape is unasserted."
+        )
     return seen
 
 
@@ -1115,27 +1233,37 @@ def main() -> int:
         if pin.matrix:
             cm = covered_by_custom(pin.text, pin.chart, pin.version, managers)
             if cm is None:
-                fail(f"{pin.rel}: matrix pin {pin.chart} {pin.version} is matched by no "
-                     f"customManager. The argocd manager cannot read matrix list "
-                     f"elements, so nothing watches it.")
+                fail(
+                    f"{pin.rel}: matrix pin {pin.chart} {pin.version} is matched by no "
+                    f"customManager. The argocd manager cannot read matrix list "
+                    f"elements, so nothing watches it."
+                )
             else:
-                assert_reach(f"custom.regex {cm.where}",
-                             FilePatterns(cm.file_patterns, "renovate.json"),
-                             source, f"matrix pin {what}")
+                assert_reach(
+                    f"custom.regex {cm.where}",
+                    FilePatterns(cm.file_patterns, "renovate.json"),
+                    source,
+                    f"matrix pin {what}",
+                )
             continue
         if pin.is_oci:
             last = pin.repo.rstrip("/").rsplit("/", 1)[-1]
             if last == pin.chart:
                 cm = covered_by_custom(pin.text, pin.chart, pin.version, managers)
                 if cm is None:
-                    fail(f"{pin.rel}: OCI pin {pin.chart} {pin.version} has repoURL "
-                         f"ending in '{last}', so the argocd manager derives "
-                         f"'{pin.repo[len('oci://'):]}/{pin.chart}' — not a package. It "
-                         f"needs a customManager and has none.")
+                    fail(
+                        f"{pin.rel}: OCI pin {pin.chart} {pin.version} has repoURL "
+                        f"ending in '{last}', so the argocd manager derives "
+                        f"'{pin.repo[len('oci://') :]}/{pin.chart}' — not a package. It "
+                        f"needs a customManager and has none."
+                    )
                 else:
-                    assert_reach(f"custom.regex {cm.where}",
-                                 FilePatterns(cm.file_patterns, "renovate.json"),
-                                 source, f"OCI pin {what}")
+                    assert_reach(
+                        f"custom.regex {cm.where}",
+                        FilePatterns(cm.file_patterns, "renovate.json"),
+                        source,
+                        f"OCI pin {what}",
+                    )
                 continue
         # Everything else is resolved by the built-in argocd manager: it reads
         # repoURL as the registry and chart as the package, which is correct for
@@ -1145,8 +1273,10 @@ def main() -> int:
         assert_reach("argocd", argocd_patterns, source, f"chart pin {what}")
 
     if not total:
-        fail("no chart pins found in applicationsets/ — no ApplicationSet template "
-             "names a chart, so this gate proved nothing.")
+        fail(
+            "no chart pins found in applicationsets/ — no ApplicationSet template "
+            "names a chart, so this gate proved nothing."
+        )
 
     others = check_other_families(managers)
     oci = check_oci_repourl_shape(pins)
@@ -1167,26 +1297,32 @@ def main() -> int:
     bearing = len({p.appset for p in pins})
     *rest, last = list(dict.fromkeys(f.label for f in OTHER_FAMILIES))
     families = f"{', '.join(rest)} and {last}" if rest else last
-    print(f"renovate coverage OK: {total} chart pin(s) across {bearing} of "
-          f"{len(appset_files())} ApplicationSets, plus {others} pin(s) "
-          f"of kind {families} — "
-          f"every one watched by a manager that resolves. {oci} of the chart pins "
-          f"are OCI and also assert repoURL repeats their chart name; "
-          f"{len(NO_PINS)} file(s) are asserted to pin nothing")
-    print(f"toolchain OK: {derived} pin(s) derived from what the workflows resolve — "
-          f"every action reference, every version-file a setup step reads and every "
-          f"distribution a job installs is claimed by an enabled manager, and every "
-          f"enabled manager claims one")
+    print(
+        f"renovate coverage OK: {total} chart pin(s) across {bearing} of "
+        f"{len(appset_files())} ApplicationSets, plus {others} pin(s) "
+        f"of kind {families} — "
+        f"every one watched by a manager that resolves. {oci} of the chart pins "
+        f"are OCI and also assert repoURL repeats their chart name; "
+        f"{len(NO_PINS)} file(s) are asserted to pin nothing"
+    )
+    print(
+        f"toolchain OK: {derived} pin(s) derived from what the workflows resolve — "
+        f"every action reference, every version-file a setup step reads and every "
+        f"distribution a job installs is claimed by an enabled manager, and every "
+        f"enabled manager claims one"
+    )
 
     # Split by where the pattern came from. One is a decision made in this
     # repository; the other moves when Renovate does, without this repository
     # changing, which is why the record has a drift check and this line names it.
     recorded = sorted({m for m, _ in reach_recorded})
-    print(f"file patterns OK: every pin above sits in a file the manager it is "
-          f"attributed to actually opens — {len(reach_configured)} matched by a "
-          f"pattern renovate.json configures, {len(reach_recorded)} by the recorded "
-          f"default of {', '.join(recorded) if recorded else 'no manager'}, which "
-          f"scripts/check-renovate-defaults.mjs holds to the shipped package")
+    print(
+        f"file patterns OK: every pin above sits in a file the manager it is "
+        f"attributed to actually opens — {len(reach_configured)} matched by a "
+        f"pattern renovate.json configures, {len(reach_recorded)} by the recorded "
+        f"default of {', '.join(recorded) if recorded else 'no manager'}, which "
+        f"scripts/check-renovate-defaults.mjs holds to the shipped package"
+    )
     return 0
 
 

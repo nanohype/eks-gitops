@@ -33,15 +33,31 @@ def control_plane() -> list[dict]:
     """A Tenant, its Platform, the Platform's BudgetPolicy and a ModelGateway over it."""
     return [
         {"kind": "Tenant", "metadata": {"name": "platform-ops"}, "spec": {}},
-        {"kind": "Platform", "metadata": {"name": "ops"},
-         "spec": {"tenant": "platform-ops", "budget": {"name": "ops-budget"},
-                  "identity": {"allowedModels": [SONNET, HAIKU]}}},
-        {"kind": "BudgetPolicy", "metadata": {"name": "ops-budget"},
-         "spec": {"platformRef": {"name": "ops"}, "killSwitchEnabled": True}},
-        {"kind": "ModelGateway", "metadata": {"name": "ops"},
-         "spec": {"platformRef": {"name": "ops"},
-                  "routes": [{"name": "reason", "modelId": SONNET},
-                             {"name": "cheap", "modelId": HAIKU}]}},
+        {
+            "kind": "Platform",
+            "metadata": {"name": "ops"},
+            "spec": {
+                "tenant": "platform-ops",
+                "budget": {"name": "ops-budget"},
+                "identity": {"allowedModels": [SONNET, HAIKU]},
+            },
+        },
+        {
+            "kind": "BudgetPolicy",
+            "metadata": {"name": "ops-budget"},
+            "spec": {"platformRef": {"name": "ops"}, "killSwitchEnabled": True},
+        },
+        {
+            "kind": "ModelGateway",
+            "metadata": {"name": "ops"},
+            "spec": {
+                "platformRef": {"name": "ops"},
+                "routes": [
+                    {"name": "reason", "modelId": SONNET},
+                    {"name": "cheap", "modelId": HAIKU},
+                ],
+            },
+        },
     ]
 
 
@@ -51,8 +67,9 @@ class AnOverlay(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.root = pathlib.Path(tmp.name)
         # The published standard resolves nowhere, so no run reads this machine's.
-        self.no_standard = mock.patch.object(gate, "STANDARD_PATHS",
-                                             (self.root / "no-standard.json",))
+        self.no_standard = mock.patch.object(
+            gate, "STANDARD_PATHS", (self.root / "no-standard.json",)
+        )
         self.no_standard.start()
         self.addCleanup(self.no_standard.stop)
 
@@ -65,8 +82,10 @@ class AnOverlay(unittest.TestCase):
         if docs is not None:
             self.write(docs)
         out = io.StringIO()
-        with contextlib.redirect_stdout(out), \
-                mock.patch("sys.argv", ["check-ai-config.py", "--root", str(self.root)]):
+        with (
+            contextlib.redirect_stdout(out),
+            mock.patch("sys.argv", ["check-ai-config.py", "--root", str(self.root)]),
+        ):
             rc = gate.main()
         return rc, out.getvalue()
 
@@ -84,8 +103,9 @@ class AConsistentControlPlane(AnOverlay):
         self.assertIn("NOT COMPARED", said)
 
     def test_documents_of_other_kinds_are_not_read(self):
-        rc, said = self.check([*control_plane(),
-                               {"kind": "ConfigMap", "metadata": {"name": "x"}}, "a string"])
+        rc, said = self.check(
+            [*control_plane(), {"kind": "ConfigMap", "metadata": {"name": "x"}}, "a string"]
+        )
         self.assertEqual(rc, 0, said)
         self.assertIn("over 4 AI control-plane CR(s)", said)
 
@@ -104,6 +124,7 @@ class AModelId(AnOverlay):
     def route_to(self, model: str) -> list[dict]:
         def edit(gateway):
             gateway["spec"]["routes"][0]["modelId"] = model
+
         docs = self.edited("ModelGateway", edit)
         platform = next(d for d in docs if d["kind"] == "Platform")
         platform["spec"]["identity"]["allowedModels"].append(model)
@@ -134,6 +155,7 @@ class AModelId(AnOverlay):
     def test_an_allowlisted_id_is_held_to_the_same_rules(self):
         def edit(platform):
             platform["spec"]["identity"]["allowedModels"].append("anthropic.claude-opus-5")
+
         rc, said = self.check(self.edited("Platform", edit))
         self.assertEqual(rc, 1, said)
         self.assertIn("Platform/ops identity.allowedModels", said)
@@ -146,14 +168,17 @@ class AReference(AnOverlay):
     def test_a_route_outside_the_allowlist_is_denied_by_iam(self):
         def edit(platform):
             platform["spec"]["identity"]["allowedModels"] = [SONNET]
+
         rc, said = self.check(self.edited("Platform", edit))
         self.assertEqual(rc, 1, said)
-        self.assertIn(f"route 'cheap': modelId '{HAIKU}' is absent from Platform/ops's "
-                      "allowedModels", said)
+        self.assertIn(
+            f"route 'cheap': modelId '{HAIKU}' is absent from Platform/ops's allowedModels", said
+        )
 
     def test_a_gateway_naming_no_platform_is_refused(self):
         def edit(gateway):
             gateway["spec"]["platformRef"]["name"] = "elsewhere"
+
         rc, said = self.check(self.edited("ModelGateway", edit))
         self.assertEqual(rc, 1, said)
         self.assertIn("ModelGateway/ops: platformRef names 'elsewhere', which no Platform", said)
@@ -161,6 +186,7 @@ class AReference(AnOverlay):
     def test_a_platform_naming_no_tenant_is_refused(self):
         def edit(platform):
             platform["spec"]["tenant"] = "nobody"
+
         rc, said = self.check(self.edited("Platform", edit))
         self.assertEqual(rc, 1, said)
         self.assertIn("Platform/ops: tenant 'nobody' names no Tenant CR", said)
@@ -168,6 +194,7 @@ class AReference(AnOverlay):
     def test_a_budget_policy_naming_no_platform_is_refused(self):
         def edit(budget):
             budget["spec"]["platformRef"]["name"] = "elsewhere"
+
         rc, said = self.check(self.edited("BudgetPolicy", edit))
         self.assertEqual(rc, 1, said)
         self.assertIn("BudgetPolicy/ops-budget: platformRef names 'elsewhere'", said)
@@ -177,6 +204,7 @@ class ABudget(AnOverlay):
     def test_a_platform_with_no_budget_is_refused(self):
         def edit(platform):
             del platform["spec"]["budget"]
+
         rc, said = self.check(self.edited("Platform", edit))
         self.assertEqual(rc, 1, said)
         self.assertIn("Platform/ops: carries no budget reference", said)
@@ -184,6 +212,7 @@ class ABudget(AnOverlay):
     def test_a_budget_naming_no_policy_is_refused(self):
         def edit(platform):
             platform["spec"]["budget"]["name"] = "missing"
+
         rc, said = self.check(self.edited("Platform", edit))
         self.assertEqual(rc, 1, said)
         self.assertIn("budget 'missing' names no BudgetPolicy", said)
@@ -191,6 +220,7 @@ class ABudget(AnOverlay):
     def test_a_budget_nothing_enforces_is_refused(self):
         def edit(budget):
             budget["spec"]["killSwitchEnabled"] = False
+
         rc, said = self.check(self.edited("BudgetPolicy", edit))
         self.assertEqual(rc, 1, said)
         self.assertIn("BudgetPolicy/ops-budget: killSwitchEnabled is not set", said)
@@ -199,6 +229,7 @@ class ABudget(AnOverlay):
         def edit(platform):
             platform["spec"]["tenant"] = "nobody"
             del platform["spec"]["budget"]
+
         rc, said = self.check(self.edited("Platform", edit))
         self.assertEqual(rc, 1, said)
         self.assertIn("has 2 problem(s)", said)
@@ -215,8 +246,7 @@ class ThePolicySnapshot(AnOverlay):
             return gate.check_policy_drift()
 
     def test_a_standard_naming_the_same_tiers_matches(self):
-        path = self.standard({"content": {"models": {v: k for k, v
-                                                     in gate.POLICY_MODELS.items()}}})
+        path = self.standard({"content": {"models": {v: k for k, v in gate.POLICY_MODELS.items()}}})
         self.assertEqual(self.compare(path), ([], f"matches {path}"))
 
     def test_a_standard_that_moved_is_drift(self):

@@ -36,27 +36,34 @@ CHART_CACHE = "~/.cache/eks-gitops/charts"
 
 
 def workflows() -> dict[str, dict]:
-    found = {p.name: yaml.safe_load(p.read_text())
-             for p in sorted([*WORKFLOWS.glob("*.yml"), *WORKFLOWS.glob("*.yaml")])}
+    found = {
+        p.name: yaml.safe_load(p.read_text())
+        for p in sorted([*WORKFLOWS.glob("*.yml"), *WORKFLOWS.glob("*.yaml")])
+    }
     assert found, f"no workflow under {WORKFLOWS}"
     return found
 
 
 def jobs() -> dict[str, dict]:
     """{workflow:job: job} over every workflow."""
-    return {f"{name}:{job}": body
-            for name, doc in workflows().items()
-            for job, body in (doc.get("jobs") or {}).items()}
+    return {
+        f"{name}:{job}": body
+        for name, doc in workflows().items()
+        for job, body in (doc.get("jobs") or {}).items()
+    }
 
 
 # ── A small evaluator for the step conditions the chart cache rests on ──
 
-_TOKEN = re.compile(r"""\s*(?:
+_TOKEN = re.compile(
+    r"""\s*(?:
     (?P<string>'(?:[^']|'')*')
   | (?P<op>&&|\|\||==|!=|\(|\))
   | (?P<call>[A-Za-z_]\w*)\(\)
   | (?P<name>[A-Za-z_][\w.-]*)
-)""", re.X)
+)""",
+    re.X,
+)
 
 STATUS_FUNCTIONS = ("always", "success", "failure", "cancelled")
 
@@ -101,11 +108,13 @@ def render(template: str, context: dict[str, str]) -> str:
     A hashFiles() call becomes a token naming its arguments: what it hashes is
     the same on every branch, which is all a key comparison here needs.
     """
+
     def value(m: re.Match) -> str:
         expression = m.group(1).strip()
         if expression.startswith("hashFiles("):
             return f"<{expression}>"
         return context[expression]
+
     return re.sub(r"\$\{\{(.*?)\}\}", value, template)
 
 
@@ -134,8 +143,9 @@ class EveryDownloadIsBounded(unittest.TestCase):
                 script = re.sub(r"\\\n\s*", " ", str(step.get("run", "")))
                 for line in script.splitlines():
                     words = line.split()
-                    found.extend((name, words[i + 1:])
-                                 for i, word in enumerate(words) if word == "curl")
+                    found.extend(
+                        (name, words[i + 1 :]) for i, word in enumerate(words) if word == "curl"
+                    )
         return found
 
     def test_every_curl_carries_each_bound(self):
@@ -172,13 +182,16 @@ class KeepingTheChartCache(unittest.TestCase):
         steps = self.job["steps"]
 
         def on_cache(step, action):
-            return (str(step.get("uses", "")).startswith(f"actions/{action}@")
-                    and (step.get("with") or {}).get("path") == CHART_CACHE)
+            return (
+                str(step.get("uses", "")).startswith(f"actions/{action}@")
+                and (step.get("with") or {}).get("path") == CHART_CACHE
+            )
 
         self.combined = [s for s in steps if on_cache(s, "cache")]
         restores = [i for i, s in enumerate(steps) if on_cache(s, "cache/restore")]
-        fetches = [i for i, s in enumerate(steps)
-                   if "render-addons.py --fetch" in str(s.get("run", ""))]
+        fetches = [
+            i for i, s in enumerate(steps) if "render-addons.py --fetch" in str(s.get("run", ""))
+        ]
         self.saves = [i for i, s in enumerate(steps) if on_cache(s, "cache/save")]
         self.assertEqual(len(restores), 1, "the charts job restores the cache once")
         self.assertEqual(len(fetches), 1, "the charts job fetches once")
@@ -191,15 +204,23 @@ class KeepingTheChartCache(unittest.TestCase):
         """The keys the save steps save under, when the fetch ended in `outcome`."""
         primary = render(self.restore["with"]["key"], {})
         rid, fid = self.restore["id"], self.fetch["id"]
-        context = {f"steps.{fid}.outcome": outcome,
-                   f"steps.{rid}.outputs.cache-hit": "true" if hit else "false",
-                   f"steps.{rid}.outputs.cache-primary-key": primary,
-                   **self.RUN}
-        status = {"always": True, "success": outcome == "success",
-                  "failure": outcome in ("failure", "skipped"),
-                  "cancelled": outcome == "cancelled"}
-        return [render(step["with"]["key"], context) for step in self.save_steps
-                if evaluate(str(step.get("if", "")), context, status)]
+        context = {
+            f"steps.{fid}.outcome": outcome,
+            f"steps.{rid}.outputs.cache-hit": "true" if hit else "false",
+            f"steps.{rid}.outputs.cache-primary-key": primary,
+            **self.RUN,
+        }
+        status = {
+            "always": True,
+            "success": outcome == "success",
+            "failure": outcome in ("failure", "skipped"),
+            "cancelled": outcome == "cancelled",
+        }
+        return [
+            render(step["with"]["key"], context)
+            for step in self.save_steps
+            if evaluate(str(step.get("if", "")), context, status)
+        ]
 
     def primary(self) -> str:
         return render(self.restore["with"]["key"], {})
@@ -244,9 +265,11 @@ class KeepingTheChartCache(unittest.TestCase):
                 with self.subTest(outcome=outcome, hit=hit):
                     saved = self.saved(outcome, hit)
                     self.assertEqual(len(saved), 1, f"a {outcome} fetch keeps {saved}")
-                    self.assertNotEqual(saved[0], primary,
-                                        "an incomplete set under the key every rendering "
-                                        "job restores")
+                    self.assertNotEqual(
+                        saved[0],
+                        primary,
+                        "an incomplete set under the key every rendering job restores",
+                    )
                     for value in self.RUN.values():
                         self.assertIn(value, saved[0], "a key a later run can collide with")
 
@@ -271,8 +294,10 @@ class KeepingTheChartCache(unittest.TestCase):
                     saved = self.saved(outcome, hit)
                     self.assertTrue(saved, f"a {outcome} fetch keeps nothing")
                     for key in saved:
-                        self.assertFalse(key.startswith(primary),
-                                         f"{key} begins with the rendering jobs' {primary}")
+                        self.assertFalse(
+                            key.startswith(primary),
+                            f"{key} begins with the rendering jobs' {primary}",
+                        )
 
     def test_restore_keys_try_the_incomplete_set_these_pins_left_first(self):
         """An earlier attempt at the same pins kept everything it verified, so a
@@ -281,10 +306,15 @@ class KeepingTheChartCache(unittest.TestCase):
         these moved."""
         keys = self.restore_keys()
         self.assertTrue(keys, "no restore-keys")
-        self.assertIn(self.pins(), keys[0],
-                      "the first restore key names no pins, so any pins' set can come first")
-        self.assertTrue(self.saved("failure", hit=False)[0].startswith(keys[0]),
-                        "the first restore key does not reach the set these pins left")
+        self.assertIn(
+            self.pins(),
+            keys[0],
+            "the first restore key names no pins, so any pins' set can come first",
+        )
+        self.assertTrue(
+            self.saved("failure", hit=False)[0].startswith(keys[0]),
+            "the first restore key does not reach the set these pins left",
+        )
 
     def test_restore_keys_then_hand_a_pin_bump_the_newest_set_complete_or_not(self):
         """A restore key naming no pins reaches the sets every pin set kept, so a
@@ -292,8 +322,9 @@ class KeepingTheChartCache(unittest.TestCase):
         primary = self.primary()
         partial = self.saved("failure", hit=False)[0]
         broad = [key for key in self.restore_keys() if self.pins() not in key]
-        self.assertTrue(broad, "every restore key names these pins, so a pin bump "
-                               "starts from nothing")
+        self.assertTrue(
+            broad, "every restore key names these pins, so a pin bump starts from nothing"
+        )
         for prefix in broad:
             with self.subTest(prefix=prefix):
                 self.assertTrue(primary.startswith(prefix))
@@ -306,9 +337,12 @@ class KeepingTheChartCache(unittest.TestCase):
         readers = 0
         for name, job in jobs().items():
             for step in job.get("steps") or []:
-                if (str(step.get("uses", "")).startswith("actions/cache/restore@")
-                        and (step.get("with") or {}).get("path") == CHART_CACHE
-                        and step is not self.restore and name != "ci.yml:charts"):
+                if (
+                    str(step.get("uses", "")).startswith("actions/cache/restore@")
+                    and (step.get("with") or {}).get("path") == CHART_CACHE
+                    and step is not self.restore
+                    and name != "ci.yml:charts"
+                ):
                     readers += 1
                     with self.subTest(job=name):
                         self.assertEqual(render(step["with"]["key"], {}), self.primary())
@@ -332,9 +366,11 @@ def step_shell(doc: dict, job: dict, step: dict) -> list[str]:
     workflow's. With none of them set the runner uses bash -e, which leaves a
     pipeline's status to its last command; `shell: bash` adds pipefail.
     """
-    shell = (step.get("shell")
-             or ((job.get("defaults") or {}).get("run") or {}).get("shell")
-             or ((doc.get("defaults") or {}).get("run") or {}).get("shell"))
+    shell = (
+        step.get("shell")
+        or ((job.get("defaults") or {}).get("run") or {}).get("shell")
+        or ((doc.get("defaults") or {}).get("run") or {}).get("shell")
+    )
     if shell is None:
         return ["bash", "-e"]
     if shell == "bash":
@@ -359,11 +395,16 @@ class LoggingInToEcrPublic(unittest.TestCase):
     """
 
     # Each job that logs in, and the step that reads public.ecr.aws in it.
-    READERS = {"ci.yml:charts": "render-addons.py --fetch",
-               "ci.yml:image-vulnerabilities": "check-image-vulnerabilities.py"}
+    READERS = {
+        "ci.yml:charts": "render-addons.py --fetch",
+        "ci.yml:image-vulnerabilities": "check-image-vulnerabilities.py",
+    }
     REPO = "owner/repo"
-    OUTPUTS = {"aws-access-key-id": "key-id", "aws-secret-access-key": "secret-key",
-               "aws-session-token": "session-token"}
+    OUTPUTS = {
+        "aws-access-key-id": "key-id",
+        "aws-secret-access-key": "secret-key",
+        "aws-session-token": "session-token",
+    }
 
     def setUp(self):
         self.doc = workflows()["ci.yml"]
@@ -372,19 +413,24 @@ class LoggingInToEcrPublic(unittest.TestCase):
         for name, job in jobs().items():
             steps = job.get("steps") or []
             masks = [i for i, s in enumerate(steps) if ROLE_NAME in (s.get("env") or {})]
-            creds = [i for i, s in enumerate(steps)
-                     if str(s.get("uses", "")).startswith(CREDENTIALS_ACTION)]
+            creds = [
+                i
+                for i, s in enumerate(steps)
+                if str(s.get("uses", "")).startswith(CREDENTIALS_ACTION)
+            ]
             logins = [i for i, s in enumerate(steps) if "docker login" in str(s.get("run", ""))]
             if masks or creds or logins:
-                self.assertEqual((len(masks), len(creds), len(logins)), (1, 1, 1),
-                                 f"{name} masks the role, assumes it and logs in once each")
+                self.assertEqual(
+                    (len(masks), len(creds), len(logins)),
+                    (1, 1, 1),
+                    f"{name} masks the role, assumes it and logs in once each",
+                )
                 self.logins[name] = (job, steps, creds[0], logins[0])
                 self.masks[name] = masks[0]
         self.assertEqual(sorted(self.logins), sorted(self.READERS))
 
     def condition(self, step: dict, context: dict[str, str], passing: bool = True) -> bool:
-        status = {"always": True, "success": passing, "failure": not passing,
-                  "cancelled": False}
+        status = {"always": True, "success": passing, "failure": not passing, "cancelled": False}
         return bool(evaluate(str(step.get("if") or "success()"), context, status))
 
     def test_each_job_logs_in_before_it_reads(self):
@@ -395,28 +441,37 @@ class LoggingInToEcrPublic(unittest.TestCase):
                 self.assertLess(self.masks[name], creds)
                 self.assertLess(creds, login)
                 self.assertLess(login, reads[0])
-                self.assertEqual(steps[creds]["with"]["role-to-assume"],
-                                 f"${{{{ {ROLE_SECRET} }}}}")
+                self.assertEqual(
+                    steps[creds]["with"]["role-to-assume"], f"${{{{ {ROLE_SECRET} }}}}"
+                )
                 self.assertIs(steps[creds]["with"].get("mask-aws-account-id"), True)
 
     def test_the_role_is_assumed_only_when_configured_and_never_for_a_fork(self):
         """GitHub issues a fork's pull request no OIDC token, and an unset secret names no role."""
-        events = {"a push": ("push", ""),
-                  "a pull request from this repo": ("pull_request", self.REPO),
-                  "a pull request from a fork": ("pull_request", "fork/repo")}
+        events = {
+            "a push": ("push", ""),
+            "a pull request from this repo": ("pull_request", self.REPO),
+            "a pull request from a fork": ("pull_request", "fork/repo"),
+        }
         for name, (_, steps, creds, _) in self.logins.items():
             configured = f"steps.{steps[self.masks[name]]['id']}.outputs.configured"
             for role in ("false", "true"):
                 for label, (event, head) in events.items():
-                    context = {configured: role, "github.event_name": event,
-                               "github.event.pull_request.head.repo.full_name": head,
-                               "github.repository": self.REPO}
+                    context = {
+                        configured: role,
+                        "github.event_name": event,
+                        "github.event.pull_request.head.repo.full_name": head,
+                        "github.repository": self.REPO,
+                    }
                     with self.subTest(job=name, configured=role, event=label):
-                        self.assertEqual(self.condition(steps[creds], context),
-                                         role == "true" and head != "fork/repo")
+                        self.assertEqual(
+                            self.condition(steps[creds], context),
+                            role == "true" and head != "fork/repo",
+                        )
 
-    def run_mask_step(self, secret: str | None, variable: str = "false"
-                      ) -> dict[str, tuple[subprocess.CompletedProcess, str]]:
+    def run_mask_step(
+        self, secret: str | None, variable: str = "false"
+    ) -> dict[str, tuple[subprocess.CompletedProcess, str]]:
         """Each job's mask step, run as the runner runs it, and what it wrote to
         $GITHUB_OUTPUT, by job. `secret` None leaves the secret out of the
         environment, as a fork's pull request receives it; `variable` is what the
@@ -429,14 +484,23 @@ class LoggingInToEcrPublic(unittest.TestCase):
                 script.write_text(str(step["run"]))
                 output = pathlib.Path(tmp) / "output"
                 output.write_text("")
-                env = {"PATH": f"/usr/bin{os.pathsep}/bin", "GITHUB_WORKSPACE": str(ROOT),
-                       "GITHUB_REPOSITORY": self.REPO,
-                       "GITHUB_OUTPUT": str(output), "ROLE_ARN_VARIABLE": variable}
+                env = {
+                    "PATH": f"/usr/bin{os.pathsep}/bin",
+                    "GITHUB_WORKSPACE": str(ROOT),
+                    "GITHUB_REPOSITORY": self.REPO,
+                    "GITHUB_OUTPUT": str(output),
+                    "ROLE_ARN_VARIABLE": variable,
+                }
                 if secret is not None:
                     env[ROLE_NAME] = secret
-                done = subprocess.run([*step_shell(self.doc, job, step), str(script)],
-                                      env=env, capture_output=True, text=True, timeout=30,
-                                      check=False)
+                done = subprocess.run(
+                    [*step_shell(self.doc, job, step), str(script)],
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    check=False,
+                )
                 runs[name] = (done, output.read_text())
         self.assertTrue(runs, "no mask step was run")
         return runs
@@ -447,12 +511,18 @@ class LoggingInToEcrPublic(unittest.TestCase):
         for name, (_, steps, _, _) in self.logins.items():
             step = steps[self.masks[name]]
             with self.subTest(job=name):
-                self.assertEqual(step.get("env"), {
-                    ROLE_NAME: f"${{{{ {ROLE_SECRET} }}}}",
-                    "ROLE_ARN_VARIABLE": f"${{{{ vars.{ROLE_NAME} != '' }}}}",
-                })
-                first = next(line.strip() for line in str(step["run"]).splitlines()
-                             if line.strip() and not line.strip().startswith("#"))
+                self.assertEqual(
+                    step.get("env"),
+                    {
+                        ROLE_NAME: f"${{{{ {ROLE_SECRET} }}}}",
+                        "ROLE_ARN_VARIABLE": f"${{{{ vars.{ROLE_NAME} != '' }}}}",
+                    },
+                )
+                first = next(
+                    line.strip()
+                    for line in str(step["run"]).splitlines()
+                    if line.strip() and not line.strip().startswith("#")
+                )
                 self.assertEqual(first, MASK_COMMAND)
                 self.assertNotIn("if", step)
 
@@ -471,8 +541,10 @@ class LoggingInToEcrPublic(unittest.TestCase):
                 self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
                 self.assertEqual(output, "configured=true\n")
                 lines = done.stdout.splitlines()
-                self.assertEqual(sorted(lines[:2]), [f"::add-mask::{SYNTHETIC_ID}",
-                                                     f"::add-mask::{SYNTHETIC_ARN}"])
+                self.assertEqual(
+                    sorted(lines[:2]),
+                    [f"::add-mask::{SYNTHETIC_ID}", f"::add-mask::{SYNTHETIC_ARN}"],
+                )
                 unmasked = [ln for ln in lines if not ln.startswith("::add-mask::")]
                 self.assertFalse([ln for ln in unmasked if SYNTHETIC_ID in ln], unmasked)
 
@@ -486,18 +558,20 @@ class LoggingInToEcrPublic(unittest.TestCase):
                         self.assertEqual(done.returncode, 1)
                         self.assertEqual(output, "")
                         self.assertIn("still a variable", done.stdout)
-                        self.assertIn(f"gh variable delete {ROLE_NAME} --repo {self.REPO}",
-                                      done.stdout)
-                        errors = [ln for ln in done.stdout.splitlines()
-                                  if ln.startswith("::error")]
+                        self.assertIn(
+                            f"gh variable delete {ROLE_NAME} --repo {self.REPO}", done.stdout
+                        )
+                        errors = [ln for ln in done.stdout.splitlines() if ln.startswith("::error")]
                         self.assertFalse([e for e in errors if SYNTHETIC_ID in e])
 
     def test_a_secret_that_is_not_one_role_arn_fails_the_job_unprinted(self):
         """A value that names no role, or spans lines, is refused after its ids
         are masked, and its error carries none of it."""
-        cases = {"not an ARN": "SENTINEL-not-a-role",
-                 "a user, not a role": f"arn:aws:iam::{SYNTHETIC_ID}:user/someone",
-                 "two lines": f"{SYNTHETIC_ARN}\n{SYNTHETIC_ARN}"}
+        cases = {
+            "not an ARN": "SENTINEL-not-a-role",
+            "a user, not a role": f"arn:aws:iam::{SYNTHETIC_ID}:user/someone",
+            "two lines": f"{SYNTHETIC_ARN}\n{SYNTHETIC_ARN}",
+        }
         for label, secret in cases.items():
             for name, (done, output) in self.run_mask_step(secret).items():
                 with self.subTest(job=name, case=label):
@@ -514,8 +588,7 @@ class LoggingInToEcrPublic(unittest.TestCase):
             with self.subTest(job=name):
                 self.assertTrue(self.condition(steps[login], {outcome: "success"}))
                 self.assertFalse(self.condition(steps[login], {outcome: "skipped"}))
-                self.assertFalse(self.condition(steps[login], {outcome: "failure"},
-                                                passing=False))
+                self.assertFalse(self.condition(steps[login], {outcome: "failure"}, passing=False))
 
     def test_the_role_credentials_reach_the_login_step_alone(self):
         """As outputs of the step that assumed the role, not as environment every
@@ -528,13 +601,17 @@ class LoggingInToEcrPublic(unittest.TestCase):
                 self.assertIs(given.get("output-credentials"), True)
                 env = dict(steps[login].get("env") or {})
                 env.pop("ECR_PUBLIC_REGION", None)
-                self.assertEqual(env, {
-                    "AWS_ACCESS_KEY_ID": f"${{{{ {outputs}aws-access-key-id }}}}",
-                    "AWS_SECRET_ACCESS_KEY": f"${{{{ {outputs}aws-secret-access-key }}}}",
-                    "AWS_SESSION_TOKEN": f"${{{{ {outputs}aws-session-token }}}}",
-                })
-                readers = [s.get("name") for i, s in enumerate(steps)
-                           if i != login and outputs in str(s)]
+                self.assertEqual(
+                    env,
+                    {
+                        "AWS_ACCESS_KEY_ID": f"${{{{ {outputs}aws-access-key-id }}}}",
+                        "AWS_SECRET_ACCESS_KEY": f"${{{{ {outputs}aws-secret-access-key }}}}",
+                        "AWS_SESSION_TOKEN": f"${{{{ {outputs}aws-session-token }}}}",
+                    },
+                )
+                readers = [
+                    s.get("name") for i, s in enumerate(steps) if i != login and outputs in str(s)
+                ]
                 self.assertEqual(readers, [], "another step reads the role's credentials")
 
     def test_the_role_and_the_token_are_both_asked_of_us_east_1(self):
@@ -558,11 +635,11 @@ class LoggingInToEcrPublic(unittest.TestCase):
         again beside the OIDC token, and no permission the login does not need."""
         for name, (job, *_) in self.logins.items():
             with self.subTest(job=name):
-                self.assertEqual(job.get("permissions"),
-                                 {"contents": "read", "id-token": "write"})
+                self.assertEqual(job.get("permissions"), {"contents": "read", "id-token": "write"})
 
-    def run_login(self, aws: str, docker: str
-                  ) -> dict[str, tuple[subprocess.CompletedProcess, dict[str, str]]]:
+    def run_login(
+        self, aws: str, docker: str
+    ) -> dict[str, tuple[subprocess.CompletedProcess, dict[str, str]]]:
         """Each job's login step, run under the shell the runner gives it with
         stand-ins for aws and docker, and what the stand-ins recorded, by job.
 
@@ -584,13 +661,22 @@ class LoggingInToEcrPublic(unittest.TestCase):
                     stub.chmod(0o755)
                 script = pathlib.Path(tmp) / "step.sh"
                 script.write_text(str(step["run"]))
-                context = {f"steps.{steps[creds]['id']}.outputs.{k}": v
-                           for k, v in self.OUTPUTS.items()}
-                env = {"PATH": f"{bin_dir}{os.pathsep}/usr/bin{os.pathsep}/bin", "LOG": str(log),
-                       **{k: render(str(v), context) for k, v in step["env"].items()}}
-                done = subprocess.run([*step_shell(self.doc, job, step), str(script)],
-                                      env=env, capture_output=True, text=True, timeout=30,
-                                      check=False)
+                context = {
+                    f"steps.{steps[creds]['id']}.outputs.{k}": v for k, v in self.OUTPUTS.items()
+                }
+                env = {
+                    "PATH": f"{bin_dir}{os.pathsep}/usr/bin{os.pathsep}/bin",
+                    "LOG": str(log),
+                    **{k: render(str(v), context) for k, v in step["env"].items()},
+                }
+                done = subprocess.run(
+                    [*step_shell(self.doc, job, step), str(script)],
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    check=False,
+                )
                 runs[name] = (done, {f.name: f.read_text() for f in log.iterdir()})
         self.assertTrue(runs, "no login step was run")
         return runs
@@ -598,24 +684,34 @@ class LoggingInToEcrPublic(unittest.TestCase):
     def test_the_minted_token_is_handed_to_docker_on_stdin(self):
         runs = self.run_login(
             aws='echo "$* $AWS_ACCESS_KEY_ID $AWS_SECRET_ACCESS_KEY $AWS_SESSION_TOKEN" '
-                '> "$LOG/aws"; echo minted-token',
-            docker='echo "$*" > "$LOG/docker"; cat > "$LOG/stdin"')
+            '> "$LOG/aws"; echo minted-token',
+            docker='echo "$*" > "$LOG/docker"; cat > "$LOG/stdin"',
+        )
         for name, (done, recorded) in runs.items():
             with self.subTest(job=name):
                 self.assertEqual(done.returncode, 0, done.stderr)
-                self.assertEqual(recorded["aws"].split(),
-                                 ["ecr-public", "get-login-password", "--region", "us-east-1",
-                                  *self.OUTPUTS.values()])
-                self.assertEqual(recorded["docker"].split(),
-                                 ["login", "--username", "AWS", "--password-stdin",
-                                  "public.ecr.aws"])
+                self.assertEqual(
+                    recorded["aws"].split(),
+                    [
+                        "ecr-public",
+                        "get-login-password",
+                        "--region",
+                        "us-east-1",
+                        *self.OUTPUTS.values(),
+                    ],
+                )
+                self.assertEqual(
+                    recorded["docker"].split(),
+                    ["login", "--username", "AWS", "--password-stdin", "public.ecr.aws"],
+                )
                 self.assertEqual(recorded["stdin"], "minted-token\n")
 
     def test_a_token_that_could_not_be_fetched_fails_the_step_whatever_docker_does(self):
         """Without pipefail the pipeline's status is docker's, and a docker that
         accepted the empty input would pass a login that never happened."""
-        runs = self.run_login(aws="echo 'Unable to locate credentials' >&2; exit 253",
-                              docker='cat > "$LOG/stdin"')
+        runs = self.run_login(
+            aws="echo 'Unable to locate credentials' >&2; exit 253", docker='cat > "$LOG/stdin"'
+        )
         for name, (done, recorded) in runs.items():
             with self.subTest(job=name):
                 self.assertNotEqual(done.returncode, 0)
@@ -631,8 +727,8 @@ class LoggingInToEcrPublic(unittest.TestCase):
             for job_name, job in (doc.get("jobs") or {}).items():
                 permissions = job.get("permissions") or {}
                 if permissions == "write-all" or (
-                        isinstance(permissions, dict)
-                        and permissions.get("id-token", "none") != "none"):
+                    isinstance(permissions, dict) and permissions.get("id-token", "none") != "none"
+                ):
                     granted.append(f"{name}:{job_name}")
         self.assertEqual(sorted(granted), sorted(self.logins))
 

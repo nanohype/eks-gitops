@@ -25,8 +25,9 @@ HELM_CONFIG = "application/vnd.cncf.helm.config.v1+json"
 HELM_CHART_CONTENT = "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
 
 
-def http_error(url: str, code: int, headers: dict[str, str] | None = None,
-               body: bytes = b"") -> urllib.error.HTTPError:
+def http_error(
+    url: str, code: int, headers: dict[str, str] | None = None, body: bytes = b""
+) -> urllib.error.HTTPError:
     msg = email.message.Message()
     for k, v in (headers or {}).items():
         msg[k] = v
@@ -45,8 +46,9 @@ class Wire(io.RawIOBase):
     socket timeout is a run of segments each charged just under it.
     """
 
-    def __init__(self, segments: list[tuple[bytes, float]],
-                 charge: Callable[[float], None] | None = None) -> None:
+    def __init__(
+        self, segments: list[tuple[bytes, float]], charge: Callable[[float], None] | None = None
+    ) -> None:
         super().__init__()
         self.segments = list(segments)
         self.charge = charge
@@ -87,9 +89,15 @@ class Served(http.client.HTTPResponse):
     wire: Wire
 
 
-def served(body: bytes, *, piece: int | None = None, seconds: float = 0.0,
-           chunked: bool = False, length: int | None = None,
-           charge: Callable[[float], None] | None = None) -> Served:
+def served(
+    body: bytes,
+    *,
+    piece: int | None = None,
+    seconds: float = 0.0,
+    chunked: bool = False,
+    length: int | None = None,
+    charge: Callable[[float], None] | None = None,
+) -> Served:
     """A 200 carrying `body`, its status line and headers already read.
 
     The status line and headers arrive on one read of the socket, and what
@@ -101,14 +109,16 @@ def served(body: bytes, *, piece: int | None = None, seconds: float = 0.0,
     piece = piece or max(len(body), 1)
     if chunked:
         framing = "Transfer-Encoding: chunked"
-        chunks = [body[i:i + piece] for i in range(0, len(body), piece)]
+        chunks = [body[i : i + piece] for i in range(0, len(body), piece)]
         payload = b"".join(b"%x\r\n%s\r\n" % (len(c), c) for c in chunks) + b"0\r\n\r\n"
     else:
         framing = f"Content-Length: {len(body) if length is None else length}"
         payload = body
     head = f"HTTP/1.1 200 OK\r\n{framing}\r\n\r\n".encode()
-    wire = Wire([(head, 0.0)] + [(payload[i:i + piece], seconds)
-                                 for i in range(0, len(payload), piece)], charge)
+    wire = Wire(
+        [(head, 0.0)] + [(payload[i : i + piece], seconds) for i in range(0, len(payload), piece)],
+        charge,
+    )
     resp = Served(_Socket(wire), method="GET")  # type: ignore[arg-type]
     resp.wire = wire
     resp.begin()
@@ -175,16 +185,23 @@ class Transport:
     def trickle(self, body: bytes, *, piece: int, seconds: float, chunked: bool = False):
         """A step serving `body` `piece` bytes per read of the socket, each read
         charged `seconds` on this transport's timer."""
-        return lambda _req: served(body, piece=piece, seconds=seconds, chunked=chunked,
-                                   charge=self.charge)
+        return lambda _req: served(
+            body, piece=piece, seconds=seconds, chunked=chunked, charge=self.charge
+        )
 
     def bind(self, http_get, jitter: float = 0.0):
         """`http_get` over this transport, with a fixed wall clock, the transport's
         own timer, its own record of the last request to each host and a fixed
         jitter draw."""
-        return functools.partial(http_get, urlopen=self.urlopen, sleep=self.sleep,
-                                 clock=lambda: NOW, timer=lambda: self.elapsed,
-                                 jitter=lambda: jitter, last_sent=self.sent)
+        return functools.partial(
+            http_get,
+            urlopen=self.urlopen,
+            sleep=self.sleep,
+            clock=lambda: NOW,
+            timer=lambda: self.elapsed,
+            jitter=lambda: jitter,
+            last_sent=self.sent,
+        )
 
     def urls(self) -> list[str]:
         return [r.full_url for r in self.requests]
@@ -199,12 +216,21 @@ class OciRegistry:
 
     TOKEN = "t0k"
     REALM = "https://auth.example/token"
-    CHALLENGE = (f'Bearer realm="{REALM}",service="registry.example",'
-                 'scope="aws"')
+    CHALLENGE = f'Bearer realm="{REALM}",service="registry.example",scope="aws"'
     transport_class = Transport
 
-    def __init__(self, host, path, version, config, *, content=b"chart-tgz",
-                 media_type=None, digest=None, realm=None):
+    def __init__(
+        self,
+        host,
+        path,
+        version,
+        config,
+        *,
+        content=b"chart-tgz",
+        media_type=None,
+        digest=None,
+        realm=None,
+    ):
         self.base = f"https://{host}/v2/{path}"
         self.version = version
         self.blob = json.dumps(config).encode()
@@ -222,11 +248,12 @@ class OciRegistry:
         if auth(req) != f"Bearer {self.TOKEN}":
             return http_error(url, 401, {"WWW-Authenticate": self.challenge})
         if url == f"{self.base}/manifests/{self.version}":
-            return json.dumps({
-                "config": {"mediaType": self.media_type, "digest": self.digest},
-                "layers": [{"mediaType": HELM_CHART_CONTENT,
-                            "digest": self.content_digest}],
-            }).encode()
+            return json.dumps(
+                {
+                    "config": {"mediaType": self.media_type, "digest": self.digest},
+                    "layers": [{"mediaType": HELM_CHART_CONTENT, "digest": self.content_digest}],
+                }
+            ).encode()
         if url == f"{self.base}/blobs/{self.digest}":
             return self.blob
         if url == f"{self.base}/blobs/{self.content_digest}":

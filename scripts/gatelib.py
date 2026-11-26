@@ -55,8 +55,10 @@ def read_yaml_all(path) -> list:
 
     path = pathlib.Path(path)
     if not path.is_file():
-        print(f"Cannot run: {path} does not exist. This gate examined nothing, which "
-              f"is not the same as finding nothing.")
+        print(
+            f"Cannot run: {path} does not exist. This gate examined nothing, which "
+            f"is not the same as finding nothing."
+        )
         sys.exit(CANNOT_RUN)
     try:
         return [d for d in yaml.safe_load_all(path.read_text()) if d is not None]
@@ -79,8 +81,10 @@ def read_yaml(path):
     """
     docs = read_yaml_all(path)
     if not docs:
-        print(f"Cannot run: {pathlib.Path(path)} holds no YAML document, so the "
-              f"coordinates this gate reads from it are unknown.")
+        print(
+            f"Cannot run: {pathlib.Path(path)} holds no YAML document, so the "
+            f"coordinates this gate reads from it are unknown."
+        )
         sys.exit(CANNOT_RUN)
     return docs[0]
 
@@ -89,8 +93,10 @@ def read_json(path):
     """`path` parsed as JSON, or exit 2 naming the file. See read_yaml_all."""
     path = pathlib.Path(path)
     if not path.is_file():
-        print(f"Cannot run: {path} does not exist. This gate examined nothing, which "
-              f"is not the same as finding nothing.")
+        print(
+            f"Cannot run: {path} does not exist. This gate examined nothing, which "
+            f"is not the same as finding nothing."
+        )
         sys.exit(CANNOT_RUN)
     try:
         return json.loads(path.read_text())
@@ -135,20 +141,22 @@ def cannot_read(what: str, reasons: Iterable[str]) -> int:
     print(f"Cannot run: {what} could not be read:")
     for reason in reasons:
         print(f"        {reason}")
-    print("What could not be read was not examined, which is not the same as nothing "
-          "being wrong: an unreachable or rate-limiting registry is a fact about the "
-          "network, not about this repo.")
+    print(
+        "What could not be read was not examined, which is not the same as nothing "
+        "being wrong: an unreachable or rate-limiting registry is a fact about the "
+        "network, not about this repo."
+    )
     return CANNOT_RUN
 
 
-def refuse_chart(chart: str, version: str, source: str,
-                 exc: registry.ChartUnavailable) -> NoReturn:
+def refuse_chart(chart: str, version: str, source: str, exc: registry.ChartUnavailable) -> NoReturn:
     """Exit with the status `exc` earns, saying why: 1 when answered, else CANNOT_RUN."""
     if exc.answered:
-        print(f"{chart} {version}: {source} answered, and its answer rules the pin out "
-              f"— {exc}")
-        print("A pin that does not resolve to an archive the registry client can verify "
-              "is a finding about this repo.")
+        print(f"{chart} {version}: {source} answered, and its answer rules the pin out — {exc}")
+        print(
+            "A pin that does not resolve to an archive the registry client can verify "
+            "is a finding about this repo."
+        )
         sys.exit(1)
     sys.exit(cannot_read(f"{chart} {version} from {source}", [str(exc)]))
 

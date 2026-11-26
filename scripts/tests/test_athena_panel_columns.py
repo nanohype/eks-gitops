@@ -24,26 +24,38 @@ from gateloader import load
 
 gate = load("check-athena-panel-columns")
 
-COLUMNS = ["line_item_unblended_cost", "line_item_usage_start_date", "resource_tags",
-           "product_servicecode", "billing_period"]
+COLUMNS = [
+    "line_item_unblended_cost",
+    "line_item_usage_start_date",
+    "resource_tags",
+    "product_servicecode",
+    "billing_period",
+]
 
 ATHENA = {"type": "grafana-athena-datasource", "uid": "athena"}
 PROMETHEUS = {"type": "prometheus", "uid": "managed-prometheus"}
 
-SPEND = ("SELECT date_trunc('day', line_item_usage_start_date) AS day, "
-         "sum(line_item_unblended_cost) AS cost FROM cur "
-         "WHERE element_at(resource_tags, 'user_PlatformId') = '$platform' "
-         "GROUP BY 1 ORDER BY 1")
+SPEND = (
+    "SELECT date_trunc('day', line_item_usage_start_date) AS day, "
+    "sum(line_item_unblended_cost) AS cost FROM cur "
+    "WHERE element_at(resource_tags, 'user_PlatformId') = '$platform' "
+    "GROUP BY 1 ORDER BY 1"
+)
 
 
 def dashboard(*panels: dict) -> dict:
     """A GrafanaDashboard carrying `panels` in its embedded JSON."""
-    return {"apiVersion": "grafana.integreatly.org/v1beta1", "kind": "GrafanaDashboard",
-            "metadata": {"name": "cost"}, "spec": {"json": json.dumps({"panels": list(panels)})}}
+    return {
+        "apiVersion": "grafana.integreatly.org/v1beta1",
+        "kind": "GrafanaDashboard",
+        "metadata": {"name": "cost"},
+        "spec": {"json": json.dumps({"panels": list(panels)})},
+    }
 
 
-def panel(sql: str, title: str = "Spend", target_ds: dict | None = ATHENA,
-          panel_ds: dict | None = None) -> dict:
+def panel(
+    sql: str, title: str = "Spend", target_ds: dict | None = ATHENA, panel_ds: dict | None = None
+) -> dict:
     target: dict = {"refId": "A", "rawSQL": sql}
     if target_ds is not None:
         target["datasource"] = target_ds
@@ -55,16 +67,18 @@ def panel(sql: str, title: str = "Spend", target_ds: dict | None = ATHENA,
 
 class ReadingIdentifiers(unittest.TestCase):
     def test_columns_are_read_and_sql_is_not(self):
-        self.assertEqual(gate.referenced_identifiers(SPEND),
-                         {"line_item_usage_start_date", "line_item_unblended_cost",
-                          "resource_tags"})
+        self.assertEqual(
+            gate.referenced_identifiers(SPEND),
+            {"line_item_usage_start_date", "line_item_unblended_cost", "resource_tags"},
+        )
 
     def test_a_map_key_in_a_string_is_not_a_column(self):
         self.assertNotIn("user_platformid", gate.referenced_identifiers(SPEND))
 
     def test_a_function_call_is_not_a_column(self):
-        self.assertEqual(gate.referenced_identifiers("SELECT approx_percentile(x, 0.5) FROM cur"),
-                         {"x"})
+        self.assertEqual(
+            gate.referenced_identifiers("SELECT approx_percentile(x, 0.5) FROM cur"), {"x"}
+        )
 
     def test_an_alias_is_not_a_column_wherever_it_is_named(self):
         sql = "SELECT sum(line_item_unblended_cost) AS spend FROM cur ORDER BY spend"
@@ -75,8 +89,9 @@ class ReadingIdentifiers(unittest.TestCase):
         self.assertEqual(gate.referenced_identifiers(sql), {"bill_billing_period_start_date"})
 
     def test_case_is_folded(self):
-        self.assertEqual(gate.referenced_identifiers("select resource_tags from cur"),
-                         {"resource_tags"})
+        self.assertEqual(
+            gate.referenced_identifiers("select resource_tags from cur"), {"resource_tags"}
+        )
 
 
 class FindingQueries(unittest.TestCase):
@@ -87,19 +102,21 @@ class FindingQueries(unittest.TestCase):
         self.assertEqual(self.queries(panel(SPEND)), [("Spend", SPEND)])
 
     def test_a_target_inheriting_the_panels_athena_datasource_is_read(self):
-        self.assertEqual(self.queries(panel(SPEND, target_ds=None, panel_ds=ATHENA)),
-                         [("Spend", SPEND)])
+        self.assertEqual(
+            self.queries(panel(SPEND, target_ds=None, panel_ds=ATHENA)), [("Spend", SPEND)]
+        )
 
     def test_a_target_on_another_datasource_is_not(self):
         self.assertEqual(self.queries(panel(SPEND, target_ds=PROMETHEUS)), [])
 
     def test_a_target_with_no_sql_is_not(self):
-        self.assertEqual(self.queries(panel("  "), {"title": "x", "targets": [{"expr": "up"}]}),
-                         [])
+        self.assertEqual(self.queries(panel("  "), {"title": "x", "targets": [{"expr": "up"}]}), [])
 
     def test_what_is_no_panel_or_target_is_skipped(self):
-        self.assertEqual(self.queries("text", {"targets": ["x", panel(SPEND)["targets"][0]]}),
-                         [("(untitled)", SPEND)])
+        self.assertEqual(
+            self.queries("text", {"targets": ["x", panel(SPEND)["targets"][0]]}),
+            [("(untitled)", SPEND)],
+        )
 
 
 class ADashboardTree(unittest.TestCase):
@@ -110,10 +127,16 @@ class ADashboardTree(unittest.TestCase):
         self.dashboards = self.root / "dashboards"
         (self.dashboards / "base").mkdir(parents=True)
         self.columns = self.dashboards / "cur-columns.txt"
-        self.columns.write_text("# The columns the export delivers.\n\n"
-                                + "\n".join(f"{c}  # why" for c in COLUMNS) + "\n")
-        for name, value in (("ROOT", self.root), ("DASHBOARD_DIR", self.dashboards),
-                            ("COLUMNS_FILE", self.columns)):
+        self.columns.write_text(
+            "# The columns the export delivers.\n\n"
+            + "\n".join(f"{c}  # why" for c in COLUMNS)
+            + "\n"
+        )
+        for name, value in (
+            ("ROOT", self.root),
+            ("DASHBOARD_DIR", self.dashboards),
+            ("COLUMNS_FILE", self.columns),
+        ):
             patch = mock.patch.object(gate, name, value)
             patch.start()
             self.addCleanup(patch.stop)
@@ -137,12 +160,16 @@ class ADashboardTree(unittest.TestCase):
         self.assertIn("1 Athena panel quer(ies) reference only the 5 columns", said)
 
     def test_a_panel_naming_an_undelivered_column_fails(self):
-        self.write(dashboard(panel("SELECT bill_billing_period_start_date FROM cur",
-                                   title="Periods")))
+        self.write(
+            dashboard(panel("SELECT bill_billing_period_start_date FROM cur", title="Periods"))
+        )
         rc, said = self.check()
         self.assertEqual(rc, 1, said)
-        self.assertIn("panel 'Periods' references 'bill_billing_period_start_date', which the "
-                      "CUR table does not deliver", said)
+        self.assertIn(
+            "panel 'Periods' references 'bill_billing_period_start_date', which the "
+            "CUR table does not deliver",
+            said,
+        )
 
     def test_no_athena_panel_would_pass_vacuously(self):
         self.write(dashboard(panel(SPEND, target_ds=PROMETHEUS)))

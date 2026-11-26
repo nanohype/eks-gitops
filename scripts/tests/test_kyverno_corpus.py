@@ -26,19 +26,23 @@ def _load():
 
 class Corpus(unittest.TestCase):
     def setUp(self):
-        self.assertTrue(MANIFEST.exists(), f"{MANIFEST} is absent — the Kyverno "
-                                           f"suite has no manifest to run")
+        self.assertTrue(
+            MANIFEST.exists(), f"{MANIFEST} is absent — the Kyverno suite has no manifest to run"
+        )
         self.spec = _load()
 
     def test_results_are_declared(self):
-        self.assertTrue(self.spec.get("results"),
-                        "the suite declares no results — `kyverno test` over an "
-                        "empty expectation set reports success")
+        self.assertTrue(
+            self.spec.get("results"),
+            "the suite declares no results — `kyverno test` over an "
+            "empty expectation set reports success",
+        )
 
     def test_every_policy_path_exists(self):
         for rel in self.spec.get("policies") or []:
-            self.assertTrue((TESTS / rel).resolve().exists(),
-                            f"policy {rel} named by the suite does not exist")
+            self.assertTrue(
+                (TESTS / rel).resolve().exists(), f"policy {rel} named by the suite does not exist"
+            )
 
     def test_every_named_resource_exists_in_the_corpus(self):
         docs = []
@@ -51,18 +55,24 @@ class Corpus(unittest.TestCase):
 
         named = {n for r in self.spec["results"] for n in (r.get("resources") or [])}
         missing = sorted(named - present)
-        self.assertFalse(missing, f"results name resources absent from the corpus: "
-                                  f"{missing} — the expectation survives, the fixture "
-                                  f"does not, and the assertion silently stops running")
+        self.assertFalse(
+            missing,
+            f"results name resources absent from the corpus: "
+            f"{missing} — the expectation survives, the fixture "
+            f"does not, and the assertion silently stops running",
+        )
 
     def test_both_directions_are_exercised(self):
         # A suite asserting only passes proves a policy admits; it cannot prove
         # the policy rejects anything.
         outcomes = {r.get("result") for r in self.spec["results"]}
         self.assertIn("pass", outcomes)
-        self.assertIn("fail", outcomes,
-                      "no result expects a failure — the suite would pass against "
-                      "policies that reject nothing")
+        self.assertIn(
+            "fail",
+            outcomes,
+            "no result expects a failure — the suite would pass against "
+            "policies that reject nothing",
+        )
 
 
 if __name__ == "__main__":

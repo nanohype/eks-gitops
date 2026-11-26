@@ -21,6 +21,7 @@ refactor: normalize ApplicationSet generators
 ## Pull Request Checklist
 
 - [ ] YAML lint passes: `task lint:yaml`
+- [ ] Gate scripts under `scripts/` lint, format-check and typecheck: `task lint:python` and `task typecheck`
 - [ ] All environments build: `task kustomize:build`
 - [ ] Environment values files (`values-{env}.yaml`) contain only deltas (not full base copy)
 - [ ] Sync wave number follows category ordering

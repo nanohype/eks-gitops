@@ -55,7 +55,8 @@ class EveryListGeneratorIsWalked(unittest.TestCase):
             matrix({"clusters": {}}, listgen("second")),
         )
         self.assertEqual(
-            self.names(doc), ["first", "second"],
+            self.names(doc),
+            ["first", "second"],
             "an element past the first list generator was dropped — the walk "
             "that did this reported a full run over a truncated corpus",
         )
@@ -130,18 +131,20 @@ class TheRealCatalogIsWalkedWhole(unittest.TestCase):
             doc = yaml.safe_load(path.read_text())
             if not isinstance(doc, dict) or doc.get("kind") != "ApplicationSet":
                 continue
-            lists = [g for g in gatelib.matrix_generators(doc)
-                     if (g.get("list") or {}).get("elements")]
+            lists = [
+                g for g in gatelib.matrix_generators(doc) if (g.get("list") or {}).get("elements")
+            ]
             if len(lists) > 1:
                 multi += 1
             expected = sum(len(g["list"]["elements"]) for g in lists)
             self.assertEqual(
-                len(gatelib.list_elements(doc)), expected,
-                f"{path.name}: the walk returned fewer elements than its "
-                f"generators declare",
+                len(gatelib.list_elements(doc)),
+                expected,
+                f"{path.name}: the walk returned fewer elements than its generators declare",
             )
         self.assertGreater(
-            multi, 0,
+            multi,
+            0,
             "no ApplicationSet declares more than one list generator, so this "
             "suite no longer exercises the case the walk exists for — either the "
             "catalog changed shape or the fixture-only tests above are all that "
@@ -164,30 +167,40 @@ class AReadThatFailed(unittest.TestCase):
             status = gatelib.cannot_read("2 of 5 pinned chart(s)", ["a: HTTP 503", "b: timed out"])
         self.assertEqual(status, gatelib.CANNOT_RUN)
         lines = out.getvalue().splitlines()
-        self.assertEqual(lines[:3], ["Cannot run: 2 of 5 pinned chart(s) could not be read:",
-                                     "        a: HTTP 503", "        b: timed out"])
+        self.assertEqual(
+            lines[:3],
+            [
+                "Cannot run: 2 of 5 pinned chart(s) could not be read:",
+                "        a: HTTP 503",
+                "        b: timed out",
+            ],
+        )
         self.assertIn("a fact about the network, not about this repo", lines[3])
 
     def exit_status(self, answered: bool):
         exc = registry.ChartUnavailable("why", answered=answered)
-        with mock.patch.object(registry, "chart_archive", side_effect=exc), \
-                contextlib.redirect_stdout(io.StringIO()) as out, \
-                self.assertRaises(SystemExit) as caught:
+        with (
+            mock.patch.object(registry, "chart_archive", side_effect=exc),
+            contextlib.redirect_stdout(io.StringIO()) as out,
+            self.assertRaises(SystemExit) as caught,
+        ):
             gatelib.chart_archive_or_exit(self.REPO, "c", "1.0.0")
         return caught.exception.code, out.getvalue()
 
     def test_a_pin_the_registry_ruled_out_exits_1(self):
         code, said = self.exit_status(answered=True)
         self.assertEqual(code, 1)
-        self.assertIn(f"c 1.0.0: {self.REPO} answered, and its answer rules the pin out — why",
-                      said)
+        self.assertIn(
+            f"c 1.0.0: {self.REPO} answered, and its answer rules the pin out — why", said
+        )
         self.assertNotIn("Cannot run", said)
 
     def test_a_chart_that_could_not_be_read_cannot_run(self):
         code, said = self.exit_status(answered=False)
         self.assertEqual(code, gatelib.CANNOT_RUN)
-        self.assertIn(f"Cannot run: c 1.0.0 from {self.REPO} could not be read:\n        why\n",
-                      said)
+        self.assertIn(
+            f"Cannot run: c 1.0.0 from {self.REPO} could not be read:\n        why\n", said
+        )
 
     def test_an_archive_that_is_fetched_is_returned(self):
         archive = pathlib.Path("/cache/c-1.0.0.tgz")

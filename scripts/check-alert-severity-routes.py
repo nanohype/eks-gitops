@@ -101,8 +101,10 @@ def documents(directory: pathlib.Path) -> list[tuple[pathlib.Path, dict]]:
     without saying which.
     """
     if not directory.is_dir():
-        print(f"Cannot run: {under_root(directory)} does not exist, so the "
-              f"alert rules whose routing this gate checks are not there at all.")
+        print(
+            f"Cannot run: {under_root(directory)} does not exist, so the "
+            f"alert rules whose routing this gate checks are not there at all."
+        )
         print("This gate examined nothing, which is not the same as finding nothing.")
         sys.exit(gatelib.CANNOT_RUN)
     out = []
@@ -129,12 +131,13 @@ def shipped(root: pathlib.Path) -> set[tuple[str, str]]:
     both readings are taken and disagreement between them is itself a finding.
     """
     gatelib.require("kustomize")
-    proc = subprocess.run(["kustomize", "build", str(root)],
-                          capture_output=True, text=True)
+    proc = subprocess.run(["kustomize", "build", str(root)], capture_output=True, text=True)
     if proc.returncode != 0:
-        print(f"Cannot run: kustomize build {under_root(root)} failed, so what "
-              f"this catalog delivers could not be read. The alerting files on "
-              f"disk say nothing about that on their own.")
+        print(
+            f"Cannot run: kustomize build {under_root(root)} failed, so what "
+            f"this catalog delivers could not be read. The alerting files on "
+            f"disk say nothing about that on their own."
+        )
         print(proc.stderr.strip()[:500])
         sys.exit(gatelib.CANNOT_RUN)
     out: set[tuple[str, str]] = set()
@@ -196,8 +199,10 @@ def rule_labels(doc: dict):
         if not isinstance(rule, dict):
             continue
         labels = rule.get("labels")
-        yield str(rule.get("title") or rule.get("uid") or "<unnamed>"), \
-            labels if isinstance(labels, dict) else {}
+        yield (
+            str(rule.get("title") or rule.get("uid") or "<unnamed>"),
+            labels if isinstance(labels, dict) else {},
+        )
 
 
 def main() -> int:
@@ -205,60 +210,74 @@ def main() -> int:
     failures: list[str] = []
 
     policies = [(p, d) for p, d in docs if d.get("kind") == POLICY]
-    contact_points = {str((d.get("spec") or {}).get("name")
-                          or (d.get("metadata") or {}).get("name")): p
-                      for p, d in docs if d.get("kind") == CONTACT_POINT}
+    contact_points = {
+        str((d.get("spec") or {}).get("name") or (d.get("metadata") or {}).get("name")): p
+        for p, d in docs
+        if d.get("kind") == CONTACT_POINT
+    }
     rule_groups = [(p, d) for p, d in docs if d.get("kind") == RULE_GROUP]
 
     # What the directory holds against what the kustomization delivers. Neither
     # reading can stand in for the other: the files carry the routing this gate
     # reasons about and the render carries whether any of it reaches a cluster.
-    on_disk = {(str(d.get("kind")), str((d.get("metadata") or {}).get("name"))): p
-               for p, d in docs if str(d.get("kind")) in ALERTING_KINDS}
+    on_disk = {
+        (str(d.get("kind")), str((d.get("metadata") or {}).get("name"))): p
+        for p, d in docs
+        if str(d.get("kind")) in ALERTING_KINDS
+    }
     delivered = shipped(KUSTOMIZE_ROOT)
     for kind, name in sorted(set(on_disk) - delivered):
         failures.append(
             f"{on_disk[(kind, name)].name}: {kind}/{name} is under "
             f"{under_root(ALERTING)} and {under_root(KUSTOMIZE_ROOT)} does not "
             f"render it, so this gate is reading a document no cluster receives. "
-            f"The routing it describes is checked here and delivered nowhere.")
+            f"The routing it describes is checked here and delivered nowhere."
+        )
     for kind, name in sorted(delivered - set(on_disk)):
         failures.append(
             f"{under_root(KUSTOMIZE_ROOT)} renders {kind}/{name} and no file "
             f"under {under_root(ALERTING)} declares it — an alerting object this "
-            f"gate never examined is one whose routing nothing here has checked.")
+            f"gate never examined is one whose routing nothing here has checked."
+        )
 
     if not rule_groups:
-        print(f"FAIL  no {RULE_GROUP} found under "
-              f"{under_root(ALERTING)} — this gate examined no rule, which "
-              f"reports the same as a catalog whose rules are all routed.")
+        print(
+            f"FAIL  no {RULE_GROUP} found under "
+            f"{under_root(ALERTING)} — this gate examined no rule, which "
+            f"reports the same as a catalog whose rules are all routed."
+        )
         return gatelib.CANNOT_RUN
     if not policies:
-        print(f"FAIL  {len(rule_groups)} rule group(s) are delivered by no "
-              f"{POLICY}. Every label they carry selects the workspace default "
-              f"policy and its empty default contact point, so a rule asking to "
-              f"page reaches nobody.")
+        print(
+            f"FAIL  {len(rule_groups)} rule group(s) are delivered by no "
+            f"{POLICY}. Every label they carry selects the workspace default "
+            f"policy and its empty default contact point, so a rule asking to "
+            f"page reaches nobody."
+        )
         return 1
     if len(policies) > 1:
-        print(f"FAIL  {len(policies)} {POLICY} resources: "
-              f"{', '.join(sorted(str(p.name) for p, _ in policies))}. Grafana "
-              f"keeps one routing tree per instance, so which of these delivers "
-              f"an alert is decided by whichever reconciled last.")
+        print(
+            f"FAIL  {len(policies)} {POLICY} resources: "
+            f"{', '.join(sorted(str(p.name) for p, _ in policies))}. Grafana "
+            f"keeps one routing tree per instance, so which of these delivers "
+            f"an alert is decided by whichever reconciled last."
+        )
         return 1
 
     _, policy = policies[0]
     root = (policy.get("spec") or {}).get("route") or {}
     keys = routing_keys(root)
     if not keys:
-        print(f"FAIL  the {POLICY} matches on no label at all, so every alert "
-              f"takes the root route and the severities the rules carry decide "
-              f"nothing.")
+        print(
+            f"FAIL  the {POLICY} matches on no label at all, so every alert "
+            f"takes the root route and the severities the rules carry decide "
+            f"nothing."
+        )
         return 1
 
     # Which values each key can be routed to, and which receivers are reachable.
     routed: dict[str, set[str]] = {k: set() for k in keys}
-    receivers = {str(node.get("receiver")) for node in routes_of(root)
-                 if node.get("receiver")}
+    receivers = {str(node.get("receiver")) for node in routes_of(root) if node.get("receiver")}
     reached: set[str] = set()
     for node in routes_of(root):
         pairs = matcher_pairs(node)
@@ -272,13 +291,15 @@ def main() -> int:
             failures.append(
                 f"the notification policy routes to receiver '{receiver}' and no "
                 f"{CONTACT_POINT} in this catalog declares it — Grafana has "
-                f"nowhere to deliver what that route matches.")
+                f"nowhere to deliver what that route matches."
+            )
     for name in sorted(contact_points):
         if name not in receivers:
             failures.append(
                 f"{contact_points[name].name} declares the contact point '{name}' "
                 f"and no route in the notification policy names it — a "
-                f"destination nothing reaches is one nobody re-reads.")
+                f"destination nothing reaches is one nobody re-reads."
+            )
 
     for path, doc in rule_groups:
         group = (doc.get("metadata") or {}).get("name", path.name)
@@ -289,13 +310,15 @@ def main() -> int:
                     failures.append(
                         f"{path.name}: {group}/{title} carries no '{key}' label and "
                         f"the notification policy routes on it, so this rule takes "
-                        f"the root route whatever it is asking for.")
+                        f"the root route whatever it is asking for."
+                    )
                 elif str(value) not in routed.get(key, set()):
                     failures.append(
                         f"{path.name}: {group}/{title} is labelled {key}={value} and "
                         f"no route matches that value — it falls to the root "
                         f"receiver, which is where an unrouted alert goes to be "
-                        f"read late or not at all.")
+                        f"read late or not at all."
+                    )
 
     if failures:
         print(f"{len(failures)} alert-routing problem(s):\n")
@@ -304,14 +327,18 @@ def main() -> int:
         return 1
 
     covered = sum(len(v) for v in routed.values())
-    print(f"✓ every alert rule routes to a declared contact point: "
-          f"{sum(len(list(rule_labels(d))) for _, d in rule_groups)} rule(s) across "
-          f"{len(rule_groups)} group(s), matched on "
-          f"{', '.join(sorted(keys))} against {covered} routed value(s) reaching "
-          f"{len(contact_points)} contact point(s)")
-    print(f"  {len(delivered)} of them rendered by "
-          f"{under_root(KUSTOMIZE_ROOT)}; what AMG accepts and what Secrets "
-          f"Manager holds are outside this repository and outside this claim")
+    print(
+        f"✓ every alert rule routes to a declared contact point: "
+        f"{sum(len(list(rule_labels(d))) for _, d in rule_groups)} rule(s) across "
+        f"{len(rule_groups)} group(s), matched on "
+        f"{', '.join(sorted(keys))} against {covered} routed value(s) reaching "
+        f"{len(contact_points)} contact point(s)"
+    )
+    print(
+        f"  {len(delivered)} of them rendered by "
+        f"{under_root(KUSTOMIZE_ROOT)}; what AMG accepts and what Secrets "
+        f"Manager holds are outside this repository and outside this claim"
+    )
     return 0
 
 

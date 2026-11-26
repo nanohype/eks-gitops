@@ -32,25 +32,39 @@ def external_secret(name: str = "endpoints", *, data: int = 0, extract: bool = T
     if extract:
         spec["dataFrom"] = [{"extract": {"key": "placeholder"}}]
     if data:
-        spec["data"] = [{"secretKey": f"k{i}", "remoteRef": {"key": "placeholder"}}
-                        for i in range(data)]
-    return {"apiVersion": "external-secrets.io/v1", "kind": "ExternalSecret",
-            "metadata": {"name": name}, "spec": spec}
+        spec["data"] = [
+            {"secretKey": f"k{i}", "remoteRef": {"key": "placeholder"}} for i in range(data)
+        ]
+    return {
+        "apiVersion": "external-secrets.io/v1",
+        "kind": "ExternalSecret",
+        "metadata": {"name": name},
+        "spec": spec,
+    }
 
 
 def replace(*paths: str) -> str:
-    return yaml.safe_dump([{"op": "replace", "path": p,
-                            "value": "{{ .metadata.labels.cluster_name }}-endpoints"}
-                           for p in paths])
+    return yaml.safe_dump(
+        [
+            {"op": "replace", "path": p, "value": "{{ .metadata.labels.cluster_name }}-endpoints"}
+            for p in paths
+        ]
+    )
 
 
 def appset(path: str, *patches: dict, elements: list[dict] | None = None) -> dict:
     gens = [{"list": {"elements": elements}}] if elements is not None else []
-    return {"apiVersion": "argoproj.io/v1alpha1", "kind": "ApplicationSet",
-            "metadata": {"name": "a"},
-            "spec": {"generators": gens,
-                     "template": {"spec": {"source": {"path": path,
-                                                      "kustomize": {"patches": list(patches)}}}}}}
+    return {
+        "apiVersion": "argoproj.io/v1alpha1",
+        "kind": "ApplicationSet",
+        "metadata": {"name": "a"},
+        "spec": {
+            "generators": gens,
+            "template": {
+                "spec": {"source": {"path": path, "kustomize": {"patches": list(patches)}}}
+            },
+        },
+    }
 
 
 def patch(body: str | None, name: str = "endpoints", kind: str = "ExternalSecret") -> dict:
@@ -65,41 +79,57 @@ class KeyPaths(unittest.TestCase):
         self.assertEqual(gate.key_paths(external_secret()), [KEY])
 
     def test_a_data_list_is_one_reference_per_key(self):
-        self.assertEqual(gate.key_paths(external_secret(data=2, extract=False)),
-                         ["/spec/data/0/remoteRef/key", "/spec/data/1/remoteRef/key"])
+        self.assertEqual(
+            gate.key_paths(external_secret(data=2, extract=False)),
+            ["/spec/data/0/remoteRef/key", "/spec/data/1/remoteRef/key"],
+        )
 
     def test_entries_naming_no_remote_secret_are_not_references(self):
-        es = {"spec": {"dataFrom": [{"find": {"name": {"regexp": "x"}}}, "x"],
-                       "data": [{"secretKey": "k"}, {"remoteRef": "x"}]}}
+        es = {
+            "spec": {
+                "dataFrom": [{"find": {"name": {"regexp": "x"}}}, "x"],
+                "data": [{"secretKey": "k"}, {"remoteRef": "x"}],
+            }
+        }
         self.assertEqual(gate.key_paths(es), [])
         self.assertEqual(gate.key_paths({}), [])
 
 
 class DeliveredDirs(unittest.TestCase):
     def test_a_templated_path_is_substituted_per_element(self):
-        doc = appset("{{ .path }}", elements=[{"path": "addons/a"}, {"name": "no-path"},
-                                               "text"])
-        doc["spec"]["generators"] = [{"matrix": {"generators": [
-            {"clusters": {}}, {"merge": {"generators": doc["spec"]["generators"]}}]}}, "text"]
+        doc = appset("{{ .path }}", elements=[{"path": "addons/a"}, {"name": "no-path"}, "text"])
+        doc["spec"]["generators"] = [
+            {
+                "matrix": {
+                    "generators": [
+                        {"clusters": {}},
+                        {"merge": {"generators": doc["spec"]["generators"]}},
+                    ]
+                }
+            },
+            "text",
+        ]
         self.assertEqual(gate.delivered_dirs(doc), ["addons/a"])
 
     def test_a_literal_path_is_its_own_directory(self):
         self.assertEqual(gate.delivered_dirs(appset("/addons/fixed/")), ["addons/fixed"])
 
     def test_no_source_path_delivers_nothing(self):
-        self.assertEqual(gate.delivered_dirs({"spec": {"template": {"spec": {"sources": []}}}}),
-                         [])
+        self.assertEqual(gate.delivered_dirs({"spec": {"template": {"spec": {"sources": []}}}}), [])
 
 
 class OwningDir(unittest.TestCase):
     def test_the_longest_directory_shipping_the_manifest_owns_it(self):
         rel = pathlib.Path("addons/obs/grafana/es.yaml")
-        self.assertEqual(gate.owning_dir(rel, ["addons/obs", "addons/obs/grafana", "addons/o"]),
-                         "addons/obs/grafana")
+        self.assertEqual(
+            gate.owning_dir(rel, ["addons/obs", "addons/obs/grafana", "addons/o"]),
+            "addons/obs/grafana",
+        )
 
     def test_a_sibling_sharing_a_prefix_does_not_own_it(self):
-        self.assertIsNone(gate.owning_dir(pathlib.Path("addons/grafana-extra/es.yaml"),
-                                          ["addons/grafana"]))
+        self.assertIsNone(
+            gate.owning_dir(pathlib.Path("addons/grafana-extra/es.yaml"), ["addons/grafana"])
+        )
 
 
 class ARepository(unittest.TestCase):
@@ -127,8 +157,10 @@ class ARepository(unittest.TestCase):
 
     def delivered(self, es: dict, *patches: dict, where: str = "addons/obs/grafana") -> None:
         self.write(f"{where}/es.yaml", es)
-        self.write(f"applicationsets/{where.replace('/', '-')}.yaml",
-                   appset("{{ .path }}", *patches, elements=[{"path": where}]))
+        self.write(
+            f"applicationsets/{where.replace('/', '-')}.yaml",
+            appset("{{ .path }}", *patches, elements=[{"path": where}]),
+        )
 
     def test_one_patched_reference_passes(self):
         self.delivered(external_secret(), patch(replace(KEY)))
@@ -147,14 +179,18 @@ class ARepository(unittest.TestCase):
         self.delivered(external_secret(), patch(replace("/spec/target/name")))
         rc, said = self.check()
         self.assertEqual(rc, 1, said)
-        self.assertIn(f"holds a remote secret name at {KEY}, but the ApplicationSet rendering "
-                      "addons/obs/grafana/ does not replace it", said)
+        self.assertIn(
+            f"holds a remote secret name at {KEY}, but the ApplicationSet rendering "
+            "addons/obs/grafana/ does not replace it",
+            said,
+        )
         self.assertIn("Patched paths for 'endpoints' in that app: ['/spec/target/name']", said)
 
     def test_another_apps_patch_does_not_vouch_for_a_same_named_secret(self):
         self.delivered(external_secret(), patch(replace(KEY)))
-        self.delivered(external_secret(), patch(replace("/spec/target/name")),
-                       where="addons/obs/monitoring")
+        self.delivered(
+            external_secret(), patch(replace("/spec/target/name")), where="addons/obs/monitoring"
+        )
         rc, said = self.check()
         self.assertEqual(rc, 1, said)
         self.assertIn("addons/obs/monitoring/es.yaml", said)
@@ -165,25 +201,35 @@ class ARepository(unittest.TestCase):
         self.write("addons/orphan/es.yaml", external_secret("orphan"))
         rc, said = self.check()
         self.assertEqual(rc, 1, said)
-        self.assertIn("addons/orphan/es.yaml: ExternalSecret 'orphan' sits under no directory", said)
+        self.assertIn(
+            "addons/orphan/es.yaml: ExternalSecret 'orphan' sits under no directory", said
+        )
 
     def test_a_secret_with_no_remote_reference_or_no_name_is_not_counted(self):
         self.delivered(external_secret(), patch(replace(KEY)))
         nameless = external_secret(data=2)
         del nameless["metadata"]["name"]
-        self.write("addons/obs/grafana/generated.yaml", external_secret("gen", extract=False),
-                   nameless)
+        self.write(
+            "addons/obs/grafana/generated.yaml", external_secret("gen", extract=False), nameless
+        )
         rc, said = self.check()
         self.assertEqual(rc, 0, said)
         self.assertIn("1 ExternalSecret(s)", said)
 
     def test_patches_that_are_not_replace_ops_on_an_external_secret_are_not_read(self):
-        self.delivered(external_secret(), patch(replace(KEY)),
-                       patch(replace(KEY), kind="Deployment"), patch(replace(KEY), name=""),
-                       patch(None), patch("metadata:\n  labels: {a: b}\n"),
-                       patch(yaml.safe_dump([{"op": "add", "path": "/x"}, "x", {"op": "replace"}])))
-        self.write("applicationsets/kustomization.yaml",
-                   {"kind": "Kustomization", "spec": appset("x", patch(replace(KEY)))["spec"]})
+        self.delivered(
+            external_secret(),
+            patch(replace(KEY)),
+            patch(replace(KEY), kind="Deployment"),
+            patch(replace(KEY), name=""),
+            patch(None),
+            patch("metadata:\n  labels: {a: b}\n"),
+            patch(yaml.safe_dump([{"op": "add", "path": "/x"}, "x", {"op": "replace"}])),
+        )
+        self.write(
+            "applicationsets/kustomization.yaml",
+            {"kind": "Kustomization", "spec": appset("x", patch(replace(KEY)))["spec"]},
+        )
         rc, said = self.check()
         self.assertEqual(rc, 0, said)
 
@@ -197,8 +243,10 @@ class ARepository(unittest.TestCase):
         self.assertIn("target: {'kind': 'ExternalSecret', 'name': 'endpoints'}", out.getvalue())
 
     def test_no_external_secret_would_pass_vacuously(self):
-        self.write("applicationsets/a.yaml",
-                   appset("{{ .path }}", patch(replace(KEY)), elements=[{"path": "addons/x"}]))
+        self.write(
+            "applicationsets/a.yaml",
+            appset("{{ .path }}", patch(replace(KEY)), elements=[{"path": "addons/x"}]),
+        )
         rc, said = self.check()
         self.assertEqual(rc, 1, said)
         self.assertIn("found no ExternalSecret manifests", said)
@@ -215,7 +263,8 @@ class ARepository(unittest.TestCase):
         (self.root / "charts" / "c" / "templates").mkdir(parents=True)
         (self.root / "charts" / "c" / "Chart.yaml").write_text("name: c\n")
         (self.root / "charts" / "c" / "templates" / "es.yaml").write_text(
-            "{{- if .Values.x }}\nkind: ExternalSecret\n{{- end }}\n")
+            "{{- if .Values.x }}\nkind: ExternalSecret\n{{- end }}\n"
+        )
         rc, said = self.check()
         self.assertEqual(rc, 0, said)
 

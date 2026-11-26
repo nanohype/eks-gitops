@@ -117,26 +117,24 @@ IMAGE = re.compile(r'^\s*image:\s*"?([^"\s]+)"?\s*$', re.M)
 # fleet no longer renders mutably FAILS: an exemption that matches nothing is a
 # description that rots, and it rots toward permissive.
 ALLOWED_MUTABLE: dict[str, str] = {
-    "ghcr.io/kyverno/kyverno":
-        "the kyverno chart carries this in a ConfigMap as the CLI image for "
-        "`kyverno` invocations, with no values key to pin it. Invisible until "
-        "controller-supplied references entered the population. Clears when the "
-        "chart exposes the tag, or when this catalog stops shipping that "
-        "ConfigMap.",
-    "nats-streaming":
-        "the argo-events version table's oldest streaming row carries `latest`, "
-        "alongside rows that pin. An eventbus asking for that version gets a "
-        "moving image; nothing in this catalog selects it, and nothing here can "
-        "pin it. Clears on a chart that pins the row.",
-    "natsio/prometheus-nats-exporter":
-        "an argo-events eventbus default the controller passes to the NATS "
-        "StatefulSet it creates. The chart pins two other tags of this image and "
-        "leaves the exporter's unset. Clears on a chart version that pins it.",
+    "ghcr.io/kyverno/kyverno": "the kyverno chart carries this in a ConfigMap as the CLI image for "
+    "`kyverno` invocations, with no values key to pin it. Invisible until "
+    "controller-supplied references entered the population. Clears when the "
+    "chart exposes the tag, or when this catalog stops shipping that "
+    "ConfigMap.",
+    "nats-streaming": "the argo-events version table's oldest streaming row carries `latest`, "
+    "alongside rows that pin. An eventbus asking for that version gets a "
+    "moving image; nothing in this catalog selects it, and nothing here can "
+    "pin it. Clears on a chart that pins the row.",
+    "natsio/prometheus-nats-exporter": "an argo-events eventbus default the controller passes to the NATS "
+    "StatefulSet it creates. The chart pins two other tags of this image and "
+    "leaves the exporter's unset. Clears on a chart version that pins it.",
 }
 
 
-def inventory(env: str, seen: set[str] | None = None
-              ) -> tuple[dict[str, set[str]], list[tuple[str, str]], list[tuple[str, str]]]:
+def inventory(
+    env: str, seen: set[str] | None = None
+) -> tuple[dict[str, set[str]], list[tuple[str, str]], list[tuple[str, str]]]:
     """(image -> charts that render it, charts not rendered, references not placed).
 
     Two lists rather than one, because they are two facts with two repairs and
@@ -155,7 +153,7 @@ def inventory(env: str, seen: set[str] | None = None
     and exits 1 the way gatelib.chart_archive_or_exit does; one that could not
     be read is a chart that did not render.
     """
-    gatelib.require('helm')
+    gatelib.require("helm")
     units = render_addons.discover()
     images: dict[str, set[str]] = {}
     unrendered: list[tuple[str, str]] = []
@@ -180,8 +178,7 @@ def inventory(env: str, seen: set[str] | None = None
         except registry.ChartUnavailable as exc:
             if exc.answered:
                 gatelib.refuse_chart(u.chart, u.version, u.source, exc)
-            unrendered.append((u.path, f"{u.chart} {u.version} could not be fetched "
-                                       f"— {exc}"[:200]))
+            unrendered.append((u.path, f"{u.chart} {u.version} could not be fetched — {exc}"[:200]))
             continue
         cmd = ["helm", "template", u.chart, str(archive)]
         if u.namespace:
@@ -193,8 +190,7 @@ def inventory(env: str, seen: set[str] | None = None
         if proc.returncode != 0:
             unrendered.append((u.path, (proc.stderr.strip() or proc.stdout.strip())[:200]))
             continue
-        for ref_str in extract_images(proc.stdout, u.chart, unrendered, unclassified,
-                                      seen):
+        for ref_str in extract_images(proc.stdout, u.chart, unrendered, unclassified, seen):
             images.setdefault(ref_str, set()).add(u.chart)
     return images, unrendered, unclassified
 
@@ -278,7 +274,8 @@ IMAGE_REF = re.compile(
     rf"|({REGISTRY}"
     r"[a-z0-9][a-z0-9._-]*(?:/[a-z0-9][a-z0-9._-]*)+:[a-zA-Z0-9][\w.-]*)"
     r"|([a-z][a-z0-9]*(?:[_-][a-z0-9]+)*:(?:latest|v?[0-9][\w.-]*))"
-    r")\b")
+    r")\b"
+)
 
 # Images a CONTROLLER starts, which no pod template in this render declares. The
 # controller is handed the reference and creates the pod later, so the deployable
@@ -291,34 +288,23 @@ IMAGE_REF = re.compile(
 # NOT_A_CONTAINER. An unclassified one is reported, so the answer to "is this
 # deployed?" is never silence.
 CONTROLLER_IMAGES = {
-    "nats":
-        "the NATS server the argo-events eventbus controller starts, declared as "
-        "`natsImage` in its own version table beside the two natsio/* sidecars it "
-        "creates in the same StatefulSet",
-    "nats-streaming":
-        "the same table's streaming variant, for eventbus resources that ask for "
-        "it",
-    "docker.io/envoyproxy/ratelimit":
-        "the Envoy Gateway controller reads it from its own EnvoyGateway "
-        "ConfigMap and creates the rate-limit Deployment",
-    "docker.io/envoyproxy/ai-gateway-extproc":
-        "the AI Gateway controller injects it as the ext-proc sidecar on every "
-        "gateway pod it manages",
-    "ghcr.io/aquasecurity/node-collector":
-        "trivy-operator creates one node-collector pod per node scan",
-    "quay.io/argoproj/argoexec":
-        "the workflow controller injects it as the init and wait container of "
-        "every workflow step pod",
-    "quay.io/jetstack/cert-manager-acmesolver":
-        "cert-manager creates one solver pod per HTTP-01 challenge",
-    "natsio/nats-server-config-reloader":
-        "the argo-events eventbus controller creates the NATS StatefulSet with "
-        "this sidecar",
-    "natsio/prometheus-nats-exporter":
-        "the same controller, same StatefulSet",
-    "ghcr.io/kyverno/kyverno":
-        "the chart's own CLI image reference, carried in a ConfigMap for "
-        "`kyverno` invocations rather than as a container",
+    "nats": "the NATS server the argo-events eventbus controller starts, declared as "
+    "`natsImage` in its own version table beside the two natsio/* sidecars it "
+    "creates in the same StatefulSet",
+    "nats-streaming": "the same table's streaming variant, for eventbus resources that ask for it",
+    "docker.io/envoyproxy/ratelimit": "the Envoy Gateway controller reads it from its own EnvoyGateway "
+    "ConfigMap and creates the rate-limit Deployment",
+    "docker.io/envoyproxy/ai-gateway-extproc": "the AI Gateway controller injects it as the ext-proc sidecar on every "
+    "gateway pod it manages",
+    "ghcr.io/aquasecurity/node-collector": "trivy-operator creates one node-collector pod per node scan",
+    "quay.io/argoproj/argoexec": "the workflow controller injects it as the init and wait container of "
+    "every workflow step pod",
+    "quay.io/jetstack/cert-manager-acmesolver": "cert-manager creates one solver pod per HTTP-01 challenge",
+    "natsio/nats-server-config-reloader": "the argo-events eventbus controller creates the NATS StatefulSet with "
+    "this sidecar",
+    "natsio/prometheus-nats-exporter": "the same controller, same StatefulSet",
+    "ghcr.io/kyverno/kyverno": "the chart's own CLI image reference, carried in a ConfigMap for "
+    "`kyverno` invocations rather than as a container",
 }
 
 # Image-shaped strings that are not container images. An OCI artifact reference
@@ -326,29 +312,20 @@ CONTROLLER_IMAGES = {
 # container — so scanning it for a running-container CVE would report on
 # something nothing runs.
 NOT_A_CONTAINER = {
-    "falco-rules":
-        "a falcoctl rulesfile OCI artifact; check-falco-rule-floor.py resolves "
-        "these against the registry and asserts Falco loads what they install",
-    "falco-incubating-rules":
-        "the same, the incubating tier",
-    "falco-sandbox-rules":
-        "the same, the sandbox tier",
-    "registry/image":
-        "placeholder prose in the EnvoyExtensionPolicy CRD's field description "
-        "(`registry/image:tag` or `registry/image@sha256:digest`), rendered by "
-        "gateway-crds-helm; a format example, not a reference anything pulls",
-    "localhost":
-        "a memcached address in a Loki config value; `localhost:11211` is a host "
-        "and a port",
-    "hubble-relay":
-        "a Kubernetes Service address in a Cilium config value — `hubble-relay:80` "
-        "has the shape of a single-segment image and is a host and a port",
-    "ghcr.io/falcosecurity/plugins/plugin/container":
-        "a falcoctl rules/plugin OCI artifact, unpacked into an emptyDir",
-    "ghcr.io/falcosecurity/plugins/plugin/k8smeta":
-        "the same, the k8smeta plugin",
-    "mirror.gcr.io/aquasec/trivy-checks":
-        "the trivy checks bundle, an OCI artifact trivy-operator downloads",
+    "falco-rules": "a falcoctl rulesfile OCI artifact; check-falco-rule-floor.py resolves "
+    "these against the registry and asserts Falco loads what they install",
+    "falco-incubating-rules": "the same, the incubating tier",
+    "falco-sandbox-rules": "the same, the sandbox tier",
+    "registry/image": "placeholder prose in the EnvoyExtensionPolicy CRD's field description "
+    "(`registry/image:tag` or `registry/image@sha256:digest`), rendered by "
+    "gateway-crds-helm; a format example, not a reference anything pulls",
+    "localhost": "a memcached address in a Loki config value; `localhost:11211` is a host "
+    "and a port",
+    "hubble-relay": "a Kubernetes Service address in a Cilium config value — `hubble-relay:80` "
+    "has the shape of a single-segment image and is a host and a port",
+    "ghcr.io/falcosecurity/plugins/plugin/container": "a falcoctl rules/plugin OCI artifact, unpacked into an emptyDir",
+    "ghcr.io/falcosecurity/plugins/plugin/k8smeta": "the same, the k8smeta plugin",
+    "mirror.gcr.io/aquasec/trivy-checks": "the trivy checks bundle, an OCI artifact trivy-operator downloads",
 }
 
 
@@ -358,16 +335,15 @@ NOT_A_CONTAINER = {
 # rendered fails too.
 IMAGELESS_CHARTS = {
     "ai-gateway-crds-helm": "the Envoy AI Gateway CRDs, applied ahead of the "
-                            "controller that renders one of their kinds",
+    "controller that renders one of their kinds",
     "gateway-crds-helm": "Envoy Gateway's own CRDs, split out of gateway-helm so "
-                         "the Gateway API CRDs it bundles have one owner",
+    "the Gateway API CRDs it bundles have one owner",
     "prometheus-operator-crds": "the Prometheus operator CRDs, applied ahead of "
-                                "the charts that render ServiceMonitors",
+    "the charts that render ServiceMonitors",
 }
 
 
-def chart_coverage(images: dict[str, set[str]], units,
-                   seen: set[str] | None = None) -> list[str]:
+def chart_coverage(images: dict[str, set[str]], units, seen: set[str] | None = None) -> list[str]:
     """Every chart the render covered contributed an image, or is declared not to.
 
     A per-chart floor rather than a total, because a total cannot see the shape
@@ -382,8 +358,7 @@ def chart_coverage(images: dict[str, set[str]], units,
     # otel-gateway-floor. Any one of those can render nothing while the other two
     # keep the name contributing, so the floor is per chart name and says so
     # rather than reading as per render unit.
-    rendered = {u.chart for u in units if u.chart not in getattr(
-        render_addons, "SKIP_CHARTS", {})}
+    rendered = {u.chart for u in units if u.chart not in getattr(render_addons, "SKIP_CHARTS", {})}
     contributing = set().union(*images.values()) if images else set()
 
     for chart in sorted(rendered - contributing):
@@ -393,21 +368,23 @@ def chart_coverage(images: dict[str, set[str]], units,
             f"{chart} rendered and contributed no image. Every chart shipping a "
             f"workload contributes at least one, so either the extraction stopped "
             f"seeing a shape this chart uses, or the chart ships only CRDs and "
-            f"belongs in IMAGELESS_CHARTS with the reason.")
+            f"belongs in IMAGELESS_CHARTS with the reason."
+        )
 
-    problems += declaration_rot(seen if seen is not None
-                                else {bare_name(ref) for ref in images})
+    problems += declaration_rot(seen if seen is not None else {bare_name(ref) for ref in images})
 
     for chart, reason in sorted(IMAGELESS_CHARTS.items()):
         if chart not in rendered:
             problems.append(
                 f"{chart} is declared imageless but the fleet no longer renders it — "
-                f"the entry outlived its chart. (recorded: {reason})")
+                f"the entry outlived its chart. (recorded: {reason})"
+            )
         elif chart in contributing:
             problems.append(
                 f"{chart} is declared imageless and now contributes an image. It "
                 f"ships a workload; delete the entry so its images are scanned like "
-                f"every other chart's. (recorded: {reason})")
+                f"every other chart's. (recorded: {reason})"
+            )
     return problems
 
 
@@ -468,10 +445,13 @@ def keyed_images(node) -> set[str]:
     return found
 
 
-def extract_images(rendered: str, chart: str,
-                   unrendered: list[tuple[str, str]],
-                   unclassified: list[tuple[str, str]],
-                   seen: set[str] | None = None) -> set[str]:
+def extract_images(
+    rendered: str,
+    chart: str,
+    unrendered: list[tuple[str, str]],
+    unclassified: list[tuple[str, str]],
+    seen: set[str] | None = None,
+) -> set[str]:
     """Every image one chart's render deploys, and an assertion that it is every one.
 
     Structural first, because a pattern is a claim about spelling. IMAGE is
@@ -496,8 +476,9 @@ def extract_images(rendered: str, chart: str,
 
     structural = keyed_images(docs)
     textual = {m.group(1) for m in IMAGE.finditer(rendered)}
-    candidates = {c for s in string_scalars(docs)
-                  for groups in IMAGE_REF.findall(s) for c in groups if c}
+    candidates = {
+        c for s in string_scalars(docs) for groups in IMAGE_REF.findall(s) for c in groups if c
+    }
     if seen is not None:
         # Every image-shaped reference the render carried, including the ones
         # excluded below. A declaration is about what the render CONTAINS, so
@@ -518,13 +499,16 @@ def extract_images(rendered: str, chart: str,
         if bare in CONTROLLER_IMAGES:
             controller.add(ref_str)
             continue
-        unclassified.append((
-            chart,
-            f"{ref_str} is image-shaped and reaches no pod template or `image:` key. "
-            f"Either a structural walk stopped seeing a shape, or a controller is "
-            f"handed it and starts a pod later — in which case it belongs in "
-            f"CONTROLLER_IMAGES with the controller that starts it, or in "
-            f"NOT_A_CONTAINER if pulling it runs nothing"))
+        unclassified.append(
+            (
+                chart,
+                f"{ref_str} is image-shaped and reaches no pod template or `image:` key. "
+                f"Either a structural walk stopped seeing a shape, or a controller is "
+                f"handed it and starts a pod later — in which case it belongs in "
+                f"CONTROLLER_IMAGES with the controller that starts it, or in "
+                f"NOT_A_CONTAINER if pulling it runs nothing",
+            )
+        )
     return structural | textual | controller
 
 
@@ -536,13 +520,16 @@ def declaration_rot(seen: set[str]) -> list[str]:
     only ever widens.
     """
     problems = []
-    for table, label in ((CONTROLLER_IMAGES, "started by a controller"),
-                         (NOT_A_CONTAINER, "not a container image")):
+    for table, label in (
+        (CONTROLLER_IMAGES, "started by a controller"),
+        (NOT_A_CONTAINER, "not a container image"),
+    ):
         for bare, reason in sorted(table.items()):
             if bare not in seen:
                 problems.append(
                     f"{bare} is declared {label} and the fleet renders no reference to "
-                    f"it — the declaration outlived its image. (recorded: {reason})")
+                    f"it — the declaration outlived its image. (recorded: {reason})"
+                )
     return problems
 
 
@@ -552,7 +539,7 @@ def classify(ref: str) -> str:
         return "digest"
     name = ref.rsplit("/", 1)[-1]
     if ":" not in name:
-        return "mutable"          # no tag resolves to :latest
+        return "mutable"  # no tag resolves to :latest
     tag = name.rsplit(":", 1)[1]
     return "mutable" if tag.lower() in MUTABLE_TAGS else "tag"
 
@@ -588,14 +575,16 @@ def verdict(images: dict[str, set[str]], allowed: dict[str, str]) -> list[str]:
             continue
         failures.append(
             f"{ref} (via {', '.join(sorted(images[ref]))}) resolves to a moving "
-            f"target. {MUTABLE_REMEDIATION}")
+            f"target. {MUTABLE_REMEDIATION}"
+        )
 
     for bare, reason in sorted(allowed.items()):
         if bare not in mutable_seen:
             failures.append(
                 f"{bare} is on the mutable-tag exemption list but the fleet no longer "
                 f"renders it mutably — the exemption outlived its reason. Delete it. "
-                f"(recorded: {reason[:100]})")
+                f"(recorded: {reason[:100]})"
+            )
     return failures
 
 
@@ -611,8 +600,10 @@ def main() -> int:
     if args.list:
         for ref in sorted(images):
             print(f"{classify(ref):8} {ref}  ({', '.join(sorted(images[ref]))})")
-        print(f"\n{len(images)} image(s); {len(unrendered)} chart(s) not rendered; "
-              f"{len(unclassified)} reference(s) not placed")
+        print(
+            f"\n{len(images)} image(s); {len(unrendered)} chart(s) not rendered; "
+            f"{len(unclassified)} reference(s) not placed"
+        )
         for path, err in unrendered:
             print(f"  not rendered  {path}: {err}")
         for path, err in unclassified:
@@ -620,8 +611,10 @@ def main() -> int:
         return 0
 
     if not images:
-        print("FAIL  rendered no images at all. Every chart failed, or the extractor "
-              "stopped matching — either way this reports the same as a clean fleet.")
+        print(
+            "FAIL  rendered no images at all. Every chart failed, or the extractor "
+            "stopped matching — either way this reports the same as a clean fleet."
+        )
         for path, err in unrendered:
             print(f"        {path}: {err}")
         return 2
@@ -639,8 +632,10 @@ def main() -> int:
 
     if failures:
         if unrendered:
-            print(f"{len(unrendered)} chart(s) could not be rendered and were NOT "
-                  f"scanned, so the population below is a subset of the fleet:")
+            print(
+                f"{len(unrendered)} chart(s) could not be rendered and were NOT "
+                f"scanned, so the population below is a subset of the fleet:"
+            )
             for path, err in unrendered:
                 print(f"  {path}: {err}")
             print()
@@ -654,17 +649,20 @@ def main() -> int:
     # not render is a gate that examined less than it reports on, which is not
     # the same as finding nothing.
     if unrendered:
-        print(f"Cannot run: {len(unrendered)} chart(s) could not be rendered and were "
-              f"NOT scanned:")
+        print(f"Cannot run: {len(unrendered)} chart(s) could not be rendered and were NOT scanned:")
         for path, err in unrendered:
             print(f"  {path}: {err}")
-        print(f"The {len(images)} image(s) that did render carry an immutable "
-              f"reference. That is a result over part of the fleet, not the fleet.")
+        print(
+            f"The {len(images)} image(s) that did render carry an immutable "
+            f"reference. That is a result over part of the fleet, not the fleet."
+        )
         return gatelib.CANNOT_RUN
 
-    print(f"✓ all {len(images)} rendered image(s) across {len(images and set().union(*images.values()) or [])} "
-          f"chart(s) carry an immutable reference "
-          f"({len(ALLOWED_MUTABLE)} exemption(s), each still matching the render)")
+    print(
+        f"✓ all {len(images)} rendered image(s) across {len(images and set().union(*images.values()) or [])} "
+        f"chart(s) carry an immutable reference "
+        f"({len(ALLOWED_MUTABLE)} exemption(s), each still matching the render)"
+    )
     return 0
 
 

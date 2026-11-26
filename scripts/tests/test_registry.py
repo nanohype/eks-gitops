@@ -87,7 +87,8 @@ class ReadingRetryAfter(unittest.TestCase):
     def test_http_date_is_measured_from_now(self):
         when = datetime.datetime.fromtimestamp(NOW + 30, tz=datetime.UTC)
         self.assertAlmostEqual(
-            registry.retry_after(email.utils.format_datetime(when, usegmt=True), NOW), 30.0)
+            registry.retry_after(email.utils.format_datetime(when, usegmt=True), NOW), 30.0
+        )
 
     def test_a_naive_http_date_is_read_as_utc(self):
         """The asctime form carries no zone, and every HTTP-date is UTC.
@@ -111,14 +112,17 @@ class ReadingRetryAfter(unittest.TestCase):
         self.addCleanup(restore)
         when = datetime.datetime.fromtimestamp(NOW + 45, tz=datetime.UTC)
         asctime = when.strftime("%a %b %d %H:%M:%S %Y")
-        self.assertIsNone(email.utils.parsedate_to_datetime(asctime).tzinfo,
-                          "the fixture must be a date with no zone")
+        self.assertIsNone(
+            email.utils.parsedate_to_datetime(asctime).tzinfo,
+            "the fixture must be a date with no zone",
+        )
         self.assertAlmostEqual(registry.retry_after(asctime, NOW), 45.0)
 
     def test_a_date_already_past_asks_for_no_wait(self):
         when = datetime.datetime.fromtimestamp(NOW - 30, tz=datetime.UTC)
         self.assertEqual(
-            registry.retry_after(email.utils.format_datetime(when, usegmt=True), NOW), 0.0)
+            registry.retry_after(email.utils.format_datetime(when, usegmt=True), NOW), 0.0
+        )
 
     def test_an_absent_or_unreadable_header_states_nothing(self):
         self.assertIsNone(registry.retry_after(None, NOW))
@@ -162,18 +166,18 @@ class RetryingOnlyWhatMayClear(unittest.TestCase):
         with self.assertRaises(registry.RegistryError):
             self.get(t)
         base = registry.RETRY_BASE_SECONDS
-        self.assertEqual(t.waits, [base * 2 ** i for i in range(registry.RETRY_ATTEMPTS - 1)])
+        self.assertEqual(t.waits, [base * 2**i for i in range(registry.RETRY_ATTEMPTS - 1)])
         self.assertEqual(t.waits[-1], registry.RETRY_MAX_WAIT_SECONDS)
 
     def test_jitter_stretches_a_wait_and_never_shortens_one(self):
         """Jobs throttled together must not come back together, and a registry's
         Retry-After is a minimum: the draw only ever adds to it."""
-        t = Transport(http_error(self.URL, 429, {"Retry-After": "8"}),
-                      http_error(self.URL, 429), b"ok")
+        t = Transport(
+            http_error(self.URL, 429, {"Retry-After": "8"}), http_error(self.URL, 429), b"ok"
+        )
         self.assertEqual(self.get(t, jitter=1.0), b"ok")
         stretch = 1 + registry.RETRY_JITTER
-        self.assertEqual(t.waits, [8.0 * stretch,
-                                   registry.RETRY_BASE_SECONDS * 2 * stretch])
+        self.assertEqual(t.waits, [8.0 * stretch, registry.RETRY_BASE_SECONDS * 2 * stretch])
 
     def test_the_refused_response_is_closed_before_the_wait(self):
         """A rate-limited client holding the refused connection open while it
@@ -186,8 +190,7 @@ class RetryingOnlyWhatMayClear(unittest.TestCase):
         self.assertEqual(closed_at_sleep, [True])
 
     def test_a_registry_that_never_relents_is_reported_after_the_bound(self):
-        t = Transport(*[http_error(self.URL, 429, {"Retry-After": "1"})]
-                      * registry.RETRY_ATTEMPTS)
+        t = Transport(*[http_error(self.URL, 429, {"Retry-After": "1"})] * registry.RETRY_ATTEMPTS)
         with self.assertRaises(registry.RegistryError) as caught:
             self.get(t)
         self.assertEqual(len(t.requests), registry.RETRY_ATTEMPTS)
@@ -211,8 +214,9 @@ class RetryingOnlyWhatMayClear(unittest.TestCase):
                 with self.assertRaises(registry.RegistryError) as caught:
                     self.get(t, jitter=1.0)
                 self.assertEqual(len(t.requests), registry.RETRY_ATTEMPTS)
-                self.assertIn(f"HTTP 429 to the last of {registry.RETRY_ATTEMPTS}",
-                              str(caught.exception))
+                self.assertIn(
+                    f"HTTP 429 to the last of {registry.RETRY_ATTEMPTS}", str(caught.exception)
+                )
                 self.assertLessEqual(t.elapsed, registry.CALL_DEADLINE_SECONDS)
 
     def test_no_request_is_given_longer_than_the_call_has_left(self):
@@ -311,13 +315,19 @@ class RetryingOnlyWhatMayClear(unittest.TestCase):
     def test_the_challenge_is_handed_the_calls_own_deadline(self):
         t = Transport(http_error(self.URL, 401, {"WWW-Authenticate": "Bearer x"}), b"ok")
         handed = []
-        self.get(t, deadline=500.0,
-                 challenge=lambda _www, deadline: handed.append(deadline) or "Bearer t")
+        self.get(
+            t,
+            deadline=500.0,
+            challenge=lambda _www, deadline: handed.append(deadline) or "Bearer t",
+        )
         self.assertEqual(handed, [500.0])
 
     def test_a_second_401_is_reported_not_answered_again(self):
-        t = Transport(http_error(self.URL, 401, {"WWW-Authenticate": "Bearer x"}),
-                      http_error(self.URL, 401, {"WWW-Authenticate": "Bearer x"}), b"ok")
+        t = Transport(
+            http_error(self.URL, 401, {"WWW-Authenticate": "Bearer x"}),
+            http_error(self.URL, 401, {"WWW-Authenticate": "Bearer x"}),
+            b"ok",
+        )
         answers = []
         with self.assertRaises(urllib.error.HTTPError) as caught:
             self.get(t, challenge=lambda www, _d: answers.append(www) or "Bearer t")
@@ -329,13 +339,13 @@ class RetryingOnlyWhatMayClear(unittest.TestCase):
         """The repeat would be one request past the bound, so there is none to
         make: the token is not fetched, and the reason names the bound."""
         limited = [http_error(self.URL, 429)] * (registry.RETRY_ATTEMPTS - 1)
-        t = Transport(*limited, http_error(self.URL, 401, {"WWW-Authenticate": "Bearer x"}),
-                      b"ok")
+        t = Transport(*limited, http_error(self.URL, 401, {"WWW-Authenticate": "Bearer x"}), b"ok")
         answers = []
         with self.assertRaises(registry.RegistryError) as caught:
             self.get(t, challenge=lambda www, _d: answers.append(www) or "Bearer t")
-        self.assertIn(f"asked for a token on the last of {registry.RETRY_ATTEMPTS}",
-                      str(caught.exception))
+        self.assertIn(
+            f"asked for a token on the last of {registry.RETRY_ATTEMPTS}", str(caught.exception)
+        )
         self.assertEqual(answers, [])
         self.assertEqual(len(t.requests), registry.RETRY_ATTEMPTS)
 
@@ -385,8 +395,13 @@ class SpacingRequestsToAHost(unittest.TestCase):
     def test_a_chart_read_spaces_its_challenge_token_and_repeat(self):
         """ECR Public's token realm is on the registry's own host, so the token
         request a challenge leads to is held to the same spacing."""
-        reg = Registry(self.HOST, "karpenter/karpenter", "1.2.3", self.META,
-                       realm=f"https://{self.HOST}/token/")
+        reg = Registry(
+            self.HOST,
+            "karpenter/karpenter",
+            "1.2.3",
+            self.META,
+            realm=f"https://{self.HOST}/token/",
+        )
         t = self.transport(*[reg] * 4)
         registry.oci_chart_content(f"oci://{self.HOST}/karpenter/karpenter", "1.2.3", t.get())
         self.assertEqual({urllib.parse.urlsplit(u).netloc for u in t.urls()}, {self.HOST})
@@ -414,8 +429,13 @@ class SpacingRequestsToAHost(unittest.TestCase):
         """Every gate's calls in one process read the one record, so a chart read
         is spaced from the chart read before it."""
         t = self.transport(b"ok", b"ok")
-        get = functools.partial(registry.http_get, urlopen=t.urlopen, sleep=t.sleep,
-                                clock=lambda: NOW, timer=lambda: t.elapsed)
+        get = functools.partial(
+            registry.http_get,
+            urlopen=t.urlopen,
+            sleep=t.sleep,
+            clock=lambda: NOW,
+            timer=lambda: t.elapsed,
+        )
         with mock.patch.dict(registry._LAST_SENT, clear=True):
             get(f"https://{self.HOST}/v2/x/blobs/a", {}, None)
             get(f"https://{self.HOST}/v2/x/blobs/b", {}, None)
@@ -431,8 +451,9 @@ class SpacingRequestsToAHost(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()):
             t.get()(url, {}, None)
         self.assertEqual(t.waits, [registry.RETRY_BASE_SECONDS])
-        self.assertGreater(registry.RETRY_BASE_SECONDS,
-                           max(registry.REQUEST_SPACING_SECONDS.values()))
+        self.assertGreater(
+            registry.RETRY_BASE_SECONDS, max(registry.REQUEST_SPACING_SECONDS.values())
+        )
 
     def test_a_retry_after_inside_the_spacing_is_followed_by_what_it_left(self):
         """A registry naming no wait at all is still asked again no sooner than
@@ -451,8 +472,9 @@ class SpacingRequestsToAHost(unittest.TestCase):
         counts toward it, and nothing is added to a wait that outlasts it."""
         url = f"https://{self.HOST}/v2/x/manifests/1.2.3"
         asked = 1.0
-        self.assertGreater(self.LATENCY + asked, self.spacing,
-                           "the fixture must outlast the spacing")
+        self.assertGreater(
+            self.LATENCY + asked, self.spacing, "the fixture must outlast the spacing"
+        )
         t = self.transport(http_error(url, 429, {"Retry-After": f"{asked:.0f}"}), b"ok")
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(t.get()(url, {}, None), b"ok")
@@ -492,11 +514,12 @@ class SpacingRequestsToAHost(unittest.TestCase):
         get = t.get(jitter=1.0)
         get(f"https://{self.HOST}/v2/x/blobs/a", {}, None)
         t.latency = None
-        with contextlib.redirect_stderr(io.StringIO()), \
-                self.assertRaises(registry.RegistryError) as caught:
+        with (
+            contextlib.redirect_stderr(io.StringIO()),
+            self.assertRaises(registry.RegistryError) as caught,
+        ):
             get(url, {}, None)
-        self.assertIn(f"HTTP 429 to the last of {registry.RETRY_ATTEMPTS}",
-                      str(caught.exception))
+        self.assertIn(f"HTTP 429 to the last of {registry.RETRY_ATTEMPTS}", str(caught.exception))
         self.assertEqual(t.urls().count(url), registry.RETRY_ATTEMPTS)
         self.assertLessEqual(t.elapsed - self.LATENCY, registry.CALL_DEADLINE_SECONDS)
 
@@ -529,14 +552,19 @@ class ReadingABody(unittest.TestCase):
         for chunked in (False, True):
             with self.subTest(chunked=chunked):
                 t = Transport()
-                t.steps.append(t.trickle(self.BODY, piece=256, chunked=chunked,
-                                         seconds=registry.HTTP_TIMEOUT - 1))
+                t.steps.append(
+                    t.trickle(
+                        self.BODY, piece=256, chunked=chunked, seconds=registry.HTTP_TIMEOUT - 1
+                    )
+                )
                 with self.assertRaises(registry.RegistryError) as caught:
                     self.get(t)
                 said = str(caught.exception)
-                self.assertIn(f"registry.example: the {registry.CALL_DEADLINE_SECONDS:.0f}s "
-                              f"one call is allowed ran out while the body of {self.URL}",
-                              said)
+                self.assertIn(
+                    f"registry.example: the {registry.CALL_DEADLINE_SECONDS:.0f}s "
+                    f"one call is allowed ran out while the body of {self.URL}",
+                    said,
+                )
                 wire = t.responses[0].wire
                 self.assertGreater(wire.unsent(), 0, "the body was read to its end")
                 self.assertTrue(wire.closed, "the connection was left open")
@@ -547,8 +575,7 @@ class ReadingABody(unittest.TestCase):
         for chunked in (False, True):
             with self.subTest(chunked=chunked):
                 t = Transport()
-                t.steps.append(t.trickle(self.BODY, piece=1000, seconds=1.0,
-                                         chunked=chunked))
+                t.steps.append(t.trickle(self.BODY, piece=1000, seconds=1.0, chunked=chunked))
                 self.assertEqual(self.get(t), self.BODY)
                 self.assertEqual(t.responses[0].wire.unsent(), 0)
 
@@ -581,8 +608,11 @@ class TheJobsReadingThroughTheClient(unittest.TestCase):
     def client_scripts(self) -> set[str]:
         """Gate scripts that read through the registry client."""
         reads = r"^import registry$|^from registry import |\bgatelib\.chart_archive_or_exit\("
-        return {p.name for p in (self.ROOT / "scripts").glob("*.py")
-                if re.search(reads, p.read_text(), re.M)}
+        return {
+            p.name
+            for p in (self.ROOT / "scripts").glob("*.py")
+            if re.search(reads, p.read_text(), re.M)
+        }
 
     def cache_key(self, step) -> str | None:
         uses = str(step.get("uses", ""))
@@ -596,7 +626,7 @@ class TheJobsReadingThroughTheClient(unittest.TestCase):
             words = line.split()
             for i, word in enumerate(words):
                 found = self.SCRIPT.fullmatch(word)
-                if found and found.group(1) in clients and self.NETWORK_FLAGS & set(words[i + 1:]):
+                if found and found.group(1) in clients and self.NETWORK_FLAGS & set(words[i + 1 :]):
                     return True
         return False
 
@@ -621,8 +651,7 @@ class TheJobsReadingThroughTheClient(unittest.TestCase):
 
     def test_the_scheduled_reads_of_upstream_are_found(self):
         """The --live gates read the registry without the cache, on a schedule."""
-        live = [n for n, (_, key, upstream) in self.client_jobs().items()
-                if upstream and not key]
+        live = [n for n, (_, key, upstream) in self.client_jobs().items() if upstream and not key]
         self.assertTrue(live, "no job runs a gate that reads upstream through the client")
 
     def test_each_allows_longer_than_one_call(self):
@@ -635,8 +664,11 @@ class TheJobsReadingThroughTheClient(unittest.TestCase):
     def test_each_reads_the_key_the_charts_job_keeps(self):
         jobs = {n: key for n, (_, key, _) in self.client_jobs().items() if key}
         kept = jobs["ci.yml:charts"]
-        self.assertIn("scripts/registry.py", kept,
-                      "a client change would hand every job the archives the last one kept")
+        self.assertIn(
+            "scripts/registry.py",
+            kept,
+            "a client change would hand every job the archives the last one kept",
+        )
         for name, key in jobs.items():
             with self.subTest(job=name):
                 self.assertEqual(key, kept)
@@ -650,29 +682,34 @@ class RequestingAToken(unittest.TestCase):
             asked.append(url)
             return json.dumps(body or {"token": "t"}).encode()
 
-        self.assertEqual(registry.pull_token(challenge, "org/chart", get),
-                         registry.PullToken("t", logged_in=False))
+        self.assertEqual(
+            registry.pull_token(challenge, "org/chart", get),
+            registry.PullToken("t", logged_in=False),
+        )
         return asked[0]
 
     def test_the_scope_and_service_are_added_to_the_realm(self):
         url = self.token_url('Bearer realm="https://auth.example/token",service="reg"')
         parts = urllib.parse.urlsplit(url)
-        self.assertEqual(f"{parts.scheme}://{parts.netloc}{parts.path}",
-                         "https://auth.example/token")
-        self.assertEqual(urllib.parse.parse_qs(parts.query),
-                         {"scope": ["repository:org/chart:pull"], "service": ["reg"]})
+        self.assertEqual(
+            f"{parts.scheme}://{parts.netloc}{parts.path}", "https://auth.example/token"
+        )
+        self.assertEqual(
+            urllib.parse.parse_qs(parts.query),
+            {"scope": ["repository:org/chart:pull"], "service": ["reg"]},
+        )
 
     def test_a_realm_that_already_carries_a_query_keeps_it(self):
         """Appending `?scope=` to a realm with its own query makes a URL whose
         path ends in the realm's query string — a token endpoint that answers
         404, or a token for the wrong scope."""
-        url = self.token_url('Bearer realm="https://auth.example/token?account=ci",'
-                             'service="reg"')
+        url = self.token_url('Bearer realm="https://auth.example/token?account=ci",service="reg"')
         parts = urllib.parse.urlsplit(url)
         self.assertEqual(parts.path, "/token")
-        self.assertEqual(urllib.parse.parse_qs(parts.query),
-                         {"account": ["ci"], "scope": ["repository:org/chart:pull"],
-                          "service": ["reg"]})
+        self.assertEqual(
+            urllib.parse.parse_qs(parts.query),
+            {"account": ["ci"], "scope": ["repository:org/chart:pull"], "service": ["reg"]},
+        )
 
     def test_an_access_token_field_is_a_token_too(self):
         """The token spec names both fields, and some realms answer with only the
@@ -689,15 +726,17 @@ class RequestingAToken(unittest.TestCase):
 
     def test_a_realm_that_returns_no_token_is_refused(self):
         for body in (b"{}", b'["t"]'):
-            with self.subTest(body=body), \
-                    self.assertRaisesRegex(registry.RegistryError, "no token"):
-                registry.pull_token('Bearer realm="https://a/t"', "c",
-                                         lambda *a, _b=body, **k: _b)
+            with (
+                self.subTest(body=body),
+                self.assertRaisesRegex(registry.RegistryError, "no token"),
+            ):
+                registry.pull_token('Bearer realm="https://a/t"', "c", lambda *a, _b=body, **k: _b)
 
     def test_a_realm_that_answers_something_other_than_json_raises_a_read_failure(self):
         with self.assertRaises(registry.READ_FAILURES):
-            registry.pull_token('Bearer realm="https://a/t"', "c",
-                                     lambda *a, **k: b"<html>sign in</html>")
+            registry.pull_token(
+                'Bearer realm="https://a/t"', "c", lambda *a, **k: b"<html>sign in</html>"
+            )
 
 
 class RequestingATokenAsALoggedInClient(unittest.TestCase):
@@ -718,8 +757,9 @@ class RequestingATokenAsALoggedInClient(unittest.TestCase):
     def setUp(self):
         own_process_records(self)
 
-    def authorization(self, realm: str, registry_host: str | None = "public.ecr.aws",
-                      credentials=CREDENTIALS) -> str | None:
+    def authorization(
+        self, realm: str, registry_host: str | None = "public.ecr.aws", credentials=CREDENTIALS
+    ) -> str | None:
         """What the token request carried, held to what the token says bought it."""
         sent = []
 
@@ -727,8 +767,13 @@ class RequestingATokenAsALoggedInClient(unittest.TestCase):
             sent.append(authorization)
             return b'{"token": "t"}'
 
-        bought = registry.pull_token(f'Bearer realm="{realm}"', "org/chart", get,
-                                     registry=registry_host, credentials=credentials)
+        bought = registry.pull_token(
+            f'Bearer realm="{realm}"',
+            "org/chart",
+            get,
+            registry=registry_host,
+            credentials=credentials,
+        )
         self.assertEqual(bought, registry.PullToken("t", logged_in=sent[0] is not None))
         return sent[0]
 
@@ -741,18 +786,21 @@ class RequestingATokenAsALoggedInClient(unittest.TestCase):
 
     def test_a_registry_on_a_port_is_matched_with_its_port(self):
         """`docker login host:port` stores the port in the key, and the realm names it."""
-        self.assertEqual(self.authorization("https://registry.example:5000/token",
-                                            "registry.example:5000",
-                                            {"registry.example:5000": "cG9ydA=="}),
-                         "Basic cG9ydA==")
+        self.assertEqual(
+            self.authorization(
+                "https://registry.example:5000/token",
+                "registry.example:5000",
+                {"registry.example:5000": "cG9ydA=="},
+            ),
+            "Basic cG9ydA==",
+        )
 
     def test_a_realm_on_another_host_is_asked_anonymously(self):
         self.assertIsNone(self.authorization("https://auth.example/token"))
 
     def test_a_registry_naming_the_realm_of_the_host_the_credentials_are_for_is_anonymous(self):
         """The realm is the credentials' host, and the registry being read is not."""
-        self.assertIsNone(self.authorization("https://public.ecr.aws/token/",
-                                             "registry.example"))
+        self.assertIsNone(self.authorization("https://public.ecr.aws/token/", "registry.example"))
 
     def test_a_realm_on_another_port_of_the_host_is_asked_anonymously(self):
         self.assertIsNone(self.authorization("https://public.ecr.aws:8443/token/"))
@@ -774,12 +822,17 @@ class RequestingATokenAsALoggedInClient(unittest.TestCase):
                 sent.append(authorization)
                 return b'{"token": "t"}'
             if challenge is not None:
-                return challenge('Bearer realm="https://public.ecr.aws/token/",'
-                                 'service="public.ecr.aws"', 0.0) and b"{}"
+                return (
+                    challenge(
+                        'Bearer realm="https://public.ecr.aws/token/",service="public.ecr.aws"', 0.0
+                    )
+                    and b"{}"
+                )
             return b"{}"
 
-        repo = registry.OciRepository("oci://public.ecr.aws/karpenter/karpenter", get,
-                                      self.CREDENTIALS)
+        repo = registry.OciRepository(
+            "oci://public.ecr.aws/karpenter/karpenter", get, self.CREDENTIALS
+        )
         repo.read("manifests/1.2.3")
         self.assertEqual(sent, [self.LOGGED_IN])
         self.assertEqual((repo.token, repo.logged_in), ("t", True))
@@ -794,20 +847,25 @@ class RequestingATokenAsALoggedInClient(unittest.TestCase):
                 token = "account" if auth(req) == self.LOGGED_IN else "anonymous"
                 return json.dumps({"token": token}).encode()
             if auth(req) is None:
-                return http_error(req.full_url, 401,
-                                  {"WWW-Authenticate": f'Bearer realm="{realm}"'})
+                return http_error(
+                    req.full_url, 401, {"WWW-Authenticate": f'Bearer realm="{realm}"'}
+                )
             return b"{}"
 
         t = Transport(*[serve] * 4)
-        repo = registry.OciRepository("oci://registry.example/org/chart", t.get(),
-                                      self.CREDENTIALS)
+        repo = registry.OciRepository("oci://registry.example/org/chart", t.get(), self.CREDENTIALS)
         repo.read("manifests/1.2.3")
         repo.read("manifests/1.2.3")
         sent = [(urllib.parse.urlsplit(r.full_url).netloc, auth(r)) for r in t.requests]
-        self.assertEqual(sent, [("registry.example", None),
-                                ("public.ecr.aws", None),
-                                ("registry.example", "Bearer anonymous"),
-                                ("registry.example", "Bearer anonymous")])
+        self.assertEqual(
+            sent,
+            [
+                ("registry.example", None),
+                ("public.ecr.aws", None),
+                ("registry.example", "Bearer anonymous"),
+                ("registry.example", "Bearer anonymous"),
+            ],
+        )
 
 
 class AskingAgainWhenTheLoginIsRefused(unittest.TestCase):
@@ -835,8 +893,10 @@ class AskingAgainWhenTheLoginIsRefused(unittest.TestCase):
 
     def said(self, why: str) -> str:
         """The line stderr carries once the host refused its login for `why`."""
-        return (f"  public.ecr.aws refused the login `docker login` stored for it "
-                f"({why}), so it is read anonymously\n")
+        return (
+            f"  public.ecr.aws refused the login `docker login` stored for it "
+            f"({why}), so it is read anonymously\n"
+        )
 
     def token(self, *answers, credentials=CREDENTIALS):
         """pull_token over one scripted answer per request, each request's
@@ -851,13 +911,19 @@ class AskingAgainWhenTheLoginIsRefused(unittest.TestCase):
                 raise step
             return step
 
-        return registry.pull_token(self.CHALLENGE, "karpenter/karpenter", get,
-                                   registry="public.ecr.aws", credentials=credentials)
+        return registry.pull_token(
+            self.CHALLENGE,
+            "karpenter/karpenter",
+            get,
+            registry="public.ecr.aws",
+            credentials=credentials,
+        )
 
     def serve(self, to_login, to_anonymous):
         """A registry whose realm issues the token "login" to the stored login and
         "anon" to everyone else, answering a read carrying either one with what
         the matching callable returns for its URL."""
+
         def answer(req):
             url = req.full_url
             if url.startswith(self.REALM):
@@ -866,6 +932,7 @@ class AskingAgainWhenTheLoginIsRefused(unittest.TestCase):
             if auth(req) is None:
                 return http_error(url, 401, {"WWW-Authenticate": self.CHALLENGE})
             return (to_login if auth(req) == "Bearer login" else to_anonymous)(url)
+
         return Transport(*[answer] * 12)
 
     def test_a_realm_refusing_the_login_is_asked_again_anonymously(self):
@@ -881,31 +948,40 @@ class AskingAgainWhenTheLoginIsRefused(unittest.TestCase):
                 self.assertEqual(err.getvalue(), self.said(f"HTTP {code} from {self.REALM}"))
 
     def test_a_realm_refusing_the_anonymous_request_too_names_the_login(self):
-        with contextlib.redirect_stderr(io.StringIO()), \
-                self.assertRaises(registry.RegistryError) as caught:
+        with (
+            contextlib.redirect_stderr(io.StringIO()),
+            self.assertRaises(registry.RegistryError) as caught,
+        ):
             self.token(http_error(self.REALM, 401), http_error(self.REALM, 403))
-        self.assertEqual(str(caught.exception),
-                         f"{self.REALM} answered HTTP 401 to a token request for "
-                         f"repository:karpenter/karpenter:pull carrying the login `docker "
-                         f"login` stored for public.ecr.aws, and HTTP 403 to the same "
-                         f"request made anonymously")
+        self.assertEqual(
+            str(caught.exception),
+            f"{self.REALM} answered HTTP 401 to a token request for "
+            f"repository:karpenter/karpenter:pull carrying the login `docker "
+            f"login` stored for public.ecr.aws, and HTTP 403 to the same "
+            f"request made anonymously",
+        )
 
     def test_another_status_from_the_realm_is_no_refusal_of_the_login(self):
         """A realm that does not know the scope, or fails, answers an anonymous
         client the same way, so asking again spends a request on the same answer."""
         for code in (400, 404, 500):
-            with self.subTest(code=code), \
-                    self.assertRaisesRegex(registry.RegistryError,
-                                           f"answered HTTP {code} to a token request for "
-                                           f"repository:karpenter/karpenter:pull$"):
+            with (
+                self.subTest(code=code),
+                self.assertRaisesRegex(
+                    registry.RegistryError,
+                    f"answered HTTP {code} to a token request for "
+                    f"repository:karpenter/karpenter:pull$",
+                ),
+            ):
                 self.token(http_error(self.REALM, code))
             self.assertEqual(self.sent, [self.LOGGED_IN])
             self.assertEqual(registry._REFUSED_LOGINS, set())
 
     def test_a_refused_anonymous_request_is_not_asked_again(self):
-        with self.assertRaisesRegex(registry.RegistryError,
-                                    "answered HTTP 401 to a token request for "
-                                    "repository:karpenter/karpenter:pull$"):
+        with self.assertRaisesRegex(
+            registry.RegistryError,
+            "answered HTTP 401 to a token request for repository:karpenter/karpenter:pull$",
+        ):
             self.token(http_error(self.REALM, 401), credentials={})
         self.assertEqual(self.sent, [None])
         self.assertEqual(registry._REFUSED_LOGINS, set())
@@ -935,15 +1011,23 @@ class AskingAgainWhenTheLoginIsRefused(unittest.TestCase):
                     self.assertEqual(repo.read("manifests/1.2.3"), b"{}")
                 token = t.urls()[1]
                 self.assertTrue(token.startswith(self.REALM), token)
-                self.assertEqual([(r.full_url, auth(r)) for r in t.requests],
-                                 [(self.MANIFEST, None), (token, self.LOGGED_IN),
-                                  (self.MANIFEST, "Bearer login"),
-                                  (self.MANIFEST, None), (token, None),
-                                  (self.MANIFEST, "Bearer anon"),
-                                  (self.MANIFEST, "Bearer anon")])
+                self.assertEqual(
+                    [(r.full_url, auth(r)) for r in t.requests],
+                    [
+                        (self.MANIFEST, None),
+                        (token, self.LOGGED_IN),
+                        (self.MANIFEST, "Bearer login"),
+                        (self.MANIFEST, None),
+                        (token, None),
+                        (self.MANIFEST, "Bearer anon"),
+                        (self.MANIFEST, "Bearer anon"),
+                    ],
+                )
                 self.assertEqual((repo.token, repo.logged_in), ("anon", False))
-                self.assertEqual(err.getvalue(), self.said(
-                    f"HTTP {code} from {self.MANIFEST} with the token it bought"))
+                self.assertEqual(
+                    err.getvalue(),
+                    self.said(f"HTTP {code} from {self.MANIFEST} with the token it bought"),
+                )
 
     def test_a_later_read_refused_the_logins_token_is_made_again_anonymously(self):
         """The manifest is served to the login's token and the config blob is not,
@@ -951,19 +1035,26 @@ class AskingAgainWhenTheLoginIsRefused(unittest.TestCase):
         meta = {"name": "karpenter", "version": "1.2.3"}
         blob = json.dumps(meta).encode()
         digest = "sha256:" + hashlib.sha256(blob).hexdigest()
-        manifest = json.dumps({"config": {"mediaType": fake.HELM_CONFIG,
-                                          "digest": digest}}).encode()
+        manifest = json.dumps(
+            {"config": {"mediaType": fake.HELM_CONFIG, "digest": digest}}
+        ).encode()
 
         def under_login(url):
             return manifest if "/manifests/" in url else http_error(url, 403)
 
         t = self.serve(under_login, lambda url: manifest if "/manifests/" in url else blob)
         with contextlib.redirect_stderr(io.StringIO()):
-            self.assertEqual(registry.oci_chart_metadata(self.REF, "1.2.3", t.get(),
-                                                         credentials=self.CREDENTIALS), meta)
+            self.assertEqual(
+                registry.oci_chart_metadata(
+                    self.REF, "1.2.3", t.get(), credentials=self.CREDENTIALS
+                ),
+                meta,
+            )
         blob_url = f"https://public.ecr.aws/v2/karpenter/karpenter/blobs/{digest}"
-        self.assertEqual([auth(r) for r in t.requests if r.full_url == blob_url],
-                         ["Bearer login", None, "Bearer anon"])
+        self.assertEqual(
+            [auth(r) for r in t.requests if r.full_url == blob_url],
+            ["Bearer login", None, "Bearer anon"],
+        )
 
     def test_a_repository_made_after_the_refusal_asks_anonymously_from_the_start(self):
         t = self.serve(lambda url: http_error(url, 403), lambda url: b"{}")
@@ -977,25 +1068,43 @@ class AskingAgainWhenTheLoginIsRefused(unittest.TestCase):
         cache = pathlib.Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, cache)
         t = self.serve(lambda url: http_error(url, 403), lambda url: http_error(url, 401))
-        with contextlib.redirect_stderr(io.StringIO()), \
-                self.assertRaises(registry.ChartUnavailable) as caught:
-            registry.chart_archive(self.REF, "karpenter", "1.2.3", cache=cache, get=t.get(),
-                                   credentials=self.CREDENTIALS)
+        with (
+            contextlib.redirect_stderr(io.StringIO()),
+            self.assertRaises(registry.ChartUnavailable) as caught,
+        ):
+            registry.chart_archive(
+                self.REF,
+                "karpenter",
+                "1.2.3",
+                cache=cache,
+                get=t.get(),
+                credentials=self.CREDENTIALS,
+            )
         self.assertFalse(caught.exception.answered)
-        self.assertEqual(str(caught.exception),
-                         f"RegistryError: public.ecr.aws answered HTTP 403 to {self.MANIFEST} "
-                         f"with the token the login `docker login` stored for it bought, and "
-                         f"HTTP 401 to the same read made anonymously")
+        self.assertEqual(
+            str(caught.exception),
+            f"RegistryError: public.ecr.aws answered HTTP 403 to {self.MANIFEST} "
+            f"with the token the login `docker login` stored for it bought, and "
+            f"HTTP 401 to the same read made anonymously",
+        )
 
     def test_any_other_failure_of_the_anonymous_read_is_left_as_it_is(self):
         """A 404 to the anonymous read is the registry answering for the pin."""
         cache = pathlib.Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, cache)
         t = self.serve(lambda url: http_error(url, 403), lambda url: http_error(url, 404))
-        with contextlib.redirect_stderr(io.StringIO()), \
-                self.assertRaises(registry.ChartUnavailable) as caught:
-            registry.chart_archive(self.REF, "karpenter", "1.2.3", cache=cache, get=t.get(),
-                                   credentials=self.CREDENTIALS)
+        with (
+            contextlib.redirect_stderr(io.StringIO()),
+            self.assertRaises(registry.ChartUnavailable) as caught,
+        ):
+            registry.chart_archive(
+                self.REF,
+                "karpenter",
+                "1.2.3",
+                cache=cache,
+                get=t.get(),
+                credentials=self.CREDENTIALS,
+            )
         self.assertTrue(caught.exception.answered)
         self.assertEqual(str(caught.exception), f"HTTP 404 from {self.MANIFEST}")
 
@@ -1042,30 +1151,58 @@ class ReadingDockerCredentials(unittest.TestCase):
     def test_a_bare_host_and_a_url_key_each_name_their_host(self):
         """`docker login` writes a bare host; Docker Hub's key and an insecure
         registry's are URLs, over HTTPS and plain HTTP."""
-        self.write({"auths": {"public.ecr.aws": {"auth": "a"},
-                              "https://index.docker.io/v1/": {"auth": "b"},
-                              "http://insecure.example/": {"auth": "c"}}})
-        self.assertEqual(self.read(), ({"public.ecr.aws": "a", "index.docker.io": "b",
-                                        "insecure.example": "c"}, ""))
+        self.write(
+            {
+                "auths": {
+                    "public.ecr.aws": {"auth": "a"},
+                    "https://index.docker.io/v1/": {"auth": "b"},
+                    "http://insecure.example/": {"auth": "c"},
+                }
+            }
+        )
+        self.assertEqual(
+            self.read(),
+            ({"public.ecr.aws": "a", "index.docker.io": "b", "insecure.example": "c"}, ""),
+        )
 
     def test_a_key_keeps_the_port_it_names(self):
         """A registry on another port of a host is another registry."""
-        self.write({"auths": {"registry.example:5000": {"auth": "a"},
-                              "https://mirror.example:8443/v2/": {"auth": "b"}}})
-        self.assertEqual(registry.docker_credentials(self.dir),
-                         {"registry.example:5000": "a", "mirror.example:8443": "b"})
+        self.write(
+            {
+                "auths": {
+                    "registry.example:5000": {"auth": "a"},
+                    "https://mirror.example:8443/v2/": {"auth": "b"},
+                }
+            }
+        )
+        self.assertEqual(
+            registry.docker_credentials(self.dir),
+            {"registry.example:5000": "a", "mirror.example:8443": "b"},
+        )
 
     def test_an_entry_a_credential_helper_holds_is_left_out_and_said(self):
         """The secret is in the helper, not the file, so there is nothing to send,
         and the hosts it leaves anonymous are named once."""
-        self.write({"auths": {"public.ecr.aws": {}, "ghcr.io": "x", "r.example": {"auth": ""},
-                              "": {"auth": "c"}, "[::1": {"auth": "d"}},
-                    "credsStore": "desktop"})
+        self.write(
+            {
+                "auths": {
+                    "public.ecr.aws": {},
+                    "ghcr.io": "x",
+                    "r.example": {"auth": ""},
+                    "": {"auth": "c"},
+                    "[::1": {"auth": "d"},
+                },
+                "credsStore": "desktop",
+            }
+        )
         found, said = self.read()
         self.assertEqual(found, {})
-        self.assertEqual(said, f"  {self.dir / 'config.json'}: stores no `auth` for ghcr.io, "
-                               f"public.ecr.aws, r.example, as when a credential helper "
-                               f"holds it, so each is read anonymously\n")
+        self.assertEqual(
+            said,
+            f"  {self.dir / 'config.json'}: stores no `auth` for ghcr.io, "
+            f"public.ecr.aws, r.example, as when a credential helper "
+            f"holds it, so each is read anonymously\n",
+        )
 
     def test_a_config_with_no_logins_is_no_credentials_and_says_nothing(self):
         for doc in ({}, {"credsStore": "desktop"}, {"auths": {}}):
@@ -1078,9 +1215,11 @@ class ReadingDockerCredentials(unittest.TestCase):
 
     def test_a_file_that_is_no_docker_config_is_no_credentials_and_is_said(self):
         path = self.dir / "config.json"
-        cases = {"not json": "not readable as a docker config",
-                 '["auths"]': "holds no `auths` object",
-                 '{"auths": ["public.ecr.aws"]}': "holds no `auths` object"}
+        cases = {
+            "not json": "not readable as a docker config",
+            '["auths"]': "holds no `auths` object",
+            '{"auths": ["public.ecr.aws"]}': "holds no `auths` object",
+        }
         for doc, reason in cases.items():
             with self.subTest(doc=doc):
                 registry._SAID.clear()
@@ -1112,9 +1251,12 @@ class ReadingDockerCredentials(unittest.TestCase):
         home = self.dir / "home"
         (home / ".docker").mkdir(parents=True)
         (home / ".docker" / "config.json").write_text(
-            json.dumps({"auths": {"ghcr.io": {"auth": "g"}}}))
-        with mock.patch.dict(os.environ, {"DOCKER_CONFIG": ""}), \
-                mock.patch.object(pathlib.Path, "home", return_value=home):
+            json.dumps({"auths": {"ghcr.io": {"auth": "g"}}})
+        )
+        with (
+            mock.patch.dict(os.environ, {"DOCKER_CONFIG": ""}),
+            mock.patch.object(pathlib.Path, "home", return_value=home),
+        ):
             self.assertEqual(registry.docker_credentials(), {"ghcr.io": "g"})
 
     def test_a_repository_given_no_credentials_asks_with_the_ones_docker_stored(self):
@@ -1147,12 +1289,15 @@ class ReadingAnOciChart(unittest.TestCase):
         realm = "https://public.ecr.aws/token/"
         for read in (registry.oci_chart_metadata, registry.oci_chart_content):
             with self.subTest(read=read.__name__):
-                reg = Registry("public.ecr.aws", "karpenter/karpenter", "1.2.3", self.META,
-                               realm=realm)
+                reg = Registry(
+                    "public.ecr.aws", "karpenter/karpenter", "1.2.3", self.META, realm=realm
+                )
                 t = reg.transport()
                 read(self.REF, "1.2.3", t.get(), credentials={"public.ecr.aws": "Y3JlZA=="})
-                self.assertEqual([auth(r) for r in t.requests if r.full_url.startswith(realm)],
-                                 ["Basic Y3JlZA=="])
+                self.assertEqual(
+                    [auth(r) for r in t.requests if r.full_url.startswith(realm)],
+                    ["Basic Y3JlZA=="],
+                )
 
     def test_an_archive_is_read_with_the_credentials_it_is_given(self):
         """None is what docker stored, {} is anonymous whatever it stored, and
@@ -1161,22 +1306,34 @@ class ReadingAnOciChart(unittest.TestCase):
         config = pathlib.Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, config)
         (config / "config.json").write_text(
-            json.dumps({"auths": {"public.ecr.aws": {"auth": "c3RvcmVk"}}}))
+            json.dumps({"auths": {"public.ecr.aws": {"auth": "c3RvcmVk"}}})
+        )
         realm = "https://public.ecr.aws/token/"
-        cases = {"none given": (None, ["Basic c3RvcmVk"]), "empty": ({}, [None]),
-                 "given": ({"public.ecr.aws": "Z2l2ZW4="}, ["Basic Z2l2ZW4="])}
+        cases = {
+            "none given": (None, ["Basic c3RvcmVk"]),
+            "empty": ({}, [None]),
+            "given": ({"public.ecr.aws": "Z2l2ZW4="}, ["Basic Z2l2ZW4="]),
+        }
         for label, (credentials, expected) in cases.items():
             with self.subTest(label):
                 cache = pathlib.Path(tempfile.mkdtemp())
                 self.addCleanup(shutil.rmtree, cache)
-                reg = Registry("public.ecr.aws", "karpenter/karpenter", "1.2.3", self.META,
-                               realm=realm)
+                reg = Registry(
+                    "public.ecr.aws", "karpenter/karpenter", "1.2.3", self.META, realm=realm
+                )
                 t = reg.transport()
                 with mock.patch.dict(os.environ, {"DOCKER_CONFIG": str(config)}):
-                    registry.chart_archive(self.REF, "karpenter", "1.2.3", cache=cache,
-                                           get=t.get(), credentials=credentials)
-                self.assertEqual([auth(r) for r in t.requests if r.full_url.startswith(realm)],
-                                 expected)
+                    registry.chart_archive(
+                        self.REF,
+                        "karpenter",
+                        "1.2.3",
+                        cache=cache,
+                        get=t.get(),
+                        credentials=credentials,
+                    )
+                self.assertEqual(
+                    [auth(r) for r in t.requests if r.full_url.startswith(realm)], expected
+                )
 
     def test_the_token_is_scoped_to_pulling_this_repository_and_fetched_once(self):
         reg = Registry("public.ecr.aws", "karpenter/karpenter", "1.2.3", self.META)
@@ -1208,8 +1365,10 @@ class ReadingAnOciChart(unittest.TestCase):
         self.assertEqual(sum(u.startswith("https://auth.example/") for u in urls), 1)
         self.assertEqual(len(urls), registry.RETRY_ATTEMPTS + 2)
         self.assertEqual(t.waits, [registry.RETRY_BASE_SECONDS * 2, 2.0])
-        self.assertEqual([auth(r) for r in t.requests if r.full_url == manifest],
-                         [None] + [f"Bearer {reg.TOKEN}"] * 3)
+        self.assertEqual(
+            [auth(r) for r in t.requests if r.full_url == manifest],
+            [None] + [f"Bearer {reg.TOKEN}"] * 3,
+        )
 
     def test_a_challenged_call_throttled_everywhere_ends_inside_the_bound(self):
         """The token request a 401 leads to spends the deadline of the call it answers.
@@ -1235,16 +1394,21 @@ class ReadingAnOciChart(unittest.TestCase):
                 if auth(req) is None:
                     return http_error(manifest, 401, {"WWW-Authenticate": realm})
                 return http_error(manifest, 429, longest)
+
             return answer
 
-        cases = {"the realm refuses every request": registry.RETRY_ATTEMPTS,
-                 "the realm relents, the registry does not": 2}
+        cases = {
+            "the realm refuses every request": registry.RETRY_ATTEMPTS,
+            "the realm relents, the registry does not": 2,
+        }
         for label, relents_after in cases.items():
             with self.subTest(label):
                 t = Transport(*[throttled(relents_after)] * (2 * registry.RETRY_ATTEMPTS))
                 repo = registry.OciRepository("oci://r.example/c", t.get(jitter=1.0))
-                with contextlib.redirect_stderr(io.StringIO()), \
-                        self.assertRaises(registry.RegistryError):
+                with (
+                    contextlib.redirect_stderr(io.StringIO()),
+                    self.assertRaises(registry.RegistryError),
+                ):
                     repo.manifest("1.0.0")
                 self.assertTrue(any(u.startswith("https://auth.example/") for u in t.urls()))
                 self.assertLessEqual(t.elapsed, registry.CALL_DEADLINE_SECONDS)
@@ -1257,10 +1421,10 @@ class ReadingAnOciChart(unittest.TestCase):
         allowing one request more makes it rather than running out first."""
         reg = Registry("r.example", "c", "1.0.0", self.META)
         manifest = f"{reg.base}/manifests/1.0.0"
-        t = Transport(reg, reg, *[http_error(manifest, 429, {"Retry-After": "1"})]
-                      * registry.RETRY_ATTEMPTS)
-        with contextlib.redirect_stderr(io.StringIO()), \
-                self.assertRaises(registry.RegistryError):
+        t = Transport(
+            reg, reg, *[http_error(manifest, 429, {"Retry-After": "1"})] * registry.RETRY_ATTEMPTS
+        )
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(registry.RegistryError):
             registry.oci_chart_metadata("oci://r.example/c", "1.0.0", t.get())
         self.assertEqual(t.urls().count(manifest), registry.RETRY_ATTEMPTS)
         self.assertEqual(len(t.requests), registry.RETRY_ATTEMPTS + 1)
@@ -1271,9 +1435,9 @@ class ReadingAnOciChart(unittest.TestCase):
         token would not change, so the client neither asks for one nor loops."""
         reg = Registry("r.example", "c", "1.0.0", self.META)
         blob = f"{reg.base}/blobs/{reg.digest}"
-        t = Transport(reg, reg, reg,
-                      http_error(blob, 401, {"WWW-Authenticate": Registry.CHALLENGE}),
-                      reg, reg)
+        t = Transport(
+            reg, reg, reg, http_error(blob, 401, {"WWW-Authenticate": Registry.CHALLENGE}), reg, reg
+        )
         with self.assertRaises(urllib.error.HTTPError) as caught:
             registry.oci_chart_metadata("oci://r.example/c", "1.0.0", t.get())
         self.assertEqual(caught.exception.code, 401)
@@ -1284,8 +1448,9 @@ class ReadingAnOciChart(unittest.TestCase):
 
     def test_docker_hub_is_read_from_its_api_host(self):
         reg = Registry("registry-1.docker.io", "envoyproxy/gateway-helm", "1.0.0", self.META)
-        meta = registry.oci_chart_metadata("oci://docker.io/envoyproxy/gateway-helm",
-                                           "1.0.0", reg.transport().get())
+        meta = registry.oci_chart_metadata(
+            "oci://docker.io/envoyproxy/gateway-helm", "1.0.0", reg.transport().get()
+        )
         self.assertEqual(meta, self.META)
 
     def test_a_blob_that_does_not_match_its_digest_is_refused(self):
@@ -1303,8 +1468,13 @@ class ReadingAnOciChart(unittest.TestCase):
                 self.assertEqual(t.requests, [])
 
     def test_an_artifact_that_is_not_a_chart_is_refused(self):
-        reg = Registry("r.example", "c", "1.0.0", self.META,
-                       media_type="application/vnd.oci.image.config.v1+json")
+        reg = Registry(
+            "r.example",
+            "c",
+            "1.0.0",
+            self.META,
+            media_type="application/vnd.oci.image.config.v1+json",
+        )
         with self.assertRaisesRegex(registry.RegistryError, "is not a Helm chart"):
             registry.oci_chart_metadata("oci://r.example/c", "1.0.0", reg.transport().get())
         with self.assertRaisesRegex(registry.RegistryError, "is not a Helm chart"):
@@ -1323,22 +1493,31 @@ class ReadingAnOciChart(unittest.TestCase):
 
     def test_the_chart_content_layer_is_the_archive(self):
         reg = Registry("r.example", "c", "1.0.0", self.META, content=b"packaged")
-        self.assertEqual(registry.oci_chart_content("oci://r.example/c", "1.0.0",
-                                                    reg.transport().get()), b"packaged")
+        self.assertEqual(
+            registry.oci_chart_content("oci://r.example/c", "1.0.0", reg.transport().get()),
+            b"packaged",
+        )
 
     def test_the_content_layer_is_found_among_the_others(self):
         """A provenance layer, or a malformed entry, ahead of the chart is passed over."""
         reg = Registry("r.example", "c", "1.0.0", self.META, content=b"packaged")
-        manifest = json.dumps({
-            "config": {"mediaType": fake.HELM_CONFIG, "digest": reg.digest},
-            "layers": ["not-a-layer",
-                       {"mediaType": "application/vnd.cncf.helm.chart.provenance.v1.prov",
-                        "digest": "sha256:" + "1" * 64},
-                       {"mediaType": fake.HELM_CHART_CONTENT, "digest": reg.content_digest}],
-        }).encode()
+        manifest = json.dumps(
+            {
+                "config": {"mediaType": fake.HELM_CONFIG, "digest": reg.digest},
+                "layers": [
+                    "not-a-layer",
+                    {
+                        "mediaType": "application/vnd.cncf.helm.chart.provenance.v1.prov",
+                        "digest": "sha256:" + "1" * 64,
+                    },
+                    {"mediaType": fake.HELM_CHART_CONTENT, "digest": reg.content_digest},
+                ],
+            }
+        ).encode()
         t = reg.transport(reg, reg, manifest)
-        self.assertEqual(registry.oci_chart_content("oci://r.example/c", "1.0.0", t.get()),
-                         b"packaged")
+        self.assertEqual(
+            registry.oci_chart_content("oci://r.example/c", "1.0.0", t.get()), b"packaged"
+        )
 
     def test_a_chart_with_no_content_layer_is_refused(self):
         reg = Registry("r.example", "c", "1.0.0", self.META)
@@ -1357,24 +1536,40 @@ class ReadingAnHttpsRepository(unittest.TestCase):
         self.cache = pathlib.Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.cache, True)
         self.archive = b"loki-archive"
-        self.index = {"entries": {"loki": [
-            {"name": "loki", "version": "6.1.0", "description": "logs",
-             "urls": ["loki-6.1.0.tgz"],
-             "digest": hashlib.sha256(self.archive).hexdigest()},
-            {"name": "loki", "version": "v7.0.0", "description": "logs",
-             "urls": ["loki-7.0.0.tgz"]},
-            {"name": "loki", "version": "8.0.0", "description": "logs", "urls": [],
-             "digest": hashlib.sha256(self.archive).hexdigest()},
-        ]}}
+        self.index = {
+            "entries": {
+                "loki": [
+                    {
+                        "name": "loki",
+                        "version": "6.1.0",
+                        "description": "logs",
+                        "urls": ["loki-6.1.0.tgz"],
+                        "digest": hashlib.sha256(self.archive).hexdigest(),
+                    },
+                    {
+                        "name": "loki",
+                        "version": "v7.0.0",
+                        "description": "logs",
+                        "urls": ["loki-7.0.0.tgz"],
+                    },
+                    {
+                        "name": "loki",
+                        "version": "8.0.0",
+                        "description": "logs",
+                        "urls": [],
+                        "digest": hashlib.sha256(self.archive).hexdigest(),
+                    },
+                ]
+            }
+        }
 
     def transport(self, *steps):
-        index = json.dumps(self.index).encode()   # JSON is YAML
+        index = json.dumps(self.index).encode()  # JSON is YAML
         return Transport(*(steps or (index, self.archive)))
 
     def archive_of(self, version, t):
         with contextlib.redirect_stderr(io.StringIO()):
-            return registry.chart_archive(self.REPO, "loki", version, cache=self.cache,
-                                          get=t.get())
+            return registry.chart_archive(self.REPO, "loki", version, cache=self.cache, get=t.get())
 
     def test_the_index_entry_is_the_metadata(self):
         t = self.transport()
@@ -1384,13 +1579,15 @@ class ReadingAnHttpsRepository(unittest.TestCase):
 
     def test_a_bare_pin_matches_a_v_prefixed_index_entry(self):
         t = self.transport()
-        self.assertEqual(registry.repo_index_entry(self.REPO, "loki", "7.0.0",
-                                                   t.get())["version"], "v7.0.0")
+        self.assertEqual(
+            registry.repo_index_entry(self.REPO, "loki", "7.0.0", t.get())["version"], "v7.0.0"
+        )
 
     def test_a_v_prefixed_pin_matches_a_bare_index_entry(self):
         t = self.transport()
-        self.assertEqual(registry.repo_index_entry(self.REPO, "loki", "v6.1.0",
-                                                   t.get())["version"], "6.1.0")
+        self.assertEqual(
+            registry.repo_index_entry(self.REPO, "loki", "v6.1.0", t.get())["version"], "6.1.0"
+        )
 
     def test_the_index_is_read_once_per_repository(self):
         t = self.transport(json.dumps(self.index).encode())
@@ -1399,13 +1596,14 @@ class ReadingAnHttpsRepository(unittest.TestCase):
         self.assertEqual(t.urls(), [f"{self.REPO}/index.yaml"])
 
     def test_an_index_that_is_not_yaml_or_not_a_mapping_is_refused(self):
-        for body, why in ((b"entries: [unclosed", "is not YAML"),
-                          (b"- a\n- list\n", "is not a mapping")):
+        for body, why in (
+            (b"entries: [unclosed", "is not YAML"),
+            (b"- a\n- list\n", "is not a mapping"),
+        ):
             with self.subTest(why=why):
                 registry._INDEXES.clear()
                 with self.assertRaisesRegex(registry.RegistryError, why):
-                    registry.repo_index_entry(self.REPO, "loki", "6.1.0",
-                                              Transport(body).get())
+                    registry.repo_index_entry(self.REPO, "loki", "6.1.0", Transport(body).get())
 
     def test_a_version_the_index_does_not_list_was_answered(self):
         t = self.transport()
@@ -1419,8 +1617,9 @@ class ReadingAnHttpsRepository(unittest.TestCase):
         path = self.archive_of("6.1.0", t)
         self.assertEqual(path.read_bytes(), self.archive)
         self.assertEqual(t.urls(), [f"{self.REPO}/index.yaml", f"{self.REPO}/loki-6.1.0.tgz"])
-        self.assertEqual(registry.digest_path(path).read_text(),
-                         hashlib.sha256(self.archive).hexdigest())
+        self.assertEqual(
+            registry.digest_path(path).read_text(), hashlib.sha256(self.archive).hexdigest()
+        )
         again = self.archive_of("6.1.0", Transport())
         self.assertEqual(again, path, "a kept archive is used without a request")
 
@@ -1451,13 +1650,14 @@ class ReadingAnHttpsRepository(unittest.TestCase):
 
     def test_an_oci_archive_is_kept_under_its_reference(self):
         reg = Registry("r.example", "org/c", "1.0.0", {"name": "c"}, content=b"oci-tgz")
-        path = registry.chart_archive("oci://r.example/org/c", "c", "1.0.0",
-                                      cache=self.cache, get=reg.transport().get())
+        path = registry.chart_archive(
+            "oci://r.example/org/c", "c", "1.0.0", cache=self.cache, get=reg.transport().get()
+        )
         self.assertEqual(path.read_bytes(), b"oci-tgz")
-        self.assertEqual(path.relative_to(self.cache).as_posix(),
-                         "r.example_org_c/c-1.0.0.tgz")
-        self.assertEqual(registry.digest_path(path).read_text(),
-                         hashlib.sha256(b"oci-tgz").hexdigest())
+        self.assertEqual(path.relative_to(self.cache).as_posix(), "r.example_org_c/c-1.0.0.tgz")
+        self.assertEqual(
+            registry.digest_path(path).read_text(), hashlib.sha256(b"oci-tgz").hexdigest()
+        )
 
 
 class ReusingACachedArchive(unittest.TestCase):
@@ -1476,15 +1676,24 @@ class ReusingACachedArchive(unittest.TestCase):
         self.cache = pathlib.Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.cache, True)
         self.archive = b"verified-archive"
-        self.index = json.dumps({"entries": {"c": [
-            {"version": "1.0.0", "urls": ["c-1.0.0.tgz"],
-             "digest": hashlib.sha256(self.archive).hexdigest()}]}}).encode()
+        self.index = json.dumps(
+            {
+                "entries": {
+                    "c": [
+                        {
+                            "version": "1.0.0",
+                            "urls": ["c-1.0.0.tgz"],
+                            "digest": hashlib.sha256(self.archive).hexdigest(),
+                        }
+                    ]
+                }
+            }
+        ).encode()
 
     def fetch(self, t):
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
-            path = registry.chart_archive(self.REPO, "c", "1.0.0", cache=self.cache,
-                                          get=t.get())
+            path = registry.chart_archive(self.REPO, "c", "1.0.0", cache=self.cache, get=t.get())
         return path, err.getvalue()
 
     def kept(self) -> pathlib.Path:
@@ -1533,8 +1742,7 @@ class ReusingACachedArchive(unittest.TestCase):
                 raise OSError("no space left on device")
             return real(src, dst)
 
-        with mock.patch.object(registry.os, "replace", replace), \
-                self.assertRaises(OSError):
+        with mock.patch.object(registry.os, "replace", replace), self.assertRaises(OSError):
             registry._keep(archive, self.archive)
         self.assertFalse(registry.digest_path(archive).exists())
 
@@ -1573,8 +1781,10 @@ class PruningTheChartCache(unittest.TestCase):
 
     def test_a_partial_left_by_an_interrupted_fetch_is_dropped(self):
         keep = self.archive("https://charts.example", "a", "1.0.0")
-        partials = [keep.with_name(f".{keep.name}.4242"),
-                    keep.with_name(f".{registry.digest_path(keep).name}.4242")]
+        partials = [
+            keep.with_name(f".{keep.name}.4242"),
+            keep.with_name(f".{registry.digest_path(keep).name}.4242"),
+        ]
         for p in partials:
             p.write_bytes(b"half")
         registry.prune_archives({keep}, self.root)
@@ -1609,11 +1819,12 @@ class WhatAnUnavailableChartMeans(unittest.TestCase):
 
     def unavailable(self, *steps, source=REPO):
         t = Transport(*steps)
-        with tempfile.TemporaryDirectory() as tmp, \
-                contextlib.redirect_stderr(io.StringIO()), \
-                self.assertRaises(registry.ChartUnavailable) as caught:
-            registry.chart_archive(source, "c", "1.0.0", cache=pathlib.Path(tmp),
-                                   get=t.get())
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            contextlib.redirect_stderr(io.StringIO()),
+            self.assertRaises(registry.ChartUnavailable) as caught,
+        ):
+            registry.chart_archive(source, "c", "1.0.0", cache=pathlib.Path(tmp), get=t.get())
         return caught.exception
 
     def test_a_404_was_answered(self):
@@ -1622,8 +1833,9 @@ class WhatAnUnavailableChartMeans(unittest.TestCase):
         self.assertEqual(str(exc), f"HTTP 404 from {self.REPO}/index.yaml")
 
     def test_a_rate_limit_that_outlasts_the_retries_was_not_answered(self):
-        exc = self.unavailable(*[http_error(f"{self.REPO}/index.yaml", 429)]
-                               * registry.RETRY_ATTEMPTS)
+        exc = self.unavailable(
+            *[http_error(f"{self.REPO}/index.yaml", 429)] * registry.RETRY_ATTEMPTS
+        )
         self.assertFalse(exc.answered)
         self.assertIn("429", str(exc))
 
@@ -1638,21 +1850,23 @@ class WhatAnUnavailableChartMeans(unittest.TestCase):
 
         exc = self.unavailable(realm_404, realm_404, source=self.OCI)
         self.assertFalse(exc.answered)
-        self.assertIn("https://auth.example/token answered HTTP 404 to a token request",
-                      str(exc))
+        self.assertIn("https://auth.example/token answered HTTP 404 to a token request", str(exc))
 
     def test_a_gateway_that_never_recovers_was_not_answered(self):
-        exc = self.unavailable(*[http_error(f"{self.REPO}/index.yaml", 503)]
-                               * registry.RETRY_ATTEMPTS)
+        exc = self.unavailable(
+            *[http_error(f"{self.REPO}/index.yaml", 503)] * registry.RETRY_ATTEMPTS
+        )
         self.assertFalse(exc.answered)
         self.assertIn("HTTP 503", str(exc))
 
     def test_a_server_fault_or_network_error_was_not_answered(self):
-        for step in (http_error(f"{self.REPO}/index.yaml", 500),
-                     http_error(f"{self.REPO}/index.yaml", 403),
-                     urllib.error.URLError("no route to host"),
-                     ConnectionResetError("reset by peer"),
-                     http.client.IncompleteRead(b"partial", 10)):
+        for step in (
+            http_error(f"{self.REPO}/index.yaml", 500),
+            http_error(f"{self.REPO}/index.yaml", 403),
+            urllib.error.URLError("no route to host"),
+            ConnectionResetError("reset by peer"),
+            http.client.IncompleteRead(b"partial", 10),
+        ):
             with self.subTest(step=type(step).__name__):
                 self.assertFalse(self.unavailable(step).answered)
 
@@ -1660,13 +1874,11 @@ class WhatAnUnavailableChartMeans(unittest.TestCase):
         """A captive portal or an error page served with a 200 says nothing
         about the pin, and must not escape as a traceback that exits 1."""
         reg = Registry("r.example", "c", "1.0.0", {"name": "c"})
-        for steps in ((reg, b"<html>sign in</html>"),
-                      (reg, reg, b"<html>maintenance</html>")):
+        for steps in ((reg, b"<html>sign in</html>"), (reg, reg, b"<html>maintenance</html>")):
             with self.subTest(read="token" if len(steps) == 2 else "manifest"):
                 exc = self.unavailable(*steps, source=self.OCI)
                 self.assertFalse(exc.answered)
                 self.assertIn("JSONDecodeError", str(exc))
-
 
 
 if __name__ == "__main__":

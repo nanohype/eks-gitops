@@ -80,8 +80,7 @@ def reach(doc: dict, name: str) -> tuple[set[str] | None, str]:
     envs = set(ENVIRONMENTS)
     why = []
 
-    extra_labels = {k: v for k, v in (sel.get("matchLabels") or {}).items()
-                    if k != SECRET_TYPE}
+    extra_labels = {k: v for k, v in (sel.get("matchLabels") or {}).items() if k != SECRET_TYPE}
     if extra_labels:
         return None, ("gated on " + ", ".join(f"{k}={v}" for k, v in sorted(extra_labels.items())))
 
@@ -159,8 +158,7 @@ def main() -> int:
                     failures.append(f"{name}: {app} path {rel} does not exist")
                     continue
                 pairs += 1
-                missing = [e for e in sorted(envs)
-                           if not (d / f"values-{e}.yaml").exists()]
+                missing = [e for e in sorted(envs) if not (d / f"values-{e}.yaml").exists()]
                 if missing:
                     failures.append(
                         f"{name}: {app} is selected for {', '.join(sorted(envs))} "
@@ -169,17 +167,22 @@ def main() -> int:
                         f"ArgoCD templates that valueFile unconditionally, so the "
                         f"Application points at a file that does not exist and the "
                         f"sync fails — while the helm-render gate reads the same "
-                        f"absence as 'not deployed to this environment' and passes.")
+                        f"absence as 'not deployed to this environment' and passes."
+                    )
 
     if pairs < MIN_PAIRS:
-        print(f"FAIL  compared only {pairs} appset/addon pair(s), fewer than the "
-              f"{MIN_PAIRS} this catalog carries — the parser and the tree disagree "
-              f"about shape, so a pass here would prove nothing.")
+        print(
+            f"FAIL  compared only {pairs} appset/addon pair(s), fewer than the "
+            f"{MIN_PAIRS} this catalog carries — the parser and the tree disagree "
+            f"about shape, so a pass here would prove nothing."
+        )
         return 2
 
     if gated:
-        print("Label-gated appsets — reach is not derivable from this repo, so their "
-              "environment coverage is NOT asserted:")
+        print(
+            "Label-gated appsets — reach is not derivable from this repo, so their "
+            "environment coverage is NOT asserted:"
+        )
         for g in gated:
             print(f"  {g}")
         print()
@@ -190,9 +193,11 @@ def main() -> int:
             print(f"  {f}")
         return 1
 
-    print(f"✓ {pairs} appset/addon pair(s): every addon carries a values file for "
-          f"every environment its ApplicationSet selector reaches "
-          f"({len(gated)} label-gated appset(s) not asserted)")
+    print(
+        f"✓ {pairs} appset/addon pair(s): every addon carries a values file for "
+        f"every environment its ApplicationSet selector reaches "
+        f"({len(gated)} label-gated appset(s) not asserted)"
+    )
     return 0
 
 

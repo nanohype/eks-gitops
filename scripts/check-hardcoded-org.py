@@ -131,8 +131,10 @@ def main() -> int:
     # under --blocking. Every other outcome of this gate is a sentence about what
     # it read; that one was a sentence about a set it never had.
     if len(files) < MIN_APPSETS:
-        print(f"FAIL  found {len(files)} applied ApplicationSet(s) under "
-              f"{appsets.relative_to(args.root)}, below the floor of {MIN_APPSETS}.")
+        print(
+            f"FAIL  found {len(files)} applied ApplicationSet(s) under "
+            f"{appsets.relative_to(args.root)}, below the floor of {MIN_APPSETS}."
+        )
         print("      A scan over almost nothing reports the same as a scan over a")
         print("      catalog with no hardcoded repoURL in it.")
         return 2
@@ -170,7 +172,7 @@ def main() -> int:
         print(f"    {lineno}: {line}")
 
     print(
-        f'\n  Each must become: repoURL: \'{{{{ index .metadata.annotations "gitops/repo-url" }}}}\'\n'
+        f"\n  Each must become: repoURL: '{{{{ index .metadata.annotations \"gitops/repo-url\" }}}}'\n"
         f"  read off the ArgoCD cluster Secret — the same mechanism dashboards.yaml uses\n"
         f"  for monitoring/grafana-url. A fork of this catalog into a customer org would\n"
         f"  otherwise keep syncing from github.com/{ORG}/{CATALOG}, so the fork's own edits\n"

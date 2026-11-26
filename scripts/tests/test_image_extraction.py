@@ -219,17 +219,20 @@ data:
     def test_an_rbac_name_is_not_an_image(self):
         """`kyverno:admission-controller` has the shape and is a role name; the
         tag is the discriminator."""
-        rendered = ("apiVersion: v1\nkind: ConfigMap\ndata:\n"
-                    "  x: |\n    role: kyverno:admission-controller\n"
-                    "    other: system:auth-delegator\n")
+        rendered = (
+            "apiVersion: v1\nkind: ConfigMap\ndata:\n"
+            "  x: |\n    role: kyverno:admission-controller\n"
+            "    other: system:auth-delegator\n"
+        )
         found, problems = self.images(rendered)
         self.assertEqual(problems, [])
 
     def test_a_hostname_does_not_yield_its_last_label(self):
         """Without an anchor the alternative starts after a dot and
         `vault.example.com:8200` yields `com:8200`."""
-        rendered = ("apiVersion: v1\nkind: ConfigMap\ndata:\n"
-                    "  x: |\n    server: vault.example.com:8200\n")
+        rendered = (
+            "apiVersion: v1\nkind: ConfigMap\ndata:\n  x: |\n    server: vault.example.com:8200\n"
+        )
         found, problems = self.images(rendered)
         self.assertEqual(problems, [])
 
@@ -253,9 +256,12 @@ data:
         self.assertEqual(found, set())
         self.assertEqual(len(unrendered), 1)
         self.assertIn("could not parse", unrendered[0][1])
-        self.assertEqual(unclassified, [],
-                         "a render that did not parse cannot also have produced a "
-                         "reference the classifier could not place")
+        self.assertEqual(
+            unclassified,
+            [],
+            "a render that did not parse cannot also have produced a "
+            "reference the classifier could not place",
+        )
 
     def test_the_helm_value_sentinel_does_not_lose_the_chart(self):
         """Charts emit `- =` inside ConfigMap payloads; PyYAML has no constructor
@@ -275,7 +281,8 @@ class EveryChartContributesAnImage(unittest.TestCase):
         rule it is not about.
         """
         units = [Unit(c) for c in charts] + [
-            Unit(c) for c in gate.IMAGELESS_CHARTS if c not in charts]
+            Unit(c) for c in gate.IMAGELESS_CHARTS if c not in charts
+        ]
         if seen is None:
             seen = set(gate.CONTROLLER_IMAGES) | set(gate.NOT_A_CONTAINER)
         return gate.chart_coverage(images, units, seen)
@@ -292,8 +299,7 @@ class EveryChartContributesAnImage(unittest.TestCase):
         self.assertIn("b rendered and contributed no image", problems[0])
 
     def test_every_chart_contributing_passes(self):
-        self.assertEqual(
-            self.coverage({"x:1": {"a"}, "y:2": {"b"}}, ["a", "b"]), [])
+        self.assertEqual(self.coverage({"x:1": {"a"}, "y:2": {"b"}}, ["a", "b"]), [])
 
     def test_a_declared_imageless_chart_is_not_reported(self):
         declared = next(iter(gate.IMAGELESS_CHARTS))
@@ -333,7 +339,8 @@ class DeclarationsMatchTheRender(unittest.TestCase):
     def test_a_controller_image_the_render_dropped_is_reported(self):
         declared = next(iter(gate.CONTROLLER_IMAGES))
         problems = gate.declaration_rot(
-            (set(gate.CONTROLLER_IMAGES) | set(gate.NOT_A_CONTAINER)) - {declared})
+            (set(gate.CONTROLLER_IMAGES) | set(gate.NOT_A_CONTAINER)) - {declared}
+        )
         self.assertEqual(len(problems), 1)
         self.assertIn(declared, problems[0])
         self.assertIn("outlived its image", problems[0])
@@ -341,19 +348,19 @@ class DeclarationsMatchTheRender(unittest.TestCase):
     def test_a_non_container_declaration_the_render_dropped_is_reported(self):
         declared = next(iter(gate.NOT_A_CONTAINER))
         problems = gate.declaration_rot(
-            (set(gate.CONTROLLER_IMAGES) | set(gate.NOT_A_CONTAINER)) - {declared})
+            (set(gate.CONTROLLER_IMAGES) | set(gate.NOT_A_CONTAINER)) - {declared}
+        )
         self.assertEqual(len(problems), 1)
         self.assertIn(declared, problems[0])
 
     def test_every_declaration_matched_passes(self):
         self.assertEqual(
-            gate.declaration_rot(set(gate.CONTROLLER_IMAGES) | set(gate.NOT_A_CONTAINER)),
-            [])
+            gate.declaration_rot(set(gate.CONTROLLER_IMAGES) | set(gate.NOT_A_CONTAINER)), []
+        )
 
     def test_an_empty_render_reports_every_declaration(self):
         problems = gate.declaration_rot(set())
-        self.assertEqual(len(problems),
-                         len(gate.CONTROLLER_IMAGES) + len(gate.NOT_A_CONTAINER))
+        self.assertEqual(len(problems), len(gate.CONTROLLER_IMAGES) + len(gate.NOT_A_CONTAINER))
 
 
 DIGEST = "sha256:" + "9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e9d8c7b6a5f4e3d2c1b0a9f8e"
@@ -374,8 +381,9 @@ class ADigestPinnedReferenceIsInThePopulation(unittest.TestCase):
         return [c for groups in gate.IMAGE_REF.findall(s) for c in groups if c]
 
     def test_a_digest_only_reference_is_matched_whole(self):
-        self.assertEqual(self.candidates(f"ghcr.io/example/thing@{DIGEST}"),
-                         [f"ghcr.io/example/thing@{DIGEST}"])
+        self.assertEqual(
+            self.candidates(f"ghcr.io/example/thing@{DIGEST}"), [f"ghcr.io/example/thing@{DIGEST}"]
+        )
 
     def test_a_tag_and_digest_reference_is_matched_whole(self):
         """Not as its `repo:tag` head: what a container runs is the digest, and
@@ -390,9 +398,11 @@ class ADigestPinnedReferenceIsInThePopulation(unittest.TestCase):
         self.assertEqual(self.candidates(f"nats@{DIGEST}"), [f"nats@{DIGEST}"])
 
     def test_the_bare_name_drops_both_tag_and_digest(self):
-        for ref in (f"ghcr.io/example/thing@{DIGEST}",
-                    f"ghcr.io/example/thing:1.2.3@{DIGEST}",
-                    "ghcr.io/example/thing:1.2.3"):
+        for ref in (
+            f"ghcr.io/example/thing@{DIGEST}",
+            f"ghcr.io/example/thing:1.2.3@{DIGEST}",
+            "ghcr.io/example/thing:1.2.3",
+        ):
             with self.subTest(ref=ref):
                 self.assertEqual(gate.bare_name(ref), "ghcr.io/example/thing")
 
@@ -411,15 +421,16 @@ class ADigestPinnedReferenceIsInThePopulation(unittest.TestCase):
         with that repository, whole, by the alternative above.
         """
         self.assertEqual(self.candidates(DIGEST), [])
-        self.assertNotIn("sha256", gate.NOT_A_CONTAINER,
-                         "a declaration matching nothing in the render is an "
-                         "exemption that only ever widens")
+        self.assertNotIn(
+            "sha256",
+            gate.NOT_A_CONTAINER,
+            "a declaration matching nothing in the render is an exemption that only ever widens",
+        )
 
     def test_a_repository_digest_is_unaffected_by_that_exclusion(self):
         """The exclusion is anchored at the start of a token, so it removes the
         bare form and nothing else."""
-        for ref in (f"ghcr.io/example/app@{DIGEST}",
-                    f"ghcr.io/example/app:1.0.0@{DIGEST}"):
+        for ref in (f"ghcr.io/example/app@{DIGEST}", f"ghcr.io/example/app:1.0.0@{DIGEST}"):
             with self.subTest(ref=ref):
                 self.assertEqual(self.candidates(ref), [ref])
 
@@ -443,12 +454,13 @@ data:
         """64 lowercase hex, because the suffix is the only discriminator the
         digest alternative has — it drops the path separator and the tag rules
         the others need."""
-        for s in (f"ghcr.io/example/thing@sha256:{'a' * 63}",
-                  "ghcr.io/example/thing@sha256:not-a-digest",
-                  f"ghcr.io/example/thing@sha512:{'a' * 64}"):
+        for s in (
+            f"ghcr.io/example/thing@sha256:{'a' * 63}",
+            "ghcr.io/example/thing@sha256:not-a-digest",
+            f"ghcr.io/example/thing@sha512:{'a' * 64}",
+        ):
             with self.subTest(s=s):
-                self.assertNotIn(f"ghcr.io/example/thing@{s.split('@')[1]}",
-                                 self.candidates(s))
+                self.assertNotIn(f"ghcr.io/example/thing@{s.split('@')[1]}", self.candidates(s))
 
     def test_a_digest_pinned_controller_reference_is_reported_when_undeclared(self):
         """The finding, end to end. A controller is handed a digest-pinned
@@ -509,16 +521,20 @@ spec:
         fails — which is the defect this closes, one revision later.
         """
         recommended = re.findall(r"`([^`]+)`", gate.MUTABLE_REMEDIATION)
-        self.assertTrue(recommended,
-                        f"the remediation names no reference form: "
-                        f"{gate.MUTABLE_REMEDIATION}")
+        self.assertTrue(
+            recommended, f"the remediation names no reference form: {gate.MUTABLE_REMEDIATION}"
+        )
         for form in recommended:
             with self.subTest(form=form):
-                concrete = (form.replace("<repo>", "ghcr.io/example/app")
-                                .replace("<hex>", DIGEST.split(":", 1)[1]))
-                self.assertEqual(self.candidates(concrete), [concrete],
-                                 f"the remediation recommends {form}, which the "
-                                 f"pattern under the structural walk does not read")
+                concrete = form.replace("<repo>", "ghcr.io/example/app").replace(
+                    "<hex>", DIGEST.split(":", 1)[1]
+                )
+                self.assertEqual(
+                    self.candidates(concrete),
+                    [concrete],
+                    f"the remediation recommends {form}, which the "
+                    f"pattern under the structural walk does not read",
+                )
 
 
 class WhatCannotBeReadReachesAVerdict(unittest.TestCase):
@@ -543,10 +559,8 @@ class WhatCannotBeReadReachesAVerdict(unittest.TestCase):
         pass for a reason it did not plant. Each has its own tests elsewhere in
         this file.
         """
-        saved = (gate.inventory, gate.chart_coverage, dict(gate.ALLOWED_MUTABLE),
-                 sys.argv)
-        gate.inventory = lambda env, seen=None: (images, list(unrendered),
-                                                 list(unclassified))
+        saved = (gate.inventory, gate.chart_coverage, dict(gate.ALLOWED_MUTABLE), sys.argv)
+        gate.inventory = lambda env, seen=None: (images, list(unrendered), list(unclassified))
         gate.chart_coverage = lambda *a, **k: []
         gate.ALLOWED_MUTABLE.clear()
         sys.argv = ["check-image-pins.py"]
@@ -566,9 +580,16 @@ class WhatCannotBeReadReachesAVerdict(unittest.TestCase):
         self.assertEqual(rc, 0, out)
 
     def test_a_reference_that_cannot_be_placed_fails(self):
-        rc, out = self.verdict(self.IMAGES, unclassified=[
-            ("c", "ghcr.io/example/mystery:1.0 is image-shaped and reaches no pod "
-                  "template or `image:` key.")])
+        rc, out = self.verdict(
+            self.IMAGES,
+            unclassified=[
+                (
+                    "c",
+                    "ghcr.io/example/mystery:1.0 is image-shaped and reaches no pod "
+                    "template or `image:` key.",
+                )
+            ],
+        )
         self.assertEqual(rc, 1)
         self.assertIn("ghcr.io/example/mystery:1.0", out)
 
@@ -619,8 +640,15 @@ class WhatTheInventoryRenders(unittest.TestCase):
         params: tuple = (("settings.clusterName", "c"),)
         source = "oci://public.ecr.aws/karpenter/karpenter"
 
-    def inventory_with(self, *, fetched=None, returncode=0, stdout=DEPLOYMENT,
-                       stderr="", values=("values.yaml", "values-production.yaml")):
+    def inventory_with(
+        self,
+        *,
+        fetched=None,
+        returncode=0,
+        stdout=DEPLOYMENT,
+        stderr="",
+        values=("values.yaml", "values-production.yaml"),
+    ):
         """inventory() over one unit, recording what was fetched and run."""
         root = pathlib.Path(tempfile.mkdtemp())
         unit_dir = root / self.Unit.path
@@ -645,8 +673,13 @@ class WhatTheInventoryRenders(unittest.TestCase):
             self.commands.append(cmd)
             return Completed(returncode, stdout, stderr)
 
-        saved = (gate.ROOT, gate.render_addons.discover, gate.registry.chart_archive,
-                 gate.subprocess.run, gate.gatelib.require)
+        saved = (
+            gate.ROOT,
+            gate.render_addons.discover,
+            gate.registry.chart_archive,
+            gate.subprocess.run,
+            gate.gatelib.require,
+        )
         gate.ROOT = root
         gate.render_addons.discover = lambda *a, **k: [self.Unit()]
         gate.registry.chart_archive = chart_archive
@@ -655,19 +688,36 @@ class WhatTheInventoryRenders(unittest.TestCase):
         try:
             return gate.inventory("production"), archive, unit_dir
         finally:
-            (gate.ROOT, gate.render_addons.discover, gate.registry.chart_archive,
-             gate.subprocess.run, gate.gatelib.require) = saved
+            (
+                gate.ROOT,
+                gate.render_addons.discover,
+                gate.registry.chart_archive,
+                gate.subprocess.run,
+                gate.gatelib.require,
+            ) = saved
 
     def test_helm_renders_the_fetched_archive(self):
         (images, unrendered, unclassified), archive, unit_dir = self.inventory_with()
         self.assertEqual(self.fetches, [(self.Unit.source, "karpenter", "1.14.0")])
-        self.assertEqual(self.commands, [[
-            "helm", "template", "karpenter", str(archive),
-            "--namespace", "kube-system",
-            "--set", "settings.clusterName=c",
-            "-f", str(unit_dir / "values.yaml"),
-            "-f", str(unit_dir / "values-production.yaml"),
-        ]])
+        self.assertEqual(
+            self.commands,
+            [
+                [
+                    "helm",
+                    "template",
+                    "karpenter",
+                    str(archive),
+                    "--namespace",
+                    "kube-system",
+                    "--set",
+                    "settings.clusterName=c",
+                    "-f",
+                    str(unit_dir / "values.yaml"),
+                    "-f",
+                    str(unit_dir / "values-production.yaml"),
+                ]
+            ],
+        )
         self.assertEqual((unrendered, unclassified), ([], []))
         self.assertEqual(images, {"ghcr.io/example/app:1.0.0": {"karpenter"}})
 
@@ -677,7 +727,8 @@ class WhatTheInventoryRenders(unittest.TestCase):
 
     def test_a_chart_that_cannot_be_fetched_is_unrendered_not_passed(self):
         (images, unrendered, _), _, _ = self.inventory_with(
-            fetched=gate.registry.ChartUnavailable("HTTP 429 from r", answered=False))
+            fetched=gate.registry.ChartUnavailable("HTTP 429 from r", answered=False)
+        )
         self.assertEqual(images, {})
         self.assertEqual(self.commands, [])
         self.assertEqual(len(unrendered), 1)
@@ -686,17 +737,21 @@ class WhatTheInventoryRenders(unittest.TestCase):
 
     def test_a_pin_the_registry_ruled_out_is_a_finding(self):
         """Exit 1, as every gate reading a chart through the client gives it."""
-        with contextlib.redirect_stdout(io.StringIO()) as out, \
-                self.assertRaises(SystemExit) as caught:
-            self.inventory_with(fetched=gate.registry.ChartUnavailable(
-                "HTTP 404 from r", answered=True))
+        with (
+            contextlib.redirect_stdout(io.StringIO()) as out,
+            self.assertRaises(SystemExit) as caught,
+        ):
+            self.inventory_with(
+                fetched=gate.registry.ChartUnavailable("HTTP 404 from r", answered=True)
+            )
         self.assertEqual(caught.exception.code, 1)
         self.assertEqual(self.commands, [])
         self.assertIn("rules the pin out", out.getvalue())
 
     def test_a_render_that_fails_is_unrendered_with_helms_reason(self):
         (images, unrendered, _), _, _ = self.inventory_with(
-            returncode=1, stdout="", stderr="Error: values don't meet the schema")
+            returncode=1, stdout="", stderr="Error: values don't meet the schema"
+        )
         self.assertEqual(images, {})
         self.assertEqual(unrendered, [(self.Unit.path, "Error: values don't meet the schema")])
 
@@ -704,7 +759,8 @@ class WhatTheInventoryRenders(unittest.TestCase):
         """helm writes warnings to stderr; an image-shaped string there is not
         something the chart deploys."""
         (images, _, unclassified), _, _ = self.inventory_with(
-            stderr="WARNING: ghcr.io/example/other:2.0.0 is deprecated\n")
+            stderr="WARNING: ghcr.io/example/other:2.0.0 is deprecated\n"
+        )
         self.assertEqual(set(images), {"ghcr.io/example/app:1.0.0"})
         self.assertEqual(unclassified, [])
 
@@ -754,11 +810,16 @@ class TheHostGrammarHasOneParse(unittest.TestCase):
         try:
             proc = subprocess.run(
                 [sys.executable, "-c", _MATCH_IN_CHILD, str(GATE), text],
-                capture_output=True, text=True, timeout=self.BUDGET_SECONDS)
+                capture_output=True,
+                text=True,
+                timeout=self.BUDGET_SECONDS,
+            )
         except subprocess.TimeoutExpired:
-            self.fail(f"IMAGE_REF did not finish on {len(text)} characters within "
-                      f"{self.BUDGET_SECONDS}s — the host alternatives have more "
-                      f"than one parse again")
+            self.fail(
+                f"IMAGE_REF did not finish on {len(text)} characters within "
+                f"{self.BUDGET_SECONDS}s — the host alternatives have more "
+                f"than one parse again"
+            )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return int(proc.stdout.strip())
 
@@ -772,8 +833,9 @@ class TheHostGrammarHasOneParse(unittest.TestCase):
 
     def test_a_hostile_string_inside_a_render_completes(self):
         """Delivered the way a chart delivers one — a value in a ConfigMap."""
-        rendered = ("apiVersion: v1\\nkind: ConfigMap\\ndata:\\n"
-                    f"  cfg: |\\n    upstream: {self.HOSTILE}\\n")
+        rendered = (
+            f"apiVersion: v1\\nkind: ConfigMap\\ndata:\\n  cfg: |\\n    upstream: {self.HOSTILE}\\n"
+        )
         unclassified: list[tuple[str, str]] = []
         gate.extract_images(rendered, "c", [], unclassified)
         self.assertEqual(unclassified, [])
@@ -785,8 +847,8 @@ class TheHostGrammarHasOneParse(unittest.TestCase):
             with self.subTest(ref=ref):
                 concrete = f"{ref}:1.0.0"
                 self.assertEqual(
-                    [c for grp in gate.IMAGE_REF.findall(concrete) for c in grp if c],
-                    [concrete])
+                    [c for grp in gate.IMAGE_REF.findall(concrete) for c in grp if c], [concrete]
+                )
 
     def test_a_domain_component_carries_no_dot_of_its_own(self):
         """Dots separate components and never sit inside one. That is the
@@ -811,11 +873,11 @@ class TheHostGrammarHasOneParse(unittest.TestCase):
         records why the address is not an image would stop matching anything.
         """
         self.assertEqual(
-            [c for grp in gate.IMAGE_REF.findall("localhost:5000/x/y:1.0")
-             for c in grp if c],
-            ["localhost:5000"])
+            [c for grp in gate.IMAGE_REF.findall("localhost:5000/x/y:1.0") for c in grp if c],
+            ["localhost:5000"],
+        )
         self.assertIn("localhost", gate.NOT_A_CONTAINER)
         self.assertEqual(
-            [c for grp in gate.IMAGE_REF.findall("registry.local:5000/x/y:1.0")
-             for c in grp if c],
-            ["registry.local:5000/x/y:1.0"])
+            [c for grp in gate.IMAGE_REF.findall("registry.local:5000/x/y:1.0") for c in grp if c],
+            ["registry.local:5000/x/y:1.0"],
+        )

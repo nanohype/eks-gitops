@@ -1,9 +1,13 @@
 # Python tooling for the gate scripts. There is no package here — the gates are
 # standalone hyphenated executables — so this file exists only to configure the
-# linter and the type checker.
+# linter, the formatter and the type checker.
 
 [tool.ruff]
-target-version = "py313"
+# The interpreter every Python CI job installs, from .python-version. mypy's
+# python_version below is the same release, and the lock in requirements.txt is
+# compiled under it. scripts/tests/test_toolchain.py holds all three to that file,
+# so the bump Renovate's pyenv manager opens fails until they move with it.
+target-version = "py315"
 line-length = 100
 # scripts/ holds every executable; scripts/tests/ holds the harness. Both are in
 # scope: a fixture that drifts from the gate it exercises is the failure the type
@@ -27,7 +31,7 @@ ignore = [
 ]
 
 [tool.mypy]
-python_version = "3.13"
+python_version = "3.15"
 # Both halves, per testing-rubric `typecheck-includes-tests`: a test file that
 # drifts from the gate it covers is exactly the drift a type checker sees and a
 # test run does not.

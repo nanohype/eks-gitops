@@ -95,8 +95,10 @@ def chart_pin() -> tuple[str, str]:
     for src in sources:
         if isinstance(src, dict) and "chart" in src:
             return str(src["repoURL"]), str(src["targetRevision"])
-    print(f"Cannot run: {APPSET.relative_to(ROOT)} declares no chart source, so this "
-          f"gate has no chart to render and examined nothing.")
+    print(
+        f"Cannot run: {APPSET.relative_to(ROOT)} declares no chart source, so this "
+        f"gate has no chart to render and examined nothing."
+    )
     sys.exit(gatelib.CANNOT_RUN)
 
 
@@ -106,15 +108,23 @@ def environments() -> list[str]:
     Derived from the tree rather than listed, so an environment added without a
     threshold is checked rather than skipped.
     """
-    return sorted(p.name[len("values-"):-len(".yaml")]
-                  for p in ADDON.glob("values-*.yaml"))
+    return sorted(p.name[len("values-") : -len(".yaml")] for p in ADDON.glob("values-*.yaml"))
 
 
 def render(archive: pathlib.Path, env: str) -> dict:
     """The Loki config as the chart produces it for one environment."""
-    cmd = ["helm", "template", "loki", str(archive), "-n", "monitoring",
-           "-f", str(ADDON / "values.yaml"),
-           "-f", str(ADDON / f"values-{env}.yaml")]
+    cmd = [
+        "helm",
+        "template",
+        "loki",
+        str(archive),
+        "-n",
+        "monitoring",
+        "-f",
+        str(ADDON / "values.yaml"),
+        "-f",
+        str(ADDON / f"values-{env}.yaml"),
+    ]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=RENDER_TIMEOUT)
     if proc.returncode != 0:
         err = ((proc.stderr or "") + (proc.stdout or "")).strip()
@@ -123,12 +133,17 @@ def render(archive: pathlib.Path, env: str) -> dict:
         print("Nothing was examined, which is not the same as nothing being wrong.")
         sys.exit(gatelib.CANNOT_RUN)
     for doc in yaml.safe_load_all(proc.stdout):
-        if (doc and doc.get("kind") == "ConfigMap"
-                and doc["metadata"]["name"] == "loki"
-                and "config.yaml" in (doc.get("data") or {})):
+        if (
+            doc
+            and doc.get("kind") == "ConfigMap"
+            and doc["metadata"]["name"] == "loki"
+            and "config.yaml" in (doc.get("data") or {})
+        ):
             return yaml.safe_load(doc["data"]["config.yaml"])
-    print(f"Cannot run: the {env} render produced no loki ConfigMap carrying "
-          f"config.yaml, so no threshold could be read.")
+    print(
+        f"Cannot run: the {env} render produced no loki ConfigMap carrying "
+        f"config.yaml, so no threshold could be read."
+    )
     sys.exit(gatelib.CANNOT_RUN)
 
 
@@ -136,36 +151,43 @@ def alert_threshold() -> float | None:
     """The fill rule's evaluator threshold, read from the shipped alert."""
     docs = gatelib.read_yaml_all(ALERT)
     for doc in docs:
-        for rule in ((doc.get("spec") or {}).get("rules") or []):
+        for rule in (doc.get("spec") or {}).get("rules") or []:
             if rule.get("uid") != FILL_RULE:
                 continue
             queries = list(rule.get("data") or [])
             exprs = [(d.get("model") or {}).get("expr", "") for d in queries]
             joined = " ".join(e for e in exprs if e)
             if GAUGE not in joined:
-                fail(f"{ALERT.relative_to(ROOT)}: rule {FILL_RULE!r} does not query "
-                     f"{GAUGE}. That gauge is set on every tick; {EDGE_COUNTER} counts "
-                     f"only the transition into the throttled state, so a rule keyed "
-                     f"on it reads as quiet through a sustained outage.")
+                fail(
+                    f"{ALERT.relative_to(ROOT)}: rule {FILL_RULE!r} does not query "
+                    f"{GAUGE}. That gauge is set on every tick; {EDGE_COUNTER} counts "
+                    f"only the transition into the throttled state, so a rule keyed "
+                    f"on it reads as quiet through a sustained outage."
+                )
             if EDGE_COUNTER in joined:
-                fail(f"{ALERT.relative_to(ROOT)}: rule {FILL_RULE!r} queries "
-                     f"{EDGE_COUNTER}, which increments once per transition rather "
-                     f"than per rejected write.")
+                fail(
+                    f"{ALERT.relative_to(ROOT)}: rule {FILL_RULE!r} queries "
+                    f"{EDGE_COUNTER}, which increments once per transition rather "
+                    f"than per rejected write."
+                )
             for d in queries:
-                for cond in ((d.get("model") or {}).get("conditions") or []):
+                for cond in (d.get("model") or {}).get("conditions") or []:
                     params = (cond.get("evaluator") or {}).get("params") or []
                     if params:
                         return float(params[0])
-            fail(f"{ALERT.relative_to(ROOT)}: rule {FILL_RULE!r} carries no evaluator "
-                 f"threshold, so nothing states when it fires.")
+            fail(
+                f"{ALERT.relative_to(ROOT)}: rule {FILL_RULE!r} carries no evaluator "
+                f"threshold, so nothing states when it fires."
+            )
             return None
-    fail(f"{ALERT.relative_to(ROOT)}: no rule with uid {FILL_RULE!r}. The volume's "
-         f"ingestion cutoff is reached with no warning ahead of it.")
+    fail(
+        f"{ALERT.relative_to(ROOT)}: no rule with uid {FILL_RULE!r}. The volume's "
+        f"ingestion cutoff is reached with no warning ahead of it."
+    )
     return None
 
 
-def environment_verdict(cfg: dict, warn: float | None,
-                        rel: str) -> tuple[list[str], bool]:
+def environment_verdict(cfg: dict, warn: float | None, rel: str) -> tuple[list[str], bool]:
     """Everything wrong with one environment's rendered Loki config.
 
     Separate from the render because the render reaches a chart repository and
@@ -177,7 +199,7 @@ def environment_verdict(cfg: dict, warn: float | None,
     the second is what the closing line counts, so an environment that failed the
     comparison is not also reported as one the comparison covered.
     """
-    wal = ((cfg.get("ingester") or {}).get("wal") or {})
+    wal = (cfg.get("ingester") or {}).get("wal") or {}
     limits = cfg.get("limits_config") or {}
     comp = cfg.get("compactor") or {}
     problems: list[str] = []
@@ -189,25 +211,29 @@ def environment_verdict(cfg: dict, warn: float | None,
             f"{rel}: the render sets no ingester.wal.disk_full_threshold, so the "
             f"fraction at which Loki stops accepting every push is an upstream "
             f"default. The alert's lead time then depends on a number that can "
-            f"move under a chart bump with nothing here to compare against.")
+            f"move under a chart bump with nothing here to compare against."
+        )
     elif warn is not None and not warn < float(cutoff):
         problems.append(
             f"{rel}: the fill alert fires at {warn} but ingestion stops at "
             f"{cutoff}. There is no window in which to act — and no remedy is "
             f"fast: a retention cut must sync, wait a compaction interval, then "
             f"clear retention_delete_delay before a byte is freed, and the volume "
-            f"cannot be grown through this repo at all.")
+            f"cannot be grown through this repo at all."
+        )
     else:
         leads = True
 
     if limits.get("retention_period") is None:
         problems.append(
             f"{rel}: the render sets no limits_config.retention_period. Nothing "
-            f"then deletes on a schedule, and the volume reaches the cutoff.")
+            f"then deletes on a schedule, and the volume reaches the cutoff."
+        )
     if comp.get("retention_enabled") is not True:
         problems.append(
             f"{rel}: compactor.retention_enabled is not true, so retention_period "
-            f"deletes nothing however it is set and the cutoff arrives regardless.")
+            f"deletes nothing however it is set and the cutoff arrives regardless."
+        )
     return problems, leads
 
 
@@ -217,8 +243,10 @@ def main() -> int:
     warn = alert_threshold()
     envs = environments()
     if not envs:
-        fail(f"{ADDON.relative_to(ROOT)} carries no values-<env>.yaml, so this gate "
-             f"examined no environment.")
+        fail(
+            f"{ADDON.relative_to(ROOT)} carries no values-<env>.yaml, so this gate "
+            f"examined no environment."
+        )
 
     checked = 0
     for env in envs:
@@ -234,12 +262,14 @@ def main() -> int:
             print(f"FAIL  {f}")
         return 1
 
-    print(f"log-volume budget OK: {len(envs)} environment(s) declare an explicit "
-          f"ingestion cutoff with retention enforced against it, and the fill alert "
-          f"fires at {warn} — strictly ahead of every declared cutoff ({checked} "
-          f"checked). Capacity itself is deliberately not asserted here: the PVC size "
-          f"is under ignoreDifferences and the compression ratio is a property of the "
-          f"corpus, so the volume's fit is watched by {GAUGE} at runtime.")
+    print(
+        f"log-volume budget OK: {len(envs)} environment(s) declare an explicit "
+        f"ingestion cutoff with retention enforced against it, and the fill alert "
+        f"fires at {warn} — strictly ahead of every declared cutoff ({checked} "
+        f"checked). Capacity itself is deliberately not asserted here: the PVC size "
+        f"is under ignoreDifferences and the compression ratio is a property of the "
+        f"corpus, so the volume's fit is watched by {GAUGE} at runtime."
+    )
     return 0
 
 

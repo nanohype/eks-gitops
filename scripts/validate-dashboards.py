@@ -74,9 +74,7 @@ GRAFANA_COM_ID = re.compile(
 # annotation. Parsed textually for the same reason the id is: this runs on a
 # bare runner with no pyyaml. The value is a JSON string, so a title containing
 # a comma, a slash or a non-ASCII character survives round-tripping.
-EXPECTED_TITLE = re.compile(
-    r'^\s*nanohype\.dev/grafana-com-title:\s*"((?:[^"\\]|\\.)*)"\s*$', re.M
-)
+EXPECTED_TITLE = re.compile(r'^\s*nanohype\.dev/grafana-com-title:\s*"((?:[^"\\]|\\.)*)"\s*$', re.M)
 
 
 def fetch(url: str) -> tuple[int, bytes]:
@@ -120,7 +118,6 @@ def alert_panels(node, titles: list[str]) -> None:
     elif isinstance(node, list):
         for child in node:
             alert_panels(child, titles)
-
 
 
 # ─────────────────────── locally-authored dashboard checks ───────────────────────
@@ -242,7 +239,7 @@ def extract_dashboard_json(text: str):
         return None, "no `json: |` literal block was found"
     indent = len(m.group(1)) + 2
     body = []
-    for line in text[m.end():].splitlines():
+    for line in text[m.end() :].splitlines():
         if line.strip() and not line.startswith(" " * indent):
             break
         body.append(line[indent:] if len(line) >= indent else "")
@@ -252,9 +249,11 @@ def extract_dashboard_json(text: str):
     except json.JSONDecodeError as exc:
         # exc.lineno is relative to the block; translate it to the file so the
         # reader is sent to a line that exists in the file they opened.
-        file_line = text[:m.end()].count("\n") + exc.lineno
-        return None, (f"the `json: |` block is present but is not valid JSON — "
-                      f"{exc.msg} at file line {file_line}")
+        file_line = text[: m.end()].count("\n") + exc.lineno
+        return None, (
+            f"the `json: |` block is present but is not valid JSON — "
+            f"{exc.msg} at file line {file_line}"
+        )
 
 
 def walk_datasources(node, out: list[str]) -> None:
@@ -262,8 +261,11 @@ def walk_datasources(node, out: list[str]) -> None:
         ds = node.get("datasource")
         if isinstance(ds, str):
             out.append(ds)
-        elif (isinstance(ds, dict) and isinstance(ds.get("uid"), str)
-              and {k: ds.get(k) for k in BUILTIN_DATASOURCE} != BUILTIN_DATASOURCE):
+        elif (
+            isinstance(ds, dict)
+            and isinstance(ds.get("uid"), str)
+            and {k: ds.get(k) for k in BUILTIN_DATASOURCE} != BUILTIN_DATASOURCE
+        ):
             out.append(ds["uid"])
         for v in node.values():
             walk_datasources(v, out)
@@ -334,9 +336,7 @@ def check_local_dashboards(root: pathlib.Path) -> list[str]:
         total_declared += len(declared)
         total_used += len(used)
         for name in sorted(used - declared):
-            problems.append(
-                f"{rel}: uses ${name} but declares no such template variable"
-            )
+            problems.append(f"{rel}: uses ${name} but declares no such template variable")
 
     # An empty `used` satisfies `used - declared` on every dashboard, so a regex
     # that stops matching turns this check into a silent no-op. If anything
@@ -397,15 +397,19 @@ def main() -> int:
 
     refs = discover(args.root)
     if 0 < len(refs) < MIN_DASHBOARD_REFS:
-        print(f"FAIL  found {len(refs)} grafanaCom.id reference(s), below the floor of "
-              f"{MIN_DASHBOARD_REFS}. The comment above that constant promised a floor "
-              f"on what was EXAMINED and the code enforced one of zero, so a glob that "
-              f"matched almost nothing reported the same as a clean tree.")
+        print(
+            f"FAIL  found {len(refs)} grafanaCom.id reference(s), below the floor of "
+            f"{MIN_DASHBOARD_REFS}. The comment above that constant promised a floor "
+            f"on what was EXAMINED and the code enforced one of zero, so a glob that "
+            f"matched almost nothing reported the same as a clean tree."
+        )
         return 2
     if not refs:
-        print(f"FAIL  no grafanaCom.id references found. This repo ships "
-              f"{MIN_DASHBOARD_REFS}+ of them, so finding none means this gate read "
-              f"the wrong tree, not that the dashboards are clean.")
+        print(
+            f"FAIL  no grafanaCom.id references found. This repo ships "
+            f"{MIN_DASHBOARD_REFS}+ of them, so finding none means this gate read "
+            f"the wrong tree, not that the dashboards are clean."
+        )
         return 2
 
     print(f"Validating {len(refs)} grafana.com dashboard reference(s)\n")
@@ -448,10 +452,12 @@ def main() -> int:
             )
             continue
         if json.loads(f'"{expected}"') != name:
-            print(f'    WRONG BOARD — expected "{json.loads(chr(34)+expected+chr(34))}", grafana.com says "{name}"')
+            print(
+                f'    WRONG BOARD — expected "{json.loads(chr(34) + expected + chr(34))}", grafana.com says "{name}"'
+            )
             mismatched.append(
-                f'{gnet_id}  ({rel})  annotation says '
-                f'"{json.loads(chr(34)+expected+chr(34))}", grafana.com says "{name}"'
+                f"{gnet_id}  ({rel})  annotation says "
+                f'"{json.loads(chr(34) + expected + chr(34))}", grafana.com says "{name}"'
             )
             continue
 
@@ -508,7 +514,9 @@ def main() -> int:
     if dead or legacy or mismatched or local:
         return 1
 
-    print(f"✓ all {len(refs)} grafana.com dashboards exist, are AMG-saveable, and\n  resolve to the title their pin records")
+    print(
+        f"✓ all {len(refs)} grafana.com dashboards exist, are AMG-saveable, and\n  resolve to the title their pin records"
+    )
     print("✓ every locally-authored panel names a wired datasource and a declared variable")
     return 0
 

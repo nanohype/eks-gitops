@@ -212,8 +212,14 @@ MIN_RENDERED = 40
 # matches the RC object itself: the Pods it creates are matched by the Pod rules,
 # so the namespace it lands in must still be covered.
 WORKLOAD_KINDS = {
-    "Pod", "Deployment", "StatefulSet", "DaemonSet",
-    "ReplicaSet", "ReplicationController", "Job", "CronJob",
+    "Pod",
+    "Deployment",
+    "StatefulSet",
+    "DaemonSet",
+    "ReplicaSet",
+    "ReplicationController",
+    "Job",
+    "CronJob",
 }
 
 # Kustomize-sourced addon workloads that render pods but carry no Helm chart, so
@@ -388,8 +394,10 @@ def exclusion_of(doc: dict) -> tuple[list[str] | None, list[str]]:
         return None, problems
     expr = exprs[0]
     if expr.get("key") != NAMESPACE_NAME_LABEL or expr.get("operator") != "NotIn":
-        problems.append(f"the namespaceSelector expression is {expr.get('key')} "
-                        f"{expr.get('operator')}, not {NAMESPACE_NAME_LABEL} NotIn")
+        problems.append(
+            f"the namespaceSelector expression is {expr.get('key')} "
+            f"{expr.get('operator')}, not {NAMESPACE_NAME_LABEL} NotIn"
+        )
         return None, problems
     return sorted(set(expr.get("values") or [])), problems
 
@@ -411,19 +419,29 @@ def existing_violation_problems(doc: dict) -> list[str]:
     behind the UPDATE guard, and the base validation must be the two OR'd.
     """
     spec = doc.get("spec") or {}
-    variables = {v.get("name"): v.get("expression")
-                 for v in spec.get("variables") or [] if isinstance(v, dict)}
+    variables = {
+        v.get("name"): v.get("expression")
+        for v in spec.get("variables") or []
+        if isinstance(v, dict)
+    }
     problems: list[str] = []
     compliant = variables.get("compliant")
     existing = variables.get("existingViolation")
     if compliant is None or existing is None:
-        return ["declares no `compliant` and `existingViolation` variables to derive "
-                "the existing-violation term from"]
-    want = _normalise("oldObject != null && has(oldObject.kind) && !("
-                      + OBJECT_REF.sub("oldObject.", str(compliant)) + ")")
+        return [
+            "declares no `compliant` and `existingViolation` variables to derive "
+            "the existing-violation term from"
+        ]
+    want = _normalise(
+        "oldObject != null && has(oldObject.kind) && !("
+        + OBJECT_REF.sub("oldObject.", str(compliant))
+        + ")"
+    )
     if _normalise(existing) != want:
-        problems.append(f"existingViolation is not `compliant` read off oldObject and "
-                        f"negated behind the UPDATE guard — want `{want}`")
+        problems.append(
+            f"existingViolation is not `compliant` read off oldObject and "
+            f"negated behind the UPDATE guard — want `{want}`"
+        )
     validations = spec.get("validations") or []
     if validations and _normalise(validations[0].get("expression", "")) != GRANDFATHERED:
         problems.append(f"the base validation is not `{GRANDFATHERED}`")
@@ -463,8 +481,10 @@ def check_exclusion_parity() -> tuple[bool, set[str], set[str]]:
         validations = (doc.get("spec") or {}).get("validations") or []
         if len(validations) != 1:
             ok = False
-            print(f"  FAIL  {name} holds {len(validations)} validations, not one — a "
-                  f"ValidatingPolicy reports only the first that fails")
+            print(
+                f"  FAIL  {name} holds {len(validations)} validations, not one — a "
+                f"ValidatingPolicy reports only the first that fails"
+            )
         keys.update(f"{name}/{i}" for i in range(len(validations)))
         for problem in existing_violation_problems(doc):
             ok = False
@@ -488,11 +508,9 @@ def check_exclusion_parity() -> tuple[bool, set[str], set[str]]:
             if extra:
                 print(f"    extra:   {extra}")
     if ok:
-        print(f"  ok    {len(lists)} policies share one {len(baseline)}-namespace "
-              f"exclusion set")
+        print(f"  ok    {len(lists)} policies share one {len(baseline)}-namespace exclusion set")
     else:
-        print(f"  FAIL  exclusion lists diverge — reconcile all {len(EXCLUSION_POLICIES)} "
-              f"policies")
+        print(f"  FAIL  exclusion lists diverge — reconcile all {len(EXCLUSION_POLICIES)} policies")
     print()
     return ok, set(baseline), keys
 
@@ -527,26 +545,34 @@ def check_validation_actions(mode: str, policy_files: list[str]) -> bool:
                 print(f"  FAIL  {mode}: {name} has validationActions {got}, want {want}")
             if spec.get("failurePolicy") != "Fail":
                 ok = False
-                print(f"  FAIL  {mode}: {name} has failurePolicy "
-                      f"{spec.get('failurePolicy')}, want Fail")
-            admission = ((spec.get("evaluation") or {}).get("admission") or {})
+                print(
+                    f"  FAIL  {mode}: {name} has failurePolicy "
+                    f"{spec.get('failurePolicy')}, want Fail"
+                )
+            admission = (spec.get("evaluation") or {}).get("admission") or {}
             if admission.get("enabled") is False:
                 ok = False
-                print(f"  FAIL  {mode}: {name} sets evaluation.admission.enabled false, "
-                      f"so it evaluates nothing at admission")
-            expressions = [_normalise(v.get("expression", ""))
-                           for v in spec.get("validations") or []]
+                print(
+                    f"  FAIL  {mode}: {name} sets evaluation.admission.enabled false, "
+                    f"so it evaluates nothing at admission"
+                )
+            expressions = [
+                _normalise(v.get("expression", "")) for v in spec.get("validations") or []
+            ]
             if expressions != [want_expression]:
                 ok = False
-                print(f"  FAIL  {mode}: {name} validates {expressions}, "
-                      f"want ['{want_expression}']")
+                print(f"  FAIL  {mode}: {name} validates {expressions}, want ['{want_expression}']")
     if seen < len(EXCLUSION_POLICIES):
-        print(f"  FAIL  {mode}: rendered {seen} ValidatingPolicies, expected at least "
-              f"{len(EXCLUSION_POLICIES)}")
+        print(
+            f"  FAIL  {mode}: rendered {seen} ValidatingPolicies, expected at least "
+            f"{len(EXCLUSION_POLICIES)}"
+        )
         return False
     if ok:
-        print(f"  ok    {mode}: all {seen} ValidatingPolicies set validationActions {want}, "
-              f"failurePolicy Fail, admission on, validating `{want_expression}`")
+        print(
+            f"  ok    {mode}: all {seen} ValidatingPolicies set validationActions {want}, "
+            f"failurePolicy Fail, admission on, validating `{want_expression}`"
+        )
     return ok
 
 
@@ -593,8 +619,11 @@ def workloads(prepared: str) -> list[dict]:
     a cluster accepts, so handing it the rest of a chart risks the run for no
     information.
     """
-    return [d for d in yaml.safe_load_all(prepared)
-            if isinstance(d, dict) and d.get("kind") in WORKLOAD_KINDS]
+    return [
+        d
+        for d in yaml.safe_load_all(prepared)
+        if isinstance(d, dict) and d.get("kind") in WORKLOAD_KINDS
+    ]
 
 
 def distinct_identities(docs: list[dict]) -> list[dict]:
@@ -647,8 +676,10 @@ def render_fleet(dest: pathlib.Path) -> tuple[int, set[str]]:
         # blind in exactly the same place.
         unit_dir = REPO_ROOT / u.path
         if not unit_dir.is_dir():
-            print(f"  path '{u.path}' does not exist — the ApplicationSet element "
-                  f"points at nothing, so {u.chart} reaches this gate never")
+            print(
+                f"  path '{u.path}' does not exist — the ApplicationSet element "
+                f"points at nothing, so {u.chart} reaches this gate never"
+            )
             return -1, landed
         base = unit_dir / "values.yaml"
         for env in ENFORCE_ENVS:
@@ -664,18 +695,15 @@ def render_fleet(dest: pathlib.Path) -> tuple[int, set[str]]:
             cmd += ["-f", str(env_file)]
             proc = _run(cmd)
             if proc.returncode != 0:
-                print(f"  helm render FAILED {u.chart}@{u.version} ({env}):\n"
-                      f"{proc.stderr.strip()}")
+                print(f"  helm render FAILED {u.chart}@{u.version} ({env}):\n{proc.stderr.strip()}")
                 return -1, landed
             fleet += workloads(_prepare(proc.stdout, u.namespace, landed))
             count += 1
 
     for path, namespace, per_env in KUSTOMIZE_WORKLOADS:
-        roots = ([f"{path}/overlays/{e}" for e in ENFORCE_ENVS]
-                 if per_env else [path])
+        roots = [f"{path}/overlays/{e}" for e in ENFORCE_ENVS] if per_env else [path]
         for root in roots:
-            proc = _run(["kustomize", "build", "--enable-helm",
-                         str(REPO_ROOT / root)])
+            proc = _run(["kustomize", "build", "--enable-helm", str(REPO_ROOT / root)])
             if proc.returncode != 0:
                 print(f"  kustomize build FAILED {root}:\n{proc.stderr.strip()}")
                 return -1, landed
@@ -683,8 +711,8 @@ def render_fleet(dest: pathlib.Path) -> tuple[int, set[str]]:
             count += 1
 
     (dest / "fleet.yaml").write_text(
-        "\n---\n".join(yaml.safe_dump(d, sort_keys=False)
-                        for d in distinct_identities(fleet)))
+        "\n---\n".join(yaml.safe_dump(d, sort_keys=False) for d in distinct_identities(fleet))
+    )
 
     # The canary rides in with the fleet so it meets exactly the policy build the
     # fleet meets. Deliberately NOT recorded in `landed`: its namespace is
@@ -716,8 +744,9 @@ def build_policies(mode: str, dest: pathlib.Path) -> list[str]:
     return files
 
 
-def kyverno_apply(policies: list[str], resources: pathlib.Path
-                  ) -> tuple[dict | None, subprocess.CompletedProcess]:
+def kyverno_apply(
+    policies: list[str], resources: pathlib.Path
+) -> tuple[dict | None, subprocess.CompletedProcess]:
     """Run kyverno and return its parsed policy report.
 
     The exit code is deliberately NOT the verdict — the canary makes it
@@ -725,8 +754,16 @@ def kyverno_apply(policies: list[str], resources: pathlib.Path
     resource. A report that will not parse returns None, which every caller
     treats as a failure rather than as an empty result set.
     """
-    cmd = ["kyverno", "apply", *policies, "--resource", str(resources),
-           "--policy-report", "--output-format", "json"]
+    cmd = [
+        "kyverno",
+        "apply",
+        *policies,
+        "--resource",
+        str(resources),
+        "--policy-report",
+        "--output-format",
+        "json",
+    ]
     proc = _run(cmd)
     return report_json(proc.stdout), proc
 
@@ -764,15 +801,17 @@ def _rule_key(result: dict) -> str:
 
 
 def _is_canary(result: dict) -> bool:
-    return any(r.get("namespace") == CANARY_NAMESPACE
-               and r.get("name") == CANARY_NAME
-               for r in result.get("resources", []))
+    return any(
+        r.get("namespace") == CANARY_NAMESPACE and r.get("name") == CANARY_NAME
+        for r in result.get("resources", [])
+    )
 
 
 def _is_runtime_pod(result: dict) -> bool:
-    return any(r.get("namespace") == RUNTIME_POD_NAMESPACE
-               and r.get("name") == RUNTIME_POD_NAME
-               for r in result.get("resources", []))
+    return any(
+        r.get("namespace") == RUNTIME_POD_NAMESPACE and r.get("name") == RUNTIME_POD_NAME
+        for r in result.get("resources", [])
+    )
 
 
 def judge_runtime_pod(results: list[dict]) -> bool:
@@ -793,27 +832,38 @@ def judge_runtime_pod(results: list[dict]) -> bool:
     denials = [r for r in hits if r.get("result") in ("fail", "warn", "error")]
 
     if not passes:
-        print("  FAIL  the runtime pod was evaluated by NO rule — it was not "
-              "rendered, or no policy")
-        print("        matches a bare Pod any more. An unevaluated pod cannot be "
-              "denied here, which is")
+        print(
+            "  FAIL  the runtime pod was evaluated by NO rule — it was not rendered, or no policy"
+        )
+        print(
+            "        matches a bare Pod any more. An unevaluated pod cannot be "
+            "denied here, which is"
+        )
         print("        indistinguishable from being admitted.")
         return False
     if denials:
-        print(f"  FAIL  the runtime pod was denied by {len(denials)} rule(s) — "
-              f"an Argo workflow step pod")
-        print("        would be rejected at admission on an Enforce cluster, and "
-              "the eval tier could not run:")
+        print(
+            f"  FAIL  the runtime pod was denied by {len(denials)} rule(s) — "
+            f"an Argo workflow step pod"
+        )
+        print(
+            "        would be rejected at admission on an Enforce cluster, and "
+            "the eval tier could not run:"
+        )
         for r in denials:
             print(f"          [{r.get('result')}] {r.get('policy')}/{r.get('rule')}")
         return False
-    print(f"  ok    runtime pod admitted — evaluated by {len(passes)} rule(s), "
-          f"denied by none")
+    print(f"  ok    runtime pod admitted — evaluated by {len(passes)} rule(s), denied by none")
     return True
 
 
-def judge(label: str, report: dict | None, proc: subprocess.CompletedProcess,
-          expected_rules: set[str], canary_result: str = "fail") -> bool:
+def judge(
+    label: str,
+    report: dict | None,
+    proc: subprocess.CompletedProcess,
+    expected_rules: set[str],
+    canary_result: str = "fail",
+) -> bool:
     """Verdict for one kyverno run, read out of the report rather than the exit code.
 
     Two independent things have to hold, and they fail for opposite reasons:
@@ -831,15 +881,15 @@ def judge(label: str, report: dict | None, proc: subprocess.CompletedProcess,
         # and indistinguishable from success to any exit-code check. Name it as
         # what it is rather than as a JSON problem.
         if not proc.stdout.strip() and proc.returncode == 0:
-            print("  FAIL  kyverno matched NO resource and reported nothing "
-                  "(exit 0, empty report).")
-            print("        The canary should have been evaluated. Either it was "
-                  "not rendered, or the")
-            print("        policy build produced no rules, or the resources "
-                  "failed to load.")
+            print(
+                "  FAIL  kyverno matched NO resource and reported nothing (exit 0, empty report)."
+            )
+            print(
+                "        The canary should have been evaluated. Either it was not rendered, or the"
+            )
+            print("        policy build produced no rules, or the resources failed to load.")
         else:
-            print(f"  FAIL  kyverno produced no parseable report "
-                  f"(exit {proc.returncode}):")
+            print(f"  FAIL  kyverno produced no parseable report (exit {proc.returncode}):")
             print((proc.stderr or proc.stdout).strip()[:2000])
         print()
         return False
@@ -848,38 +898,52 @@ def judge(label: str, report: dict | None, proc: subprocess.CompletedProcess,
     summary = report.get("summary") or {}
     print(f"  {', '.join(f'{k}: {v}' for k, v in summary.items())}")
 
-    canary_hits = {_rule_key(r) for r in results
-                   if _is_canary(r) and r.get("result") == canary_result}
+    canary_hits = {
+        _rule_key(r) for r in results if _is_canary(r) and r.get("result") == canary_result
+    }
     # The runtime pod is judged separately and more precisely, so it is not also
     # counted as a foreign addon — its verdict names what actually broke.
-    foreign = [r for r in results
-               if not _is_canary(r) and not _is_runtime_pod(r)
-               and r.get("result") in ("fail", "warn", "error")]
+    foreign = [
+        r
+        for r in results
+        if not _is_canary(r)
+        and not _is_runtime_pod(r)
+        and r.get("result") in ("fail", "warn", "error")
+    ]
 
     ok = True
     unexercised = sorted(expected_rules - canary_hits)
     if unexercised:
         ok = False
-        print(f"  FAIL  the canary was not {canary_result}ed by {len(unexercised)} "
-              f"of {len(expected_rules)} validations — this run did not evaluate them:")
+        print(
+            f"  FAIL  the canary was not {canary_result}ed by {len(unexercised)} "
+            f"of {len(expected_rules)} validations — this run did not evaluate them:"
+        )
         for key in unexercised:
             print(f"          {key}")
-        print("        Either the policy build produced no such validation, the "
-              "resources failed to load,")
-        print("        or a new validation matches kinds the canary does not carry — "
-              "extend the canary.")
+        print(
+            "        Either the policy build produced no such validation, the "
+            "resources failed to load,"
+        )
+        print(
+            "        or a new validation matches kinds the canary does not carry — "
+            "extend the canary."
+        )
     else:
-        print(f"  ok    canary {canary_result}ed by all {len(expected_rules)} validations "
-              f"— the run evaluated every one")
+        print(
+            f"  ok    canary {canary_result}ed by all {len(expected_rules)} validations "
+            f"— the run evaluated every one"
+        )
 
     if foreign:
         ok = False
-        print(f"  FAIL  {len(foreign)} non-canary result(s) — these are real "
-              f"addon workloads:")
+        print(f"  FAIL  {len(foreign)} non-canary result(s) — these are real addon workloads:")
         for r in foreign[:20]:
             res = (r.get("resources") or [{}])[0]
-            print(f"          [{r.get('result')}] {r.get('policy')}/{r.get('rule')} "
-                  f"{res.get('kind')} {res.get('namespace')}/{res.get('name')}")
+            print(
+                f"          [{r.get('result')}] {r.get('policy')}/{r.get('rule')} "
+                f"{res.get('kind')} {res.get('namespace')}/{res.get('name')}"
+            )
         if len(foreign) > 20:
             print(f"          … and {len(foreign) - 20} more")
     else:
@@ -903,22 +967,25 @@ def check_namespace_coverage(landed: set[str], excluded: set[str]) -> bool:
     print("── Exclusion coverage ──")
     uncovered = sorted(landed - excluded)
     if uncovered:
-        print(f"  FAIL  {len(uncovered)} namespace(s) receive fleet workloads but "
-              f"are on no exclusion list:")
+        print(
+            f"  FAIL  {len(uncovered)} namespace(s) receive fleet workloads but "
+            f"are on no exclusion list:"
+        )
         for ns in uncovered:
             print(f"          {ns}")
-        print(f"        Add them to all {len(EXCLUSION_POLICIES)} policies, or confirm the "
-              "workload is meant to comply.")
+        print(
+            f"        Add them to all {len(EXCLUSION_POLICIES)} policies, or confirm the "
+            "workload is meant to comply."
+        )
         print()
         return False
-    print(f"  ok    all {len(landed)} namespaces receiving fleet workloads are "
-          f"excluded")
+    print(f"  ok    all {len(landed)} namespaces receiving fleet workloads are excluded")
     print()
     return True
 
 
 def main() -> int:
-    gatelib.require('helm', 'kyverno')
+    gatelib.require("helm", "kyverno")
     parity_ok, excluded, expected_rules = check_exclusion_parity()
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -930,8 +997,7 @@ def main() -> int:
         count, landed = render_fleet(resources)
         if count < 0:
             return 1
-        print(f"  rendered {count} addon×env manifests into their namespaces, "
-              f"plus the canary\n")
+        print(f"  rendered {count} addon×env manifests into their namespaces, plus the canary\n")
         # A constant, not a derivation. Bounding the render by the discovered
         # units was written first and is circular: discover() reads the same
         # ApplicationSets the render does, so a discovery that matched almost
@@ -942,10 +1008,12 @@ def main() -> int:
         # regardless of how much fleet was rendered, so without a floor here a run
         # over almost no fleet is indistinguishable from a clean one.
         if count < MIN_RENDERED:
-            print(f"  FAIL  {count} manifest(s) rendered, below the floor of "
-                  f"{MIN_RENDERED}. The policies were evaluated against a fleet "
-                  f"this catalog does not have, and 'no addon flagged' is a "
-                  f"statement about that fleet rather than this one.\n")
+            print(
+                f"  FAIL  {count} manifest(s) rendered, below the floor of "
+                f"{MIN_RENDERED}. The policies were evaluated against a fleet "
+                f"this catalog does not have, and 'no addon flagged' is a "
+                f"statement about that fleet rather than this one.\n"
+            )
             return gatelib.CANNOT_RUN
 
         coverage_ok = check_namespace_coverage(landed, excluded)
@@ -956,8 +1024,7 @@ def main() -> int:
         built = {mode: build_policies(mode, tmpdir) for mode in EXPECTED_ACTIONS}
         # Every overlay is checked and reported before the verdict is taken, so
         # one wrong tier does not hide another.
-        actions = {mode: check_validation_actions(mode, files)
-                   for mode, files in built.items()}
+        actions = {mode: check_validation_actions(mode, files) for mode, files in built.items()}
         actions_ok = all(actions.values())
         print()
 
@@ -966,7 +1033,8 @@ def main() -> int:
         enforce_ok = judge(
             "Deny admission (production overlay)",
             *kyverno_apply(built["production"], resources),
-            expected_rules=expected_rules)
+            expected_rules=expected_rules,
+        )
 
         # Audit (development): the SAME validations must match the canary.
         # `kyverno apply` reports it `fail` here too — the CLI's --audit-warn has
@@ -976,7 +1044,8 @@ def main() -> int:
         audit_ok = judge(
             "Audit overlay (development)",
             *kyverno_apply(built["development"], resources),
-            expected_rules=expected_rules)
+            expected_rules=expected_rules,
+        )
 
     if parity_ok and coverage_ok and actions_ok and enforce_ok and audit_ok:
         print("Policy-admission gate PASSED.")

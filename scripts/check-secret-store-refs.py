@@ -104,7 +104,9 @@ UNPRINTABLE = "<not a name this API server would accept>"
 # gate reporting on the half that happens to be plain manifests.
 HELM_REF = re.compile(
     r"^(?P<indent>\s*)secretStoreRef:\s*$\n"
-    r"(?P<body>(?:(?P=indent)\s+\S.*$\n?)*)", re.M)
+    r"(?P<body>(?:(?P=indent)\s+\S.*$\n?)*)",
+    re.M,
+)
 FIELD = re.compile(r"^\s*(?P<key>name|kind):\s*(?P<value>\S.*?)\s*$", re.M)
 HELM_API = re.compile(r"^apiVersion:\s*(?P<api>external-secrets\.io/\S+)\s*$", re.M)
 HELM_KIND = re.compile(r"^kind:\s*(?P<kind>\S+)\s*$", re.M)
@@ -148,8 +150,7 @@ def store_refs(node, path: pathlib.Path, out: list):
     if isinstance(node, dict):
         ref = node.get("secretStoreRef")
         if isinstance(ref, dict):
-            out.append((path, str(ref.get("kind") or CLUSTER_STORE),
-                        str(ref.get("name") or "")))
+            out.append((path, str(ref.get("kind") or CLUSTER_STORE), str(ref.get("name") or "")))
         for value in node.values():
             store_refs(value, path, out)
     elif isinstance(node, list):
@@ -167,10 +168,8 @@ def helm_store_refs(path: pathlib.Path) -> list[tuple[pathlib.Path, str, str]]:
     out = []
     text = path.read_text(encoding="utf-8")
     for block in HELM_REF.finditer(text):
-        fields = {m.group("key"): m.group("value")
-                  for m in FIELD.finditer(block.group("body"))}
-        out.append((path, fields.get("kind", CLUSTER_STORE),
-                    fields.get("name", "")))
+        fields = {m.group("key"): m.group("value") for m in FIELD.finditer(block.group("body"))}
+        out.append((path, fields.get("kind", CLUSTER_STORE), fields.get("name", "")))
     return out
 
 
@@ -208,8 +207,8 @@ def survey():
             if HELM_KIND.search(text) and "secretStoreRef" in text:
                 consumers.extend(helm_store_refs(path))
             for m in HELM_API.finditer(text):
-                head = text[:m.start()].rfind("\n---")
-                block = text[max(head, 0):m.start() + 400]
+                head = text[: m.start()].rfind("\n---")
+                block = text[max(head, 0) : m.start() + 400]
                 if re.search(rf"^kind:\s*{EXTERNAL_SECRET}\s*$", block, re.M):
                     versions.setdefault(m.group("api"), []).append(path)
             continue
@@ -242,10 +241,10 @@ def build_contract(declared, versions) -> dict:
     (kind, name), (_path, api) = next(iter(declared.items()))
     return {
         "_generated": "scripts/check-secret-store-refs.py --write; the source of "
-                      "truth is the manifest under addons/bootstrap/secret-stores/. "
-                      "Edit that, then regenerate.",
+        "truth is the manifest under addons/bootstrap/secret-stores/. "
+        "Edit that, then regenerate.",
         "_purpose": "Consumers outside this repository assert their chart "
-                    "defaults against these values instead of restating them.",
+        "defaults against these values instead of restating them.",
         "clusterSecretStore": {"apiVersion": api, "kind": kind, "name": name},
         "externalSecret": {"apiVersion": sorted(versions)[0]},
     }
@@ -258,41 +257,50 @@ def main(argv: list[str] | None = None) -> int:
     runner it parses the runner's own flags and exits.
     """
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--write", action="store_true",
-                        help="regenerate the published contract from the tree")
+    parser.add_argument(
+        "--write", action="store_true", help="regenerate the published contract from the tree"
+    )
     args = parser.parse_args(argv)
 
     declared, consumers, versions = survey()
 
     if not declared:
-        print(f"Cannot run: no {' or '.join(STORE_KINDS)} is declared anywhere "
-              f"under {rel(ROOT)}, so there is no name for anything to be "
-              f"compared against.")
+        print(
+            f"Cannot run: no {' or '.join(STORE_KINDS)} is declared anywhere "
+            f"under {rel(ROOT)}, so there is no name for anything to be "
+            f"compared against."
+        )
         print("This gate examined nothing, which is not the same as finding nothing.")
         return gatelib.CANNOT_RUN
     if not consumers:
-        print("Cannot run: no secretStoreRef found, so this gate read no "
-              "consumer. A catalog whose references all resolve reports the "
-              "same thing.")
+        print(
+            "Cannot run: no secretStoreRef found, so this gate read no "
+            "consumer. A catalog whose references all resolve reports the "
+            "same thing."
+        )
         return gatelib.CANNOT_RUN
 
     failures: list[str] = []
 
     cluster_stores = {k: v for k, v in declared.items() if k[0] == CLUSTER_STORE}
     if len(cluster_stores) != 1:
-        names = ", ".join(f"{printable(n)} ({rel(p)})" for (_k, n), (p, _a) in
-                          sorted(cluster_stores.items()))
-        print(f"FAIL  {len(cluster_stores)} {CLUSTER_STORE}(s) declared: "
-              f"{names or 'none'}. The published contract names one store, so a "
-              f"catalog declaring several has not decided which one a consumer "
-              f"in another repository should pin to.")
+        names = ", ".join(
+            f"{printable(n)} ({rel(p)})" for (_k, n), (p, _a) in sorted(cluster_stores.items())
+        )
+        print(
+            f"FAIL  {len(cluster_stores)} {CLUSTER_STORE}(s) declared: "
+            f"{names or 'none'}. The published contract names one store, so a "
+            f"catalog declaring several has not decided which one a consumer "
+            f"in another repository should pin to."
+        )
         return 1
 
     for path, kind, name in consumers:
         if not name:
             failures.append(
                 f"{rel(path)}: a secretStoreRef names no store at all, so the "
-                f"ExternalSecret resolves against nothing.")
+                f"ExternalSecret resolves against nothing."
+            )
         elif (kind, name) not in declared:
             failures.append(
                 f"{rel(path)}: secretStoreRef names {printable(kind, KIND)}/"
@@ -300,7 +308,8 @@ def main(argv: list[str] | None = None) -> int:
                 f"catalog declares no such store. External Secrets accepts the "
                 f"object, records SecretSyncedError on its status, and never "
                 f"creates the target Secret — the workload mounts a Secret that "
-                f"is not there.")
+                f"is not there."
+            )
 
     for path, kind, name in patch_targets():
         if (kind, name) not in declared:
@@ -310,56 +319,58 @@ def main(argv: list[str] | None = None) -> int:
                 f"catalog declares no such store. kustomize does not treat an "
                 f"unmatched target as an error — the build exits 0 and emits the "
                 f"unpatched base, so every cluster silently keeps whatever the "
-                f"base said.")
+                f"base said."
+            )
 
     if len(versions) > 1:
         listed = "; ".join(
-            f"{printable(api, GROUP_VERSION)} in "
-            f"{', '.join(sorted({rel(p) for p in paths}))}"
-            for api, paths in sorted(versions.items()))
+            f"{printable(api, GROUP_VERSION)} in {', '.join(sorted({rel(p) for p in paths}))}"
+            for api, paths in sorted(versions.items())
+        )
         failures.append(
             f"{EXTERNAL_SECRET}s in this catalog declare {len(versions)} "
             f"apiVersions: {listed}. There is no single version to publish, and "
-            f"a consumer pinning to one of them is pinning to a coin flip.")
+            f"a consumer pinning to one of them is pinning to a coin flip."
+        )
 
     if failures:
         print(f"{len(failures)} secret-store reference problem(s):\n")
-    # py/clear-text-logging-sensitive-data matches here on the NAMES of the
-    # files this gate reads — addons/bootstrap/secret-stores/ and
-    # contracts/secret-store.json — and treats a path containing "secret-store"
-    # as secret material. A secret store is the thing that holds secrets, not a
-    # secret: it is an address and a set of credentials-free provider settings,
-    # and the values printed below are a Kubernetes object name, a kind, a group
-    # version, a repository-relative path and a count. Every one read from a file
-    # has been through printable(), which returns it only on a fullmatch against
-    # the API server's own grammar and a fixed stand-in otherwise.
-    #
-    # This repository has now made the same distinction in two systems. The
-    # secrets block in .gitignore carries !*secret*-store*.yaml and
-    # !*secret*-store*.yml, and this file's contract added !*secret*-store*.json
-    # to it. Both are about a name rather than a content, and the pattern will
-    # recur in whatever tool comes third.
-    #
-    # The marker below does NOT suppress anything. Code scanning runs here as
-    # default setup, which reads no suppression comment for this query: the
-    # alerts stayed open with it in place and were closed by dismissing them in
-    # the scanner's own database, which is not in this tree. So the marker
-    # records the decision at the site and the decision takes effect somewhere a
-    # reader of this file cannot see.
-    #
-    # It stays because the alternative leaves the site with no explanation at
-    # all. Read it as a comment addressed to a person, not to the tool.
-    #
-    # Not worked around in the code either. A verified string can be rebuilt
-    # character by character from a literal alphabet, which defeats the dataflow
-    # and explains nothing — a reader can disagree with a comment, and cannot
-    # even see a defeated dataflow.
-    #
-    # The placement is the one the marker would need if it were read: on the
-    # line BEFORE the expression, covering that line only. On the same line it
-    # is the older `lgtm[...]` form, which edits the line it annotates and so
-    # changes the alert's hash — the original closes as fixed and an identical
-    # one opens beside it.
+        # py/clear-text-logging-sensitive-data matches here on the NAMES of the
+        # files this gate reads — addons/bootstrap/secret-stores/ and
+        # contracts/secret-store.json — and treats a path containing "secret-store"
+        # as secret material. A secret store is the thing that holds secrets, not a
+        # secret: it is an address and a set of credentials-free provider settings,
+        # and the values printed below are a Kubernetes object name, a kind, a group
+        # version, a repository-relative path and a count. Every one read from a file
+        # has been through printable(), which returns it only on a fullmatch against
+        # the API server's own grammar and a fixed stand-in otherwise.
+        #
+        # This repository has now made the same distinction in two systems. The
+        # secrets block in .gitignore carries !*secret*-store*.yaml and
+        # !*secret*-store*.yml, and this file's contract added !*secret*-store*.json
+        # to it. Both are about a name rather than a content, and the pattern will
+        # recur in whatever tool comes third.
+        #
+        # The marker below does NOT suppress anything. Code scanning runs here as
+        # default setup, which reads no suppression comment for this query: the
+        # alerts stayed open with it in place and were closed by dismissing them in
+        # the scanner's own database, which is not in this tree. So the marker
+        # records the decision at the site and the decision takes effect somewhere a
+        # reader of this file cannot see.
+        #
+        # It stays because the alternative leaves the site with no explanation at
+        # all. Read it as a comment addressed to a person, not to the tool.
+        #
+        # Not worked around in the code either. A verified string can be rebuilt
+        # character by character from a literal alphabet, which defeats the dataflow
+        # and explains nothing — a reader can disagree with a comment, and cannot
+        # even see a defeated dataflow.
+        #
+        # The placement is the one the marker would need if it were read: on the
+        # line BEFORE the expression, covering that line only. On the same line it
+        # is the older `lgtm[...]` form, which edits the line it annotates and so
+        # changes the alert's hash — the original closes as fixed and an identical
+        # one opens beside it.
         for f in failures:
             # codeql[py/clear-text-logging-sensitive-data]
             print(f"  {f}")
@@ -373,10 +384,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if not CONTRACT.exists():
-        print(f"FAIL  {rel(CONTRACT)} does not exist. It is the half of this "
-              f"that consumers outside this repository can read; without it they "
-              f"have nothing to compare their chart defaults against. Run "
-              f"`{rel(pathlib.Path(__file__))} --write`.")
+        print(
+            f"FAIL  {rel(CONTRACT)} does not exist. It is the half of this "
+            f"that consumers outside this repository can read; without it they "
+            f"have nothing to compare their chart defaults against. Run "
+            f"`{rel(pathlib.Path(__file__))} --write`."
+        )
         return 1
 
     # Compared as bytes, and deliberately not parsed for the message. What is in
@@ -385,27 +398,34 @@ def main(argv: list[str] | None = None) -> int:
     # the same whatever the difference is.
     if CONTRACT.read_text(encoding="utf-8") != rendered(want):
         print(f"FAIL  {rel(CONTRACT)} is not what this tree declares.")
-        print(f"      The manifest under {rel(STORE_DIR)} is the source of "
-              f"truth and the contract is generated from it, so a difference "
-              f"means the file was hand-edited or the manifest moved under it.")
-        print("      A contract that has drifted is worse than none: the "
-              "repositories asserting against it pass.")
-        print(f"      Regenerate with `{rel(pathlib.Path(__file__))} --write` "
-              f"and read the diff.")
+        print(
+            f"      The manifest under {rel(STORE_DIR)} is the source of "
+            f"truth and the contract is generated from it, so a difference "
+            f"means the file was hand-edited or the manifest moved under it."
+        )
+        print(
+            "      A contract that has drifted is worse than none: the "
+            "repositories asserting against it pass."
+        )
+        print(f"      Regenerate with `{rel(pathlib.Path(__file__))} --write` and read the diff.")
         return 1
 
     store = want["clusterSecretStore"]
     # Same match, same reason as the failure path above.
     # codeql[py/clear-text-logging-sensitive-data]
-    print(f"✓ every secret-store reference resolves to the one store this "
-          f"catalog declares: {printable(store['kind'], KIND)}/"
-          f"{printable(store['name'])} "
-          f"({printable(store['apiVersion'], GROUP_VERSION)}), named by "
-          f"{len(consumers)} secretStoreRef(s) "
-          f"and {len(patch_targets())} ApplicationSet patch target(s), published "
-          f"in {rel(CONTRACT)}")
-    print("  whether repositories outside this one read that contract, and "
-          "whether the store works against a real account, are outside this claim")
+    print(
+        f"✓ every secret-store reference resolves to the one store this "
+        f"catalog declares: {printable(store['kind'], KIND)}/"
+        f"{printable(store['name'])} "
+        f"({printable(store['apiVersion'], GROUP_VERSION)}), named by "
+        f"{len(consumers)} secretStoreRef(s) "
+        f"and {len(patch_targets())} ApplicationSet patch target(s), published "
+        f"in {rel(CONTRACT)}"
+    )
+    print(
+        "  whether repositories outside this one read that contract, and "
+        "whether the store works against a real account, are outside this claim"
+    )
     return 0
 
 

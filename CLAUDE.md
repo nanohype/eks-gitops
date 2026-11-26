@@ -85,6 +85,8 @@ See `docs/configuration/adding-addons.md` for full guide.
 ```bash
 task lint:yaml                     # YAML lint all files
 task lint:shell                    # shellcheck the shell gates and harnesses under scripts/
+task lint:python                   # ruff's rules and its formatter over scripts/, tests included
+task typecheck                     # mypy over scripts/, tests included
 task kustomize:build               # Build all overlays (all environments)
 task kustomize:build:env           # Build overlays for ENVIRONMENT (default: development)
 task validate                      # Every gate below, in order
@@ -115,7 +117,7 @@ task validate:image-vulnerabilities # Every fixed CRITICAL in a rendered image i
 
 ### Local `task validate` is a subset of CI
 
-`task validate` runs the structural gates (lint, kustomize build, helm-render,
+`task validate` runs the structural gates (lint, typecheck, kustomize build, helm-render,
 ApplicationSet schema, sync-wave ordering, appset render, policy-admission,
 secret-store references, directory-source sizes, load-balancer scheme inputs,
 dashboards, fork-safety, workflow account-id masking). CI runs those plus

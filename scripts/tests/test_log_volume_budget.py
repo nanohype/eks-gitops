@@ -46,9 +46,15 @@ def config(cutoff=0.9, retention="2160h", retention_enabled=True):
 def alert_file(rules) -> pathlib.Path:
     """Write a Grafana alerting manifest carrying `rules` and return its path."""
     tmp = pathlib.Path(tempfile.mkdtemp()) / "loki-disk.yaml"
-    tmp.write_text(yaml.safe_dump({"apiVersion": "grafana.integreatly.org/v1beta1",
-                                   "kind": "GrafanaAlertRuleGroup",
-                                   "spec": {"rules": rules}}))
+    tmp.write_text(
+        yaml.safe_dump(
+            {
+                "apiVersion": "grafana.integreatly.org/v1beta1",
+                "kind": "GrafanaAlertRuleGroup",
+                "spec": {"rules": rules},
+            }
+        )
+    )
     return tmp
 
 
@@ -56,11 +62,11 @@ def fill_rule(expr=None, threshold=0.75, uid=None):
     return {
         "uid": uid or gate.FILL_RULE,
         "data": [
-            {"refId": "A",
-             "model": {"expr": expr or f"max({gate.GAUGE})"}},
-            {"refId": "B",
-             "model": {"conditions": [
-                 {"evaluator": {"type": "gt", "params": [threshold]}}]}},
+            {"refId": "A", "model": {"expr": expr or f"max({gate.GAUGE})"}},
+            {
+                "refId": "B",
+                "model": {"conditions": [{"evaluator": {"type": "gt", "params": [threshold]}}]},
+            },
         ],
     }
 
@@ -109,8 +115,7 @@ class ReadingTheAlert(unittest.TestCase):
         self.assertIn("increments once per transition", joined)
 
     def test_a_rule_querying_both_still_fails_on_the_edge_counter(self):
-        self.threshold([fill_rule(
-            expr=f"max({gate.GAUGE}) or max({gate.EDGE_COUNTER})")])
+        self.threshold([fill_rule(expr=f"max({gate.GAUGE}) or max({gate.EDGE_COUNTER})")])
         self.assertEqual(len(gate.failures), 1)
         self.assertIn("increments once per transition", gate.failures[0])
 
@@ -169,25 +174,23 @@ class RetentionMustActuallyDelete(unittest.TestCase):
 
     def test_retention_disabled_in_the_compactor_fails(self):
         """`retention_period` applies only when the compactor enforces it."""
-        problems, _ = gate.environment_verdict(
-            config(retention_enabled=False), 0.75, REL)
+        problems, _ = gate.environment_verdict(config(retention_enabled=False), 0.75, REL)
         self.assertIn("compactor.retention_enabled is not true", problems[0])
 
     def test_an_absent_compactor_block_fails(self):
-        problems, _ = gate.environment_verdict(
-            config(retention_enabled=None), 0.75, REL)
+        problems, _ = gate.environment_verdict(config(retention_enabled=None), 0.75, REL)
         self.assertIn("compactor.retention_enabled is not true", problems[0])
 
     def test_a_truthy_non_true_value_does_not_satisfy_it(self):
         """Loki reads the key as a bool; `"true"` is a string the chart passes on."""
-        problems, _ = gate.environment_verdict(
-            config(retention_enabled="true"), 0.75, REL)
+        problems, _ = gate.environment_verdict(config(retention_enabled="true"), 0.75, REL)
         self.assertIn("compactor.retention_enabled is not true", problems[0])
 
     def test_every_failure_is_reported_from_one_pass(self):
         """A gate that returns on the first problem hides the rest behind a fix."""
         problems, _ = gate.environment_verdict(
-            config(cutoff=None, retention=None, retention_enabled=False), 0.75, REL)
+            config(cutoff=None, retention=None, retention_enabled=False), 0.75, REL
+        )
         self.assertEqual(len(problems), 3)
 
 
@@ -195,34 +198,47 @@ class TheChartPin(unittest.TestCase):
     """The chart rendered is the one the ApplicationSet installs, read from it."""
 
     def pin(self, sources):
-        doc = {"kind": "ApplicationSet",
-               "spec": {"template": {"spec": {"sources": sources}}}}
+        doc = {"kind": "ApplicationSet", "spec": {"template": {"spec": {"sources": sources}}}}
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
             appset = root / "applicationsets" / "addons-observability.yaml"
             appset.parent.mkdir()
             appset.write_text(yaml.safe_dump(doc))
             out = io.StringIO()
-            with mock.patch.object(gate, "ROOT", root), \
-                    mock.patch.object(gate, "APPSET", appset), \
-                    contextlib.redirect_stdout(out):
+            with (
+                mock.patch.object(gate, "ROOT", root),
+                mock.patch.object(gate, "APPSET", appset),
+                contextlib.redirect_stdout(out),
+            ):
                 try:
                     return gate.chart_pin(), out.getvalue()
                 except SystemExit as exc:
                     return exc.code, out.getvalue()
 
     def test_the_chart_source_is_the_pin(self):
-        pin, _ = self.pin([{"repoURL": "https://github.com/example/eks-gitops", "ref": "values"},
-                           {"repoURL": "https://grafana.github.io/helm-charts",
-                            "chart": "loki", "targetRevision": "6.29.0"}])
+        pin, _ = self.pin(
+            [
+                {"repoURL": "https://github.com/example/eks-gitops", "ref": "values"},
+                {
+                    "repoURL": "https://grafana.github.io/helm-charts",
+                    "chart": "loki",
+                    "targetRevision": "6.29.0",
+                },
+            ]
+        )
         self.assertEqual(pin, ("https://grafana.github.io/helm-charts", "6.29.0"))
 
     def test_an_appset_with_no_chart_source_cannot_run(self):
-        rc, out = self.pin([{"repoURL": "https://github.com/example/eks-gitops",
-                             "path": "addons/observability/loki"}])
+        rc, out = self.pin(
+            [
+                {
+                    "repoURL": "https://github.com/example/eks-gitops",
+                    "path": "addons/observability/loki",
+                }
+            ]
+        )
         self.assertEqual(rc, gate.gatelib.CANNOT_RUN)
-        self.assertIn("applicationsets/addons-observability.yaml declares no chart source",
-                      out)
+        self.assertIn("applicationsets/addons-observability.yaml declares no chart source", out)
 
 
 class TheEnvironmentCorpus(unittest.TestCase):
@@ -230,8 +246,10 @@ class TheEnvironmentCorpus(unittest.TestCase):
 
     def test_every_shipped_values_file_is_an_environment(self):
         envs = gate.environments()
-        self.assertTrue(envs, "the addon carries no values-<env>.yaml, so this gate "
-                              "would examine no environment")
+        self.assertTrue(
+            envs,
+            "the addon carries no values-<env>.yaml, so this gate would examine no environment",
+        )
         for env in envs:
             with self.subTest(env=env):
                 self.assertTrue((gate.ADDON / f"values-{env}.yaml").exists())

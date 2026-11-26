@@ -59,6 +59,7 @@ TEMPLATE = re.compile(r"\{\{[^}]*\}\}")
 
 SKIP_DIRS = {".git", "node_modules", "rendered", "__pycache__", ".task"}
 
+
 def label_blocks(node, path="") -> list[tuple[str, dict]]:
     """Yield every (jsonpath, labels-map) pair reachable in a parsed document."""
     found = []
@@ -148,9 +149,7 @@ def main() -> int:
     scanned = 0
 
     files = sorted(
-        p
-        for p in REPO.rglob("*.y*ml")
-        if not any(part in SKIP_DIRS for part in p.parts)
+        p for p in REPO.rglob("*.y*ml") if not any(part in SKIP_DIRS for part in p.parts)
     )
 
     # A file dropped from the corpus because its parser choked is a corpus that
@@ -190,13 +189,17 @@ def main() -> int:
     print(f"Checked {scanned} label value(s) across {len(files)} YAML file(s)")
     product = outside_self(files, REPO)
     if product == 0:
-        print(f"FAIL  every file examined lies inside {SELF_DIRS} — this run saw the "
-              f"gate's own directories and none of the manifests this repo ships.")
+        print(
+            f"FAIL  every file examined lies inside {SELF_DIRS} — this run saw the "
+            f"gate's own directories and none of the manifests this repo ships."
+        )
         return 2
     if len(files) < MIN_FILES or scanned < MIN_VALUES:
-        print(f"FAIL  examined {len(files)} file(s) and {scanned} label value(s), under "
-              f"the floors ({MIN_FILES}/{MIN_VALUES}). This gate looked at almost "
-              f"nothing, which is not the same as finding nothing.")
+        print(
+            f"FAIL  examined {len(files)} file(s) and {scanned} label value(s), under "
+            f"the floors ({MIN_FILES}/{MIN_VALUES}). This gate looked at almost "
+            f"nothing, which is not the same as finding nothing."
+        )
         return 2
 
     if failures:

@@ -49,8 +49,7 @@ class WhatTheScanLeavesInTheLog(unittest.TestCase):
         self.bin = pathlib.Path(tmp.name)
         # Only the directories of the tools the script calls, so a kubeconform
         # installed beside them cannot answer in the stub's place.
-        tools = {pathlib.Path(p).parent for p in
-                 (shutil.which(t) for t in ("sed", "head")) if p}
+        tools = {pathlib.Path(p).parent for p in (shutil.which(t) for t in ("sed", "head")) if p}
         self.path = os.pathsep.join([str(self.bin), *sorted(map(str, tools))])
         for d in tools:
             if (d / "kubeconform").exists():
@@ -60,12 +59,18 @@ class WhatTheScanLeavesInTheLog(unittest.TestCase):
         if stub:
             quoted = " ".join("'" + line.replace("'", "'\\''") + "'" for line in lines)
             exe = self.bin / "kubeconform"
-            exe.write_text(STUB.format(bash=self.bash, argv=self.bin / "argv", lines=quoted,
-                                       status=status))
+            exe.write_text(
+                STUB.format(bash=self.bash, argv=self.bin / "argv", lines=quoted, status=status)
+            )
             exe.chmod(0o755)
         env = {"PATH": self.path, "HOME": str(self.bin)}
-        proc = subprocess.run([self.bash, str(SCRIPT), "rendered/"], capture_output=True,
-                              text=True, env=env, timeout=60)
+        proc = subprocess.run(
+            [self.bash, str(SCRIPT), "rendered/"],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=60,
+        )
         return proc.returncode, proc.stdout + proc.stderr
 
     def assert_refs(self, said: str):
@@ -76,9 +81,9 @@ class WhatTheScanLeavesInTheLog(unittest.TestCase):
     def test_a_rejected_manifest_reaches_the_log_with_the_refs(self):
         """The status is collected with `||`, so `set -e` cannot exit before the print."""
         rejected = "rendered/bad.yaml - ConfigMap rv is invalid: got number, want string"
-        rc, said = self.scan(rejected,
-                             "Summary: 1 resource found in 1 file - Valid: 0, Invalid: 1",
-                             status=1)
+        rc, said = self.scan(
+            rejected, "Summary: 1 resource found in 1 file - Valid: 0, Invalid: 1", status=1
+        )
         self.assertEqual(rc, 1, said)
         self.assertIn(rejected, said)
         self.assertIn("FAIL  kubeconform exited 1.", said)

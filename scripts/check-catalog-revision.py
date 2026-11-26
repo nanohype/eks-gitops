@@ -54,8 +54,8 @@ except ImportError:  # pragma: no cover
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 APPSETS = ROOT / "applicationsets"
 
-URL_ANNOTATION = 'gitops/repo-url'
-REV_ANNOTATION = 'gitops/repo-branch'
+URL_ANNOTATION = "gitops/repo-url"
+REV_ANNOTATION = "gitops/repo-branch"
 
 
 def sources_of(doc):

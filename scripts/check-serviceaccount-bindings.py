@@ -93,7 +93,7 @@ def pod_specs(doc: dict):
 
 
 def main() -> int:
-    gatelib.require('helm')
+    gatelib.require("helm")
     repo = Path(__file__).resolve().parent.parent
     charts = sorted(repo.glob(CHART_GLOB))
     if not charts:
@@ -142,7 +142,9 @@ def main() -> int:
             print(f)
         print(f"\n{len(failures)} ServiceAccount binding problem(s).")
         return 1
-    print("Every pod names a ServiceAccount its chart creates, and every ServiceAccount has a consumer.")
+    print(
+        "Every pod names a ServiceAccount its chart creates, and every ServiceAccount has a consumer."
+    )
     return 0
 
 

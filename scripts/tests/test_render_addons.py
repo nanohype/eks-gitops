@@ -32,8 +32,7 @@ gate = load("render-addons")
 
 
 def appset(sources, generators=None, destination=None):
-    doc = {"kind": "ApplicationSet",
-           "spec": {"template": {"spec": {"sources": sources}}}}
+    doc = {"kind": "ApplicationSet", "spec": {"template": {"spec": {"sources": sources}}}}
     if generators is not None:
         doc["spec"]["generators"] = generators
     if destination is not None:
@@ -49,8 +48,9 @@ class OciReferences(unittest.TestCase):
     """
 
     def unit(self, repo, chart):
-        return gate.Unit(appset="a.yaml", chart=chart, version="1.0.0",
-                         repo=repo, path="addons/x/y")
+        return gate.Unit(
+            appset="a.yaml", chart=chart, version="1.0.0", repo=repo, path="addons/x/y"
+        )
 
     def test_a_repo_url_ending_in_the_chart_name_is_used_as_is(self):
         u = self.unit("oci://public.ecr.aws/karpenter/karpenter", "karpenter")
@@ -112,17 +112,16 @@ class SynthesisingChartParameters(unittest.TestCase):
 
     def test_a_templated_parameter_takes_its_synthetic_value(self):
         params = gate._synth_params(
-            {"parameters": [{"name": "clusterName", "value": "{{ .name }}"}]})
+            {"parameters": [{"name": "clusterName", "value": "{{ .name }}"}]}
+        )
         self.assertEqual(params, [("clusterName", "ci-cluster")])
 
     def test_a_templated_parameter_with_no_synthetic_value_takes_a_placeholder(self):
-        params = gate._synth_params(
-            {"parameters": [{"name": "someOther", "value": "{{ .x }}"}]})
+        params = gate._synth_params({"parameters": [{"name": "someOther", "value": "{{ .x }}"}]})
         self.assertEqual(params, [("someOther", "ci")])
 
     def test_a_literal_parameter_is_passed_through(self):
-        params = gate._synth_params(
-            {"parameters": [{"name": "replicaCount", "value": 3}]})
+        params = gate._synth_params({"parameters": [{"name": "replicaCount", "value": 3}]})
         self.assertEqual(params, [("replicaCount", "3")])
 
     def test_a_valueless_parameter_takes_a_synthetic_value(self):
@@ -141,11 +140,13 @@ class TheAddonPathFromValueFiles(unittest.TestCase):
     """A single-source appset states its addon directory only in `valueFiles`."""
 
     def test_the_base_values_path_is_extracted(self):
-        helm = {"valueFiles": [
-            "$values/addons/observability/loki/values.yaml",
-            "$values/addons/observability/loki/values-production.yaml"]}
-        self.assertEqual(gate._path_from_valuefiles(helm),
-                         "addons/observability/loki")
+        helm = {
+            "valueFiles": [
+                "$values/addons/observability/loki/values.yaml",
+                "$values/addons/observability/loki/values-production.yaml",
+            ]
+        }
+        self.assertEqual(gate._path_from_valuefiles(helm), "addons/observability/loki")
 
     def test_a_per_environment_file_alone_does_not_supply_the_path(self):
         """Matching it would yield a directory that ends in the environment name."""
@@ -164,9 +165,17 @@ class WhatARenderIsHanded(unittest.TestCase):
     line of text with the wait the registry asked for dropped.
     """
 
-    def render(self, env_files=("values.yaml", "values-staging.yaml"), env="staging",
-               path="addons/x/y", returncode=0, stderr="", stdout="", skip_crds=False,
-               objects=None):
+    def render(
+        self,
+        env_files=("values.yaml", "values-staging.yaml"),
+        env="staging",
+        path="addons/x/y",
+        returncode=0,
+        stderr="",
+        stdout="",
+        skip_crds=False,
+        objects=None,
+    ):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         root = pathlib.Path(tmp.name)
@@ -174,33 +183,51 @@ class WhatARenderIsHanded(unittest.TestCase):
         unit_dir.mkdir(parents=True)
         for name in env_files:
             (unit_dir / name).write_text("{}\n")
-        unit = gate.Unit(appset="a.yaml", chart="karpenter", version="1.15.1",
-                         repo="oci://public.ecr.aws/karpenter/karpenter",
-                         path=path, params=[("clusterName", "ci-cluster")],
-                         namespace="kube-system", skip_crds=skip_crds)
+        unit = gate.Unit(
+            appset="a.yaml",
+            chart="karpenter",
+            version="1.15.1",
+            repo="oci://public.ecr.aws/karpenter/karpenter",
+            path=path,
+            params=[("clusterName", "ci-cluster")],
+            namespace="kube-system",
+            skip_crds=skip_crds,
+        )
         archive = root / "karpenter-1.15.1.tgz"
-        ran = mock.Mock(return_value=mock.Mock(returncode=returncode, stdout=stdout,
-                                               stderr=stderr))
+        ran = mock.Mock(return_value=mock.Mock(returncode=returncode, stdout=stdout, stderr=stderr))
         fetch = mock.Mock(return_value=archive)
-        with mock.patch.object(gate, "REPO_ROOT", root), \
-                mock.patch.object(gate.gatelib, "chart_archive_or_exit", fetch), \
-                mock.patch.object(gate.subprocess, "run", ran):
+        with (
+            mock.patch.object(gate, "REPO_ROOT", root),
+            mock.patch.object(gate.gatelib, "chart_archive_or_exit", fetch),
+            mock.patch.object(gate.subprocess, "run", ran),
+        ):
             result = gate.render(unit, env, objects)
         return result, fetch, ran, archive, unit_dir
 
     def test_the_archive_is_fetched_from_the_unit_source_and_rendered(self):
         result, fetch, ran, archive, unit_dir = self.render()
         self.assertEqual(result, (True, "rendered"))
-        fetch.assert_called_once_with("oci://public.ecr.aws/karpenter/karpenter",
-                                      "karpenter", "1.15.1")
+        fetch.assert_called_once_with(
+            "oci://public.ecr.aws/karpenter/karpenter", "karpenter", "1.15.1"
+        )
         cmd = ran.call_args.args[0]
         self.assertEqual(cmd[:4], ["helm", "template", "karpenter", str(archive)])
         self.assertNotIn("--version", cmd)
         self.assertFalse(any(str(a).startswith("oci://") for a in cmd))
-        self.assertEqual(cmd[4:], ["--namespace", "kube-system", "--include-crds",
-                                   "--set", "clusterName=ci-cluster",
-                                   "-f", str(unit_dir / "values.yaml"),
-                                   "-f", str(unit_dir / "values-staging.yaml")])
+        self.assertEqual(
+            cmd[4:],
+            [
+                "--namespace",
+                "kube-system",
+                "--include-crds",
+                "--set",
+                "clusterName=ci-cluster",
+                "-f",
+                str(unit_dir / "values.yaml"),
+                "-f",
+                str(unit_dir / "values-staging.yaml"),
+            ],
+        )
 
     def test_an_environment_with_no_delta_fetches_nothing(self):
         result, fetch, ran, _, _ = self.render(env_files=("values.yaml",))
@@ -218,8 +245,9 @@ class WhatARenderIsHanded(unittest.TestCase):
         ran.assert_not_called()
 
     def test_a_render_helm_refuses_fails_with_what_helm_said(self):
-        result, _, _, _, _ = self.render(returncode=1,
-                                         stderr="Error: values don't meet the schema\n")
+        result, _, _, _, _ = self.render(
+            returncode=1, stderr="Error: values don't meet the schema\n"
+        )
         self.assertEqual(result, (False, "Error: values don't meet the schema"))
 
     def test_a_source_that_skips_crds_is_rendered_without_them(self):
@@ -229,13 +257,16 @@ class WhatARenderIsHanded(unittest.TestCase):
 
     def test_the_cluster_scoped_objects_a_render_produces_are_recorded(self):
         objects = {}
-        stdout = ("apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\n"
-                  "metadata:\n  name: nodepools.karpenter.sh\n---\n"
-                  "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\n")
+        stdout = (
+            "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\n"
+            "metadata:\n  name: nodepools.karpenter.sh\n---\n"
+            "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\n"
+        )
         result, _, _, _, _ = self.render(stdout=stdout, objects=objects)
         self.assertEqual(result, (True, "rendered"))
-        self.assertEqual(objects, {"CustomResourceDefinition/nodepools.karpenter.sh":
-                                   {"a.yaml addons/x/y"}})
+        self.assertEqual(
+            objects, {"CustomResourceDefinition/nodepools.karpenter.sh": {"a.yaml addons/x/y"}}
+        )
 
     def test_a_render_that_is_not_yaml_fails_rather_than_counting_nothing(self):
         result, _, _, _, _ = self.render(stdout="a: [unclosed\n", objects={})
@@ -246,12 +277,30 @@ class WhatARenderIsHanded(unittest.TestCase):
 def discovered(source_helm):
     """The units discover() reads out of one matrix appset."""
     doc = appset(
-        [{"repoURL": "{{ .chartRepo }}", "chart": "{{ .chart }}",
-          "targetRevision": "{{ .chartVersion }}", "helm": source_helm}],
-        generators=[{"list": {"elements": [
-            {"chart": "gateway-helm", "chartVersion": "1.10.0",
-             "chartRepo": "oci://docker.io/envoyproxy/gateway-helm",
-             "path": "addons/x/eg", "namespace": "ns"}]}}])
+        [
+            {
+                "repoURL": "{{ .chartRepo }}",
+                "chart": "{{ .chart }}",
+                "targetRevision": "{{ .chartVersion }}",
+                "helm": source_helm,
+            }
+        ],
+        generators=[
+            {
+                "list": {
+                    "elements": [
+                        {
+                            "chart": "gateway-helm",
+                            "chartVersion": "1.10.0",
+                            "chartRepo": "oci://docker.io/envoyproxy/gateway-helm",
+                            "path": "addons/x/eg",
+                            "namespace": "ns",
+                        }
+                    ]
+                }
+            }
+        ],
+    )
     with tempfile.TemporaryDirectory() as tmp:
         (pathlib.Path(tmp) / "a.yaml").write_text(yaml.safe_dump(doc))
         with mock.patch.object(gate, "APPSET_DIR", pathlib.Path(tmp)):
@@ -266,45 +315,55 @@ class RenderingCRDsTheWayArgoCDDoes(unittest.TestCase):
 
     def test_a_source_without_it_includes_them(self):
         self.assertFalse(discovered({})[0].skip_crds)
-        self.assertFalse(discovered({"skipCrds": "true"})[0].skip_crds,
-                         "only a boolean true is honoured, as ArgoCD's field is a bool")
+        self.assertFalse(
+            discovered({"skipCrds": "true"})[0].skip_crds,
+            "only a boolean true is honoured, as ArgoCD's field is a bool",
+        )
 
     def test_only_cluster_scoped_objects_are_keyed(self):
-        stream = "\n---\n".join([
-            "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\n"
-            "metadata:\n  name: a.example.io",
-            "apiVersion: example.io/v1\nkind: CustomResourceDefinition\n"
-            "metadata:\n  name: not-a-crd.example.io",
-            "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\n"
-            "metadata: {}",
-            "apiVersion: admissionregistration.k8s.io/v1\nkind: ValidatingAdmissionPolicy\n"
-            "metadata:\n  name: safe-upgrades.gateway.networking.k8s.io",
-            "apiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRole\n"
-            "metadata:\n  name: viewer",
-            "apiVersion: rbac.authorization.k8s.io/v1\nkind: Role\n"
-            "metadata:\n  name: namespaced",
-            "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: ns",
-            "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: b",
-            "",
-            "just a string",
-        ])
-        self.assertEqual(gate.cluster_objects(stream), {
-            "CustomResourceDefinition/a.example.io",
-            "ValidatingAdmissionPolicy/safe-upgrades.gateway.networking.k8s.io",
-            "ClusterRole/viewer",
-            "Namespace/ns",
-        })
+        stream = "\n---\n".join(
+            [
+                "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\n"
+                "metadata:\n  name: a.example.io",
+                "apiVersion: example.io/v1\nkind: CustomResourceDefinition\n"
+                "metadata:\n  name: not-a-crd.example.io",
+                "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata: {}",
+                "apiVersion: admissionregistration.k8s.io/v1\nkind: ValidatingAdmissionPolicy\n"
+                "metadata:\n  name: safe-upgrades.gateway.networking.k8s.io",
+                "apiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRole\n"
+                "metadata:\n  name: viewer",
+                "apiVersion: rbac.authorization.k8s.io/v1\nkind: Role\n"
+                "metadata:\n  name: namespaced",
+                "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: ns",
+                "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: b",
+                "",
+                "just a string",
+            ]
+        )
+        self.assertEqual(
+            gate.cluster_objects(stream),
+            {
+                "CustomResourceDefinition/a.example.io",
+                "ValidatingAdmissionPolicy/safe-upgrades.gateway.networking.k8s.io",
+                "ClusterRole/viewer",
+                "Namespace/ns",
+            },
+        )
 
     def test_a_bare_equals_sign_reads_as_the_string_kubernetes_reads(self):
         """prometheus-operator-crds renders `- =` in an enum: YAML 1.1's value tag."""
-        stream = ("apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\n"
-                  "metadata:\n  name: probes.monitoring.coreos.com\n"
-                  "spec:\n  enum:\n  - =\n  - '!='\n")
-        self.assertEqual(gate.cluster_objects(stream),
-                         {"CustomResourceDefinition/probes.monitoring.coreos.com"})
-        self.assertFalse(yaml.SafeLoader.yaml_constructors.get("tag:yaml.org,2002:value")
-                         is gate._value_scalar,
-                         "the module-wide SafeLoader is not this gate's to change")
+        stream = (
+            "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\n"
+            "metadata:\n  name: probes.monitoring.coreos.com\n"
+            "spec:\n  enum:\n  - =\n  - '!='\n"
+        )
+        self.assertEqual(
+            gate.cluster_objects(stream), {"CustomResourceDefinition/probes.monitoring.coreos.com"}
+        )
+        self.assertFalse(
+            yaml.SafeLoader.yaml_constructors.get("tag:yaml.org,2002:value") is gate._value_scalar,
+            "the module-wide SafeLoader is not this gate's to change",
+        )
 
 
 def crd(name):
@@ -315,13 +374,22 @@ class OneOwnerPerClusterScopedObject(unittest.TestCase):
     """A cluster-scoped object two Applications install is overwritten by each in turn."""
 
     def test_a_crd_one_unit_installs_is_fine(self):
-        self.assertEqual(gate.object_ownership(
-            {crd("backends.gateway.envoyproxy.io"): {"a.yaml addons/x/eg-crds"}}), [])
+        self.assertEqual(
+            gate.object_ownership(
+                {crd("backends.gateway.envoyproxy.io"): {"a.yaml addons/x/eg-crds"}}
+            ),
+            [],
+        )
 
     def test_a_crd_two_units_install_is_a_finding(self):
         problems = gate.object_ownership(
-            {crd("backends.gateway.envoyproxy.io"): {"a.yaml addons/x/eg",
-                                                     "a.yaml addons/x/eg-crds"}})
+            {
+                crd("backends.gateway.envoyproxy.io"): {
+                    "a.yaml addons/x/eg",
+                    "a.yaml addons/x/eg-crds",
+                }
+            }
+        )
         self.assertEqual(len(problems), 1)
         self.assertIn("backends.gateway.envoyproxy.io is installed by 2", problems[0])
 
@@ -329,7 +397,8 @@ class OneOwnerPerClusterScopedObject(unittest.TestCase):
         """gateway-api-crds is a directory source no render here sees, so the
         group is what names it — the shape gateway-helm's bundle took."""
         problems = gate.object_ownership(
-            {crd("httproutes.gateway.networking.k8s.io"): {"a.yaml addons/x/eg"}})
+            {crd("httproutes.gateway.networking.k8s.io"): {"a.yaml addons/x/eg"}}
+        )
         self.assertEqual(len(problems), 1)
         self.assertIn("gateway-api-crds.yaml", problems[0])
 
@@ -338,42 +407,57 @@ class OneOwnerPerClusterScopedObject(unittest.TestCase):
         which skipCrds alone would not have dropped (they are templates)."""
         for kind in ("ValidatingAdmissionPolicy", "ValidatingAdmissionPolicyBinding"):
             problems = gate.object_ownership(
-                {f"{kind}/safe-upgrades.gateway.networking.k8s.io": {"a.yaml addons/x/eg"}})
+                {f"{kind}/safe-upgrades.gateway.networking.k8s.io": {"a.yaml addons/x/eg"}}
+            )
             self.assertEqual(len(problems), 1, kind)
             self.assertIn("gateway-api-crds.yaml", problems[0])
 
     def test_a_cluster_role_two_charts_render_is_a_finding(self):
         problems = gate.object_ownership(
-            {"ClusterRole/viewer": {"a.yaml addons/x/one", "b.yaml addons/y/two"}})
+            {"ClusterRole/viewer": {"a.yaml addons/x/one", "b.yaml addons/y/two"}}
+        )
         self.assertEqual(len(problems), 1)
 
     def test_a_non_crd_named_like_a_gateway_api_crd_is_not_matched_by_group(self):
-        self.assertEqual(gate.object_ownership(
-            {"ClusterRole/httproutes.gateway.networking.k8s.io": {"a.yaml addons/x/one"}}), [])
+        self.assertEqual(
+            gate.object_ownership(
+                {"ClusterRole/httproutes.gateway.networking.k8s.io": {"a.yaml addons/x/one"}}
+            ),
+            [],
+        )
 
     def test_a_chart_rendering_an_argo_workflows_crd_has_a_second_owner(self):
         problems = gate.object_ownership(
-            {crd("workflows.argoproj.io"): {"a.yaml addons/x/argo-workflows"}})
+            {crd("workflows.argoproj.io"): {"a.yaml addons/x/argo-workflows"}}
+        )
         self.assertEqual(len(problems), 1)
         self.assertIn("argo-workflows-crds.yaml", problems[0])
 
     def test_another_argoproj_crd_is_not_owned_by_the_workflows_directory(self):
         """argoproj.io is shared with argo-events and argo-rollouts, which install
         their own kinds in it."""
-        self.assertEqual(gate.object_ownership(
-            {crd("rollouts.argoproj.io"): {"a.yaml addons/x/argo-rollouts"}}), [])
+        self.assertEqual(
+            gate.object_ownership({crd("rollouts.argoproj.io"): {"a.yaml addons/x/argo-rollouts"}}),
+            [],
+        )
 
 
 class OwnersThatNeverShareACluster(unittest.TestCase):
     """Two Applications whose selectors exclude each other are not two owners."""
 
-    TIERS = {"a.yaml addons/o/full": {"observability/tier": "full"},
-             "b.yaml addons/o/floor": {"observability/tier": "floor"}}
+    TIERS = {
+        "a.yaml addons/o/full": {"observability/tier": "full"},
+        "b.yaml addons/o/floor": {"observability/tier": "floor"},
+    }
 
     def test_mutually_exclusive_tiers_are_not_a_finding(self):
         """otel-gateway's full and floor tiers render the same ClusterRole."""
-        self.assertEqual(gate.object_ownership(
-            {"ClusterRole/otel-gateway": set(self.TIERS)}, selectors=self.TIERS), [])
+        self.assertEqual(
+            gate.object_ownership(
+                {"ClusterRole/otel-gateway": set(self.TIERS)}, selectors=self.TIERS
+            ),
+            [],
+        )
 
     def test_a_third_owner_that_can_reach_either_tier_is_a_finding(self):
         owners = {"ClusterRole/otel-gateway": {*self.TIERS, "c.yaml addons/x/any"}}
@@ -382,7 +466,8 @@ class OwnersThatNeverShareACluster(unittest.TestCase):
     def test_a_directory_owner_reaches_every_cluster(self):
         problems = gate.object_ownership(
             {crd("httproutes.gateway.networking.k8s.io"): {"a.yaml addons/o/full"}},
-            selectors=self.TIERS)
+            selectors=self.TIERS,
+        )
         self.assertEqual(len(problems), 1)
 
     def test_selectors_conflict_only_on_a_shared_label(self):
@@ -392,17 +477,49 @@ class OwnersThatNeverShareACluster(unittest.TestCase):
 
     def test_discovery_reads_matchlabels_from_a_matrix_clusters_generator(self):
         doc = appset(
-            [{"repoURL": "{{ .chartRepo }}", "chart": "{{ .chart }}",
-              "targetRevision": "{{ .chartVersion }}", "helm": {}}],
-            generators=[{"matrix": {"generators": [
-                {"clusters": {"selector": {
-                    "matchLabels": {"eks-agent-platform/enabled": "true"},
-                    "matchExpressions": [{"key": "environment", "operator": "In",
-                                          "values": ["staging"]}]}}},
-                {"list": {"elements": [
-                    {"chart": "gateway-helm", "chartVersion": "1.10.0",
-                     "chartRepo": "oci://docker.io/envoyproxy/gateway-helm",
-                     "path": "addons/x/eg"}]}}]}}])
+            [
+                {
+                    "repoURL": "{{ .chartRepo }}",
+                    "chart": "{{ .chart }}",
+                    "targetRevision": "{{ .chartVersion }}",
+                    "helm": {},
+                }
+            ],
+            generators=[
+                {
+                    "matrix": {
+                        "generators": [
+                            {
+                                "clusters": {
+                                    "selector": {
+                                        "matchLabels": {"eks-agent-platform/enabled": "true"},
+                                        "matchExpressions": [
+                                            {
+                                                "key": "environment",
+                                                "operator": "In",
+                                                "values": ["staging"],
+                                            }
+                                        ],
+                                    }
+                                }
+                            },
+                            {
+                                "list": {
+                                    "elements": [
+                                        {
+                                            "chart": "gateway-helm",
+                                            "chartVersion": "1.10.0",
+                                            "chartRepo": "oci://docker.io/envoyproxy/gateway-helm",
+                                            "path": "addons/x/eg",
+                                        }
+                                    ]
+                                }
+                            },
+                        ]
+                    }
+                }
+            ],
+        )
         with tempfile.TemporaryDirectory() as tmp:
             (pathlib.Path(tmp) / "a.yaml").write_text(yaml.safe_dump(doc))
             with mock.patch.object(gate, "APPSET_DIR", pathlib.Path(tmp)):
@@ -419,8 +536,11 @@ class DirectoryOwnershipRecords(unittest.TestCase):
         (pathlib.Path(tmp) / name).write_text(yaml.safe_dump(doc))
 
     def owner(self, **kw):
-        base = {"appset": "d.yaml", "source": ("https://github.com/o/r", "v1.0.0", "crds"),
-                "crd_groups": ("x.example.io",)}
+        base = {
+            "appset": "d.yaml",
+            "source": ("https://github.com/o/r", "v1.0.0", "crds"),
+            "crd_groups": ("x.example.io",),
+        }
         base.update(kw)
         return gate.DirectoryOwner(**base)
 
@@ -429,14 +549,21 @@ class DirectoryOwnershipRecords(unittest.TestCase):
 
     def test_a_matching_record_passes(self):
         with tempfile.TemporaryDirectory() as tmp:
-            self.write(tmp, "d.yaml", {"repoURL": "https://github.com/o/r",
-                                       "targetRevision": "v1.0.0", "path": "crds"})
+            self.write(
+                tmp,
+                "d.yaml",
+                {"repoURL": "https://github.com/o/r", "targetRevision": "v1.0.0", "path": "crds"},
+            )
             self.assertEqual(gate.directory_owner_drift((self.owner(),), pathlib.Path(tmp)), [])
 
     def test_a_moved_pin_or_channel_is_a_finding(self):
         for changed in ({"targetRevision": "v1.1.0"}, {"path": "crds-experimental"}):
-            src = {"repoURL": "https://github.com/o/r", "targetRevision": "v1.0.0",
-                   "path": "crds", **changed}
+            src = {
+                "repoURL": "https://github.com/o/r",
+                "targetRevision": "v1.0.0",
+                "path": "crds",
+                **changed,
+            }
             with tempfile.TemporaryDirectory() as tmp:
                 self.write(tmp, "d.yaml", src)
                 problems = gate.directory_owner_drift((self.owner(),), pathlib.Path(tmp))
@@ -459,8 +586,9 @@ class FetchingTheChartCache(unittest.TestCase):
     """--fetch fills the cache every rendering job reads, and only with pins."""
 
     def unit(self, chart, repo):
-        return gate.Unit(appset="a.yaml", chart=chart, version="1.0.0",
-                         repo=repo, path=f"addons/x/{chart}")
+        return gate.Unit(
+            appset="a.yaml", chart=chart, version="1.0.0", repo=repo, path=f"addons/x/{chart}"
+        )
 
     def fetch(self, units, skip=None):
         fetched, pruned = [], []
@@ -473,32 +601,44 @@ class FetchingTheChartCache(unittest.TestCase):
             pruned.append(set(keep))
             return 3
 
-        with mock.patch.object(gate.gatelib, "chart_archive_or_exit", archive), \
-                mock.patch.object(gate.registry, "prune_archives", prune), \
-                mock.patch.dict(gate.SKIP_CHARTS, skip or {}, clear=True), \
-                contextlib.redirect_stdout(io.StringIO()) as out:
+        with (
+            mock.patch.object(gate.gatelib, "chart_archive_or_exit", archive),
+            mock.patch.object(gate.registry, "prune_archives", prune),
+            mock.patch.dict(gate.SKIP_CHARTS, skip or {}, clear=True),
+            contextlib.redirect_stdout(io.StringIO()) as out,
+        ):
             rc = gate.fetch_all(units)
         return rc, fetched, pruned, out.getvalue()
 
     def test_every_pinned_chart_is_fetched_from_its_source(self):
-        rc, fetched, pruned, out = self.fetch([
-            self.unit("operator", "oci://ghcr.io/nanohype/charts"),
-            self.unit("kyverno", "https://kyverno.github.io/kyverno"),
-        ])
+        rc, fetched, pruned, out = self.fetch(
+            [
+                self.unit("operator", "oci://ghcr.io/nanohype/charts"),
+                self.unit("kyverno", "https://kyverno.github.io/kyverno"),
+            ]
+        )
         self.assertEqual(rc, 0)
-        self.assertEqual(fetched, [
-            ("oci://ghcr.io/nanohype/charts/operator", "operator", "1.0.0"),
-            ("https://kyverno.github.io/kyverno", "kyverno", "1.0.0"),
-        ])
-        self.assertEqual(pruned, [{pathlib.Path("/cache/operator-1.0.0.tgz"),
-                                   pathlib.Path("/cache/kyverno-1.0.0.tgz")}])
+        self.assertEqual(
+            fetched,
+            [
+                ("oci://ghcr.io/nanohype/charts/operator", "operator", "1.0.0"),
+                ("https://kyverno.github.io/kyverno", "kyverno", "1.0.0"),
+            ],
+        )
+        self.assertEqual(
+            pruned,
+            [{pathlib.Path("/cache/operator-1.0.0.tgz"), pathlib.Path("/cache/kyverno-1.0.0.tgz")}],
+        )
         self.assertIn("removed 3 cached file(s) no pin names", out)
 
     def test_a_skipped_chart_is_neither_fetched_nor_kept(self):
         rc, fetched, pruned, _ = self.fetch(
-            [self.unit("kyverno", "https://kyverno.github.io/kyverno"),
-             self.unit("private", "https://charts.private.example")],
-            skip={"private": "needs credentials"})
+            [
+                self.unit("kyverno", "https://kyverno.github.io/kyverno"),
+                self.unit("private", "https://charts.private.example"),
+            ],
+            skip={"private": "needs credentials"},
+        )
         self.assertEqual(rc, 0)
         self.assertEqual([c for _, c, _ in fetched], ["kyverno"])
         self.assertEqual(pruned, [{pathlib.Path("/cache/kyverno-1.0.0.tgz")}])
@@ -527,15 +667,22 @@ class FetchingOverTheRegistryClient(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.cache = pathlib.Path(tmp.name)
         self.archive = b"kyverno-archive"
-        self.oci = fake.OciRegistry(*self.OCI, "1.0.0",
-                                    {"name": "operator", "version": "1.0.0"},
-                                    content=b"operator-archive")
+        self.oci = fake.OciRegistry(
+            *self.OCI,
+            "1.0.0",
+            {"name": "operator", "version": "1.0.0"},
+            content=b"operator-archive",
+        )
         self.urls: list[str] = []
-        for patch in (mock.patch.object(gate.registry, "CHART_CACHE", self.cache),
-                      mock.patch.dict(gate.registry._INDEXES, clear=True),
-                      mock.patch.dict(gate.registry.http_get.__kwdefaults__,
-                                      {"urlopen": self.urlopen, "sleep": self.fail_on_wait}),
-                      mock.patch.dict(gate.SKIP_CHARTS, clear=True)):
+        for patch in (
+            mock.patch.object(gate.registry, "CHART_CACHE", self.cache),
+            mock.patch.dict(gate.registry._INDEXES, clear=True),
+            mock.patch.dict(
+                gate.registry.http_get.__kwdefaults__,
+                {"urlopen": self.urlopen, "sleep": self.fail_on_wait},
+            ),
+            mock.patch.dict(gate.SKIP_CHARTS, clear=True),
+        ):
             patch.start()
             self.addCleanup(patch.stop)
 
@@ -543,9 +690,20 @@ class FetchingOverTheRegistryClient(unittest.TestCase):
         self.fail(f"the client waited {seconds}s on a registry that never rate-limits")
 
     def index(self) -> bytes:
-        return yaml.safe_dump({"apiVersion": "v1", "entries": {"kyverno": [{
-            "version": "1.0.0", "urls": ["kyverno-1.0.0.tgz"],
-            "digest": hashlib.sha256(self.archive).hexdigest()}]}}).encode()
+        return yaml.safe_dump(
+            {
+                "apiVersion": "v1",
+                "entries": {
+                    "kyverno": [
+                        {
+                            "version": "1.0.0",
+                            "urls": ["kyverno-1.0.0.tgz"],
+                            "digest": hashlib.sha256(self.archive).hexdigest(),
+                        }
+                    ]
+                },
+            }
+        ).encode()
 
     def urlopen(self, req, timeout=None):
         url = req.full_url
@@ -561,23 +719,36 @@ class FetchingOverTheRegistryClient(unittest.TestCase):
         return fake.served(answer)
 
     def units(self):
-        return [gate.Unit(appset="a.yaml", chart="kyverno", version="1.0.0",
-                          repo=self.REPO, path="addons/x/kyverno"),
-                gate.Unit(appset="b.yaml", chart="operator", version="1.0.0",
-                          repo=f"oci://{self.OCI[0]}/org/charts", path="addons/x/operator")]
+        return [
+            gate.Unit(
+                appset="a.yaml",
+                chart="kyverno",
+                version="1.0.0",
+                repo=self.REPO,
+                path="addons/x/kyverno",
+            ),
+            gate.Unit(
+                appset="b.yaml",
+                chart="operator",
+                version="1.0.0",
+                repo=f"oci://{self.OCI[0]}/org/charts",
+                path="addons/x/operator",
+            ),
+        ]
 
     def fetch(self):
         """One --fetch run. Each is its own process, so no index outlives it."""
         gate.registry._INDEXES.clear()
         self.urls.clear()
-        with contextlib.redirect_stdout(io.StringIO()) as out, \
-                contextlib.redirect_stderr(io.StringIO()):
+        with (
+            contextlib.redirect_stdout(io.StringIO()) as out,
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
             rc = gate.fetch_all(self.units())
         return rc, out.getvalue()
 
     def on_disk(self):
-        return sorted(str(p.relative_to(self.cache)) for p in self.cache.rglob("*")
-                      if p.is_file())
+        return sorted(str(p.relative_to(self.cache)) for p in self.cache.rglob("*") if p.is_file())
 
     def test_the_pinned_archives_and_their_records_are_what_the_cache_holds(self):
         stale = gate.registry.archive_path(self.REPO, "kyverno", "0.9.0")
@@ -589,16 +760,21 @@ class FetchingOverTheRegistryClient(unittest.TestCase):
         rc, out = self.fetch()
 
         self.assertEqual(rc, 0, out)
-        kept = [gate.registry.archive_path(u.source, u.chart, u.version)
-                for u in self.units()]
-        self.assertEqual(self.on_disk(), sorted(
-            str(p.relative_to(self.cache)) for k in kept
-            for p in (k, gate.registry.digest_path(k))))
+        kept = [gate.registry.archive_path(u.source, u.chart, u.version) for u in self.units()]
+        self.assertEqual(
+            self.on_disk(),
+            sorted(
+                str(p.relative_to(self.cache))
+                for k in kept
+                for p in (k, gate.registry.digest_path(k))
+            ),
+        )
         self.assertEqual(kept[0].read_bytes(), self.archive)
         self.assertEqual(kept[1].read_bytes(), b"operator-archive")
         for k in kept:
-            self.assertEqual(gate.registry.digest_path(k).read_text(),
-                             hashlib.sha256(k.read_bytes()).hexdigest())
+            self.assertEqual(
+                gate.registry.digest_path(k).read_text(), hashlib.sha256(k.read_bytes()).hexdigest()
+            )
         self.assertIn("Fetched 2 pinned chart archive(s)", out)
         self.assertIn("removed 3 cached file(s) no pin names", out)
 
@@ -615,8 +791,7 @@ class FetchingOverTheRegistryClient(unittest.TestCase):
         kyverno.write_bytes(b"truncated")
         rc, out = self.fetch()
         self.assertEqual(rc, 0, out)
-        self.assertEqual(self.urls, [f"{self.REPO}/index.yaml",
-                                     f"{self.REPO}/kyverno-1.0.0.tgz"])
+        self.assertEqual(self.urls, [f"{self.REPO}/index.yaml", f"{self.REPO}/kyverno-1.0.0.tgz"])
         self.assertEqual(kyverno.read_bytes(), self.archive)
 
 
@@ -624,8 +799,13 @@ class ExpiredSkips(unittest.TestCase):
     """A skip whose chart an anonymous fetch reaches is reported; one it cannot reach stays."""
 
     def unit(self, chart):
-        return gate.Unit(appset="a.yaml", chart=chart, version="1.0.0",
-                         repo="https://charts.example", path=f"addons/x/{chart}")
+        return gate.Unit(
+            appset="a.yaml",
+            chart=chart,
+            version="1.0.0",
+            repo="https://charts.example",
+            path=f"addons/x/{chart}",
+        )
 
     def stale(self, units, skip, unreachable=()):
         asked = []
@@ -638,8 +818,10 @@ class ExpiredSkips(unittest.TestCase):
                 raise gate.registry.ChartUnavailable("HTTP 401", answered=False)
             return cache / f"{chart}-{version}.tgz"
 
-        with mock.patch.object(gate.registry, "chart_archive", archive), \
-                mock.patch.dict(gate.SKIP_CHARTS, skip, clear=True):
+        with (
+            mock.patch.object(gate.registry, "chart_archive", archive),
+            mock.patch.dict(gate.SKIP_CHARTS, skip, clear=True),
+        ):
             return gate.stale_skips(units), asked
 
     def test_the_fetch_is_handed_no_login_and_an_empty_cache_of_its_own(self):
@@ -658,14 +840,17 @@ class ExpiredSkips(unittest.TestCase):
         self.assertEqual(asked, ["private"])
 
     def test_a_skipped_chart_that_still_cannot_be_fetched_stays(self):
-        stale, _ = self.stale([self.unit("private")], {"private": "needs credentials"},
-                              unreachable={"private"})
+        stale, _ = self.stale(
+            [self.unit("private")], {"private": "needs credentials"}, unreachable={"private"}
+        )
         self.assertEqual(stale, [])
 
     def test_a_chart_nothing_skips_is_not_asked_about(self):
-        stale, asked = self.stale([self.unit("kyverno"), self.unit("private")],
-                                  {"private": "needs credentials"},
-                                  unreachable={"private"})
+        stale, asked = self.stale(
+            [self.unit("kyverno"), self.unit("private")],
+            {"private": "needs credentials"},
+            unreachable={"private"},
+        )
         self.assertEqual((stale, asked), ([], ["private"]))
 
 
@@ -685,21 +870,32 @@ class AnExpiredSkipIsAskedOfTheRegistryAnonymously(unittest.TestCase):
         config = self.root / "docker"
         config.mkdir()
         (config / "config.json").write_text(
-            json.dumps({"auths": {self.HOST: {"auth": self.LOGIN}}}))
-        self.oci = fake.OciRegistry(self.HOST, "org/charts/private", "1.0.0",
-                                    {"name": "private"}, content=b"private-archive",
-                                    realm=f"https://{self.HOST}/token")
+            json.dumps({"auths": {self.HOST: {"auth": self.LOGIN}}})
+        )
+        self.oci = fake.OciRegistry(
+            self.HOST,
+            "org/charts/private",
+            "1.0.0",
+            {"name": "private"},
+            content=b"private-archive",
+            realm=f"https://{self.HOST}/token",
+        )
         self.anonymous_served = False
-        self.unit = gate.Unit(appset="a.yaml", chart="private", version="1.0.0",
-                              repo=f"oci://{self.HOST}/org/charts", path="addons/x/private")
-        for patch in (mock.patch.object(gate.registry, "CHART_CACHE", self.root / "cache"),
-                      mock.patch.dict(os.environ, {"DOCKER_CONFIG": str(config)}),
-                      mock.patch.object(gate.registry, "_REFUSED_LOGINS", set()),
-                      mock.patch.object(gate.registry, "_SAID", set()),
-                      mock.patch.dict(gate.registry.http_get.__kwdefaults__,
-                                      {"urlopen": self.urlopen}),
-                      mock.patch.dict(gate.SKIP_CHARTS, {"private": "needs a login"},
-                                      clear=True)):
+        self.unit = gate.Unit(
+            appset="a.yaml",
+            chart="private",
+            version="1.0.0",
+            repo=f"oci://{self.HOST}/org/charts",
+            path="addons/x/private",
+        )
+        for patch in (
+            mock.patch.object(gate.registry, "CHART_CACHE", self.root / "cache"),
+            mock.patch.dict(os.environ, {"DOCKER_CONFIG": str(config)}),
+            mock.patch.object(gate.registry, "_REFUSED_LOGINS", set()),
+            mock.patch.object(gate.registry, "_SAID", set()),
+            mock.patch.dict(gate.registry.http_get.__kwdefaults__, {"urlopen": self.urlopen}),
+            mock.patch.dict(gate.SKIP_CHARTS, {"private": "needs a login"}, clear=True),
+        ):
             patch.start()
             self.addCleanup(patch.stop)
 
@@ -707,8 +903,11 @@ class AnExpiredSkipIsAskedOfTheRegistryAnonymously(unittest.TestCase):
         """The fake registry, its realm issuing a token to the stored login alone
         unless anonymous_served says otherwise."""
         asked_anonymously = fake.auth(req) != f"Basic {self.LOGIN}"
-        if (req.full_url.startswith(f"https://{self.HOST}/token?") and asked_anonymously
-                and not self.anonymous_served):
+        if (
+            req.full_url.startswith(f"https://{self.HOST}/token?")
+            and asked_anonymously
+            and not self.anonymous_served
+        ):
             raise fake.http_error(req.full_url, 401)
         answer = self.oci(req)
         if isinstance(answer, BaseException):
@@ -718,8 +917,7 @@ class AnExpiredSkipIsAskedOfTheRegistryAnonymously(unittest.TestCase):
     def fetch_with_the_stored_login(self, cache=None):
         """What the client fetches holding the login, to show it does fetch."""
         with contextlib.redirect_stderr(io.StringIO()):
-            return gate.registry.chart_archive(self.unit.source, "private", "1.0.0",
-                                               cache=cache)
+            return gate.registry.chart_archive(self.unit.source, "private", "1.0.0", cache=cache)
 
     def test_a_chart_only_the_stored_login_fetches_is_no_stale_skip(self):
         fetched = self.fetch_with_the_stored_login(self.root / "elsewhere")
@@ -762,10 +960,13 @@ class TheDiscoveredCorpus(unittest.TestCase):
                 continue  # kustomize / git-sourced — not this gate's corpus
             if path.name not in contributing:
                 missed.append(path.name)
-        self.assertEqual(missed, [],
-                         "these ApplicationSets pin a Helm chart and produced no "
-                         "render unit, so this gate and the two importing its "
-                         "discover() never examine them")
+        self.assertEqual(
+            missed,
+            [],
+            "these ApplicationSets pin a Helm chart and produced no "
+            "render unit, so this gate and the two importing its "
+            "discover() never examine them",
+        )
 
     def test_every_matrix_element_pinning_a_chart_becomes_a_unit(self):
         """A matrix appset contributes one unit per list element, and dropping
@@ -787,15 +988,17 @@ class TheDiscoveredCorpus(unittest.TestCase):
                     sorted(str(e["chart"]) for e in elements),
                     "the units discovered for this appset are not its list "
                     "elements — an element was dropped from the corpus three "
-                    "gates share")
+                    "gates share",
+                )
 
     def test_every_unit_names_a_directory_that_exists(self):
         """A typo in an element's `path` removes the addon from three gates."""
         for u in self.units:
             with self.subTest(unit=f"{u.appset}:{u.chart}"):
-                self.assertTrue((gate.REPO_ROOT / u.path).is_dir(),
-                                f"{u.appset} points {u.chart} at '{u.path}', "
-                                f"which is not a directory")
+                self.assertTrue(
+                    (gate.REPO_ROOT / u.path).is_dir(),
+                    f"{u.appset} points {u.chart} at '{u.path}', which is not a directory",
+                )
 
     def test_no_unit_carries_an_unrendered_template(self):
         for u in self.units:

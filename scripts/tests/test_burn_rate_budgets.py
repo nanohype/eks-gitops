@@ -35,8 +35,9 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 HAS_KUSTOMIZE = shutil.which("kustomize") is not None
 
 
-def burn_expr(budget, factor, long_window, short_window,
-              guard=None, numerator=None, denominator=None):
+def burn_expr(
+    budget, factor, long_window, short_window, guard=None, numerator=None, denominator=None
+):
     """A dual-window burn expression in the shape this catalog writes them.
 
     Two metric selectors by default, because the real rules divide one by
@@ -47,9 +48,11 @@ def burn_expr(budget, factor, long_window, short_window,
     den = denominator or DENOMINATOR
 
     def half(window):
-        return (f"(sum(rate({num}[{window}])) / "
-                f"clamp_min(sum(rate({den}[{window}])), 0.001) / "
-                f"{budget} > bool {factor})")
+        return (
+            f"(sum(rate({num}[{window}])) / "
+            f"clamp_min(sum(rate({den}[{window}])), 0.001) / "
+            f"{budget} > bool {factor})"
+        )
 
     expr = half(long_window) + " * " + half(short_window)
     if guard is not None:
@@ -58,28 +61,43 @@ def burn_expr(budget, factor, long_window, short_window,
 
 
 def rule(title, summary, expr):
-    return {"uid": title.lower(), "title": title,
-            "annotations": {"summary": summary},
-            "data": [{"refId": "A", "model": {"refId": "A", "expr": expr}},
-                     {"refId": "B", "model": {"refId": "B", "expression": "A"}}]}
+    return {
+        "uid": title.lower(),
+        "title": title,
+        "annotations": {"summary": summary},
+        "data": [
+            {"refId": "A", "model": {"refId": "A", "expr": expr}},
+            {"refId": "B", "model": {"refId": "B", "expression": "A"}},
+        ],
+    }
 
 
 def group(name, *rules):
-    return {"apiVersion": "grafana.integreatly.org/v1beta1",
-            "kind": "GrafanaAlertRuleGroup",
-            "metadata": {"name": name},
-            "spec": {"rules": list(rules)}}
+    return {
+        "apiVersion": "grafana.integreatly.org/v1beta1",
+        "kind": "GrafanaAlertRuleGroup",
+        "metadata": {"name": name},
+        "spec": {"rules": list(rules)},
+    }
 
 
 def dashboard(name, *exprs):
-    return {"apiVersion": "grafana.integreatly.org/v1beta1",
-            "kind": "GrafanaDashboard",
-            "metadata": {"name": name},
-            "spec": {"json": json.dumps(
-                {"title": name,
-                 "panels": [{"type": "timeseries", "title": f"p{i}",
-                             "targets": [{"expr": e}]}
-                            for i, e in enumerate(exprs)]})}}
+    return {
+        "apiVersion": "grafana.integreatly.org/v1beta1",
+        "kind": "GrafanaDashboard",
+        "metadata": {"name": name},
+        "spec": {
+            "json": json.dumps(
+                {
+                    "title": name,
+                    "panels": [
+                        {"type": "timeseries", "title": f"p{i}", "targets": [{"expr": e}]}
+                        for i, e in enumerate(exprs)
+                    ],
+                }
+            )
+        },
+    }
 
 
 NUMERATOR = 'svc_request_duration_seconds_bucket{job="svc",le="1"}'
@@ -120,25 +138,39 @@ class ReadingTheExpression(unittest.TestCase):
 
     def planted(self):
         d = pathlib.Path(tempfile.mkdtemp())
-        (d / "g.yaml").write_text(yaml.safe_dump(group(
-            "g",
-            rule("Burn", "burning (2% in 1h)",
-                 burn_expr("0.01", "14.4", "1h", "5m")),
-            rule("Rate", "error rate above 5%",
-                 f"sum(rate({DENOMINATOR}[5m])) > 0.05"))))
+        (d / "g.yaml").write_text(
+            yaml.safe_dump(
+                group(
+                    "g",
+                    rule("Burn", "burning (2% in 1h)", burn_expr("0.01", "14.4", "1h", "5m")),
+                    rule("Rate", "error rate above 5%", f"sum(rate({DENOMINATOR}[5m])) > 0.05"),
+                )
+            )
+        )
         return d
 
 
 class TheDurationGrammar(unittest.TestCase):
     def test_units_convert(self):
-        for text, want in (("5m", 300), ("1h", 3600), ("1d", 86400),
-                           ("3d", 259200), ("30d", 2592000), ("1w", 604800)):
+        for text, want in (
+            ("5m", 300),
+            ("1h", 3600),
+            ("1d", 86400),
+            ("3d", 259200),
+            ("30d", 2592000),
+            ("1w", 604800),
+        ):
             with self.subTest(duration=text):
                 self.assertEqual(gate.seconds(text), want)
 
     def test_seconds_render_as_the_unit_a_file_would_write(self):
-        for total, want in ((2592000, "30d"), (259200, "3d"), (3600, "1h"),
-                            (1800, "30m"), (604800, "1w")):
+        for total, want in (
+            (2592000, "30d"),
+            (259200, "3d"),
+            (3600, "1h"),
+            (1800, "30m"),
+            (604800, "1w"),
+        ):
             with self.subTest(seconds=total):
                 self.assertEqual(gate.human(total), want)
 
@@ -168,14 +200,14 @@ class TheVerdict(unittest.TestCase):
         alerts.mkdir(parents=True)
         boards.mkdir(parents=True)
         (alerts / "g.yaml").write_text(yaml.safe_dump(group("slo", *rules)))
-        (boards / "d.yaml").write_text(
-            yaml.safe_dump(dashboard("d", *panel_exprs)))
+        (boards / "d.yaml").write_text(yaml.safe_dump(dashboard("d", *panel_exprs)))
         resources = ["  - alerting/g.yaml"]
         if ship_dashboard:
             resources.append("  - platform/d.yaml")
         (base / "kustomization.yaml").write_text(
             "apiVersion: kustomize.config.k8s.io/v1beta1\n"
-            "kind: Kustomization\nresources:\n" + "\n".join(resources) + "\n")
+            "kind: Kustomization\nresources:\n" + "\n".join(resources) + "\n"
+        )
         saved = (gate.ROOT, gate.ALERT_DIR, gate.KUSTOMIZE_ROOT)
         gate.ROOT, gate.ALERT_DIR, gate.KUSTOMIZE_ROOT = root, alerts, base
         try:
@@ -189,14 +221,10 @@ class TheVerdict(unittest.TestCase):
         """The four-tier ladder, each claim the one its expression spends
         against a 30d objective."""
         return [
-            rule("Fast", "burning fast (2% in 1h)",
-                 burn_expr("0.01", "14.4", "1h", "5m")),
-            rule("Slow", "burning (5% in 6h)",
-                 burn_expr("0.01", "6", "6h", "30m")),
-            rule("Ticket1d", "burning slowly (10% in 1d)",
-                 burn_expr("0.01", "3", "1d", "2h")),
-            rule("Ticket3d", "burning slowest (10% in 3d)",
-                 burn_expr("0.01", "1", "3d", "6h")),
+            rule("Fast", "burning fast (2% in 1h)", burn_expr("0.01", "14.4", "1h", "5m")),
+            rule("Slow", "burning (5% in 6h)", burn_expr("0.01", "6", "6h", "30m")),
+            rule("Ticket1d", "burning slowly (10% in 1d)", burn_expr("0.01", "3", "1d", "2h")),
+            rule("Ticket3d", "burning slowest (10% in 3d)", burn_expr("0.01", "1", "3d", "6h")),
         ]
 
     def test_a_consistent_ladder_passes(self):
@@ -219,8 +247,7 @@ class TheVerdict(unittest.TestCase):
 
     def test_a_factor_that_drifts_from_its_claim_is_reported(self):
         tiers = self.tiers()
-        tiers[0]["data"][0]["model"]["expr"] = burn_expr(
-            "0.01", "7.2", "1h", "5m")
+        tiers[0]["data"][0]["model"]["expr"] = burn_expr("0.01", "7.2", "1h", "5m")
         rc, out = self.verdict(tiers)
         self.assertEqual(rc, 1, out)
         self.assertIn("burn factor 7.2", out)
@@ -230,8 +257,8 @@ class TheVerdict(unittest.TestCase):
         directory changes here, and every claim in it becomes wrong."""
         rc, out = self.verdict(
             self.tiers(),
-            panel_exprs=(f"sum(rate({NUMERATOR}[60d])) / "
-                         f"sum(rate({DENOMINATOR}[60d]))",))
+            panel_exprs=(f"sum(rate({NUMERATOR}[60d])) / sum(rate({DENOMINATOR}[60d]))",),
+        )
         self.assertEqual(rc, 1, out)
         self.assertIn("60d objective", out)
         self.assertEqual(out.count("claims"), 4)
@@ -239,8 +266,7 @@ class TheVerdict(unittest.TestCase):
     def test_a_claim_compared_to_nothing_is_reported(self):
         """No panel measures what the rule burns against, so the figure agrees
         with whatever it says. That is the state the defect survived in."""
-        rc, out = self.verdict(
-            self.tiers(), panel_exprs=('sum(rate(other_metric{job="x"}[30d]))',))
+        rc, out = self.verdict(self.tiers(), panel_exprs=('sum(rate(other_metric{job="x"}[30d]))',))
         self.assertEqual(rc, 1, out)
         self.assertIn("compared to nothing", out)
 
@@ -264,7 +290,8 @@ class TheVerdict(unittest.TestCase):
         tiers = self.tiers()
         tiers[0]["data"][0]["model"]["expr"] = (
             f"(sum(rate({NUMERATOR}[1h])) / 0.01 > bool 14.4)"
-            f" * (sum(rate({NUMERATOR}[5m])) / 0.01 > bool 6)")
+            f" * (sum(rate({NUMERATOR}[5m])) / 0.01 > bool 6)"
+        )
         rc, out = self.verdict(tiers)
         self.assertEqual(rc, 1, out)
         self.assertIn("2 different burn factors", out)
@@ -273,10 +300,13 @@ class TheVerdict(unittest.TestCase):
         """Which panel states the objective decides the figure. A tree stating
         both has not decided, and picking one here would be this gate choosing
         the answer it checks against."""
-        rc, out = self.verdict(self.tiers(), panel_exprs=(
-            f"sum(rate({NUMERATOR}[30d]))",
-            f"sum(rate({DENOMINATOR}[7d]))",
-        ))
+        rc, out = self.verdict(
+            self.tiers(),
+            panel_exprs=(
+                f"sum(rate({NUMERATOR}[30d]))",
+                f"sum(rate({DENOMINATOR}[7d]))",
+            ),
+        )
         self.assertEqual(rc, 1, out)
         self.assertIn("which of those", out.lower())
 
@@ -299,9 +329,12 @@ class TheVerdict(unittest.TestCase):
         base.mkdir(parents=True)
         (base / "kustomization.yaml").write_text(
             "apiVersion: kustomize.config.k8s.io/v1beta1\n"
-            "kind: Kustomization\nresources:\n  - platform/gone.yaml\n")
-        with self.assertRaises(SystemExit) as caught, \
-                contextlib.redirect_stdout(io.StringIO()) as out:
+            "kind: Kustomization\nresources:\n  - platform/gone.yaml\n"
+        )
+        with (
+            self.assertRaises(SystemExit) as caught,
+            contextlib.redirect_stdout(io.StringIO()) as out,
+        ):
             gate.delivered_dashboards(base)
         self.assertEqual(caught.exception.code, gate.gatelib.CANNOT_RUN)
         self.assertIn("could not be read", out.getvalue())
@@ -309,8 +342,9 @@ class TheVerdict(unittest.TestCase):
     def test_no_burn_rule_at_all_cannot_run(self):
         """Exit 2. A directory with no burn rule reports what a directory of
         correct claims reports."""
-        rc, out = self.verdict([rule("Rate", "error rate above 5%",
-                                     f"sum(rate({DENOMINATOR}[5m])) > 0.05")])
+        rc, out = self.verdict(
+            [rule("Rate", "error rate above 5%", f"sum(rate({DENOMINATOR}[5m])) > 0.05")]
+        )
         self.assertEqual(rc, gate.gatelib.CANNOT_RUN, out)
         self.assertIn("no burn-rate rule", out)
 
@@ -340,7 +374,8 @@ class TheShippedCatalog(unittest.TestCase):
                 self.assertTrue(
                     [s for s in selectors if s in windows],
                     f"{group_name}/{r.get('title')} burns against "
-                    f"{selectors} and no dashboard panel measures any of them")
+                    f"{selectors} and no dashboard panel measures any of them",
+                )
 
     def test_the_rules_this_reads_are_rules_the_catalog_delivers(self):
         """This gate reads the alerting directory; a cluster receives what the
@@ -354,13 +389,19 @@ class TheShippedCatalog(unittest.TestCase):
         this one reading files no cluster has, silently.
         """
         routes = load("check-alert-severity-routes")
-        self.assertEqual(routes.KUSTOMIZE_ROOT, gate.KUSTOMIZE_ROOT,
-                         "the two alerting gates render different roots, so one "
-                         "of them is asserting over a tree the other does not")
-        self.assertIn(gate.RULE_GROUP, routes.ALERTING_KINDS,
-                      f"{routes.__name__} no longer refuses an unrendered "
-                      f"{gate.RULE_GROUP}, so this gate's corpus is files on "
-                      f"disk rather than what a cluster receives")
+        self.assertEqual(
+            routes.KUSTOMIZE_ROOT,
+            gate.KUSTOMIZE_ROOT,
+            "the two alerting gates render different roots, so one "
+            "of them is asserting over a tree the other does not",
+        )
+        self.assertIn(
+            gate.RULE_GROUP,
+            routes.ALERTING_KINDS,
+            f"{routes.__name__} no longer refuses an unrendered "
+            f"{gate.RULE_GROUP}, so this gate's corpus is files on "
+            f"disk rather than what a cluster receives",
+        )
 
     def test_the_objective_is_read_from_the_dashboards_not_declared_here(self):
         """A constant agreeing with the standard today and compared to nothing

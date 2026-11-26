@@ -168,7 +168,8 @@ SCAN_TIMEOUT = 600
 # TOOMANYREQUESTS for a 429, UNAVAILABLE for a 503 — and a status whose body
 # carries none as "unexpected status code <status> <reason>".
 REFUSED_FOR_NOW = re.compile(
-    r"\b(?:TOOMANYREQUESTS|UNAVAILABLE): |unexpected status code (?:429|5\d\d)\b")
+    r"\b(?:TOOMANYREQUESTS|UNAVAILABLE): |unexpected status code (?:429|5\d\d)\b"
+)
 
 # How trivy says a transfer was cut off: a layer, or its own vulnerability
 # database, whose stream ended short of the length the registry sent, which Go
@@ -208,8 +209,10 @@ REPORTED_SEVERITIES = ["CRITICAL", "HIGH"]
 # mirror.gcr.io rather than docker.io: this pulls on every CI run, and Docker
 # Hub's anonymous limits are the problem that mirror exists to solve. The
 # catalog already pulls trivy-operator through it.
-CANARY = ("mirror.gcr.io/library/alpine@sha256:"
-          "ca1c944a4f8486a153024d9965aafbe24f5723c1d5c02f4964c045a16d19dc54")
+CANARY = (
+    "mirror.gcr.io/library/alpine@sha256:"
+    "ca1c944a4f8486a153024d9965aafbe24f5723c1d5c02f4964c045a16d19dc54"
+)
 
 Finding = collections.namedtuple("Finding", "image bare id package installed fixed severity")
 
@@ -257,12 +260,15 @@ class Unscannable(Exception):
         said = self.stderr.splitlines()[-STDERR_LINES:]
         if not said:
             return [f"{indent}{self}; trivy wrote nothing to stderr"]
-        return [f"{indent}{self}; trivy's stderr ends:",
-                *(f"{indent}  {line}" for line in said)]
+        return [f"{indent}{self}; trivy's stderr ends:", *(f"{indent}  {line}" for line in said)]
 
 
-def scan(ref: str, *, sleep: Callable[[float], None] = time.sleep,
-         jitter: Callable[[], float] = random.random) -> list[Finding]:
+def scan(
+    ref: str,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+    jitter: Callable[[], float] = random.random,
+) -> list[Finding]:
     """Fixed findings at the reported severities, or Unscannable saying why not.
 
     An invocation a registry refused for now, by REFUSED_FOR_NOW, or whose
@@ -270,18 +276,28 @@ def scan(ref: str, *, sleep: Callable[[float], None] = time.sleep,
     invocations, each wait printed to stderr. Any other failure is raised on
     the invocation that produced it.
     """
-    cmd = ["trivy", "image", "--quiet", "--scanners", "vuln",
-           "--severity", ",".join(REPORTED_SEVERITIES),
-           "--ignore-unfixed", "--format", "json", ref]
+    cmd = [
+        "trivy",
+        "image",
+        "--quiet",
+        "--scanners",
+        "vuln",
+        "--severity",
+        ",".join(REPORTED_SEVERITIES),
+        "--ignore-unfixed",
+        "--format",
+        "json",
+        ref,
+    ]
     attempt = 0
     while True:
         attempt += 1
         try:
-            proc = subprocess.run(cmd, capture_output=True, text=True,
-                                  timeout=SCAN_TIMEOUT)
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=SCAN_TIMEOUT)
         except subprocess.TimeoutExpired as exc:
-            raise Unscannable(f"trivy ran past the {SCAN_TIMEOUT}s one scan is allowed",
-                              exc.stderr) from exc
+            raise Unscannable(
+                f"trivy ran past the {SCAN_TIMEOUT}s one scan is allowed", exc.stderr
+            ) from exc
         if proc.returncode == 0:
             return _findings(ref, proc)
         said = proc.stderr or ""
@@ -289,12 +305,17 @@ def scan(ref: str, *, sleep: Callable[[float], None] = time.sleep,
         if clears is None:
             raise Unscannable(f"trivy exited {proc.returncode}", proc.stderr)
         if attempt == SCAN_ATTEMPTS:
-            raise Unscannable(f"trivy exited {proc.returncode} on each of {SCAN_ATTEMPTS} "
-                              f"attempts, each ending for a reason that clears",
-                              proc.stderr)
+            raise Unscannable(
+                f"trivy exited {proc.returncode} on each of {SCAN_ATTEMPTS} "
+                f"attempts, each ending for a reason that clears",
+                proc.stderr,
+            )
         wait = SCAN_BACKOFF_SECONDS * 2 ** (attempt - 1) * (1 + SCAN_JITTER * jitter())
-        print(f"  {ref}: attempt {attempt} of {SCAN_ATTEMPTS} ended with "
-              f"'{clears.group(0).strip(': ')}', retrying in {wait:.0f}s", file=sys.stderr)
+        print(
+            f"  {ref}: attempt {attempt} of {SCAN_ATTEMPTS} ended with "
+            f"'{clears.group(0).strip(': ')}', retrying in {wait:.0f}s",
+            file=sys.stderr,
+        )
         sleep(wait)
 
 
@@ -305,23 +326,34 @@ def _findings(ref: str, proc: subprocess.CompletedProcess[str]) -> list[Finding]
     except json.JSONDecodeError as exc:
         raise Unscannable("trivy exited 0 and wrote no JSON report", proc.stderr) from exc
     if not isinstance(report, dict):
-        raise Unscannable("trivy exited 0 and wrote a report that is not a JSON object",
-                          proc.stderr)
+        raise Unscannable(
+            "trivy exited 0 and wrote a report that is not a JSON object", proc.stderr
+        )
     out = []
     for result in report.get("Results") or []:
         for v in result.get("Vulnerabilities") or []:
-            out.append(Finding(ref, bare(ref), v["VulnerabilityID"], v.get("PkgName", ""),
-                               v.get("InstalledVersion", ""), v.get("FixedVersion", ""),
-                               v.get("Severity", "")))
+            out.append(
+                Finding(
+                    ref,
+                    bare(ref),
+                    v["VulnerabilityID"],
+                    v.get("PkgName", ""),
+                    v.get("InstalledVersion", ""),
+                    v.get("FixedVersion", ""),
+                    v.get("Severity", ""),
+                )
+            )
     return out
 
 
 def read_advisories() -> list[dict]:
     """The acknowledged findings, or exit 2 naming what is wrong with the file."""
     if not ADVISORIES.is_file():
-        cannot_run(f"Cannot run: {ADVISORIES.name} does not exist, so every finding "
-                   f"below would be reported as unacknowledged whether or not a "
-                   f"decision had been recorded about it.")
+        cannot_run(
+            f"Cannot run: {ADVISORIES.name} does not exist, so every finding "
+            f"below would be reported as unacknowledged whether or not a "
+            f"decision had been recorded about it."
+        )
     doc = gatelib.read_yaml_all(ADVISORIES)
     entries = (doc[0] or {}).get("advisories") if doc else None
     if entries is None:
@@ -349,8 +381,9 @@ def review_date(value: object) -> datetime.date | None:
     return None
 
 
-def verdict(findings: list[Finding], advisories: list[dict],
-            today: datetime.date | None = None) -> list[str]:
+def verdict(
+    findings: list[Finding], advisories: list[dict], today: datetime.date | None = None
+) -> list[str]:
     """Everything wrong, over a scan, an acknowledgement list and a date.
 
     Four directions against the scan, and only the first is the question the
@@ -377,7 +410,8 @@ def verdict(findings: list[Finding], advisories: list[dict],
             problems.append(
                 f"image-advisories.yaml: an entry under `advisories:` is a "
                 f"{type(entry).__name__}, not a mapping — nothing can be read from it, "
-                f"and the findings it was meant to acknowledge are unacknowledged.")
+                f"and the findings it was meant to acknowledge are unacknowledged."
+            )
             continue
         key = (str(entry.get("id", "")), str(entry.get("package", "")))
         # str() around the read, not just the strip: a `reason:` key written and
@@ -387,19 +421,22 @@ def verdict(findings: list[Finding], advisories: list[dict],
         if not str(entry.get("reason") or "").strip():
             problems.append(
                 f"image-advisories.yaml: {key[0]} in {key[1]} is acknowledged with no "
-                f"reason recorded, so nothing states what would let it be removed.")
+                f"reason recorded, so nothing states what would let it be removed."
+            )
         if "review_by" in entry:
             due = review_date(entry["review_by"])
             if due is None:
                 problems.append(
                     f"image-advisories.yaml: {key[0]} in {key[1]} has review_by "
                     f"{entry['review_by']!r}, which is not a YYYY-MM-DD date, so the "
-                    f"entry never falls due.")
+                    f"entry never falls due."
+                )
             elif due < today:
                 problems.append(
                     f"image-advisories.yaml: {key[0]} in {key[1]} was due for review on "
                     f"{due.isoformat()}. Re-read the finding against the catalog: move "
-                    f"the chart pin, or record the decision again with a later review_by.")
+                    f"the chart pin, or record the decision again with a later review_by."
+                )
         by_key[key] = entry
 
     # 1. A blocking finding nothing acknowledges — the gate's own question.
@@ -412,14 +449,16 @@ def verdict(findings: list[Finding], advisories: list[dict],
                 f"{f.image}: {f.id} in {f.package} {f.installed} is CRITICAL and fixed "
                 f"in {f.fixed}, and no entry in image-advisories.yaml names it. Move the "
                 f"chart pin to a version carrying the fix, or record why the finding "
-                f"stands.")
+                f"stands."
+            )
             continue
         listed = [str(i) for i in (acknowledged.get("images") or [])]
         if f.bare not in listed:
             problems.append(
                 f"{f.image}: {f.id} in {f.package} is acknowledged, but the entry does "
                 f"not list {f.bare}. An acknowledgement covers the images it names — a "
-                f"new image acquiring a known CRITICAL is a decision, not an inheritance.")
+                f"new image acquiring a known CRITICAL is a decision, not an inheritance."
+            )
             continue
 
     # 3. An entry no image carries. 4. An entry listing an image with no such finding.
@@ -433,18 +472,21 @@ def verdict(findings: list[Finding], advisories: list[dict],
         if not listed:
             problems.append(
                 f"image-advisories.yaml: {key[0]} in {key[1]} lists no images, so it "
-                f"acknowledges nothing while reading as a considered decision.")
+                f"acknowledges nothing while reading as a considered decision."
+            )
             continue
         if not any((key[0], key[1], img) in carried for img in listed):
             problems.append(
                 f"image-advisories.yaml: {key[0]} in {key[1]} is acknowledged but no "
-                f"scanned image carries it — the entry outlived its reason. Delete it.")
+                f"scanned image carries it — the entry outlived its reason. Delete it."
+            )
             continue
         for img in listed:
             if (key[0], key[1], img) not in carried:
                 problems.append(
                     f"image-advisories.yaml: {key[0]} in {key[1]} lists {img}, which no "
-                    f"longer carries it. Drop that image from the entry.")
+                    f"longer carries it. Drop that image from the entry."
+                )
     return list(dict.fromkeys(problems))
 
 
@@ -453,24 +495,29 @@ def run_canary() -> int:
     try:
         found = scan(CANARY)
     except Unscannable as exc:
-        cannot_run("Cannot run: the canary image could not be scanned.",
-                   f"  {CANARY}",
-                   *exc.lines("    "),
-                   "An unreachable registry is a fact about the network, not about "
-                   "the images this catalog pins.")
+        cannot_run(
+            "Cannot run: the canary image could not be scanned.",
+            f"  {CANARY}",
+            *exc.lines("    "),
+            "An unreachable registry is a fact about the network, not about "
+            "the images this catalog pins.",
+        )
     critical = [f for f in found if f.severity == BLOCKING_SEVERITY]
     if not critical:
-        cannot_run("Cannot run: the canary returned no fixed CRITICAL findings.",
-                   f"  {CANARY}",
-                   "The canary is pinned by digest to an image whose CRITICALs have "
-                   "published fixes and cannot be patched away underneath it, so an "
-                   "empty result here is a fact about the scanner. One with no "
-                   "database, or one reading a flag as 'report nothing', returns a "
-                   "clean result for every image — including every image below.")
-    print(f"canary OK: {len(critical)} fixed CRITICAL finding(s) from the pinned "
-          f"end-of-life image, so a clean result below is a result rather than a "
-          f"silence — "
-          + ", ".join(sorted({f"{f.id} ({f.package})" for f in critical})))
+        cannot_run(
+            "Cannot run: the canary returned no fixed CRITICAL findings.",
+            f"  {CANARY}",
+            "The canary is pinned by digest to an image whose CRITICALs have "
+            "published fixes and cannot be patched away underneath it, so an "
+            "empty result here is a fact about the scanner. One with no "
+            "database, or one reading a flag as 'report nothing', returns a "
+            "clean result for every image — including every image below.",
+        )
+    print(
+        f"canary OK: {len(critical)} fixed CRITICAL finding(s) from the pinned "
+        f"end-of-life image, so a clean result below is a result rather than a "
+        f"silence — " + ", ".join(sorted({f"{f.id} ({f.package})" for f in critical}))
+    )
     return 0
 
 
@@ -488,20 +535,26 @@ def scan_all(images: dict[str, set[str]]) -> list[Finding]:
         except Unscannable as exc:
             unscannable.append((ref, exc))
     if unscannable:
-        cannot_run("Cannot run: these images could not be scanned, and the ones that "
-                   "were say nothing about them:",
-                   *(line for ref, exc in unscannable
-                     for line in (f"  {ref}  (via {', '.join(sorted(images[ref]))})",
-                                  *exc.lines("    "))))
+        cannot_run(
+            "Cannot run: these images could not be scanned, and the ones that "
+            "were say nothing about them:",
+            *(
+                line
+                for ref, exc in unscannable
+                for line in (f"  {ref}  (via {', '.join(sorted(images[ref]))})", *exc.lines("    "))
+            ),
+        )
     return findings
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--list", action="store_true",
-                    help="print every finding at the reported severities, then exit 0")
-    ap.add_argument("--self-test", action="store_true",
-                    help="run the canary alone")
+    ap.add_argument(
+        "--list",
+        action="store_true",
+        help="print every finding at the reported severities, then exit 0",
+    )
+    ap.add_argument("--self-test", action="store_true", help="run the canary alone")
     ap.add_argument("--env", default="production")
     args = ap.parse_args()
 
@@ -513,39 +566,48 @@ def main() -> int:
     seen: set[str] = set()
     images, unrendered, unclassified = image_pins.inventory(args.env, seen)
     if unrendered:
-        cannot_run("Cannot run: charts that did not render contributed no images, so "
-                   "the scan below would cover part of the fleet and report on all of "
-                   "it.",
-                   *(f"  {path}: {err}" for path, err in unrendered))
+        cannot_run(
+            "Cannot run: charts that did not render contributed no images, so "
+            "the scan below would cover part of the fleet and report on all of "
+            "it.",
+            *(f"  {path}: {err}" for path, err in unrendered),
+        )
     # A reference the classifier could not place is one this scan cannot decide
     # to include or exclude. Excluded silently it is an unscanned image inside a
     # population reported as the fleet's — the same shape as a chart that did
     # not render, one string down.
     if unclassified:
-        cannot_run("Cannot run: the render carries image-shaped references that reach "
-                   "no pod template and are on no declaration, so whether the scan "
-                   "below covers them is unknown:",
-                   *(f"  {chart}: {detail}" for chart, detail in unclassified))
+        cannot_run(
+            "Cannot run: the render carries image-shaped references that reach "
+            "no pod template and are on no declaration, so whether the scan "
+            "below covers them is unknown:",
+            *(f"  {chart}: {detail}" for chart, detail in unclassified),
+        )
     units = image_pins.render_addons.discover()
     coverage = image_pins.chart_coverage(images, units, seen)
     if coverage:
-        cannot_run("Cannot run: the image population is smaller than the charts that "
-                   "rendered it, so a scan over it says less than it appears to:",
-                   *(f"  {problem}" for problem in coverage))
+        cannot_run(
+            "Cannot run: the image population is smaller than the charts that "
+            "rendered it, so a scan over it says less than it appears to:",
+            *(f"  {problem}" for problem in coverage),
+        )
     if len(images) < len(units):
-        cannot_run(f"Cannot run: the render produced {len(images)} image(s) from "
-                   f"{len(units)} chart(s). Every chart shipping a workload "
-                   f"contributes at least one, so the walk got smaller rather than "
-                   f"the catalog.")
+        cannot_run(
+            f"Cannot run: the render produced {len(images)} image(s) from "
+            f"{len(units)} chart(s). Every chart shipping a workload "
+            f"contributes at least one, so the walk got smaller rather than "
+            f"the catalog."
+        )
 
     findings = scan_all(images)
 
     if args.list:
         for f in sorted(findings, key=lambda f: (f.severity, f.image, f.id)):
-            print(f"{f.severity:8} {f.image}  {f.id}  {f.package} {f.installed} "
-                  f"-> {f.fixed}")
-        print(f"\n{len(findings)} fixed finding(s) at {'/'.join(REPORTED_SEVERITIES)} "
-              f"across {len(images)} image(s)")
+            print(f"{f.severity:8} {f.image}  {f.id}  {f.package} {f.installed} -> {f.fixed}")
+        print(
+            f"\n{len(findings)} fixed finding(s) at {'/'.join(REPORTED_SEVERITIES)} "
+            f"across {len(images)} image(s)"
+        )
         return 0
 
     for problem in verdict(findings, read_advisories()):
@@ -560,12 +622,14 @@ def main() -> int:
             print(f"  {problem}")
         return 1
 
-    print(f"image vulnerabilities OK: {len(images)} image(s) scanned across "
-          f"{len(set().union(*images.values()))} chart(s). "
-          f"{len(critical)} fixed CRITICAL finding(s), every one acknowledged in "
-          f"image-advisories.yaml against the image carrying it, and every "
-          f"acknowledgement still matched by the scan. {len(high)} fixed HIGH "
-          f"finding(s) counted and not gated — run --list to read them.")
+    print(
+        f"image vulnerabilities OK: {len(images)} image(s) scanned across "
+        f"{len(set().union(*images.values()))} chart(s). "
+        f"{len(critical)} fixed CRITICAL finding(s), every one acknowledged in "
+        f"image-advisories.yaml against the image carrying it, and every "
+        f"acknowledgement still matched by the scan. {len(high)} fixed HIGH "
+        f"finding(s) counted and not gated — run --list to read them."
+    )
     return 0
 
 

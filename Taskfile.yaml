@@ -171,9 +171,16 @@ tasks:
       - ./scripts/check-policy-validity.py
 
   lint:python:
-    desc: "Python lint + typecheck — ruff and mypy over scripts/ INCLUDING scripts/tests"
+    desc: "Python lint — ruff's rules and its formatter over scripts/, scripts/tests included"
     cmds:
       - ruff check .
+      # The formatter's output is the only layout the gate scripts carry, so a
+      # diff never mixes a behaviour change with a re-wrap.
+      - ruff format --check .
+
+  typecheck:
+    desc: "Python typecheck — mypy over scripts/, scripts/tests included"
+    cmds:
       # Tests are in scope on purpose: a fixture that drifts from the gate it
       # exercises is exactly the drift a type checker sees and a test run does not.
       - mypy
@@ -246,6 +253,7 @@ tasks:
     deps:
       - lint:yaml
       - lint:python
+      - typecheck
       - lint:shell
       - kustomize:build
       - validate:helm-render

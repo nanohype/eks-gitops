@@ -50,19 +50,25 @@ def running_major() -> int:
     case saying "the runtime satisfies the floor and the pin does not" keeps
     saying that on whatever node the suite runs on.
     """
-    out = subprocess.run([NODE, "-p", "process.versions.node"],
-                         capture_output=True, text=True, timeout=60).stdout
+    out = subprocess.run(
+        [NODE, "-p", "process.versions.node"], capture_output=True, text=True, timeout=60
+    ).stdout
     return int(out.strip().split(".")[0])
 
 
 @unittest.skipUnless(NODE, "node is not on PATH")
 class TheDriftCheckAgainstAPackageFixture(unittest.TestCase):
-    def package(self, root: pathlib.Path, *, engines: str | None,
-                defaults: dict | None = None, registry: bool = True) -> None:
+    def package(
+        self,
+        root: pathlib.Path,
+        *,
+        engines: str | None,
+        defaults: dict | None = None,
+        registry: bool = True,
+    ) -> None:
         pkg = root / "node_modules" / "renovate"
         (pkg / "dist" / "modules" / "manager").mkdir(parents=True)
-        body: dict[str, object] = {
-            "name": "renovate", "version": "0.0.1", "type": "module"}
+        body: dict[str, object] = {"name": "renovate", "version": "0.0.1", "type": "module"}
         if engines is not None:
             body["engines"] = {"node": engines}
         (pkg / "package.json").write_text(json.dumps(body))
@@ -76,19 +82,30 @@ class TheDriftCheckAgainstAPackageFixture(unittest.TestCase):
             "  key === 'defaultConfig' ? {managerFilePatterns: DEFAULTS[name]} : undefined;\n"
         )
 
-    def tree(self, *, engines: str | None = None, managers=("argocd", "gomod"),
-             record=None, node_version: str | None = "999.0.0",
-             defaults=None, registry: bool = True) -> pathlib.Path:
+    def tree(
+        self,
+        *,
+        engines: str | None = None,
+        managers=("argocd", "gomod"),
+        record=None,
+        node_version: str | None = "999.0.0",
+        defaults=None,
+        registry: bool = True,
+    ) -> pathlib.Path:
         """A repo root the script can run in, with a Renovate package inside it."""
         root = pathlib.Path(tempfile.mkdtemp())
         (root / "scripts").mkdir()
         shutil.copy(SCRIPT, root / "scripts" / SCRIPT.name)
         (root / "renovate.json").write_text(json.dumps({"enabledManagers": list(managers)}))
         recorded = {m: DEFAULTS.get(m) for m in managers} if record is None else record
-        (root / "scripts" / RECORD.name).write_text(json.dumps({
-            "generated": {"by": "test", "renovate": "0.0.1"},
-            "managers": recorded,
-        }))
+        (root / "scripts" / RECORD.name).write_text(
+            json.dumps(
+                {
+                    "generated": {"by": "test", "renovate": "0.0.1"},
+                    "managers": recorded,
+                }
+            )
+        )
         if node_version is not None:
             (root / ".node-version").write_text(node_version + "\n")
         self.package(root, engines=engines, defaults=defaults, registry=registry)
@@ -97,7 +114,11 @@ class TheDriftCheckAgainstAPackageFixture(unittest.TestCase):
     def run_in(self, root: pathlib.Path, *args: str):
         proc = subprocess.run(
             [NODE, "scripts/" + SCRIPT.name, *args],
-            cwd=root, capture_output=True, text=True, timeout=120)
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
         return proc.returncode, proc.stdout + proc.stderr
 
     # ── the passing direction, which every refusal below is measured against ──
@@ -137,8 +158,11 @@ class TheDriftCheckAgainstAPackageFixture(unittest.TestCase):
     def test_a_manager_the_registry_does_not_know_cannot_run(self):
         """Misspelled here, or removed upstream. Either way no default was
         resolved for it, which is not a default that matches."""
-        rc, out = self.run_in(self.tree(engines=">=0.0.0", managers=("argocd", "gomud"),
-                                        record={"argocd": [], "gomud": []}))
+        rc, out = self.run_in(
+            self.tree(
+                engines=">=0.0.0", managers=("argocd", "gomud"), record={"argocd": [], "gomud": []}
+            )
+        )
         self.assertEqual(rc, 2, out)
         self.assertIn("does not know that name", out)
 
@@ -167,8 +191,7 @@ class TheDriftCheckAgainstAPackageFixture(unittest.TestCase):
         before reading the tree at all.
         """
         major = running_major()
-        rc, out = self.run_in(self.tree(engines=f">={major}.0.0",
-                                        node_version=f"{major - 1}.0.0"))
+        rc, out = self.run_in(self.tree(engines=f">={major}.0.0", node_version=f"{major - 1}.0.0"))
         self.assertEqual(rc, 1, out)
         self.assertIn(f".node-version pins node {major - 1}.0.0", out)
 
@@ -176,31 +199,31 @@ class TheDriftCheckAgainstAPackageFixture(unittest.TestCase):
         """`^24.11.0` does not admit 25. A comparator reading it as a lower bound
         would pass a Node the package excludes."""
         major = running_major()
-        rc, out = self.run_in(self.tree(engines=f"^{major}.0.0",
-                                        node_version=f"{major + 1}.0.0"))
+        rc, out = self.run_in(self.tree(engines=f"^{major}.0.0", node_version=f"{major + 1}.0.0"))
         self.assertEqual(rc, 1, out)
         self.assertIn(f".node-version pins node {major + 1}.0.0", out)
 
     def test_a_gte_floor_admits_the_next_major(self):
         major = running_major()
-        rc, out = self.run_in(self.tree(engines=f">={major}.0.0",
-                                        node_version=f"{major + 1}.0.0"))
+        rc, out = self.run_in(self.tree(engines=f">={major}.0.0", node_version=f"{major + 1}.0.0"))
         self.assertEqual(rc, 0, out)
 
     def test_a_disjunction_admits_a_pin_in_its_later_alternative(self):
         """`^24.11.0 || ^26.13.0` is how the package declares two supported
         majors. A pin satisfying only the second alternative is supported."""
         major = running_major()
-        rc, out = self.run_in(self.tree(engines=f"^{major - 2}.0.0 || ^{major}.0.0",
-                                        node_version=f"{major}.0.0"))
+        rc, out = self.run_in(
+            self.tree(engines=f"^{major - 2}.0.0 || ^{major}.0.0", node_version=f"{major}.0.0")
+        )
         self.assertEqual(rc, 0, out)
 
     def test_a_disjunction_rejects_a_pin_between_its_alternatives(self):
         """The major between two caret alternatives satisfies neither; reading
         the disjunction as a lower bound would pass it."""
         major = running_major()
-        rc, out = self.run_in(self.tree(engines=f"^{major - 2}.0.0 || ^{major}.0.0",
-                                        node_version=f"{major - 1}.0.0"))
+        rc, out = self.run_in(
+            self.tree(engines=f"^{major - 2}.0.0 || ^{major}.0.0", node_version=f"{major - 1}.0.0")
+        )
         self.assertEqual(rc, 1, out)
         self.assertIn(f".node-version pins node {major - 1}.0.0", out)
 
@@ -217,8 +240,9 @@ class TheDriftCheckAgainstAPackageFixture(unittest.TestCase):
         self.assertIn("satisfied by luck", out)
 
     def test_a_record_that_disagrees_with_the_package_is_a_tree_defect(self):
-        rc, out = self.run_in(self.tree(engines=">=0.0.0",
-                                        record={"argocd": [], "gomod": ["/^go\\.mod$/"]}))
+        rc, out = self.run_in(
+            self.tree(engines=">=0.0.0", record={"argocd": [], "gomod": ["/^go\\.mod$/"]})
+        )
         self.assertEqual(rc, 1, out)
         self.assertIn("package ships", out)
 
@@ -228,8 +252,9 @@ class TheDriftCheckAgainstAPackageFixture(unittest.TestCase):
         self.assertIn("absent from the record", out)
 
     def test_a_record_that_outlived_its_manager_is_a_tree_defect(self):
-        rc, out = self.run_in(self.tree(engines=">=0.0.0", managers=("argocd",),
-                                        record={"argocd": [], "gomod": []}))
+        rc, out = self.run_in(
+            self.tree(engines=">=0.0.0", managers=("argocd",), record={"argocd": [], "gomod": []})
+        )
         self.assertEqual(rc, 1, out)
         self.assertIn("no longer enables it", out)
 
@@ -245,12 +270,13 @@ class TheFixtureDescribesTheRealScript(unittest.TestCase):
         below the floor fails in the suite rather than only where the package is
         installed."""
         version_file = ROOT / ".node-version"
-        self.assertTrue(version_file.is_file(),
-                        ".node-version does not exist, so the Node the "
-                        "renovate-coverage job runs is whatever the runner ships")
+        self.assertTrue(
+            version_file.is_file(),
+            ".node-version does not exist, so the Node the "
+            "renovate-coverage job runs is whatever the runner ships",
+        )
         major = int(version_file.read_text().strip().lstrip("v").split(".")[0])
-        self.assertGreaterEqual(major, 24,
-                                "the recorded Renovate declares engines.node ^24.11.0")
+        self.assertGreaterEqual(major, 24, "the recorded Renovate declares engines.node ^24.11.0")
 
 
 if __name__ == "__main__":

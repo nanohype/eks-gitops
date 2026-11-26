@@ -25,17 +25,18 @@ class ClassifyingAReference(unittest.TestCase):
 
     def test_a_digest_is_immutable(self):
         self.assertEqual(
-            gate.classify("ghcr.io/opencost/opencost:1.121.1@sha256:" + "5" * 64),
-            "digest")
+            gate.classify("ghcr.io/opencost/opencost:1.121.1@sha256:" + "5" * 64), "digest"
+        )
 
     def test_a_digest_without_a_tag_is_immutable(self):
-        self.assertEqual(gate.classify("quay.io/cilium/cilium@sha256:" + "0" * 64),
-                         "digest")
+        self.assertEqual(gate.classify("quay.io/cilium/cilium@sha256:" + "0" * 64), "digest")
 
     def test_a_version_tag_is_accepted(self):
-        for ref in ("quay.io/jetstack/cert-manager-controller:v1.21.1",
-                    "memcached:1.6.45-alpine",
-                    "docker.io/envoyproxy/ratelimit:1e50889b"):
+        for ref in (
+            "quay.io/jetstack/cert-manager-controller:v1.21.1",
+            "memcached:1.6.45-alpine",
+            "docker.io/envoyproxy/ratelimit:1e50889b",
+        ):
             with self.subTest(ref=ref):
                 self.assertEqual(gate.classify(ref), "tag")
 
@@ -47,8 +48,7 @@ class ClassifyingAReference(unittest.TestCase):
     def test_every_moving_tag_is_mutable(self):
         for tag in sorted(gate.MUTABLE_TAGS):
             with self.subTest(tag=tag):
-                self.assertEqual(gate.classify(f"docker.io/library/nginx:{tag}"),
-                                 "mutable")
+                self.assertEqual(gate.classify(f"docker.io/library/nginx:{tag}"), "mutable")
 
     def test_a_moving_tag_is_recognised_whatever_its_case(self):
         self.assertEqual(gate.classify("docker.io/library/nginx:LATEST"), "mutable")
@@ -71,24 +71,29 @@ class TheBareNameAnExemptionMatches(unittest.TestCase):
     """An exemption names the image, not the tag it happened to carry."""
 
     def test_the_tag_is_dropped(self):
-        self.assertEqual(gate.bare_name("docker.io/library/nginx:latest"),
-                         "docker.io/library/nginx")
+        self.assertEqual(
+            gate.bare_name("docker.io/library/nginx:latest"), "docker.io/library/nginx"
+        )
 
     def test_an_untagged_reference_is_its_own_bare_name(self):
-        self.assertEqual(gate.bare_name("ghcr.io/kyverno/readiness-checker"),
-                         "ghcr.io/kyverno/readiness-checker")
+        self.assertEqual(
+            gate.bare_name("ghcr.io/kyverno/readiness-checker"), "ghcr.io/kyverno/readiness-checker"
+        )
 
     def test_a_registry_port_survives(self):
-        self.assertEqual(gate.bare_name("registry:5000/nanohype/agent"),
-                         "registry:5000/nanohype/agent")
+        self.assertEqual(
+            gate.bare_name("registry:5000/nanohype/agent"), "registry:5000/nanohype/agent"
+        )
 
 
 class TheVerdict(unittest.TestCase):
     """Both directions fail: an unpinned image, and an exemption that rotted."""
 
     def test_an_all_pinned_fleet_has_no_problems(self):
-        images = {"quay.io/cilium/cilium@sha256:" + "0" * 64: {"cilium"},
-                  "registry.k8s.io/metrics-server/metrics-server:v0.8.1": {"metrics-server"}}
+        images = {
+            "quay.io/cilium/cilium@sha256:" + "0" * 64: {"cilium"},
+            "registry.k8s.io/metrics-server/metrics-server:v0.8.1": {"metrics-server"},
+        }
         self.assertEqual(gate.verdict(images, {}), [])
 
     def test_a_mutable_reference_is_reported_with_the_chart_that_renders_it(self):
@@ -103,8 +108,10 @@ class TheVerdict(unittest.TestCase):
         self.assertIn("via loki, tempo", gate.verdict(images, {})[0])
 
     def test_an_exemption_suppresses_exactly_its_own_image(self):
-        images = {"docker.io/library/nginx:latest": {"loki"},
-                  "docker.io/library/redis:latest": {"tempo"}}
+        images = {
+            "docker.io/library/nginx:latest": {"loki"},
+            "docker.io/library/redis:latest": {"tempo"},
+        }
         problems = gate.verdict(images, {"docker.io/library/nginx": "recorded reason"})
         self.assertEqual(len(problems), 1)
         self.assertIn("redis", problems[0])
@@ -146,8 +153,7 @@ class TheImageExtractor(unittest.TestCase):
                 self.assertEqual(self.refs(line), [])
 
     def test_every_image_in_a_multi_document_render_is_found(self):
-        text = ("kind: Deployment\n  image: a:1\n---\n"
-                "kind: DaemonSet\n  image: b:2\n")
+        text = "kind: Deployment\n  image: a:1\n---\nkind: DaemonSet\n  image: b:2\n"
         self.assertEqual(self.refs(text), ["a:1", "b:2"])
 
 
@@ -157,9 +163,11 @@ class TheShippedExemptionList(unittest.TestCase):
     def test_every_entry_carries_a_recorded_reason(self):
         for bare, reason in gate.ALLOWED_MUTABLE.items():
             with self.subTest(image=bare):
-                self.assertTrue(reason.strip(),
-                                f"{bare} is exempted with no reason recorded, so "
-                                f"nothing states what would let it be removed")
+                self.assertTrue(
+                    reason.strip(),
+                    f"{bare} is exempted with no reason recorded, so "
+                    f"nothing states what would let it be removed",
+                )
 
 
 if __name__ == "__main__":

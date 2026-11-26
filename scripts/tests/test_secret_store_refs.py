@@ -30,31 +30,50 @@ gate = load("check-secret-store-refs")
 ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 
 
-def store(name="aws-secrets-manager", api="external-secrets.io/v1",
-          kind="ClusterSecretStore"):
-    return {"apiVersion": api, "kind": kind, "metadata": {"name": name},
-            "spec": {"provider": {"aws": {"service": "SecretsManager",
-                                          "region": "us-west-2"}}}}
+def store(name="aws-secrets-manager", api="external-secrets.io/v1", kind="ClusterSecretStore"):
+    return {
+        "apiVersion": api,
+        "kind": kind,
+        "metadata": {"name": name},
+        "spec": {"provider": {"aws": {"service": "SecretsManager", "region": "us-west-2"}}},
+    }
 
 
-def external_secret(name, store_name="aws-secrets-manager",
-                    api="external-secrets.io/v1"):
-    return {"apiVersion": api, "kind": "ExternalSecret",
-            "metadata": {"name": name},
-            "spec": {"secretStoreRef": {"name": store_name,
-                                        "kind": "ClusterSecretStore"},
-                     "target": {"name": name}}}
+def external_secret(name, store_name="aws-secrets-manager", api="external-secrets.io/v1"):
+    return {
+        "apiVersion": api,
+        "kind": "ExternalSecret",
+        "metadata": {"name": name},
+        "spec": {
+            "secretStoreRef": {"name": store_name, "kind": "ClusterSecretStore"},
+            "target": {"name": name},
+        },
+    }
 
 
-def appset(name, target_name="aws-secrets-manager",
-           target_kind="ClusterSecretStore"):
-    return {"apiVersion": "argoproj.io/v1alpha1", "kind": "ApplicationSet",
-            "metadata": {"name": name},
-            "spec": {"template": {"spec": {"source": {
-                "path": "p",
-                "kustomize": {"patches": [
-                    {"target": {"kind": target_kind, "name": target_name},
-                     "patch": "- op: replace\n  path: /spec/x\n  value: y"}]}}}}}}
+def appset(name, target_name="aws-secrets-manager", target_kind="ClusterSecretStore"):
+    return {
+        "apiVersion": "argoproj.io/v1alpha1",
+        "kind": "ApplicationSet",
+        "metadata": {"name": name},
+        "spec": {
+            "template": {
+                "spec": {
+                    "source": {
+                        "path": "p",
+                        "kustomize": {
+                            "patches": [
+                                {
+                                    "target": {"kind": target_kind, "name": target_name},
+                                    "patch": "- op: replace\n  path: /spec/x\n  value: y",
+                                }
+                            ]
+                        },
+                    }
+                }
+            }
+        },
+    }
 
 
 CHART_TEMPLATE = """apiVersion: external-secrets.io/v1
@@ -91,8 +110,9 @@ class ReadingChartSource(unittest.TestCase):
         p = self.chart()
         with self.assertRaises(yaml.YAMLError):
             list(yaml.safe_load_all(p.read_text()))
-        self.assertEqual(gate.helm_store_refs(p),
-                         [(p, "ClusterSecretStore", "aws-secrets-manager")])
+        self.assertEqual(
+            gate.helm_store_refs(p), [(p, "ClusterSecretStore", "aws-secrets-manager")]
+        )
 
     def test_a_typo_in_chart_source_is_read_as_written(self):
         p = self.chart("aws-secretsmanager")
@@ -102,11 +122,13 @@ class ReadingChartSource(unittest.TestCase):
         """The block is located by its key and the fields read from inside it.
         A bare grep for `name:` would take the target's, or the metadata's."""
         p = self.chart()
-        p.write_text(p.read_text().replace(
-            "  refreshInterval: 1h\n",
-            "  refreshInterval: 1h\n  decoy:\n    name: not-a-store\n"))
-        self.assertEqual([r[2] for r in gate.helm_store_refs(p)],
-                         ["aws-secrets-manager"])
+        p.write_text(
+            p.read_text().replace(
+                "  refreshInterval: 1h\n",
+                "  refreshInterval: 1h\n  decoy:\n    name: not-a-store\n",
+            )
+        )
+        self.assertEqual([r[2] for r in gate.helm_store_refs(p)], ["aws-secrets-manager"])
 
 
 class TheVerdict(unittest.TestCase):
@@ -119,15 +141,13 @@ class TheVerdict(unittest.TestCase):
         for i, doc in enumerate(docs):
             (root / "addons" / f"{i:02d}.yaml").write_text(yaml.safe_dump(doc))
         for i, doc in enumerate(appsets):
-            (root / "applicationsets" / f"{i:02d}.yaml").write_text(
-                yaml.safe_dump(doc))
+            (root / "applicationsets" / f"{i:02d}.yaml").write_text(yaml.safe_dump(doc))
         path = root / "contracts" / "secret-store.json"
         if contract is not None:
             path.parent.mkdir(parents=True)
             path.write_text(json.dumps(contract, indent=2) + "\n")
         saved = (gate.ROOT, gate.APPSET_DIR, gate.CONTRACT)
-        gate.ROOT, gate.APPSET_DIR, gate.CONTRACT = (
-            root, root / "applicationsets", path)
+        gate.ROOT, gate.APPSET_DIR, gate.CONTRACT = (root, root / "applicationsets", path)
         try:
             with contextlib.redirect_stdout(io.StringIO()) as out:
                 rc = gate.main(["--write"] if write else [])
@@ -138,17 +158,15 @@ class TheVerdict(unittest.TestCase):
     def healthy(self):
         return [store(), external_secret("a"), external_secret("b")]
 
-    def contract_for(self, name="aws-secrets-manager",
-                     api="external-secrets.io/v1"):
+    def contract_for(self, name="aws-secrets-manager", api="external-secrets.io/v1"):
         return {
             "_generated": "scripts/check-secret-store-refs.py --write; the source "
-                          "of truth is the manifest under "
-                          "addons/bootstrap/secret-stores/. Edit that, then "
-                          "regenerate.",
+            "of truth is the manifest under "
+            "addons/bootstrap/secret-stores/. Edit that, then "
+            "regenerate.",
             "_purpose": "Consumers outside this repository assert their chart "
-                        "defaults against these values instead of restating them.",
-            "clusterSecretStore": {"apiVersion": api,
-                                   "kind": "ClusterSecretStore", "name": name},
+            "defaults against these values instead of restating them.",
+            "clusterSecretStore": {"apiVersion": api, "kind": "ClusterSecretStore", "name": name},
             "externalSecret": {"apiVersion": api},
         }
 
@@ -169,14 +187,17 @@ class TheVerdict(unittest.TestCase):
         """kustomize exits 0 on an unmatched target and emits the unpatched
         base, so nothing downstream can fail on this."""
         rc, out, _ = self.verdict(
-            self.healthy(), appsets=[appset("s", "aws-secretsmanager")],
-            contract=self.contract_for())
+            self.healthy(),
+            appsets=[appset("s", "aws-secretsmanager")],
+            contract=self.contract_for(),
+        )
         self.assertEqual(rc, 1, out)
         self.assertIn("does not treat an unmatched target as an error", out)
 
     def test_a_patch_target_that_matches_is_not_reported(self):
-        rc, out, _ = self.verdict(self.healthy(), appsets=[appset("s")],
-                                  contract=self.contract_for())
+        rc, out, _ = self.verdict(
+            self.healthy(), appsets=[appset("s")], contract=self.contract_for()
+        )
         self.assertEqual(rc, 0, out)
 
     def test_a_reference_naming_no_store_at_all_is_reported(self):
@@ -202,8 +223,7 @@ class TheVerdict(unittest.TestCase):
     def test_a_contract_that_drifted_from_the_manifest_is_reported(self):
         """The failure mode of publishing: consumers assert against it and
         pass, which is worse than having nothing to assert against."""
-        rc, out, _ = self.verdict(
-            self.healthy(), contract=self.contract_for("aws-secretsmanager"))
+        rc, out, _ = self.verdict(self.healthy(), contract=self.contract_for("aws-secretsmanager"))
         self.assertEqual(rc, 1, out)
         self.assertIn("is not what this tree declares", out)
 
@@ -224,8 +244,7 @@ class TheVerdict(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         root = path.parent.parent
         saved = (gate.ROOT, gate.APPSET_DIR, gate.CONTRACT)
-        gate.ROOT, gate.APPSET_DIR, gate.CONTRACT = (
-            root, root / "applicationsets", path)
+        gate.ROOT, gate.APPSET_DIR, gate.CONTRACT = (root, root / "applicationsets", path)
         try:
             with contextlib.redirect_stdout(io.StringIO()) as second:
                 rc = gate.main([])
@@ -244,13 +263,11 @@ class TheVerdict(unittest.TestCase):
         the same byte comparison as every other difference — unparseable is not
         a separate case once the file has to be exactly what the generator
         emits."""
-        _rc, _out, path = self.verdict(self.healthy(),
-                                       contract=self.contract_for())
+        _rc, _out, path = self.verdict(self.healthy(), contract=self.contract_for())
         path.write_text("{not json")
         root = path.parent.parent
         saved = (gate.ROOT, gate.APPSET_DIR, gate.CONTRACT)
-        gate.ROOT, gate.APPSET_DIR, gate.CONTRACT = (
-            root, root / "applicationsets", path)
+        gate.ROOT, gate.APPSET_DIR, gate.CONTRACT = (root, root / "applicationsets", path)
         try:
             with contextlib.redirect_stdout(io.StringIO()) as out:
                 rc = gate.main([])
@@ -263,16 +280,13 @@ class TheVerdict(unittest.TestCase):
         rc, out, path = self.verdict(self.healthy(), write=True)
         self.assertEqual(rc, 0, out)
         written = json.loads(path.read_text())
-        self.assertEqual(written["clusterSecretStore"]["name"],
-                         "aws-secrets-manager")
-        self.assertEqual(written["externalSecret"]["apiVersion"],
-                         "external-secrets.io/v1")
+        self.assertEqual(written["clusterSecretStore"]["name"], "aws-secrets-manager")
+        self.assertEqual(written["externalSecret"]["apiVersion"], "external-secrets.io/v1")
 
     def test_no_store_declared_cannot_run(self):
         """Exit 2. A tree with no store is a gate with nothing to compare
         against, which reports the same as a tree whose references all resolve."""
-        rc, out, _ = self.verdict([external_secret("a")],
-                                  contract=self.contract_for())
+        rc, out, _ = self.verdict([external_secret("a")], contract=self.contract_for())
         self.assertEqual(rc, gate.gatelib.CANNOT_RUN, out)
         self.assertIn("examined nothing", out)
 
@@ -296,20 +310,30 @@ class NothingUnverifiedIsEchoed(unittest.TestCase):
     """
 
     def test_a_real_name_is_printed_as_written(self):
-        self.assertEqual(gate.printable("aws-secrets-manager"),
-                         "aws-secrets-manager")
-        self.assertEqual(gate.printable("ClusterSecretStore", gate.KIND),
-                         "ClusterSecretStore")
+        self.assertEqual(gate.printable("aws-secrets-manager"), "aws-secrets-manager")
+        self.assertEqual(gate.printable("ClusterSecretStore", gate.KIND), "ClusterSecretStore")
         self.assertEqual(
             gate.printable("external-secrets.io/v1beta1", gate.GROUP_VERSION),
-            "external-secrets.io/v1beta1")
+            "external-secrets.io/v1beta1",
+        )
 
     def test_a_credential_shaped_value_is_withheld(self):
         self.assertEqual(gate.printable(HOSTILE), gate.UNPRINTABLE)
 
     def test_a_value_carrying_a_separator_a_name_cannot_have_is_withheld(self):
-        for value in (HOSTILE, "a b", "a\nb", "a/b", "a=b", "A", "-a", "a-",
-                      "a" * 254, "", "eyJhbGciOiJIUzI1NiJ9.e30.x"):
+        for value in (
+            HOSTILE,
+            "a b",
+            "a\nb",
+            "a/b",
+            "a=b",
+            "A",
+            "-a",
+            "a-",
+            "a" * 254,
+            "",
+            "eyJhbGciOiJIUzI1NiJ9.e30.x",
+        ):
             with self.subTest(value=value[:20]):
                 self.assertEqual(gate.printable(value), gate.UNPRINTABLE)
 
@@ -334,9 +358,11 @@ class TheOutputCarriesNothingItDidNotVerify(TheVerdict):
         self.assertEqual(rc, 1, out)
         self.assertNotIn(HOSTILE, out)
         self.assertNotIn("AKIA", out)
-        self.assertIn("Regenerate", out,
-                      "the remedy is the same whatever the difference is, and "
-                      "it is what the reader needs")
+        self.assertIn(
+            "Regenerate",
+            out,
+            "the remedy is the same whatever the difference is, and it is what the reader needs",
+        )
 
     def test_a_hostile_value_in_a_consumer_is_not_repeated(self):
         docs = self.healthy()
@@ -348,8 +374,8 @@ class TheOutputCarriesNothingItDidNotVerify(TheVerdict):
 
     def test_a_hostile_value_in_a_patch_target_is_not_repeated(self):
         rc, out, _ = self.verdict(
-            self.healthy(), appsets=[appset("s", HOSTILE)],
-            contract=self.contract_for())
+            self.healthy(), appsets=[appset("s", HOSTILE)], contract=self.contract_for()
+        )
         self.assertEqual(rc, 1, out)
         self.assertNotIn(HOSTILE, out)
 
@@ -377,12 +403,16 @@ class TheOutputCarriesNothingItDidNotVerify(TheVerdict):
         source = (ROOT / "scripts" / "check-secret-store-refs.py").read_text()
         lines = source.splitlines()
         marked = [i for i, line in enumerate(lines) if "codeql[" in line]
-        self.assertTrue(marked, "the markers are gone; if the query stopped "
-                                "matching, delete this test with them")
+        self.assertTrue(
+            marked,
+            "the markers are gone; if the query stopped matching, delete this test with them",
+        )
         REASON = "secret store is the thing that holds secrets"
-        self.assertIn(REASON, source,
-                      "no marker in this file says what the scanner matched or "
-                      "why the match is wrong")
+        self.assertIn(
+            REASON,
+            source,
+            "no marker in this file says what the scanner matched or why the match is wrong",
+        )
         for i in marked:
             with self.subTest(line=i + 1):
                 above = "\n".join(lines[:i])
@@ -390,7 +420,8 @@ class TheOutputCarriesNothingItDidNotVerify(TheVerdict):
                     REASON in above or "same reason as" in above,
                     "this marker neither carries the reason nor points at it — "
                     "on its own it is indistinguishable from somebody silencing "
-                    "a finding they did not read")
+                    "a finding they did not read",
+                )
 
     def test_the_marker_does_not_claim_to_suppress(self):
         """It did not. The alerts stayed open with it in place and were closed
@@ -408,8 +439,7 @@ class TheOutputCarriesNothingItDidNotVerify(TheVerdict):
         suppression; they cannot see a defeated dataflow at all."""
         source = (ROOT / "scripts" / "check-secret-store-refs.py").read_text()
         self.assertNotIn("ALPHABET", source)
-        self.assertIn("return text if grammar.fullmatch(text) else UNPRINTABLE",
-                      source)
+        self.assertIn("return text if grammar.fullmatch(text) else UNPRINTABLE", source)
 
     def test_the_contract_is_never_parsed_for_a_message(self):
         """It was `json.dumps(have)`, which put arbitrary file content into the
@@ -418,8 +448,7 @@ class TheOutputCarriesNothingItDidNotVerify(TheVerdict):
         source = (ROOT / "scripts" / "check-secret-store-refs.py").read_text()
         self.assertNotIn("json.dumps(have", source)
         self.assertNotIn("json.loads(CONTRACT", source)
-        self.assertIn('CONTRACT.read_text(encoding="utf-8") != rendered(want)',
-                      source)
+        self.assertIn('CONTRACT.read_text(encoding="utf-8") != rendered(want)', source)
 
 
 class TheShippedCatalog(unittest.TestCase):
@@ -444,43 +473,54 @@ class TheShippedCatalog(unittest.TestCase):
         comments about the gate.
         """
         key = re.compile(r"^\s*secretStoreRef:\s*$", re.M)
-        grepped = {path for path in gate.tracked_yaml()
-                   if key.search(path.read_text(encoding="utf-8"))}
+        grepped = {
+            path for path in gate.tracked_yaml() if key.search(path.read_text(encoding="utf-8"))
+        }
         self.assertEqual({p for p, _k, _n in self.consumers}, grepped)
 
     def test_the_corpus_spans_both_readers(self):
         """One of them is chart source. A catalog whose consumers were all plain
         manifests would pass a gate with no Go-template reader at all."""
-        helm = [p for p, _k, _n in self.consumers
-                if gate.gatelib.is_helm_template(p)]
-        plain = [p for p, _k, _n in self.consumers
-                 if not gate.gatelib.is_helm_template(p)]
-        self.assertTrue(helm, "no chart-source consumer — the text reader is "
-                              "exercised by nothing on this tree")
+        helm = [p for p, _k, _n in self.consumers if gate.gatelib.is_helm_template(p)]
+        plain = [p for p, _k, _n in self.consumers if not gate.gatelib.is_helm_template(p)]
+        self.assertTrue(
+            helm, "no chart-source consumer — the text reader is exercised by nothing on this tree"
+        )
         self.assertTrue(plain)
 
     def test_the_published_contract_is_the_declared_store(self):
         published = json.loads(gate.CONTRACT.read_text(encoding="utf-8"))
         (kind, name), (path, api) = next(
-            iter({k: v for k, v in self.declared.items()
-                  if k[0] == gate.CLUSTER_STORE}.items()))
-        self.assertEqual(published["clusterSecretStore"],
-                         {"apiVersion": api, "kind": kind, "name": name},
-                         f"{gate.rel(gate.CONTRACT)} and {gate.rel(path)} "
-                         f"disagree about the store this catalog owns")
+            iter({k: v for k, v in self.declared.items() if k[0] == gate.CLUSTER_STORE}.items())
+        )
+        self.assertEqual(
+            published["clusterSecretStore"],
+            {"apiVersion": api, "kind": kind, "name": name},
+            f"{gate.rel(gate.CONTRACT)} and {gate.rel(path)} "
+            f"disagree about the store this catalog owns",
+        )
 
     def test_the_contract_is_not_ignored_by_git(self):
         """A published contract that git refuses to track is one no consumer can
         fetch. `.gitignore` carries `*secret*.json` under its secrets rules, and
         the file's own name matches it."""
         import subprocess
+
         proc = subprocess.run(
-            ["git", "-C", str(ROOT), "ls-files", "--error-unmatch",
-             str(gate.CONTRACT.relative_to(ROOT))],
-            capture_output=True, text=True)
-        self.assertEqual(proc.returncode, 0,
-                         f"{gate.rel(gate.CONTRACT)} is not tracked: "
-                         f"{proc.stderr.strip()}")
+            [
+                "git",
+                "-C",
+                str(ROOT),
+                "ls-files",
+                "--error-unmatch",
+                str(gate.CONTRACT.relative_to(ROOT)),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(
+            proc.returncode, 0, f"{gate.rel(gate.CONTRACT)} is not tracked: {proc.stderr.strip()}"
+        )
 
 
 if __name__ == "__main__":

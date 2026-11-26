@@ -85,7 +85,10 @@ failures: list[str] = []
 # removable, but a create or update is refused.
 LEGACY_GROUP = "kyverno.io"
 LEGACY_KINDS = {
-    "ClusterPolicy", "Policy", "CleanupPolicy", "ClusterCleanupPolicy",
+    "ClusterPolicy",
+    "Policy",
+    "CleanupPolicy",
+    "ClusterCleanupPolicy",
     "PolicyException",
 }
 
@@ -98,11 +101,16 @@ REJECTIONS = ("policy validation error", "Invalid value", "failed to compile pol
 # Kinds Kyverno reports as one "policy rule" each in `kyverno apply`'s load
 # count, because they carry no `rules` list of their own.
 CEL_POLICY_KINDS = {
-    "ValidatingPolicy", "NamespacedValidatingPolicy",
-    "ImageValidatingPolicy", "NamespacedImageValidatingPolicy",
-    "MutatingPolicy", "NamespacedMutatingPolicy",
-    "GeneratingPolicy", "NamespacedGeneratingPolicy",
-    "DeletingPolicy", "NamespacedDeletingPolicy",
+    "ValidatingPolicy",
+    "NamespacedValidatingPolicy",
+    "ImageValidatingPolicy",
+    "NamespacedImageValidatingPolicy",
+    "MutatingPolicy",
+    "NamespacedMutatingPolicy",
+    "GeneratingPolicy",
+    "NamespacedGeneratingPolicy",
+    "DeletingPolicy",
+    "NamespacedDeletingPolicy",
 }
 
 
@@ -120,10 +128,11 @@ def _check_pins_digest(rel, rendered: str) -> None:
         name = doc["metadata"]["name"]
         cfg = (doc.get("spec") or {}).get("validationConfigurations") or {}
         for field, why in (
-            ("mutateDigest", "admission verifies a tag and the kubelet resolves it again "
-                             "at pull"),
-            ("verifyDigest", "an image whose pin did not happen reaches validation and "
-                             "passes on its tag"),
+            ("mutateDigest", "admission verifies a tag and the kubelet resolves it again at pull"),
+            (
+                "verifyDigest",
+                "an image whose pin did not happen reaches validation and passes on its tag",
+            ),
         ):
             if cfg.get(field, True) is not True:
                 failures.append(
@@ -167,22 +176,28 @@ def legacy_policies(rendered: str) -> list[str]:
 
 
 def main() -> int:
-    gatelib.require('kustomize', 'kyverno')
+    gatelib.require("kustomize", "kyverno")
     import tempfile
 
     overlays = sorted(
-        p for p in POLICIES.glob("*/overlays/*") if p.is_dir() and (p / "kustomization.yaml").exists()
+        p
+        for p in POLICIES.glob("*/overlays/*")
+        if p.is_dir() and (p / "kustomization.yaml").exists()
     )
     if not overlays:
-        print("FAIL  found no policy overlays under policies/kyverno/*/overlays/ — "
-              "refusing to report validity over an empty set.")
+        print(
+            "FAIL  found no policy overlays under policies/kyverno/*/overlays/ — "
+            "refusing to report validity over an empty set."
+        )
         return 1
 
     seen_envs = {p.name for p in overlays}
     missing = set(ENVS) - seen_envs
     if missing:
-        print(f"FAIL  no overlay found for environment(s) {sorted(missing)} — "
-              f"a policy group that renders in only some environments would go unchecked.")
+        print(
+            f"FAIL  no overlay found for environment(s) {sorted(missing)} — "
+            f"a policy group that renders in only some environments would go unchecked."
+        )
         return 1
 
     with tempfile.TemporaryDirectory() as td:
@@ -192,15 +207,21 @@ def main() -> int:
         for overlay in overlays:
             rel = overlay.relative_to(ROOT)
             build = subprocess.run(
-                ["kustomize", "build", str(overlay)], capture_output=True, text=True,
+                ["kustomize", "build", str(overlay)],
+                capture_output=True,
+                text=True,
                 timeout=LOCAL_TIMEOUT,
             )
             if build.returncode != 0:
-                failures.append(f"{rel}: kustomize build failed:\n      {build.stderr.strip()[:300]}")
+                failures.append(
+                    f"{rel}: kustomize build failed:\n      {build.stderr.strip()[:300]}"
+                )
                 continue
             if not build.stdout.strip():
-                failures.append(f"{rel}: rendered to nothing — an empty overlay cannot be validated, "
-                                f"and would silently install no policy.")
+                failures.append(
+                    f"{rel}: rendered to nothing — an empty overlay cannot be validated, "
+                    f"and would silently install no policy."
+                )
                 continue
 
             legacy = legacy_policies(build.stdout)
@@ -210,7 +231,8 @@ def main() -> int:
                     f"Kyverno v1.20 removed execution of legacy kyverno.io policy types "
                     f"and no longer accepts create or update requests for them — migrate "
                     f"to ValidatingPolicy, MutatingPolicy, GeneratingPolicy or "
-                    f"ImageValidatingPolicy (policies.kyverno.io).")
+                    f"ImageValidatingPolicy (policies.kyverno.io)."
+                )
                 continue
 
             rendered = pathlib.Path(td) / f"{overlay.parent.parent.name}-{overlay.name}.yaml"
@@ -218,7 +240,9 @@ def main() -> int:
 
             run = subprocess.run(
                 ["kyverno", "apply", str(rendered), "--resource", str(probe)],
-                capture_output=True, text=True, timeout=LOCAL_TIMEOUT,
+                capture_output=True,
+                text=True,
+                timeout=LOCAL_TIMEOUT,
             )
             combined = run.stdout + run.stderr
 
@@ -238,32 +262,39 @@ def main() -> int:
                 failures.append(
                     f"{rel}: kyverno printed no rule count, so nothing establishes "
                     f"that it loaded any policy at all. A run that evaluated nothing "
-                    f"reports the same `error: 0` as a clean one.")
+                    f"reports the same `error: 0` as a clean one."
+                )
                 continue
             got_rules = int(m.group(1))
             if want_rules and got_rules < want_rules:
                 failures.append(
                     f"{rel}: the render carries {want_rules} rule(s) but kyverno "
                     f"loaded only {got_rules} — it discarded a policy it could not "
-                    f"parse, and silently reported no error for it.")
+                    f"parse, and silently reported no error for it."
+                )
                 continue
             if got_rules == 0:
-                failures.append(
-                    f"{rel}: kyverno loaded 0 policy rules from this overlay.")
+                failures.append(f"{rel}: kyverno loaded 0 policy rules from this overlay.")
                 continue
             # kyverno apply exits 0 even when a policy fails validation; the
             # signal is the error count in the summary and the validation
             # message on stderr. Read both rather than trusting the exit code.
             if any(s in combined for s in REJECTIONS):
                 detail = next(
-                    (ln.strip() for ln in combined.splitlines()
-                     if any(s in ln for s in REJECTIONS)),
+                    (
+                        ln.strip()
+                        for ln in combined.splitlines()
+                        if any(s in ln for s in REJECTIONS)
+                    ),
                     "(no detail)",
                 )
                 failures.append(f"{rel}: Kyverno rejects this policy:\n      {detail[:400]}")
                 continue
             if "error: 0" not in combined:
-                summary = next((ln.strip() for ln in combined.splitlines() if ln.startswith("pass:")), combined.strip()[:200])
+                summary = next(
+                    (ln.strip() for ln in combined.splitlines() if ln.startswith("pass:")),
+                    combined.strip()[:200],
+                )
                 failures.append(f"{rel}: kyverno reported errors: {summary}")
                 continue
 
@@ -274,9 +305,11 @@ def main() -> int:
             print(f"FAIL  {f}")
         return 1
 
-    print(f"policy validity OK: {len(overlays)} rendered overlays "
-          f"({len({p.parent.parent.name for p in overlays})} groups x {len(seen_envs)} environments), "
-          f"every one accepted by Kyverno")
+    print(
+        f"policy validity OK: {len(overlays)} rendered overlays "
+        f"({len({p.parent.parent.name for p in overlays})} groups x {len(seen_envs)} environments), "
+        f"every one accepted by Kyverno"
+    )
     return 0
 
 

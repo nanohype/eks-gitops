@@ -96,7 +96,9 @@ def pins() -> dict[str, dict]:
                 chart = node.get("chart")
                 version = node.get("chartVersion") or node.get("targetRevision")
                 repo = node.get("repoURL") or node.get("chartRepo")
-                if not (isinstance(chart, str) and isinstance(version, str) and isinstance(repo, str)):
+                if not (
+                    isinstance(chart, str) and isinstance(version, str) and isinstance(repo, str)
+                ):
                     continue
                 if "{{" in chart or "{{" in version or "{{" in repo:
                     continue
@@ -123,6 +125,7 @@ def load_records() -> dict:
 
 # ---------------------------------------------------------------- offline gate
 
+
 def check_offline(live: dict, recorded: dict) -> int:
     problems = []
 
@@ -140,7 +143,9 @@ def check_offline(live: dict, recorded: dict) -> int:
                 f"A repository change is a change of maintainer — re-record it deliberately."
             )
         if not rec.get("description"):
-            problems.append(f"{chart} has a provenance record with no description to compare against.")
+            problems.append(
+                f"{chart} has a provenance record with no description to compare against."
+            )
         if rec.get("deprecated") is True:
             problems.append(
                 f"{chart} is recorded as deprecated upstream and is still pinned. "
@@ -148,18 +153,23 @@ def check_offline(live: dict, recorded: dict) -> int:
             )
 
     for chart in sorted(set(recorded) - set(live)):
-        problems.append(f"{chart} has a provenance record but is no longer pinned — drop the record.")
+        problems.append(
+            f"{chart} has a provenance record but is no longer pinned — drop the record."
+        )
 
     if problems:
         print(f"FAIL  {len(problems)} problem(s):")
         for p in problems:
             print(f"        {p}")
         return 1
-    print(f"OK    {len(live)} chart pin(s), each with a provenance record, none recorded deprecated.")
+    print(
+        f"OK    {len(live)} chart pin(s), each with a provenance record, none recorded deprecated."
+    )
     return 0
 
 
 # ------------------------------------------------------------------ live check
+
 
 def check_live() -> int:
     """1 for a chart upstream redescribed, deprecated or ruled out; CANNOT_RUN when
@@ -173,8 +183,9 @@ def check_live() -> int:
             meta = registry.chart_metadata(pin["repo"], chart, pin["version"])
         except registry.ChartUnavailable as exc:
             if exc.answered:
-                problems.append(f"{chart}: upstream answered, and its answer rules the pin "
-                                f"out — {exc}")
+                problems.append(
+                    f"{chart}: upstream answered, and its answer rules the pin out — {exc}"
+                )
             else:
                 unread.append(f"{chart} {pin['version']} from {pin['repo']} — {exc}")
             continue
@@ -209,6 +220,7 @@ def check_live() -> int:
 
 
 # ------------------------------------------------------------------------ sync
+
 
 def sync() -> int:
     live = pins()
@@ -247,6 +259,7 @@ def sync() -> int:
 
 # ------------------------------------------------------------------- self-test
 
+
 def self_test() -> int:
     """Break the offline gate's inputs and confirm each break is rejected."""
     import contextlib
@@ -266,7 +279,11 @@ def self_test() -> int:
     breaks.append(("a pinned chart with no provenance record", p, real_records))
     # a record for a chart nobody pins
     r = dict(real_records)
-    r["retired-chart"] = {"repo": "https://example.invalid", "description": "x", "deprecated": False}
+    r["retired-chart"] = {
+        "repo": "https://example.invalid",
+        "description": "x",
+        "deprecated": False,
+    }
     breaks.append(("a record for a chart no longer pinned", real_pins, r))
     # the recorded repo disagrees with the pin
     name = sorted(real_pins)[0]

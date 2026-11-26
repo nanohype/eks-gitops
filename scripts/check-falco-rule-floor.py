@@ -82,8 +82,7 @@ RULE_FLOOR = 85
 
 # Falco loads a rule when its priority is at least this severe. Order is
 # upstream's, most severe first; `informational` is the long spelling of `info`.
-SEVERITY = ["emergency", "alert", "critical", "error", "warning", "notice",
-            "info", "debug"]
+SEVERITY = ["emergency", "alert", "critical", "error", "warning", "notice", "info", "debug"]
 
 # The least permissive floor this catalog accepts. Asserted directly rather than
 # left to RULE_FLOOR, because a count cannot separate the two ways rules vanish:
@@ -134,26 +133,37 @@ def chart_pin() -> tuple[str, str, str]:
         for inner in (gen.get("matrix") or {}).get("generators") or []:
             for el in (inner.get("list") or {}).get("elements") or []:
                 if el.get("appName") == "falco":
-                    return (str(el["chartRepo"]), str(el["chart"]),
-                            str(el["chartVersion"]))
-    cannot_run(f"Cannot run: {APPSET.relative_to(ROOT)} carries no falco element, so "
-               f"this gate has no chart to render.")
+                    return (str(el["chartRepo"]), str(el["chart"]), str(el["chartVersion"]))
+    cannot_run(
+        f"Cannot run: {APPSET.relative_to(ROOT)} carries no falco element, so "
+        f"this gate has no chart to render."
+    )
 
 
 def environments() -> list[str]:
-    return sorted(p.name[len("values-"):-len(".yaml")]
-                  for p in ADDON.glob("values-*.yaml"))
+    return sorted(p.name[len("values-") : -len(".yaml")] for p in ADDON.glob("values-*.yaml"))
 
 
 def render(archive: pathlib.Path, env: str) -> tuple[dict, dict]:
     """The falco and falcoctl configs as the chart produces them for one env."""
-    cmd = ["helm", "template", "falco", str(archive), "-n", "falco",
-           "-f", str(ADDON / "values.yaml"),
-           "-f", str(ADDON / f"values-{env}.yaml")]
+    cmd = [
+        "helm",
+        "template",
+        "falco",
+        str(archive),
+        "-n",
+        "falco",
+        "-f",
+        str(ADDON / "values.yaml"),
+        "-f",
+        str(ADDON / f"values-{env}.yaml"),
+    ]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=RENDER_TIMEOUT)
     if proc.returncode != 0:
-        cannot_run(f"Cannot run: helm could not render falco for {env}.",
-                   ((proc.stderr or "") + (proc.stdout or "")).strip())
+        cannot_run(
+            f"Cannot run: helm could not render falco for {env}.",
+            ((proc.stderr or "") + (proc.stdout or "")).strip(),
+        )
     found: dict[str, dict] = {}
     for doc in yaml.safe_load_all(proc.stdout):
         if not doc or doc.get("kind") != "ConfigMap":
@@ -165,17 +175,20 @@ def render(archive: pathlib.Path, env: str) -> tuple[dict, dict]:
             found["falcoctl"] = yaml.safe_load(data["falcoctl.yaml"])
     for key in ("falco", "falcoctl"):
         if key not in found:
-            cannot_run(f"Cannot run: the {env} render produced no ConfigMap carrying "
-                       f"{key}.yaml, so neither the rules it reads nor the refs it "
-                       f"installs could be determined.")
+            cannot_run(
+                f"Cannot run: the {env} render produced no ConfigMap carrying "
+                f"{key}.yaml, so neither the rules it reads nor the refs it "
+                f"installs could be determined."
+            )
     return found["falco"], found["falcoctl"]
 
 
 # What a rulesfile ref's manifest is read as. An index is accepted so a plugin
 # published multi-arch resolves to something rather than a 404, and is then
 # skipped below like any other artifact that installs no rules.
-RULESFILE_ACCEPT = ("application/vnd.oci.image.manifest.v1+json,"
-                    "application/vnd.oci.image.index.v1+json")
+RULESFILE_ACCEPT = (
+    "application/vnd.oci.image.manifest.v1+json,application/vnd.oci.image.index.v1+json"
+)
 
 
 def _unreachable(where: str, exc: BaseException) -> NoReturn:
@@ -193,21 +206,24 @@ def rulesfile_layer(manifest: dict, where: str) -> str | None:
     """
     config = manifest.get("config")
     if config is not None and not isinstance(config, dict):
-        cannot_run(f"Cannot run: {where} answered a manifest whose config is not an "
-                   f"object, so whether it is a rule set could not be read.")
+        cannot_run(
+            f"Cannot run: {where} answered a manifest whose config is not an "
+            f"object, so whether it is a rule set could not be read."
+        )
     if (config or {}).get("mediaType") != RULESFILE_CONFIG:
         return None  # a plugin, or a multi-arch index — installs no rules
     layers = manifest.get("layers")
     first = layers[0] if isinstance(layers, list) and layers else None
     digest = first.get("digest") if isinstance(first, dict) else None
     if not isinstance(digest, str) or not digest:
-        cannot_run(f"Cannot run: {where} answered a rule-set manifest with no layer "
-                   f"digest to read its rules from.")
+        cannot_run(
+            f"Cannot run: {where} answered a rule-set manifest with no layer "
+            f"digest to read its rules from."
+        )
     return digest
 
 
-def rulesfile(ref: str,
-              get: registry.Getter = registry.http_get) -> dict[str, str] | None:
+def rulesfile(ref: str, get: registry.Getter = registry.http_get) -> dict[str, str] | None:
     """Filenames and contents a rulesfile ref installs, or None for a plugin.
 
     Read through registry.py's client, so a 429 waits as long as the
@@ -219,15 +235,17 @@ def rulesfile(ref: str,
     """
     name, tag = ref.rsplit(":", 1)
     repo = name if "/" in name else f"{INDEX_PREFIX}/{name}"
-    repo = repo[len(f"{REGISTRY}/"):] if repo.startswith(f"{REGISTRY}/") else repo
+    repo = repo[len(f"{REGISTRY}/") :] if repo.startswith(f"{REGISTRY}/") else repo
     oci = registry.OciRepository(f"{REGISTRY}/{repo}", get)
     try:
         manifest = oci.manifest(tag, RULESFILE_ACCEPT)
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
-            fail(f"ref {ref!r} does not resolve: {REGISTRY}/{repo} answered 404 for "
-                 f"tag {tag!r}. falcoctl installs nothing for it, so every rule that "
-                 f"set carries is absent from every node.")
+            fail(
+                f"ref {ref!r} does not resolve: {REGISTRY}/{repo} answered 404 for "
+                f"tag {tag!r}. falcoctl installs nothing for it, so every rule that "
+                f"set carries is absent from every node."
+            )
             return None
         _unreachable(f"{REGISTRY}/{repo}:{tag}", exc)
     except registry.READ_FAILURES as exc:
@@ -250,8 +268,10 @@ def rulesfile(ref: str,
                     continue
                 out[pathlib.PurePosixPath(member.name).name] = handle.read().decode()
     except (tarfile.TarError, UnicodeDecodeError) as exc:
-        cannot_run(f"Cannot run: the layer of {REGISTRY}/{repo}:{tag} matches its digest "
-                   f"and is not a rule-set archive — {type(exc).__name__}: {exc}.")
+        cannot_run(
+            f"Cannot run: the layer of {REGISTRY}/{repo}:{tag} matches its digest "
+            f"and is not a rule-set archive — {type(exc).__name__}: {exc}."
+        )
     return out
 
 
@@ -268,8 +288,10 @@ def read_paths(falco: dict, env: str) -> tuple[set[str], set[str]]:
     """The files and directories `rules_files` names, as absolute paths."""
     listed = falco.get("rules_files")
     if not listed:
-        fail(f"values-{env}.yaml: the render names no falco.rules_files, so Falco "
-             f"reads nothing that falcoctl installs.")
+        fail(
+            f"values-{env}.yaml: the render names no falco.rules_files, so Falco "
+            f"reads nothing that falcoctl installs."
+        )
         return set(), set()
     files = {p for p in listed if str(p).endswith((".yaml", ".yml"))}
     dirs = {str(p).rstrip("/") for p in listed if p not in files}
@@ -282,8 +304,10 @@ def main() -> int:
     archive = gatelib.chart_archive_or_exit(repo, chart, version)
     envs = environments()
     if not envs:
-        fail(f"{ADDON.relative_to(ROOT)} carries no values-<env>.yaml, so this gate "
-             f"examined no environment.")
+        fail(
+            f"{ADDON.relative_to(ROOT)} carries no values-<env>.yaml, so this gate "
+            f"examined no environment."
+        )
 
     summary: list[tuple[str, int, int]] = []
     for env in envs:
@@ -292,23 +316,28 @@ def main() -> int:
 
         floor = falco.get("priority")
         if floor is None or rank(str(floor)) < 0:
-            fail(f"{rel}: the render sets falco.priority to {floor!r}, which is not "
-                 f"one of {', '.join(SEVERITY)}. Falco's own floor is then unknown "
-                 f"and the count below cannot be interpreted.")
+            fail(
+                f"{rel}: the render sets falco.priority to {floor!r}, which is not "
+                f"one of {', '.join(SEVERITY)}. Falco's own floor is then unknown "
+                f"and the count below cannot be interpreted."
+            )
             continue
         if rank(str(floor)) < rank(MIN_PRIORITY):
-            fail(f"{rel}: falco.priority is {floor!r}, stricter than {MIN_PRIORITY!r}. "
-                 f"Every rule less severe than {floor!r} is still downloaded to every "
-                 f"node and never loaded — including the privileged-container rules, "
-                 f"which upstream classifies INFO.")
+            fail(
+                f"{rel}: falco.priority is {floor!r}, stricter than {MIN_PRIORITY!r}. "
+                f"Every rule less severe than {floor!r} is still downloaded to every "
+                f"node and never loaded — including the privileged-container rules, "
+                f"which upstream classifies INFO."
+            )
 
-        refs = (((falcoctl.get("artifact") or {}).get("install") or {})
-                .get("refs") or [])
+        refs = ((falcoctl.get("artifact") or {}).get("install") or {}).get("refs") or []
         if not refs:
-            fail(f"{rel}: the rendered falcoctl config installs no refs. Note that "
-                 f"`refs` belongs under falcoctl.config.artifact — falcoctl.artifact "
-                 f"carries the containers' own settings and accepts no refs key, and "
-                 f"the chart ships no values.schema.json to reject the wrong path.")
+            fail(
+                f"{rel}: the rendered falcoctl config installs no refs. Note that "
+                f"`refs` belongs under falcoctl.config.artifact — falcoctl.artifact "
+                f"carries the containers' own settings and accepts no refs key, and "
+                f"the chart ships no values.schema.json to reject the wrong path."
+            )
             continue
 
         files, dirs = read_paths(falco, env)
@@ -321,27 +350,33 @@ def main() -> int:
             for fname, text in contents.items():
                 path = f"{FALCO_DIR}/{fname}"
                 is_read = reachable(path, files, dirs)
-                rules = [i for i in yaml.safe_load(text)
-                         if isinstance(i, dict) and "rule" in i]
-                passing = [r for r in rules if 0 <= rank(str(r.get("priority", "")))
-                           <= rank(str(floor))]
+                rules = [i for i in yaml.safe_load(text) if isinstance(i, dict) and "rule" in i]
+                passing = [
+                    r for r in rules if 0 <= rank(str(r.get("priority", ""))) <= rank(str(floor))
+                ]
                 installed += len(rules)
                 if is_read:
                     loaded += len(passing)
                 else:
-                    fail(f"{rel}: ref {ref!r} installs {path}, which falco.rules_files "
-                         f"does not name. Its {len(rules)} rule(s) are pulled onto "
-                         f"every node and never evaluated — the download succeeds, so "
-                         f"nothing else reports this.")
+                    fail(
+                        f"{rel}: ref {ref!r} installs {path}, which falco.rules_files "
+                        f"does not name. Its {len(rules)} rule(s) are pulled onto "
+                        f"every node and never evaluated — the download succeeds, so "
+                        f"nothing else reports this."
+                    )
 
         if sets == 0:
-            fail(f"{rel}: none of the {len(refs)} installed ref(s) is a rule set, so "
-                 f"Falco runs its probe against no rules this repo pins.")
+            fail(
+                f"{rel}: none of the {len(refs)} installed ref(s) is a rule set, so "
+                f"Falco runs its probe against no rules this repo pins."
+            )
         if loaded < RULE_FLOOR:
-            fail(f"{rel}: {loaded} rule(s) load at priority {floor!r}, below the floor "
-                 f"of {RULE_FLOOR}. {installed} are installed on disk. A tier dropped "
-                 f"from the refs, a tier installed but not read, or a priority floor "
-                 f"raised past rules that exist each remove rules in blocks.")
+            fail(
+                f"{rel}: {loaded} rule(s) load at priority {floor!r}, below the floor "
+                f"of {RULE_FLOOR}. {installed} are installed on disk. A tier dropped "
+                f"from the refs, a tier installed but not read, or a priority floor "
+                f"raised past rules that exist each remove rules in blocks."
+            )
         summary.append((env, loaded, installed))
 
     if failures:
@@ -350,11 +385,13 @@ def main() -> int:
         return 1
 
     detail = ", ".join(f"{e} {ld}/{inst}" for e, ld, inst in summary)
-    print(f"falco rule floor OK: every installed rule set is named in rules_files, "
-          f"every environment loads at {MIN_PRIORITY!r} or more permissive, and the "
-          f"rules that load clear the floor of {RULE_FLOOR} — loaded/installed "
-          f"{detail}. Counted from the rendered ConfigMaps against the registry the "
-          f"refs resolve to, not from the values files.")
+    print(
+        f"falco rule floor OK: every installed rule set is named in rules_files, "
+        f"every environment loads at {MIN_PRIORITY!r} or more permissive, and the "
+        f"rules that load clear the floor of {RULE_FLOOR} — loaded/installed "
+        f"{detail}. Counted from the rendered ConfigMaps against the registry the "
+        f"refs resolve to, not from the values files."
+    )
     return 0
 
 
