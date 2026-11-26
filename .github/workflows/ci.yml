@@ -779,7 +779,7 @@ jobs:
       # so scripts/renovate-manager-defaults.json transcribes them. A stale
       # transcript is worse than none: it certifies pins against a pattern
       # Renovate does not use and prints the same success as a correct one.
-      - name: Recorded manager defaults match the shipped package
+      - name: Recorded manager defaults and pip-compile headers match the shipped package
         run: node scripts/check-renovate-defaults.mjs
       - name: Every chart pin is watched
         run: ./scripts/check-renovate-coverage.py
