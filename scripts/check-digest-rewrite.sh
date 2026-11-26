@@ -50,9 +50,12 @@
 # a rewrite that stopped and not an identity decided.
 #
 # This script makes the requests and reads what came back; scripts/verdicts.py
-# decides what each answer means, the pin, the identity and a refusal's cause,
-# with the one transport-failure pattern scripts/kyverno-test.sh reads through
-# too. scripts/tests/test_verdicts.py holds those decisions without a cluster.
+# decides what each answer means, the pin, the stored template, the identity, a
+# refusal's cause and the run's outcome, with the one transport-failure pattern
+# scripts/kyverno-test.sh reads through too. scripts/tests/test_verdicts.py
+# holds those decisions without a cluster. scripts/tests/test_digest_rewrite.py
+# drives each step of this script, and test_digest_rewrite_run.py beside it runs
+# the script whole, both against stand-ins for the cluster.
 #
 # Every step is bounded, each on its own: a request that returns an answer by
 # REQUEST_TIMEOUT, a wait by its own *_TIMEOUT under a GNU timeout above it, and
@@ -312,14 +315,7 @@ ${DELETE_TIMEOUT}s, so it would answer for this overlay's Deployment."
       --means="refused the Deployment of the release-signed $TAGGED"
     return 0
   fi
-  if [ "$stored" = "$TAGGED" ]; then
-    echo "  ok    stored the Deployment's pod template as written ($TAGGED)"
-  else
-    fail=1
-    echo "  FAIL  stored the Deployment's pod template as '$stored', not as written."
-    echo "        ArgoCD compares that template with git, so every nanohype workload"
-    echo "        it syncs reads as drift, and selfHeal and admission rewrite it in turn."
-  fi
+  verdict stored --tagged="$TAGGED" --image="$stored"
   created=""
   deadline=$(( $(date +%s) + CREATE_TIMEOUT ))
   while :; do
@@ -529,17 +525,7 @@ PY
   checked=$((checked + 1))
 done
 
-if [ "$fail" -ne 0 ]; then
-  echo
-  echo "verify-images' guarantee is that the admitted spec carries the digest the"
-  echo "signature was checked against, and that a tier with Deny refuses an identity"
-  echo "the policy does not trust. Under real admission, that did not hold."
-  exit 1
-fi
-
-echo "✓ $checked overlay(s) of $POLICY pin a tagged image to the digest admission"
-echo "  verified in the init, main and ephemeral container fields and in a"
-echo "  controller's pod, leave the controller's template as written, and decide a"
-echo "  foreign identity in a pod and in an ephemeral container as their"
-echo "  validationActions say — executed through a real API server, the registry"
-echo "  and the transparency log"
+# The run's outcome: a finding fails it, and a run that checked no overlay
+# decided nothing.
+verdict outcome --policy="$POLICY" --checked="$checked" --failed="$fail"
+[ "$fail" -eq 0 ] || exit 1

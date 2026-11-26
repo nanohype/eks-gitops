@@ -79,8 +79,9 @@ EXPECTED = (
     # Every verdict on the signature-verification path that the digest-rewrite
     # gate and the Kyverno suite's runner reach, in the one module both scripts
     # ask: a transport failure, a run its time bound ended or killed, a
-    # refusal's cause, an identity outcome and a digest pin, each read to the
-    # exit status the script acts on.
+    # refusal's cause, an identity outcome, a digest pin, the stored template
+    # and a digest-rewrite run's outcome, each read to the exit status the
+    # script acts on.
     "test_verdicts",
     # How the Kyverno suite's runner acts on what verdicts.py reads out of a
     # run: a run repeated and then one that could not verify, never a verdict,
@@ -91,6 +92,11 @@ EXPECTED = (
     # log read only when the refusal alone decides nothing, and a bound on every
     # step, all without the cluster it runs on in CI.
     "test_digest_rewrite",
+    # The same gate run whole over a checkout of its own: the tree it refuses
+    # before any cluster exists, the loop over every overlay, and the status
+    # its outcome exits with. A module of its own so the reversion harness's
+    # probes on the steps do not each pay for whole runs.
+    "test_digest_rewrite_run",
     # The image population both image gates read, and the acknowledgement file
     # the vulnerability verdict is decided against. One walk answers every
     # question either gate asks, so an extractor that stops seeing a shape

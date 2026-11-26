@@ -198,10 +198,15 @@ necessary but not sufficient:
   not it is answering. kind and helm run under GNU `timeout`. Both gates make
   the requests and hand what came back to `scripts/verdicts.py`, which holds
   every verdict on that path: the one transport-failure pattern, a refusal's
-  cause, the identity and pin outcomes, a run's retry, and what a GNU `timeout`
-  status of 124 or 137 means. `scripts/tests/test_verdicts.py` covers every
-  line and branch of it, and `scripts/tests/run.py` fails a run that leaves one
-  uncovered.
+  cause, the identity and pin outcomes, the Deployment's stored template, a
+  run's retry and its outcome, and what a GNU `timeout` status of 124 or 137
+  means. `scripts/tests/test_verdicts.py` covers every line and branch of it,
+  and `scripts/tests/run.py` fails a run that leaves one uncovered.
+  `scripts/tests/test_digest_rewrite.py` drives each of the gate's steps, and
+  `scripts/tests/test_digest_rewrite_run.py` runs the script whole against
+  stand-ins for kind, helm, kubectl and kustomize. That holds its main body
+  too: every tree shape it refuses before a cluster exists, the loop over every
+  overlay, and the exit status the outcome earns.
 - **Secret scan** — gitleaks over the working tree (CI job `secrets`)
 - **Pods name ServiceAccounts that exist** — `scripts/check-serviceaccount-bindings.py`
   (CI job `serviceaccount-bindings`)
