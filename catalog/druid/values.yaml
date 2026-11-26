@@ -8,7 +8,7 @@ alias: ""
 build: "v1"
 domain: "nanohype.dev"
 organization: nanohype
-version: "36.0.0"
+version: "39.0.0"
 
 # Required resource-tagging taxonomy (nanohype/standards/resource-tagging, required
 # tier), emitted on every object via common.labels. Values mirror what landing-zone
@@ -25,9 +25,10 @@ dataClassification: "internal"
 compliance: "soc2"
 
 image:
-  uri: apache/druid:36.0.0
-  # The tag is pinned, so Always just re-pulls the same digest every restart;
-  # IfNotPresent is the deterministic match for a pinned reference.
+  # Pinned to the digest the tag resolved to, so every node runs the same bytes
+  # and a re-pushed tag changes nothing here. Always would only re-pull that
+  # digest on every restart; IfNotPresent is the deterministic match for it.
+  uri: apache/druid:39.0.0@sha256:2e5d57a0a5554f2a3dfbd36ce5cfd571654c3cc27308fa6ff4030ad8e914706c
   pullPolicy: IfNotPresent
 
 labels:
@@ -100,9 +101,6 @@ runtime: |-
   druid.server.https.trustStorePath=/opt/druid/conf/druid/cluster/tls/server-truststore.p12
   druid.server.https.trustStorePassword=${env:DRUID_TLS_KEYSTORE_PASSWORD}
   druid.server.https.validateHostnames=false
-  druid.server.https.sniHostCheck=false
-  druid.server.http.sniHostCheck=false
-  druid.server.http.sniRequired=false
   druid.client.https.keyStorePath=/opt/druid/conf/druid/cluster/tls/client-keystore.p12
   druid.client.https.keyStoreType=pkcs12
   druid.client.https.keyStorePassword=${env:DRUID_TLS_KEYSTORE_PASSWORD}
@@ -117,7 +115,6 @@ runtime: |-
   druid.discovery.type=k8s
   druid.zk.service.enabled=false
   druid.discovery.k8s.clusterIdentifier=${env:DRUID_CLUSTER_ID}
-  druid.serverview.type=http
   druid.indexer.runner.type=httpRemote
 
   # index storage (s3)
@@ -432,8 +429,6 @@ coordinator:
     druid.coordinator.kill.bufferPeriod=P30D
     druid.coordinator.kill.maxSegments=100
     druid.coordinator.balancer.strategy=cost
-    druid.coordinator.balancer.cachingCost.awaitInitialization=false
-    druid.coordinator.loadqueuepeon.repeatDelay=PT0.050S
     druid.coordinator.asOverlord.enabled=false
     druid.centralizedDatasourceSchema.enabled=false
     druid.coordinator.period.metadataStoreManagementPeriod=PT1H
@@ -451,7 +446,6 @@ coordinator:
     druid.coordinator.kill.datasource.on=true
     druid.coordinator.kill.datasource.period=P1D
     druid.coordinator.kill.datasource.durationToRetain=P90D
-    druid.coordinator.loadqueuepeon.type=http
     druid.coordinator.segment.awaitInitializationOnStart=true
     druid.coordinator.loadqueuepeon.http.batchSize=1
     druid.manager.config.pollDuration=PT1M
@@ -525,7 +519,6 @@ overlord:
     druid.indexer.runner.minWorkerVersion="0"
     druid.indexer.runner.parallelIndexTaskSlotRatio=1
     druid.indexer.runner.taskCleanupTimeout=PT60M
-    druid.indexer.runner.taskShutdownLinkTimeout=PT60M
     druid.indexer.runner.pendingTasksRunnerNumThreads=1
     druid.indexer.runner.maxRetriesBeforeBlacklist=5
     druid.indexer.runner.workerBlackListBackoffTime=PT60M
@@ -546,7 +539,7 @@ overlord:
     druid.indexer.runner.maxTaskDuration=PT6H
     druid.indexer.runner.taskCleanupDelay=P1D
     druid.indexer.runner.taskCleanupInterval=PT1H
-    druid.indexer.runner.K8sjobLaunchTimeout=PT1H
+    druid.indexer.runner.k8sjobLaunchTimeout=PT1H
     druid.indexer.runner.graceTerminationPeriodSeconds=PT90S
     druid.indexer.task.encapsulatedTask=true
     druid.indexer.runner.capacity=10
