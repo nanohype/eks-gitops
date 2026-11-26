@@ -1,0 +1,699 @@
+# This repository's policy for scripts/check-workflow-id-masking.py.
+#
+# The gate, the mask script every mask step runs (scripts/mask-aws-ids.sh) and
+# the core that script runs (scripts/mask-aws-ids.py) are nanohype/landing-zone's,
+# byte for byte, and scripts/vendored.json records the commit and digest of each.
+# The gate is the same file in every repository that runs it (its docstring, ONE
+# GATE, MANY REPOSITORIES). What is particular to this repository is here: where
+# a finding's reader is sent, what is vendored, the floor a scan must meet, where
+# each id lives, and the self-test cases anchored in these workflows.
+#
+# The workflows read one id, ECR_PUBLIC_PULL_ROLE_ARN, in ci.yml's charts and
+# image-vulnerabilities jobs. Each job's first step that receives it runs
+# `mask-aws-ids.sh --optional ECR_PUBLIC_PULL_ROLE_ARN` as its first command.
+
+docs = "docs/runbooks/render-gate-failures.md"
+
+# The gate and the mask script are landing-zone's; a change to any of them lands
+# there first, with its self-test, and is copied here with its record moved in the
+# same commit.
+vendored = [
+  "scripts/check-workflow-id-masking.py",
+  "scripts/mask-aws-ids.sh",
+  "scripts/mask-aws-ids.py",
+]
+
+[floor]
+# What a scan must have seen to report a pass: the 3 workflows (ci.yml,
+# chart-provenance.yml, diff.yml), the 2 mask steps (one in each of
+# ci.yml's charts and image-vulnerabilities jobs) and a read of the one id. Fewer
+# means the scan stopped seeing them, or a workflow stopped masking. Lower these
+# only in the change that removes one.
+min_workflows = 3
+min_mask_steps = 2
+known_id_reads = ["ECR_PUBLIC_PULL_ROLE_ARN"]
+
+[repository_level_ids]
+# The one id this repository keeps at repository level, read only by jobs that
+# declare no environment.
+ECR_PUBLIC_PULL_ROLE_ARN = "the ECR Public pull role trusts this repository's pull_request and ref:refs/heads/main OIDC subjects, and a job declaring an environment is issued an environment subject the role does not trust"
+
+[vars_allowed]
+# None: a job that can hold AWS credentials reads no variable except in the
+# guard form.
+
+# --- self-test cases -----------------------------------------------------------
+#
+# Each [[mutation]] edits a copy of one workflow (`file`, under
+# .github/workflows) in a way the rules forbid, and the gate must reject it at
+# the mutated line by the rule it plants. `old` must occur exactly once in the
+# file and is replaced by `new`; both may be arrays of the same length, each
+# pair applied in turn. `line`, when given, is a regex naming the line of the
+# mutated file the finding must cite; otherwise it is a line `new` adds.
+# `must_say` holds words of the rule the case plants, which a finding at that
+# line must carry, so another rule firing there does not pass the case.
+
+[[mutation]]
+name = 'role-to-assume from a variable'
+file = 'ci.yml'
+old = 'role-to-assume: ${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }}'
+new = 'role-to-assume: ${{ vars.ECR_PUBLIC_PULL_ROLE_ARN }}'
+must_say = 'from `vars.`'
+
+[[mutation]]
+name = 'the mask step fed from a variable'
+file = 'ci.yml'
+old = '''
+          ECR_PUBLIC_PULL_ROLE_ARN: ${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }} # zizmor: ignore[secrets-outside-env]
+          ROLE_ARN_VARIABLE'''
+new = '''
+          ECR_PUBLIC_PULL_ROLE_ARN: ${{ vars.ECR_PUBLIC_PULL_ROLE_ARN }} # zizmor: ignore[secrets-outside-env]
+          ROLE_ARN_VARIABLE'''
+must_say = 'A variable is never masked'
+
+[[mutation]]
+name = 'a variable read with index syntax'
+file = 'ci.yml'
+old = '''
+        run: ./scripts/render-addons.py --fetch
+'''
+new = "        env:\n          R: ${{ vars['ECR_PUBLIC_PULL_ROLE_ARN'] }}\n        run: ./scripts/render-addons.py --fetch\n"
+must_say = 'from `vars.`'
+
+[[mutation]]
+name = 'a variable read through a mixed-case context name'
+file = 'ci.yml'
+old = '''
+        run: ./scripts/render-addons.py --fetch
+'''
+new = '''
+        env:
+          R: ${{ Vars.ECR_PUBLIC_PULL_ROLE_ARN }}
+        run: ./scripts/render-addons.py --fetch
+'''
+must_say = 'from `vars.`'
+
+[[mutation]]
+name = 'a variable read through a computed index'
+file = 'ci.yml'
+old = '''
+          aws-region: &ecr-public-region us-east-1
+'''
+new = "          aws-region: &ecr-public-region us-east-1\n          role-session-name: ${{ vars[format('ECR_{0}', 'ROLE_ARN')] }}\n"
+must_say = 'computed index'
+
+[[mutation]]
+name = 'every variable read at once'
+file = 'ci.yml'
+old = '''
+        run: ./scripts/render-addons.py --fetch
+'''
+new = '''
+        env:
+          ALL: ${{ toJSON(vars) }}
+        run: ./scripts/render-addons.py --fetch
+'''
+must_say = 'the whole `vars`'
+
+[[mutation]]
+name = 'every secret in a job-level env'
+file = 'ci.yml'
+old = '''
+  charts:
+    name: Pinned chart archives
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+'''
+new = '''
+  charts:
+    name: Pinned chart archives
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ALL: ${{ toJSON(secrets) }}
+'''
+must_say = 'the whole `secrets`'
+
+[[mutation]]
+name = 'a variable of a name outside the rule in an AWS job'
+file = 'ci.yml'
+old = '''
+        run: ./scripts/render-addons.py --fetch
+'''
+new = '''
+        env:
+          BUCKET: ${{ vars.CHART_BUCKET }}
+        run: ./scripts/render-addons.py --fetch
+'''
+must_say = 'can hold AWS credentials'
+
+[[mutation]]
+name = 'an id-named key fed from a variable of another name'
+file = 'ci.yml'
+old = '''
+        run: ./scripts/render-addons.py --fetch
+'''
+new = '''
+        env:
+          ACCOUNT_ID: ${{ vars.AWS_OWNER }}
+        run: ./scripts/render-addons.py --fetch
+'''
+must_say = 'sets ACCOUNT_ID'
+
+[[mutation]]
+name = 'an account id as a dispatch input'
+file = 'diff.yml'
+old = '''
+    inputs:
+      environment:
+'''
+new = "    inputs:\n      account_id:\n        description: 'Target AWS account ID'\n      environment:\n"
+must_say = 'declares the workflow_dispatch input'
+
+[[mutation]]
+name = 'an account as a dispatch input under another name'
+file = 'diff.yml'
+old = '''
+    inputs:
+      environment:
+'''
+new = "    inputs:\n      aws_account:\n        description: 'Target AWS account (12 digits)'\n      environment:\n"
+must_say = 'declares the workflow_dispatch input'
+
+[[mutation]]
+name = 'an id input read through github.event.inputs with index syntax'
+file = 'diff.yml'
+old = '''
+      - name: Install Helm
+        uses: azure/setup-helm@'''
+new = "      - name: Early\n        env:\n          ACCT: ${{ github.event.inputs['account_id'] }}\n        run: echo early\n      - name: Install Helm\n        uses: azure/setup-helm@"
+must_say = 'reads the input'
+
+[[mutation]]
+name = 'an id input read through an upper-case context name'
+file = 'diff.yml'
+old = '''
+      - name: Install Helm
+        uses: azure/setup-helm@'''
+new = '''
+      - name: Early
+        env:
+          ACCT: ${{ INPUTS.role_arn }}
+        run: echo early
+      - name: Install Helm
+        uses: azure/setup-helm@'''
+must_say = 'reads the input'
+
+[[mutation]]
+name = "a piece of the secret computed in the mask step's env"
+file = 'ci.yml'
+old = '''
+          ECR_PUBLIC_PULL_ROLE_ARN: ${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }} # zizmor: ignore[secrets-outside-env]
+          ROLE_ARN_VARIABLE'''
+new = "          ECR_PUBLIC_PULL_ROLE_ARN: ${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }} # zizmor: ignore[secrets-outside-env]\n          ROLE_NAME: ${{ format('{0}', secrets.ECR_PUBLIC_PULL_ROLE_ARN) }}\n          ROLE_ARN_VARIABLE"
+must_say = 'computes from the id secret'
+
+[[mutation]]
+name = "the secret re-serialised in a later step's env"
+file = 'ci.yml'
+old = '''
+        run: ./scripts/render-addons.py --fetch
+'''
+new = '''
+        env:
+          R: ${{ toJSON(secrets.ECR_PUBLIC_PULL_ROLE_ARN) }}
+        run: ./scripts/render-addons.py --fetch
+'''
+must_say = 'computes from the id secret'
+
+[[mutation]]
+name = 'the secret expanded into run text'
+file = 'ci.yml'
+old = '''
+        run: ./scripts/render-addons.py --fetch
+'''
+new = '''
+        run: ./scripts/render-addons.py --fetch --role ${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }}
+'''
+must_say = 'passes the id secret'
+
+[[mutation]]
+name = 'the secret in a workflow-level env'
+file = 'ci.yml'
+old = '''
+env:
+  # renovate: datasource=github-releases depName=kyverno/kyverno
+'''
+new = '''
+env:
+  # renovate: datasource=github-releases depName=kyverno/kyverno
+  ROLE: ${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }}
+'''
+must_say = 'passes the id secret'
+
+[[mutation]]
+name = 'the secret in a job-level env'
+file = 'ci.yml'
+old = '''
+  charts:
+    name: Pinned chart archives
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+'''
+new = '''
+  charts:
+    name: Pinned chart archives
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ECR_PUBLIC_PULL_ROLE_ARN: ${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }}
+'''
+must_say = 'passes the id secret'
+
+[[mutation]]
+name = 'secrets: inherit'
+file = 'ci.yml'
+old = '''
+  charts:
+    name: Pinned chart archives
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+'''
+new = '''
+  charts:
+    name: Pinned chart archives
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    secrets: inherit
+'''
+must_say = 'secrets: inherit'
+
+[[mutation]]
+name = 'the repository secret read in a job declaring an environment'
+file = 'ci.yml'
+old = '''
+  charts:
+    name: Pinned chart archives
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+'''
+new = '''
+  charts:
+    name: Pinned chart archives
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: ecr-public
+'''
+must_say = 'holds at repository level'
+
+[[mutation]]
+name = 'another id read in a job with no environment'
+file = 'ci.yml'
+old = '''
+          ECR_PUBLIC_PULL_ROLE_ARN: ${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }} # zizmor: ignore[secrets-outside-env]
+          ROLE_ARN_VARIABLE'''
+new = '''
+          ECR_PUBLIC_PULL_ROLE_ARN: ${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }} # zizmor: ignore[secrets-outside-env]
+          DEPLOY_ROLE_ARN: ${{ secrets.DEPLOY_ROLE_ARN }}
+          ROLE_ARN_VARIABLE'''
+must_say = 'declares no environment'
+
+[[mutation]]
+name = 'an environment id with no job refusing the inherited name'
+file = 'ci.yml'
+old = '''
+  merge-gate:
+    name: merge gate
+'''
+new = "  deploy-probe:\n    runs-on: ubuntu-latest\n    timeout-minutes: 5\n    environment: probe\n    steps:\n      - name: Mask\n        env:\n          DEPLOY_ROLE_ARN: ${{ secrets.DEPLOY_ROLE_ARN }}\n          ROLE_ARN_VARIABLE: ${{ vars.DEPLOY_ROLE_ARN != '' }}\n        run: |\n          bash \"$GITHUB_WORKSPACE/scripts/mask-aws-ids.sh\" DEPLOY_ROLE_ARN\n\n  merge-gate:\n    name: merge gate\n"
+line = '^\s+DEPLOY_ROLE_ARN: \$\{\{ secrets\.DEPLOY_ROLE_ARN \}\}'
+must_say = 'no job it needs'
+
+[[mutation]]
+name = 'a step receives the secret before the mask step'
+file = 'ci.yml'
+old = '''
+      - &ecr-public-role
+        name: Mask the ECR Public pull role and decide whether to log in
+'''
+new = '''
+      - name: Early
+        env:
+          EARLY: ${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }}
+        run: echo early
+      - &ecr-public-role
+        name: Mask the ECR Public pull role and decide whether to log in
+'''
+must_say = 'not `bash'
+
+[[mutation]]
+name = 'an early step reads the secret with index syntax'
+file = 'ci.yml'
+old = '''
+      - &ecr-public-role
+        name: Mask the ECR Public pull role and decide whether to log in
+'''
+new = "      - name: Early\n        env:\n          EARLY: ${{ secrets['ECR_PUBLIC_PULL_ROLE_ARN'] }}\n        run: echo \"${EARLY#arn:aws:iam::}\"\n      - &ecr-public-role\n        name: Mask the ECR Public pull role and decide whether to log in\n"
+must_say = 'is the first to receive ECR_PUBLIC_PULL_ROLE_ARN'
+
+[[mutation]]
+name = 'an early step reads the secret through a mixed-case context name'
+file = 'ci.yml'
+old = '''
+      - &ecr-public-role
+        name: Mask the ECR Public pull role and decide whether to log in
+'''
+new = '''
+      - name: Early
+        env:
+          EARLY: ${{ Secrets.ECR_PUBLIC_PULL_ROLE_ARN }}
+        run: echo "${EARLY#arn:aws:iam::}"
+      - &ecr-public-role
+        name: Mask the ECR Public pull role and decide whether to log in
+'''
+must_say = 'is the first to receive ECR_PUBLIC_PULL_ROLE_ARN'
+
+[[mutation]]
+name = 'an action is the first step to receive the secret'
+file = 'ci.yml'
+old = '''
+          ECR_PUBLIC_PULL_ROLE_ARN: ${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }} # zizmor: ignore[secrets-outside-env]
+          ROLE_ARN_VARIABLE'''
+new = '''
+          ECR_PUBLIC_PULL_ROLE_ARN: ${{ steps.none.outputs.none }} # zizmor: ignore[secrets-outside-env]
+          ROLE_ARN_VARIABLE'''
+line = '^\s+role-to-assume: \$\{\{ secrets\.ECR_PUBLIC_PULL_ROLE_ARN \}\}'
+must_say = 'not a mask step'
+
+[[mutation]]
+name = 'the mask is not the first command'
+file = 'ci.yml'
+old = '''
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/mask-aws-ids.sh" --optional ECR_PUBLIC_PULL_ROLE_ARN
+'''
+new = '''
+        run: |
+          echo "starting"
+          bash "$GITHUB_WORKSPACE/scripts/mask-aws-ids.sh" --optional ECR_PUBLIC_PULL_ROLE_ARN
+'''
+must_say = "and its first command is 'echo \"starting\"'"
+
+[[mutation]]
+name = 'the mask step is conditional'
+file = 'ci.yml'
+old = '''
+      - &ecr-public-role
+        name: Mask the ECR Public pull role and decide whether to log in
+        id: ecr-public-role
+'''
+new = "      - &ecr-public-role\n        name: Mask the ECR Public pull role and decide whether to log in\n        id: ecr-public-role\n        if: github.event_name == 'push'\n"
+must_say = 'has an `if:`'
+
+[[mutation]]
+name = 'the mask step continues on error'
+file = 'ci.yml'
+old = '''
+      - &ecr-public-role
+        name: Mask the ECR Public pull role and decide whether to log in
+        id: ecr-public-role
+'''
+new = '''
+      - &ecr-public-role
+        name: Mask the ECR Public pull role and decide whether to log in
+        id: ecr-public-role
+        continue-on-error: true
+'''
+must_say = 'continue-on-error'
+
+[[mutation]]
+name = 'the mask step runs under pwsh'
+file = 'ci.yml'
+old = '''
+      - &ecr-public-role
+        name: Mask the ECR Public pull role and decide whether to log in
+        id: ecr-public-role
+'''
+new = '''
+      - &ecr-public-role
+        name: Mask the ECR Public pull role and decide whether to log in
+        id: ecr-public-role
+        shell: pwsh
+'''
+must_say = 'shell'
+
+[[mutation]]
+name = "the job's default shell does not stop on failure"
+file = 'ci.yml'
+old = '''
+  charts:
+    name: Pinned chart archives
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+'''
+new = '''
+  charts:
+    name: Pinned chart archives
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash {0}
+'''
+must_say = 'shell'
+
+[[mutation]]
+name = "the workflow's default shell does not stop on failure"
+file = 'ci.yml'
+old = '''
+permissions:
+  contents: read
+
+# Tool versions'''
+new = '''
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: sh
+
+# Tool versions'''
+must_say = 'shell'
+
+[[mutation]]
+name = 'the mask command carries an argument the script refuses'
+file = 'ci.yml'
+old = '''
+bash "$GITHUB_WORKSPACE/scripts/mask-aws-ids.sh" --optional ECR_PUBLIC_PULL_ROLE_ARN
+'''
+new = '''
+bash "$GITHUB_WORKSPACE/scripts/mask-aws-ids.sh" --optional ECR_PUBLIC_PULL_ROLE_ARN --bogus
+'''
+must_say = "and its first command is 'bash"
+
+[[mutation]]
+name = '--optional after a name'
+file = 'ci.yml'
+old = '''
+bash "$GITHUB_WORKSPACE/scripts/mask-aws-ids.sh" --optional ECR_PUBLIC_PULL_ROLE_ARN
+'''
+new = '''
+bash "$GITHUB_WORKSPACE/scripts/mask-aws-ids.sh" ECR_PUBLIC_PULL_ROLE_ARN --optional
+'''
+must_say = "and its first command is 'bash"
+
+[[mutation]]
+name = 'the mask command omits the key the step carries the secret in'
+file = 'ci.yml'
+old = '''
+bash "$GITHUB_WORKSPACE/scripts/mask-aws-ids.sh" --optional ECR_PUBLIC_PULL_ROLE_ARN
+'''
+new = '''
+bash "$GITHUB_WORKSPACE/scripts/mask-aws-ids.sh" --optional ROLE_ARN
+'''
+must_say = 'does not carry'
+
+[[mutation]]
+name = 'the mask step masks a variable it hands on'
+file = 'ci.yml'
+old = '''
+          ECR_PUBLIC_PULL_ROLE_ARN: ${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }} # zizmor: ignore[secrets-outside-env]
+          ROLE_ARN_VARIABLE'''
+new = '''
+          ECR_PUBLIC_PULL_ROLE_ARN: ${{ vars.ECR_ROLE }} # zizmor: ignore[secrets-outside-env]
+          ROLE_ARN_VARIABLE'''
+must_say = 'what it hands on as step outputs, is a secret read whole'
+
+[[mutation]]
+name = 'a receiving step runs after a failure'
+file = 'ci.yml'
+old = "        if: steps.ecr-public-role.outputs.configured == 'true' && ("
+new = "        if: always() && steps.ecr-public-role.outputs.configured == 'true' && ("
+must_say = 'runs after a failure'
+
+[[mutation]]
+name = 'role-to-assume from the matrix'
+file = 'ci.yml'
+old = 'role-to-assume: ${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }}'
+new = 'role-to-assume: ${{ matrix.role_arn }}'
+must_say = 'role-to-assume is'
+
+[[mutation]]
+name = 'role-to-assume as a literal'
+file = 'ci.yml'
+old = 'role-to-assume: ${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }}'
+new = 'role-to-assume: arn:aws:iam::222233334444:role/ecr-public-pull'
+must_say = 'role-to-assume is'
+
+[[mutation]]
+name = 'role-to-assume spelt in mixed case, from a secret named outside the rule'
+file = 'ci.yml'
+old = 'role-to-assume: ${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }}'
+new = 'Role-To-Assume: ${{ secrets.PULL_ROLE }}'
+must_say = 'not a mask step'
+
+[[mutation]]
+name = 'configure-aws-credentials without mask-aws-account-id'
+file = 'ci.yml'
+old = '''
+          mask-aws-account-id: true
+'''
+new = ''
+line = '^\s+uses: aws-actions/configure-aws-credentials@'
+must_say = 'mask-aws-account-id'
+
+[[mutation]]
+name = 'configure-aws-credentials spelt in mixed case, unmasked'
+file = 'ci.yml'
+old = [
+  '        uses: aws-actions/configure-aws-credentials@',
+  '''
+          mask-aws-account-id: true
+''',
+]
+new = [
+  '        uses: Aws-Actions/Configure-AWS-Credentials@',
+  '',
+]
+line = '^\s+uses: Aws-Actions/Configure-AWS-Credentials@'
+must_say = 'mask-aws-account-id'
+
+[[mutation]]
+name = 'the leftover-variable guard removed'
+file = 'ci.yml'
+old = "ROLE_ARN_VARIABLE: ${{ vars.ECR_PUBLIC_PULL_ROLE_ARN != '' }}"
+new = 'ROLE_ARN_VARIABLE: "false"'
+line = '^\s+ECR_PUBLIC_PULL_ROLE_ARN: \$\{\{ secrets\.ECR_PUBLIC_PULL_ROLE_ARN \}\}'
+must_say = 'compares `vars.ECR_PUBLIC_PULL_ROLE_ARN`'
+
+[[mutation]]
+name = "the guard reads the variable's value"
+file = 'ci.yml'
+old = "ROLE_ARN_VARIABLE: ${{ vars.ECR_PUBLIC_PULL_ROLE_ARN != '' }}"
+new = 'ROLE_ARN_VARIABLE: ${{ vars.ECR_PUBLIC_PULL_ROLE_ARN }}'
+must_say = 'from `vars.`'
+
+[[mutation]]
+name = 'a literal account id'
+file = 'ci.yml'
+old = '''
+        run: ./scripts/render-addons.py --fetch
+'''
+new = '''
+        env:
+          OWNER: "222233334444"
+        run: ./scripts/render-addons.py --fetch
+'''
+must_say = 'as a literal'
+
+[[mutation]]
+name = 'a literal account id YAML reads as a number'
+file = 'ci.yml'
+old = '''
+        run: ./scripts/render-addons.py --fetch
+'''
+new = '''
+        env:
+          OWNER: 222233334444
+        run: ./scripts/render-addons.py --fetch
+'''
+must_say = 'as a literal'
+
+[[mutation]]
+name = 'a literal account id as a number in an action input'
+file = 'ci.yml'
+old = '''
+          aws-region: &ecr-public-region us-east-1
+'''
+new = '''
+          aws-region: &ecr-public-region us-east-1
+          role-session-name: 222233334444
+'''
+must_say = 'as a literal'
+
+[[mutation]]
+name = 'a literal account id as a number in an env key'
+file = 'ci.yml'
+old = '''
+        run: ./scripts/render-addons.py --fetch
+'''
+new = '''
+        env:
+          222233334444: x
+        run: ./scripts/render-addons.py --fetch
+'''
+must_say = 'as a literal'
+
+[[mutation]]
+name = 'a literal account id YAML reads as octal'
+file = 'ci.yml'
+old = '''
+        run: ./scripts/render-addons.py --fetch
+'''
+new = '''
+        env:
+          OWNER: 012345670123
+        run: ./scripts/render-addons.py --fetch
+'''
+must_say = 'as a literal'
+
+[[mutation]]
+name = 'a literal account id YAML reads as octal, as an env key'
+file = 'ci.yml'
+old = '''
+        run: ./scripts/render-addons.py --fetch
+'''
+new = '''
+        env:
+          012345670123: x
+        run: ./scripts/render-addons.py --fetch
+'''
+must_say = 'as a literal'
+
+[[mutation]]
+name = "a workflow that does not parse, with an account id at the parser's excerpt cut"
+file = 'ci.yml'
+old = '''
+        run: ./scripts/render-addons.py --fetch
+'''
+new = '''
+        env:
+          OWNER: x 222233334444 qqqqqqqqqqqqqqqqqqqqq: y
+        run: ./scripts/render-addons.py --fetch
+'''
+line = '^'
+must_say = 'could not be parsed'
+
+[[mutation]]
+name = 'a literal ARN in prose a step prints'
+file = 'diff.yml'
+old = '''
+      - name: Install Helm
+        uses: azure/setup-helm@'''
+new = '''
+      - name: Early
+        run: echo arn:aws:iam::313131313131:role/x
+      - name: Install Helm
+        uses: azure/setup-helm@'''
+must_say = 'as a literal'

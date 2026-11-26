@@ -1,8 +1,20 @@
 {
+  "scripts/check-workflow-id-masking.py": {
+    "repo": "nanohype/landing-zone",
+    "path": "scripts/check-workflow-id-masking.py",
+    "commit": "517a99d4d016ecaff8e912f524da64e9f7567263",
+    "sha256": "42226f6c9b4ca81cf7175c5e18374ab29153a711e2acbb1ad2e660ec7c39cf16"
+  },
   "scripts/mask-aws-ids.sh": {
     "repo": "nanohype/landing-zone",
     "path": "scripts/mask-aws-ids.sh",
-    "commit": "8a1a407c7674096449786d0293372d70e1fb68c2",
-    "sha256": "a6b1d760e5a4f4afd1352e1c09c6353b55f346018424cae2e257df06242c213a"
+    "commit": "517a99d4d016ecaff8e912f524da64e9f7567263",
+    "sha256": "0acbf7ff039981e0cebe961a4fa2e96b978305d4b5aa0860af0e03b1ad56ded1"
+  },
+  "scripts/mask-aws-ids.py": {
+    "repo": "nanohype/landing-zone",
+    "path": "scripts/mask-aws-ids.py",
+    "commit": "517a99d4d016ecaff8e912f524da64e9f7567263",
+    "sha256": "cee81ae98d46c8d5996196ad57837cdb906c1ad053c8b37776196d2ec7c218cc"
   }
 }

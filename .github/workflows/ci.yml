@@ -959,12 +959,13 @@ jobs:
   # role's ARN carries the account id that owns the role. The gate holds every
   # workflow to reading such a value as a secret, whole, masked by
   # scripts/mask-aws-ids.sh as the first command of the first step that receives
-  # it, and never from a variable, an input or a literal; it also holds the mask
-  # script to the bytes scripts/vendored.json records from landing-zone. Its
-  # self-test mutates copies of the workflows in each way the rules forbid and
-  # requires each rejected at the mutated line, and the mask script's own
-  # self-test runs it against synthetic ids. Offline and identical to
-  # `task validate:workflow-id-masking`.
+  # it, and never from a variable, an input or a literal. The gate, the mask
+  # script and the core that script runs are landing-zone's, held to the bytes
+  # scripts/vendored.json records, and scripts/workflow-id-masking.toml is this
+  # repository's policy. The gate's self-test mutates copies of the workflows in
+  # each way that policy lists and requires each rejected at the mutated line by
+  # the rule it plants, and the mask script's own self-test runs it against
+  # synthetic ids. Offline and identical to `task validate:workflow-id-masking`.
   workflow-id-masking:
     name: Account ids are read as secrets and masked first
     runs-on: ubuntu-latest

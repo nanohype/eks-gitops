@@ -179,8 +179,6 @@ ones:
 - [go](https://go.dev/dl/) >= 1.26 — `validate:appset-render`
 - [zizmor](https://docs.zizmor.sh/) — `validate:workflows`
 - [shellcheck](https://www.shellcheck.net/) — `lint:shell`
-- [jq](https://jqlang.org/) — `validate:workflow-id-masking`, whose vendored
-  `scripts/mask-aws-ids.sh --self-test` reads JSON values with it
 - [kind](https://kind.sigs.k8s.io/), kubectl, Docker and GNU `timeout` (`gtimeout`
   from Homebrew's coreutils on macOS) — `validate:digest-rewrite`, which is outside
   `task validate` because it runs a cluster

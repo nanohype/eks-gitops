@@ -13,6 +13,14 @@ line-length = 100
 # scope: a fixture that drifts from the gate it exercises is the failure the type
 # checker exists to catch, and it is invisible if tests are excluded.
 include = ["scripts/**/*.py"]
+# The vendored Python, which scripts/vendored.json holds to its recorded bytes:
+# ruff would re-lay it, and its lint is its source repository's. The gate's
+# self-test and the record check stand in its place here, and
+# scripts/tests/test_workflow_id_masking.py holds this list to the record.
+extend-exclude = [
+  "scripts/check-workflow-id-masking.py",
+  "scripts/mask-aws-ids.py",
+]
 
 [tool.ruff.lint]
 # Beyond the default E/F: bugbear catches the mutable-default and loop-variable
