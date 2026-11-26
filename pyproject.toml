@@ -32,9 +32,8 @@ ignore = [
 
 [tool.mypy]
 python_version = "3.15"
-# Both halves, per testing-rubric `typecheck-includes-tests`: a test file that
-# drifts from the gate it covers is exactly the drift a type checker sees and a
-# test run does not.
+# Both halves: a test file that drifts from the gate it covers is exactly the
+# drift a type checker sees and a test run does not.
 files = ["scripts"]
 ignore_missing_imports = true
 warn_unused_ignores = true

@@ -177,8 +177,8 @@ MIN_TESTS = 31
 # executes its module body with no assertion of its own. The per-file floors are
 # what hold the half of a gate that decides its verdict covered.
 #
-# testing-rubric's `security-critical-100` (severity: reject) asks for a per-file
-# 100% override on every file on a security-critical path. These sit on one:
+# A file on a security-critical path is held to 100% of its lines and branches
+# rather than to a ratchet. These sit on one:
 # check-policy-admission.py is an approval gate, deciding whether the fleet is
 # admissible at Enforce; check-image-verification.py holds the signature-
 # verification contract; check-policy-validity.py holds every rendered
@@ -188,13 +188,13 @@ MIN_TESTS = 31
 # 100 lines and 100 branches in PER_GATE_FLOORS, so a branch added to any of
 # them without a test fails this run rather than lowering a ratchet.
 
-# testing-rubric's content.coverage_floor over the gate scripts, enforced when
-# `coverage` is collecting. Statements and branches are measured apart, each
-# against its own floor: a combined figure averages one over the other, so a
-# branch shortfall hides behind line coverage and the reverse. coverage.py counts
-# statements and branches, so the rubric's lines and statements floors both read
-# its statement count, and its functions floor has no counterpart here. Both
-# figures come from coverage's JSON report. Read the standing with
+# The coverage floors over the gate scripts, enforced when `coverage` is
+# collecting. Statements and branches are measured apart, each against its own
+# floor: a combined figure averages one over the other, so a branch shortfall
+# hides behind line coverage and the reverse. coverage.py counts statements and
+# branches, not functions, so LINE_FLOOR reads its statement count and there is
+# no function floor. Both figures come from coverage's JSON report. Read the
+# standing with
 #
 #     COVERAGE_REQUIRED=1 coverage run --rcfile=.coveragerc scripts/tests/run.py
 #     coverage report --rcfile=.coveragerc --include="scripts/*.py"
@@ -220,13 +220,12 @@ PER_GATE_FLOORS: dict[str, tuple[int, int]] = {
     "scripts/check-sync-waves.py": (14, 1),
     "scripts/gatelib.py": (73, 80),
     # The registry client checks every chart archive against a digest and
-    # handles a pull token. That is signature verification's path in the sense
-    # testing-rubric's `security-critical-100` uses, so its floor is that rule's
-    # 100 rather than a ratchet: a branch no test reaches here is a check that
-    # nothing proves still checks.
+    # handles a pull token. That puts it on a security-critical path, the one
+    # signature verification takes, so its floor is 100 rather than a ratchet: a
+    # branch no test reaches here is a check that nothing proves still checks.
     "scripts/registry.py": (100, 100),
-    # The security-critical files, at the rubric's per-file override; see
-    # THE ASSERTION THAT IS NOT A NUMBER above.
+    # The security-critical files, each held to 100; see THE ASSERTION THAT IS
+    # NOT A NUMBER above.
     "scripts/check-policy-admission.py": (100, 100),
     "scripts/check-image-verification.py": (100, 100),
     "scripts/check-policy-validity.py": (100, 100),
@@ -420,8 +419,7 @@ def check_coverage() -> int:
     ):
         if pct < floor:
             failures.append(
-                f"{what} coverage over the gate scripts is {shown(pct)}, below "
-                f"testing-rubric's {floor}% floor"
+                f"{what} coverage over the gate scripts is {shown(pct)}, below its {floor}% floor"
             )
 
     root = HERE.parent.parent
@@ -479,7 +477,8 @@ def check_coverage() -> int:
         print(
             "\n  Add the tests that restore a figure, or move a per-file ratchet"
             "\n  deliberately in scripts/tests/run.py with the reason. LINE_FLOOR and"
-            "\n  BRANCH_FLOOR are testing-rubric's, and move only with it."
+            "\n  BRANCH_FLOOR are floors, not ratchets: a shortfall is restored, not"
+            "\n  met by lowering them."
         )
         return 1
 
