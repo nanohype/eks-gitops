@@ -256,7 +256,7 @@ PER_GATE_FLOORS: dict[str, tuple[int, int]] = {
     "scripts/check-log-volume-budget.py": (100, 97),
     "scripts/check-falco-rule-floor.py": (97, 91),
     "scripts/check-alert-severity-routes.py": (96, 90),
-    "scripts/check-image-vulnerabilities.py": (98, 97),
+    "scripts/check-image-vulnerabilities.py": (99, 98),
     "scripts/check-image-pins.py": (93, 88),
     # The half of the directory-size gate that decides the verdict. The rest is
     # `--sync`, `--live` and `--self-test`, which run against a clone.

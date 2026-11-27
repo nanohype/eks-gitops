@@ -2313,6 +2313,17 @@ rejects "image-vulnerabilities run: scan without the canary first" test_image_vu
   test_the_self_test_scans_the_canary_alone
 res $F
 
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+anchor = "            *(f\"  {problem}\" for problem in coverage),\n        )\n"
+m = s.replace(anchor, anchor + "    if len(images) < len(units):\n        cannot_run(\"Cannot run: fewer images than charts.\")\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "image-vulnerabilities run: refuse charts sharing an image" test_image_vulnerabilities \
+  test_charts_sharing_their_one_image_scan_it_once
+res $F
 
 
 F=scripts/check-renovate-coverage.py

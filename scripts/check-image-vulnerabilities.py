@@ -591,13 +591,6 @@ def main() -> int:
             "rendered it, so a scan over it says less than it appears to:",
             *(f"  {problem}" for problem in coverage),
         )
-    if len(images) < len(units):
-        cannot_run(
-            f"Cannot run: the render produced {len(images)} image(s) from "
-            f"{len(units)} chart(s). Every chart shipping a workload "
-            f"contributes at least one, so the walk got smaller rather than "
-            f"the catalog."
-        )
 
     findings = scan_all(images)
 

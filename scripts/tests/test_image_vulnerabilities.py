@@ -914,6 +914,18 @@ class TheGateRunWhole(unittest.TestCase):
         self.assertIn("the image population is smaller than the charts that rendered it", out)
         self.assertIn("widget rendered and contributed no image", out)
 
+    def test_charts_sharing_their_one_image_scan_it_once(self):
+        """Two charts rendering one image are one image to scan, not a walk that got
+        smaller: each chart contributed an image, which is what the floor asks."""
+        shared = "registry.example/shared:1.0.0"
+        for name in ("widget", "gadget"):
+            values = self.root / "addons" / "demo" / name / "values.yaml"
+            values.write_text(yaml.safe_dump({"image": shared}))
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("image vulnerabilities OK: 1 image(s) scanned across 2 chart(s).", out)
+        self.assertEqual(self.scanned(), [gate.CANARY, shared])
+
     def test_list_prints_every_finding_and_blocks_nothing(self):
         self.answer(
             self.WIDGET_IMAGE,
