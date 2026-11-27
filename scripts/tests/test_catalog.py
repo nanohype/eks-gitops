@@ -176,10 +176,10 @@ class Main(ATree):
         # discover() binds ROOT as its default when the module loads, so main's
         # call is pointed at the scratch tree here rather than through ROOT.
         real = catalog.discover
-        patch = mock.patch.object(catalog, "discover", lambda root=None: real(self.root))
-        patch.start()
-        self.addCleanup(patch.stop)
-        self.out: str = str(self.root / "rendered" / "catalog-{name}-chart.yaml")
+        rediscover = mock.patch.object(catalog, "discover", lambda root=None: real(self.root))
+        rediscover.start()
+        self.addCleanup(rediscover.stop)
+        self.out = str(self.root / "rendered" / "catalog-{name}-chart.yaml")
 
     def run_main(self, *argv: str) -> tuple[int, str]:
         said = io.StringIO()
