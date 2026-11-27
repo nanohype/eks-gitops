@@ -198,10 +198,16 @@ MIN_TESTS = 31
 # The coverage floors over the gate scripts, enforced when `coverage` is
 # collecting. Statements and branches are measured apart, each against its own
 # floor: a combined figure averages one over the other, so a branch shortfall
-# hides behind line coverage and the reverse. coverage.py counts statements and
-# branches, not functions, so LINE_FLOOR reads its statement count and there is
-# no function floor. Both figures come from coverage's JSON report. Read the
-# standing with
+# hides behind line coverage and the reverse. LINE_FLOOR reads coverage.py's
+# statement count. FUNCTION_FLOOR reads the functions the suite enters at all:
+# a statement figure averages a large function at 100% over the small ones no
+# test reaches, and a function nothing calls is code nothing proves. coverage's
+# JSON report gives each function its own summary, with '' as the module body;
+# a function is entered when one of its statements ran, and a function with no
+# statement of its own, its body excluded or a docstring alone, is in no count.
+# A file at 100% of its lines is at 100% of its functions by construction, so
+# the per-file floors below need no function column. All three figures come
+# from coverage's JSON report. Read the standing with
 #
 #     COVERAGE_REQUIRED=1 coverage run --rcfile=.coveragerc scripts/tests/run.py
 #     coverage report --rcfile=.coveragerc --include="scripts/*.py"
@@ -215,6 +221,7 @@ MIN_TESTS = 31
 # of the evidence, which is why each must carry a floor in PER_GATE_FLOORS.
 LINE_FLOOR = 75
 BRANCH_FLOOR = 60
+FUNCTION_FLOOR = 75
 
 # Per-file (lines, branches) floors, in percent. Below 100 each is a ratchet set
 # just under what the suite reaches, so a covered file cannot regress silently,
@@ -358,8 +365,25 @@ class Figures(NamedTuple):
         return percent(self.covered_branches, self.num_branches)
 
 
-def coverage_figures(cov) -> tuple[dict[pathlib.Path, Figures], Figures]:
-    """Per-file and total figures, read from coverage's JSON report.
+def functions_entered(report: dict) -> tuple[int, int]:
+    """(entered, total) over every function the report lists.
+
+    The module body ('') is not a function, and a function with no statement of
+    its own has nothing to enter, so neither is counted.
+    """
+    entered = total = 0
+    for entry in report["files"].values():
+        for name, function in (entry.get("functions") or {}).items():
+            summary = function["summary"]
+            if name == "" or not summary["num_statements"]:
+                continue
+            total += 1
+            entered += summary["covered_lines"] > 0
+    return entered, total
+
+
+def coverage_figures(cov) -> tuple[dict[pathlib.Path, Figures], Figures, tuple[int, int]]:
+    """Per-file and total figures, and the functions entered, from coverage's JSON report.
 
     The report lists every file under the configured source, executed or not,
     and names each relative to STARTED_IN, so each name is resolved against it.
@@ -372,7 +396,7 @@ def coverage_figures(cov) -> tuple[dict[pathlib.Path, Figures], Figures]:
         (STARTED_IN / name).resolve(): Figures.of(entry["summary"])
         for name, entry in report["files"].items()
     }
-    return files, Figures.of(report["totals"])
+    return files, Figures.of(report["totals"]), functions_entered(report)
 
 
 def check_coverage() -> int:
@@ -422,12 +446,20 @@ def check_coverage() -> int:
         )
         return 1
 
-    files, total = coverage_figures(cov)
+    files, total, (entered, functions) = coverage_figures(cov)
+    if not functions:
+        print(
+            "FAIL  coverage's report lists no function in the gate scripts, so the "
+            "function floor was measured over nothing, which is not a pass."
+        )
+        return 1
+    function_pct = percent(entered, functions)
 
     failures = []
     for what, pct, floor in (
         ("line", total.lines, LINE_FLOOR),
         ("branch", total.branches, BRANCH_FLOOR),
+        ("function", function_pct, FUNCTION_FLOOR),
     ):
         if pct < floor:
             failures.append(
@@ -488,15 +520,16 @@ def check_coverage() -> int:
             print(f"FAIL  {f}")
         print(
             "\n  Add the tests that restore a figure, or move a per-file ratchet"
-            "\n  deliberately in scripts/tests/run.py with the reason. LINE_FLOOR and"
-            "\n  BRANCH_FLOOR are floors, not ratchets: a shortfall is restored, not"
-            "\n  met by lowering them."
+            "\n  deliberately in scripts/tests/run.py with the reason. LINE_FLOOR,"
+            "\n  BRANCH_FLOOR and FUNCTION_FLOOR are floors, not ratchets: a shortfall"
+            "\n  is restored, not met by lowering them."
         )
         return 1
 
     print(
         f"coverage OK: lines {shown(total.lines)} (floor {LINE_FLOOR}%), branches "
-        f"{shown(total.branches)} (floor {BRANCH_FLOOR}%), {len(PER_GATE_FLOORS)} "
+        f"{shown(total.branches)} (floor {BRANCH_FLOOR}%), functions {shown(function_pct)} "
+        f"entered, {entered} of {functions} (floor {FUNCTION_FLOOR}%), {len(PER_GATE_FLOORS)} "
         f"per-file floor(s) held, all {len(gates)} Python file(s) in scripts/ executed."
     )
     print(
