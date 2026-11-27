@@ -52,6 +52,11 @@ ECR_PUBLIC_PULL_ROLE_ARN = "the ECR Public pull role trusts this repository's pu
 # mutated file the finding must cite; otherwise it is a line `new` adds.
 # `must_say` holds words of the rule the case plants, which a finding at that
 # line must carry, so another rule firing there does not pass the case.
+#
+# Each [[accepted]] (at the end) edits a copy of one workflow in a way the rules
+# permit, and the gate must pass the tree with it, reporting nothing anywhere.
+# `old` must occur exactly once and is replaced by `new`, both strings. These
+# keep the rules from refusing what they must allow.
 
 [[mutation]]
 name = 'role-to-assume from a variable'
@@ -116,6 +121,19 @@ new = '''
 must_say = 'the whole `vars`'
 
 [[mutation]]
+name = 'every variable value through an object filter'
+file = 'ci.yml'
+old = '''
+        run: ./scripts/render-addons.py --fetch
+'''
+new = '''
+        env:
+          ALL: ${{ join(vars.*, ',') }}
+        run: ./scripts/render-addons.py --fetch
+'''
+must_say = 'a computed index or filter of the `vars`'
+
+[[mutation]]
 name = 'every secret in a job-level env'
 file = 'ci.yml'
 old = '''
@@ -148,6 +166,24 @@ new = '''
 must_say = 'can hold AWS credentials'
 
 [[mutation]]
+name = 'a variable read in a job granted write-all'
+file = 'diff.yml'
+old = '''
+  diff:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+'''
+new = '''
+  diff:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions: write-all
+    env:
+      CLUSTER: ${{ vars.DIFF_CLUSTER }}
+'''
+must_say = 'can hold AWS credentials'
+
+[[mutation]]
 name = 'an id-named key fed from a variable of another name'
 file = 'ci.yml'
 old = '''
@@ -159,6 +195,19 @@ new = '''
         run: ./scripts/render-addons.py --fetch
 '''
 must_say = 'sets ACCOUNT_ID'
+
+[[mutation]]
+name = 'a role ARN assembled around an account id secret'
+file = 'ci.yml'
+old = '''
+        run: ./scripts/render-addons.py --fetch
+'''
+new = '''
+        env:
+          ECR_ROLE_ARN: arn:aws:iam::${{ secrets.ECR_PUBLIC_ACCOUNT_ID }}:role/ecr-public-pull
+        run: ./scripts/render-addons.py --fetch
+'''
+must_say = 'sets ECR_ROLE_ARN'
 
 [[mutation]]
 name = 'an account id as a dispatch input'
@@ -252,6 +301,20 @@ env:
 must_say = 'passes the id secret'
 
 [[mutation]]
+name = 'an id-named key in a workflow-level env'
+file = 'ci.yml'
+old = '''
+env:
+  # renovate: datasource=github-releases depName=kyverno/kyverno
+'''
+new = '''
+env:
+  # renovate: datasource=github-releases depName=kyverno/kyverno
+  ECR_PUBLIC_PULL_ROLE_ARN: ${{ secrets.ECR_PUBLIC_PULL_ROLE_ARN }}
+'''
+must_say = 'a secret or a mask-step output cannot be here'
+
+[[mutation]]
 name = 'the secret in a job-level env'
 file = 'ci.yml'
 old = '''
@@ -326,6 +389,17 @@ old = '''
     name: merge gate
 '''
 new = "  deploy-probe:\n    runs-on: ubuntu-latest\n    timeout-minutes: 5\n    environment: probe\n    steps:\n      - name: Mask\n        env:\n          DEPLOY_ROLE_ARN: ${{ secrets.DEPLOY_ROLE_ARN }}\n          ROLE_ARN_VARIABLE: ${{ vars.DEPLOY_ROLE_ARN != '' }}\n        run: |\n          bash \"$GITHUB_WORKSPACE/scripts/mask-aws-ids.sh\" DEPLOY_ROLE_ARN\n\n  merge-gate:\n    name: merge gate\n"
+line = '^\s+DEPLOY_ROLE_ARN: \$\{\{ secrets\.DEPLOY_ROLE_ARN \}\}'
+must_say = 'no job it needs'
+
+[[mutation]]
+name = 'an environment id whose needs share a job, none refusing the inherited name'
+file = 'ci.yml'
+old = '''
+  merge-gate:
+    name: merge gate
+'''
+new = "  deploy-probe:\n    needs: [helm-render, policy-admission]\n    runs-on: ubuntu-latest\n    timeout-minutes: 5\n    environment: probe\n    steps:\n      - name: Mask\n        env:\n          DEPLOY_ROLE_ARN: ${{ secrets.DEPLOY_ROLE_ARN }}\n          ROLE_ARN_VARIABLE: ${{ vars.DEPLOY_ROLE_ARN != '' }}\n        run: |\n          bash \"$GITHUB_WORKSPACE/scripts/mask-aws-ids.sh\" DEPLOY_ROLE_ARN\n\n  merge-gate:\n    name: merge gate\n"
 line = '^\s+DEPLOY_ROLE_ARN: \$\{\{ secrets\.DEPLOY_ROLE_ARN \}\}'
 must_say = 'no job it needs'
 
@@ -595,6 +669,13 @@ new = 'ROLE_ARN_VARIABLE: ${{ vars.ECR_PUBLIC_PULL_ROLE_ARN }}'
 must_say = 'from `vars.`'
 
 [[mutation]]
+name = 'the guard written with a double-quoted string'
+file = 'ci.yml'
+old = "ROLE_ARN_VARIABLE: ${{ vars.ECR_PUBLIC_PULL_ROLE_ARN != '' }}"
+new = 'ROLE_ARN_VARIABLE: ${{ vars.ECR_PUBLIC_PULL_ROLE_ARN != "" }}'
+must_say = 'this gate cannot read'
+
+[[mutation]]
 name = 'a literal account id'
 file = 'ci.yml'
 old = '''
@@ -697,3 +778,47 @@ new = '''
       - name: Install Helm
         uses: azure/setup-helm@'''
 must_say = 'as a literal'
+
+# --- permitted edits -----------------------------------------------------------
+
+[[accepted]]
+name = 'a comment above the mask command'
+file = 'ci.yml'
+old = '''
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/mask-aws-ids.sh" --optional ECR_PUBLIC_PULL_ROLE_ARN
+'''
+new = '''
+        run: |
+          # Nothing in this step prints before the mask command.
+          bash "$GITHUB_WORKSPACE/scripts/mask-aws-ids.sh" --optional ECR_PUBLIC_PULL_ROLE_ARN
+'''
+
+[[accepted]]
+name = "AWS's documentation account id in a message"
+file = 'ci.yml'
+old = 'is not an IAM role ARN (arn:aws:iam::<account>:role/<name>).'
+new = 'is not an IAM role ARN (one shaped like arn:aws:iam::123456789012:role/<name>).'
+
+[[accepted]]
+name = 'a secret named outside the rule, read in a job that can hold AWS credentials'
+file = 'ci.yml'
+old = '''
+        run: ./scripts/render-addons.py --fetch
+'''
+new = '''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./scripts/render-addons.py --fetch
+'''
+
+[[accepted]]
+name = 'an id-named key fed from an output of the mask step'
+file = 'ci.yml'
+old = '''
+          ECR_PUBLIC_REGION: *ecr-public-region
+'''
+new = '''
+          ECR_PUBLIC_REGION: *ecr-public-region
+          ACCOUNT_ID: ${{ steps.ecr-public-role.outputs.account_id }}
+'''
