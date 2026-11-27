@@ -13,6 +13,7 @@ a read that failed earns are held here.
 import ast
 import contextlib
 import io
+import json
 import pathlib
 import sys
 import unittest
@@ -257,6 +258,17 @@ class AProgramUnderABound(unittest.TestCase):
 
 
 SCRIPTS = pathlib.Path(__file__).resolve().parent.parent
+
+# The files scripts/vendored.json records are landing-zone's bytes, and the gate
+# that reads the record fails a copy that differs from it. A call one of them
+# leaves unbounded is fixed in landing-zone and re-vendored here, so this reader
+# holds the files this repository writes.
+VENDORED = set(json.loads((SCRIPTS / "vendored.json").read_text(encoding="utf-8")))
+
+# What a handler can name and still catch subprocess.TimeoutExpired: the class
+# itself, a class it derives from, or everything.
+CATCHES_EXPIRY = {"TimeoutExpired", "SubprocessError", "Exception", "BaseException"}
+
 RUNNERS = {
     "subprocess.run",
     "subprocess.check_output",
@@ -266,12 +278,20 @@ RUNNERS = {
 }
 
 
+def catches_expiry(handler: ast.ExceptHandler) -> bool:
+    if handler.type is None:
+        return True
+    named = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+    return any(ast.unparse(n).rsplit(".", 1)[-1] in CATCHES_EXPIRY for n in named)
+
+
 def unbounded_calls(source: str) -> list[str]:
     """Each call in `source` that starts a program or reads a URL with no bound.
 
     A program runs bounded when the call carries `timeout` and sits in a `try`
-    that handles `subprocess.TimeoutExpired`, the shape gatelib.run has. A URL
-    read is bounded when the call carries `timeout`.
+    that handles `subprocess.TimeoutExpired`, the shape gatelib.run has: by
+    naming it, a class it derives from, or no class at all. A URL read is
+    bounded when the call carries `timeout`.
     """
     tree = ast.parse(source)
     parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
@@ -279,10 +299,12 @@ def unbounded_calls(source: str) -> list[str]:
     def handles_timeout(node: ast.AST) -> bool:
         while node in parents:
             parent = parents[node]
-            if isinstance(parent, ast.Try) and node in parent.body:
-                for handler in parent.handlers:
-                    if handler.type is not None and "TimeoutExpired" in ast.unparse(handler.type):
-                        return True
+            if (
+                isinstance(parent, ast.Try)
+                and node in parent.body
+                and any(catches_expiry(handler) for handler in parent.handlers)
+            ):
+                return True
             node = parent
         return False
 
@@ -313,9 +335,17 @@ class EveryProgramAGateRunsIsBounded(unittest.TestCase):
         offenders = {
             path.name: calls
             for path in sorted(SCRIPTS.glob("*.py"))
-            if (calls := unbounded_calls(path.read_text(encoding="utf-8")))
+            if f"scripts/{path.name}" not in VENDORED
+            and (calls := unbounded_calls(path.read_text(encoding="utf-8")))
         }
         self.assertEqual(offenders, {}, "run these through gatelib.run")
+
+    def test_only_what_the_record_names_is_left_to_its_source(self):
+        """The exemption is the record, so it is as narrow as the record is."""
+        self.assertTrue(VENDORED, "scripts/vendored.json records no file")
+        for rel in sorted(VENDORED):
+            with self.subTest(rel=rel):
+                self.assertTrue((SCRIPTS.parent / rel).is_file(), f"{rel} is recorded and absent")
 
     def test_the_reader_sees_an_unbounded_run(self):
         self.assertEqual(
@@ -334,6 +364,39 @@ class EveryProgramAGateRunsIsBounded(unittest.TestCase):
             unbounded_calls("import urllib.request\nurllib.request.urlopen('https://x')\n"),
             ["line 2: urllib.request.urlopen"],
         )
+
+    def test_a_handler_for_a_class_the_expiry_derives_from_passes(self):
+        for caught in (
+            "subprocess.SubprocessError",
+            "(OSError, subprocess.SubprocessError)",
+            "Exception",
+            "BaseException",
+        ):
+            with self.subTest(caught=caught):
+                source = (
+                    "import subprocess\n"
+                    "try:\n"
+                    "    subprocess.run(['git'], timeout=5)\n"
+                    f"except {caught}:\n"
+                    "    pass\n"
+                )
+                self.assertEqual(unbounded_calls(source), [])
+
+    def test_a_handler_for_everything_passes(self):
+        source = (
+            "import subprocess\ntry:\n    subprocess.run(['git'], timeout=5)\nexcept:\n    pass\n"
+        )
+        self.assertEqual(unbounded_calls(source), [])
+
+    def test_a_handler_for_something_else_lets_the_expiry_escape(self):
+        source = (
+            "import subprocess\n"
+            "try:\n"
+            "    subprocess.run(['git'], timeout=5)\n"
+            "except (OSError, ValueError):\n"
+            "    pass\n"
+        )
+        self.assertEqual(unbounded_calls(source), ["line 3: subprocess.run"])
 
     def test_a_bound_whose_expiry_is_handled_passes(self):
         source = (
