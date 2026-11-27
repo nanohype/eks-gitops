@@ -658,11 +658,12 @@ class TheScope(unittest.TestCase):
 
     def test_rules_generated_for_pod_controllers(self):
         """A generated rule pins the digest into a template ArgoCD compares with git."""
-        for autogen in (
+        autogens: list[dict[str, object]] = [
             {},
             {"podControllers": {}},
             {"podControllers": {"controllers": ["deployments"]}},
-        ):
+        ]
+        for autogen in autogens:
             with self.subTest(autogen=autogen):
 
                 def edit(spec, autogen=autogen):

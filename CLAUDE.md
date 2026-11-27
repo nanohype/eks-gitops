@@ -83,10 +83,12 @@ See `docs/configuration/adding-addons.md` for full guide.
 ## Validation Commands
 
 ```bash
+task install                       # the locked Python packages, hash-checked, into python3 at the .python-version release; then the render harness's Go modules
 task lint:yaml                     # YAML lint all files
 task lint:shell                    # shellcheck the shell gates and harnesses under scripts/
 task lint:python                   # ruff's rules and its formatter over scripts/, tests included
 task typecheck                     # mypy over scripts/, tests included
+task docs                          # every repo path, task target and file:line citation the markdown names resolves
 task kustomize:build               # Build all overlays (all environments)
 task kustomize:build:env           # Build overlays for ENVIRONMENT (default: development)
 task validate                      # Every gate below, in order

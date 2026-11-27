@@ -86,7 +86,8 @@ class EveryListGeneratorIsWalked(unittest.TestCase):
         self.assertEqual(self.names(doc), ["ok"])
 
     def test_an_empty_document_yields_nothing(self):
-        for empty in ({}, {"spec": {}}, {"spec": {"generators": []}}):
+        empties: list[dict[str, object]] = [{}, {"spec": {}}, {"spec": {"generators": []}}]
+        for empty in empties:
             self.assertEqual(gatelib.list_elements(empty), [])
 
 

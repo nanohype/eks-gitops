@@ -454,6 +454,10 @@ class TheOutputCarriesNothingItDidNotVerify(TheVerdict):
 class TheShippedCatalog(unittest.TestCase):
     """Over the tree, so a reference added later is checked here."""
 
+    declared: dict[tuple[str, str], tuple[pathlib.Path, str]]
+    consumers: list[tuple[pathlib.Path, str, str]]
+    versions: dict[str, list[pathlib.Path]]
+
     @classmethod
     def setUpClass(cls):
         cls.declared, cls.consumers, cls.versions = gate.survey()

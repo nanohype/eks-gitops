@@ -22,6 +22,7 @@ import os
 import pathlib
 import tempfile
 import unittest
+from typing import Any
 from unittest import mock
 
 import fakeregistry as fake
@@ -32,7 +33,10 @@ gate = load("render-addons")
 
 
 def appset(sources, generators=None, destination=None):
-    doc = {"kind": "ApplicationSet", "spec": {"template": {"spec": {"sources": sources}}}}
+    doc: dict[str, Any] = {
+        "kind": "ApplicationSet",
+        "spec": {"template": {"spec": {"sources": sources}}},
+    }
     if generators is not None:
         doc["spec"]["generators"] = generators
     if destination is not None:
@@ -256,7 +260,7 @@ class WhatARenderIsHanded(unittest.TestCase):
         self.assertNotIn("--include-crds", ran.call_args.args[0])
 
     def test_the_cluster_scoped_objects_a_render_produces_are_recorded(self):
-        objects = {}
+        objects: dict[str, set[str]] = {}
         stdout = (
             "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\n"
             "metadata:\n  name: nodepools.karpenter.sh\n---\n"
@@ -891,8 +895,8 @@ class AnExpiredSkipIsAskedOfTheRegistryAnonymously(unittest.TestCase):
         for patch in (
             mock.patch.object(gate.registry, "CHART_CACHE", self.root / "cache"),
             mock.patch.dict(os.environ, {"DOCKER_CONFIG": str(config)}),
-            mock.patch.object(gate.registry, "_REFUSED_LOGINS", set()),
-            mock.patch.object(gate.registry, "_SAID", set()),
+            mock.patch.object(gate.registry, "_REFUSED_LOGINS", set[str]()),
+            mock.patch.object(gate.registry, "_SAID", set[str]()),
             mock.patch.dict(gate.registry.http_get.__kwdefaults__, {"urlopen": self.urlopen}),
             mock.patch.dict(gate.SKIP_CHARTS, {"private": "needs a login"}, clear=True),
         ):
@@ -936,6 +940,10 @@ class AnExpiredSkipIsAskedOfTheRegistryAnonymously(unittest.TestCase):
 
 class TheDiscoveredCorpus(unittest.TestCase):
     """Every unit three gates share comes from here."""
+
+    # render-addons.py's Units. The gate is loaded by path, so its types are not
+    # importable here.
+    units: list[Any]
 
     @classmethod
     def setUpClass(cls):

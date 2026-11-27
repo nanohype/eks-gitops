@@ -18,6 +18,7 @@ import json
 import pathlib
 import tempfile
 import unittest
+from collections.abc import Sequence
 from unittest import mock
 
 import yaml
@@ -73,12 +74,14 @@ class AnOverlay(unittest.TestCase):
         self.no_standard.start()
         self.addCleanup(self.no_standard.stop)
 
-    def write(self, docs: list[dict], name: str = "agent-platform/base/platform.yaml") -> None:
+    def write(
+        self, docs: Sequence[object], name: str = "agent-platform/base/platform.yaml"
+    ) -> None:
         path = self.root / "addons" / "ai-platform" / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(yaml.safe_dump_all(docs))
 
-    def check(self, docs: list[dict] | None = None) -> tuple[int, str]:
+    def check(self, docs: Sequence[object] | None = None) -> tuple[int, str]:
         if docs is not None:
             self.write(docs)
         out = io.StringIO()

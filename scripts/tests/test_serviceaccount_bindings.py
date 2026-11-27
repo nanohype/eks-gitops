@@ -81,14 +81,13 @@ class Charts(unittest.TestCase):
         self.rendered: dict[str, list[dict] | None] = {}
         self.commands: list[list[str]] = []
         # The gate finds charts relative to its own file, so it is pointed at the tree.
-        patches = [
+        for patch in (
             mock.patch.object(gate, "__file__", str(self.root / "scripts" / "gate.py")),
             mock.patch.object(gate.gatelib, "require", lambda *tools: None),
             mock.patch.object(gate.subprocess, "run", self.helm),
-        ]
-        for p in patches:
-            p.start()
-            self.addCleanup(p.stop)
+        ):
+            patch.start()
+            self.addCleanup(patch.stop)
 
     def helm(self, cmd, **kwargs):
         self.commands.append(cmd)

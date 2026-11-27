@@ -52,3 +52,7 @@ warn_unused_ignores = true
 strict_optional = true
 warn_no_return = true
 warn_redundant_casts = true
+# Without this, mypy skips the body of every function that carries no
+# annotation, which is most test methods: the tests were in scope and their code
+# was not read. It requires no annotations; it checks the code that has none.
+check_untyped_defs = true

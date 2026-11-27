@@ -184,8 +184,10 @@ ones:
   `task validate` because it runs a cluster
 - Python at the version `.python-version` pins, with the packages `requirements.txt`
   locks — PyYAML for the gates under `scripts/`, `coverage` for `validate:gate-tests`,
-  `yamllint` for `lint:yaml`, `zizmor` for `validate:workflows`. Install them with
-  `pip install --require-hashes -r requirements.txt`, which is what CI runs.
+  `yamllint` for `lint:yaml`, `zizmor` for `validate:workflows`. `task install`
+  checks that `python3` is that release and installs them into it with
+  `python3 -m pip install --require-hashes -r requirements.txt`, the install CI
+  runs. It then downloads the Go modules `validate:appset-render` builds against.
 
 CI pins the versions of kyverno, kubeconform, trivy, gitleaks, shellcheck, kind and
 kubectl it downloads, and the kind node image by digest;
@@ -203,9 +205,11 @@ Infrastructure prerequisites (deployed by landing-zone):
 
 ```bash
 task                          # Show all available tasks
+task install                  # Install the gates' Python packages and Go modules
 task lint:yaml                # Lint all YAML files
 task lint:python              # Lint and format-check the gate scripts
 task typecheck                # Typecheck the gate scripts
+task docs                     # Check every path, target and citation the docs name
 task kustomize:build          # Build all overlays (all environments)
 task kustomize:build:env      # Build overlays for ENVIRONMENT (default: development)
 task validate                 # Run all validations (lint + build)

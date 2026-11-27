@@ -58,6 +58,7 @@ import re
 import sys
 import tarfile
 import tempfile
+from collections.abc import Hashable
 from pathlib import Path
 
 try:
@@ -160,7 +161,7 @@ def crd_schemas(version: str, workdir: Path) -> dict[str, dict]:
     return out
 
 
-def list_identities(value, schema):
+def list_identities(value, schema) -> tuple[str, list[tuple[int, Hashable]]] | None:
     """What the API server compares two entries of this list by, or None.
 
     `map` identifies an entry by its listMapKeys tuple; `set` identifies a scalar
@@ -174,6 +175,7 @@ def list_identities(value, schema):
     error the type checker below reports on its own terms.
     """
     kind_of_list = schema.get("x-kubernetes-list-type")
+    pairs: list[tuple[int, Hashable]]
     if kind_of_list == "map":
         keys = schema.get("x-kubernetes-list-map-keys") or []
         if not keys:

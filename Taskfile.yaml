@@ -19,6 +19,33 @@ tasks:
         echo ""
         task --list
 
+  # === Setup ===
+
+  install:
+    desc: "Install the gates' dependencies — the locked Python packages, hash-checked, into python3, then the render harness's Go modules"
+    vars:
+      PINNED:
+        sh: cut -d. -f1,2 .python-version
+      ACTIVE:
+        sh: python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])'
+    preconditions:
+      # requirements.txt is compiled under the release .python-version names,
+      # and CI installs it into exactly that release.
+      - sh: '[ "{{.ACTIVE}}" = "{{.PINNED}}" ]'
+        msg: "python3 is Python {{.ACTIVE}}, and requirements.txt is compiled for {{.PINNED}}, the release .python-version pins"
+    cmds:
+      # The install every Python CI job runs, through python3's own pip: the gates
+      # run under python3, and a bare `pip` on PATH can belong to another
+      # interpreter, which then receives the packages instead.
+      - python3 -m pip install --require-hashes -r requirements.txt
+      - task: install:go
+
+  install:go:
+    desc: "Download the Go modules the ApplicationSet render harness builds against"
+    dir: applicationsets/rendertest
+    cmds:
+      - go mod download
+
   # === Validation ===
 
   lint:yaml:
@@ -184,6 +211,11 @@ tasks:
       # Tests are in scope on purpose: a fixture that drifts from the gate it
       # exercises is exactly the drift a type checker sees and a test run does not.
       - mypy
+
+  docs:
+    desc: "Docs gate — every repo path, task target and file:line citation the markdown names resolves"
+    cmds:
+      - task: validate:named-things
 
   validate:falco-rule-floor:
     desc: "Falco rule gate — every installed rule set is read, and the priority floor loads it"

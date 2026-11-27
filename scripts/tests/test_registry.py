@@ -64,9 +64,8 @@ class TheSuiteReadsNoStoredLogin(unittest.TestCase):
         """gateloader points the process at it before any gate is loaded, so no
         suite reads the logins of whoever runs it, and a token request in a test
         carries no credentials the test did not write."""
-        config = os.environ.get("DOCKER_CONFIG")
-        self.assertEqual(config, gateloader.DOCKER_CONFIG)
-        self.assertEqual(list(pathlib.Path(config).iterdir()), [])
+        self.assertEqual(os.environ.get("DOCKER_CONFIG"), gateloader.DOCKER_CONFIG)
+        self.assertEqual(list(pathlib.Path(gateloader.DOCKER_CONFIG).iterdir()), [])
         self.assertEqual(registry.docker_credentials(), {})
 
 
@@ -314,12 +313,13 @@ class RetryingOnlyWhatMayClear(unittest.TestCase):
 
     def test_the_challenge_is_handed_the_calls_own_deadline(self):
         t = Transport(http_error(self.URL, 401, {"WWW-Authenticate": "Bearer x"}), b"ok")
-        handed = []
-        self.get(
-            t,
-            deadline=500.0,
-            challenge=lambda _www, deadline: handed.append(deadline) or "Bearer t",
-        )
+        handed: list[float] = []
+
+        def challenge(_www, deadline):
+            handed.append(deadline)
+            return "Bearer t"
+
+        self.get(t, deadline=500.0, challenge=challenge)
         self.assertEqual(handed, [500.0])
 
     def test_a_second_401_is_reported_not_answered_again(self):
@@ -328,9 +328,14 @@ class RetryingOnlyWhatMayClear(unittest.TestCase):
             http_error(self.URL, 401, {"WWW-Authenticate": "Bearer x"}),
             b"ok",
         )
-        answers = []
+        answers: list[str] = []
+
+        def challenge(www, _deadline):
+            answers.append(www)
+            return "Bearer t"
+
         with self.assertRaises(urllib.error.HTTPError) as caught:
-            self.get(t, challenge=lambda www, _d: answers.append(www) or "Bearer t")
+            self.get(t, challenge=challenge)
         self.assertEqual(caught.exception.code, 401)
         self.assertEqual(len(answers), 1)
         self.assertEqual(len(t.requests), 2)
@@ -340,9 +345,14 @@ class RetryingOnlyWhatMayClear(unittest.TestCase):
         make: the token is not fetched, and the reason names the bound."""
         limited = [http_error(self.URL, 429)] * (registry.RETRY_ATTEMPTS - 1)
         t = Transport(*limited, http_error(self.URL, 401, {"WWW-Authenticate": "Bearer x"}), b"ok")
-        answers = []
+        answers: list[str] = []
+
+        def challenge(www, _deadline):
+            answers.append(www)
+            return "Bearer t"
+
         with self.assertRaises(registry.RegistryError) as caught:
-            self.get(t, challenge=lambda www, _d: answers.append(www) or "Bearer t")
+            self.get(t, challenge=challenge)
         self.assertIn(
             f"asked for a token on the last of {registry.RETRY_ATTEMPTS}", str(caught.exception)
         )
@@ -659,6 +669,7 @@ class TheJobsReadingThroughTheClient(unittest.TestCase):
             with self.subTest(job=name):
                 minutes = job.get("timeout-minutes")
                 self.assertIsInstance(minutes, int, f"{name} sets no timeout-minutes")
+                assert isinstance(minutes, int)
                 self.assertGreater(minutes * 60, registry.CALL_BOUND_SECONDS)
 
     def test_each_reads_the_key_the_charts_job_keeps(self):
@@ -1205,7 +1216,8 @@ class ReadingDockerCredentials(unittest.TestCase):
         )
 
     def test_a_config_with_no_logins_is_no_credentials_and_says_nothing(self):
-        for doc in ({}, {"credsStore": "desktop"}, {"auths": {}}):
+        no_logins: list[dict[str, object]] = [{}, {"credsStore": "desktop"}, {"auths": {}}]
+        for doc in no_logins:
             with self.subTest(doc=doc):
                 self.write(doc)
                 self.assertEqual(self.read(), ({}, ""))

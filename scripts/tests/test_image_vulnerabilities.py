@@ -27,6 +27,7 @@ import subprocess
 import tempfile
 import types
 import unittest
+from typing import Any
 from unittest import mock
 
 import yaml
@@ -268,6 +269,8 @@ class TheDefaultDayIsTheUtcDay(unittest.TestCase):
 
 class TheShippedAdvisoryFile(unittest.TestCase):
     """It is read on every run, so its shape is part of the gate."""
+
+    entries: list[dict[str, Any]]
 
     @classmethod
     def setUpClass(cls):

@@ -126,6 +126,7 @@ class EveryJobEndsAtItsOwnTimeout(unittest.TestCase):
             with self.subTest(job=name):
                 minutes = job.get("timeout-minutes")
                 self.assertIsInstance(minutes, int, f"{name} sets no timeout-minutes")
+                assert isinstance(minutes, int)
                 self.assertGreater(minutes, 0)
 
 
