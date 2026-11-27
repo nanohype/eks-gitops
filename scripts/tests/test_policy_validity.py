@@ -164,7 +164,7 @@ class TheRun(unittest.TestCase):
             mock.patch.object(gate, "ROOT", self.root),
             mock.patch.object(gate, "POLICIES", self.policies),
             mock.patch.object(gate.gatelib, "require"),
-            mock.patch.object(gate.subprocess, "run", tools or Tools()),
+            mock.patch.object(gate.gatelib.subprocess, "run", tools or Tools()),
             contextlib.redirect_stdout(buf),
         ):
             code = gate.main()

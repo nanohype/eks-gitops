@@ -57,7 +57,6 @@ would be applied:
 from __future__ import annotations
 
 import pathlib
-import subprocess
 import sys
 
 import gatelib
@@ -125,7 +124,7 @@ def render(archive: pathlib.Path, env: str) -> dict:
         "-f",
         str(ADDON / f"values-{env}.yaml"),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=RENDER_TIMEOUT)
+    proc = gatelib.run(cmd, timeout=RENDER_TIMEOUT, what=f"helm template of loki for {env}")
     if proc.returncode != 0:
         err = ((proc.stderr or "") + (proc.stdout or "")).strip()
         print(f"Cannot run: helm could not render loki for {env}.")

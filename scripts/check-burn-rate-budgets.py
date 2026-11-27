@@ -81,7 +81,6 @@ from __future__ import annotations
 import json
 import pathlib
 import re
-import subprocess
 import sys
 from fractions import Fraction
 
@@ -96,6 +95,9 @@ ALERT_DIR = ROOT / "dashboards" / "base" / "alerting"
 # Derived from the alerting directory rather than named again, so the rules and
 # the objective cannot come to be read out of different trees.
 KUSTOMIZE_ROOT = ALERT_DIR.parent
+# The bound on the kustomize build this gate reads its corpus from. A build that
+# runs it out produced nothing to read, so it is CANNOT_RUN (gatelib.run).
+RENDER_TIMEOUT = 300
 RULE_GROUP = "GrafanaAlertRuleGroup"
 DASHBOARD = "GrafanaDashboard"
 
@@ -211,7 +213,11 @@ def delivered_dashboards(root: pathlib.Path) -> list[dict]:
     a document no cluster receives.
     """
     gatelib.require("kustomize")
-    proc = subprocess.run(["kustomize", "build", str(root)], capture_output=True, text=True)
+    proc = gatelib.run(
+        ["kustomize", "build", str(root)],
+        timeout=RENDER_TIMEOUT,
+        what=f"kustomize build {under_root(root)}",
+    )
     if proc.returncode != 0:
         print(
             f"Cannot run: kustomize build {under_root(root)} failed, so "

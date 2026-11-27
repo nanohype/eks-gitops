@@ -364,7 +364,7 @@ spec:
 
 def _run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
     kw.setdefault("timeout", RENDER_TIMEOUT)
-    return subprocess.run(cmd, capture_output=True, text=True, **kw)
+    return gatelib.run(cmd, what=" ".join(cmd[:2]), **kw)
 
 
 def exclusion_of(doc: dict) -> tuple[list[str] | None, list[str]]:

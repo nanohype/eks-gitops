@@ -25,7 +25,6 @@ now names the other's file, and this check makes the in-chart set unambiguous, s
 there is one list to compare rather than a rendering to reconstruct.
 """
 
-import subprocess
 import sys
 from pathlib import Path
 
@@ -69,7 +68,7 @@ def render(chart: Path) -> list[dict]:
     if values.exists():
         cmd += ["-f", str(values)]
     cmd += RENDER_VALUES.get(name, [])
-    out = subprocess.run(cmd, capture_output=True, text=True, timeout=LOCAL_TIMEOUT)
+    out = gatelib.run(cmd, timeout=LOCAL_TIMEOUT, what=f"helm template of {name}")
     if out.returncode != 0:
         print(f"::error file={chart}::helm template failed\n{out.stderr.strip()[:1200]}")
         return []

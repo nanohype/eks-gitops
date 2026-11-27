@@ -76,7 +76,6 @@ import json
 import os
 import pathlib
 import re
-import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -374,7 +373,7 @@ def measure(root: pathlib.Path, recurse: bool, include: str, exclude: str) -> tu
 def clone(src: Source, into: pathlib.Path) -> pathlib.Path:
     """The pinned source directory, checked out. Exits 1 naming what would not resolve."""
     gatelib.require("git")
-    proc = subprocess.run(
+    proc = gatelib.run(
         [
             "git",
             "clone",
@@ -386,9 +385,8 @@ def clone(src: Source, into: pathlib.Path) -> pathlib.Path:
             src.repo_url,
             str(into),
         ],
-        capture_output=True,
-        text=True,
         timeout=NETWORK_TIMEOUT,
+        what=f"git clone of {src.repo_url} at {src.target_revision}",
     )
     if proc.returncode != 0:
         last = ((proc.stderr or "") + (proc.stdout or "")).strip().splitlines()

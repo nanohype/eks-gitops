@@ -16,11 +16,14 @@ corpus declares variables and references none.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import pathlib
 import tempfile
 import textwrap
 import unittest
+from unittest import mock
 
 from gateloader import load
 
@@ -429,6 +432,26 @@ class TheShippedDashboards(unittest.TestCase):
         which the check would report on all of them, or on none, depending only on
         whether any dashboard names a datasource at all."""
         self.assertTrue(gate.wired_datasource_refs(ROOT))
+
+
+class AnUnreachableGrafanaCom(unittest.TestCase):
+    """Every retry failing is CANNOT_RUN: the catalog was not examined, not rejected."""
+
+    def test_an_unreachable_registry_cannot_run(self):
+        err = io.StringIO()
+        with (
+            mock.patch.object(
+                gate, "main", side_effect=RuntimeError("x: unreachable after 3 attempts")
+            ),
+            contextlib.redirect_stderr(err),
+        ):
+            status = gate.entry()
+        self.assertEqual(status, gate.gatelib.CANNOT_RUN)
+        self.assertIn("Cannot run: x: unreachable after 3 attempts", err.getvalue())
+
+    def test_a_run_that_reads_everything_returns_its_own_status(self):
+        with mock.patch.object(gate, "main", return_value=1):
+            self.assertEqual(gate.entry(), 1)
 
 
 if __name__ == "__main__":

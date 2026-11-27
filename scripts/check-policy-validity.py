@@ -47,7 +47,6 @@ from __future__ import annotations
 
 import pathlib
 import re
-import subprocess
 import sys
 
 import gatelib
@@ -206,11 +205,10 @@ def main() -> int:
 
         for overlay in overlays:
             rel = overlay.relative_to(ROOT)
-            build = subprocess.run(
+            build = gatelib.run(
                 ["kustomize", "build", str(overlay)],
-                capture_output=True,
-                text=True,
                 timeout=LOCAL_TIMEOUT,
+                what=f"kustomize build of {rel}",
             )
             if build.returncode != 0:
                 failures.append(
@@ -238,11 +236,10 @@ def main() -> int:
             rendered = pathlib.Path(td) / f"{overlay.parent.parent.name}-{overlay.name}.yaml"
             rendered.write_text(build.stdout)
 
-            run = subprocess.run(
+            run = gatelib.run(
                 ["kyverno", "apply", str(rendered), "--resource", str(probe)],
-                capture_output=True,
-                text=True,
                 timeout=LOCAL_TIMEOUT,
+                what=f"kyverno apply over {rel}",
             )
             combined = run.stdout + run.stderr
 

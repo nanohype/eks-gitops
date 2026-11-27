@@ -78,7 +78,6 @@ from __future__ import annotations
 import argparse
 import pathlib
 import re
-import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
@@ -522,7 +521,7 @@ def render(
     for vf in value_files:
         cmd += ["-f", str(vf)]
 
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=RENDER_TIMEOUT)
+    proc = gatelib.run(cmd, timeout=RENDER_TIMEOUT, what=f"helm template of {unit.chart}")
     if proc.returncode != 0:
         return (False, proc.stderr.strip() or proc.stdout.strip())
     if objects is not None:

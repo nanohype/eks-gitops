@@ -50,7 +50,6 @@ import argparse
 import pathlib
 import re
 import shutil
-import subprocess
 import sys
 
 import gatelib
@@ -235,9 +234,7 @@ def tracked_files(root: pathlib.Path) -> list[pathlib.Path]:
             "empty, and not something to substitute a filesystem walk for."
         )
         sys.exit(CANNOT_RUN)
-    out = subprocess.run(
-        ["git", "ls-files", "-z"], cwd=root, capture_output=True, text=True, timeout=120
-    )
+    out = gatelib.run(["git", "ls-files", "-z"], cwd=root, timeout=120, what="git ls-files")
     if out.returncode != 0:
         err = (out.stderr or "").strip().splitlines()
         print(
