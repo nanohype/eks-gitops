@@ -71,6 +71,7 @@ import pathlib
 import re
 import subprocess
 import sys
+from collections.abc import Collection
 
 import gatelib
 import registry
@@ -343,7 +344,12 @@ IMAGELESS_CHARTS = {
 }
 
 
-def chart_coverage(images: dict[str, set[str]], units, seen: set[str] | None = None) -> list[str]:
+def chart_coverage(
+    images: dict[str, set[str]],
+    units,
+    seen: set[str] | None = None,
+    unrendered: Collection[str] = (),
+) -> list[str]:
     """Every chart the render covered contributed an image, or is declared not to.
 
     A per-chart floor rather than a total, because a total cannot see the shape
@@ -351,6 +357,12 @@ def chart_coverage(images: dict[str, set[str]], units, seen: set[str] | None = N
     spelling, two charts' entire workloads fell out of the inventory, and the
     count stayed large enough to look healthy. One image per chart is derived
     from the corpus — no constant to pick, and it moves with the catalog.
+
+    `unrendered` holds the paths of the units that did not render. A chart whose
+    every unit is among them contributed nothing because nothing of it was
+    rendered: main reports that as a run over part of the fleet (CANNOT_RUN), and
+    counting it here as a chart that rendered and contributed no image turned an
+    unreachable registry into one finding per chart and exit 1.
     """
     problems: list[str] = []
     # Keyed by chart NAME, which is what `images` records, and this catalog pins
@@ -358,7 +370,9 @@ def chart_coverage(images: dict[str, set[str]], units, seen: set[str] | None = N
     # otel-gateway-floor. Any one of those can render nothing while the other two
     # keep the name contributing, so the floor is per chart name and says so
     # rather than reading as per render unit.
-    rendered = {u.chart for u in units if u.chart not in getattr(render_addons, "SKIP_CHARTS", {})}
+    skip = getattr(render_addons, "SKIP_CHARTS", {})
+    pinned = {u.chart for u in units if u.chart not in skip}
+    rendered = {u.chart for u in units if u.chart not in skip and u.path not in unrendered}
     contributing = set().union(*images.values()) if images else set()
 
     for chart in sorted(rendered - contributing):
@@ -374,7 +388,10 @@ def chart_coverage(images: dict[str, set[str]], units, seen: set[str] | None = N
     problems += declaration_rot(seen if seen is not None else {bare_name(ref) for ref in images})
 
     for chart, reason in sorted(IMAGELESS_CHARTS.items()):
-        if chart not in rendered:
+        # Against what the fleet pins, not what rendered this run: an entry has
+        # outlived its chart when nothing pins the chart, and a chart that did not
+        # render is one this run could not examine.
+        if chart not in pinned:
             problems.append(
                 f"{chart} is declared imageless but the fleet no longer renders it — "
                 f"the entry outlived its chart. (recorded: {reason})"
@@ -619,7 +636,9 @@ def main() -> int:
             print(f"        {path}: {err}")
         return 2
 
-    failures = chart_coverage(images, render_addons.discover(), seen)
+    failures = chart_coverage(
+        images, render_addons.discover(), seen, unrendered={path for path, _ in unrendered}
+    )
     failures += verdict(images, ALLOWED_MUTABLE)
 
     # A reference the classifier cannot place is a verdict this gate owes and has

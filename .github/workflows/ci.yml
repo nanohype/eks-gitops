@@ -561,8 +561,10 @@ jobs:
       # positive control says the gate REJECTS the violation it exists to
       # catch, on the real tree: it asserts the gate is clean, introduces the
       # violation, verifies the edit actually landed and changed the meaning,
-      # and requires a non-zero exit. A gate carrying neither a control nor an
-      # asserted exemption fails this step, so the suite cannot shrink quietly.
+      # and requires exit 1, the violation status. A could-not-run (2) never
+      # judged the violation, so it is not a rejection. A gate carrying
+      # neither a control nor an asserted exemption fails this step, so the
+      # suite cannot shrink quietly.
       - name: Positive controls — every gate can reject
         run: ./scripts/tests/controls.py
       # A control proves a gate rejects a violation it was handed. This proves it

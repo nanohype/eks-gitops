@@ -21,6 +21,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 HERE = pathlib.Path(__file__).resolve().parent
 
@@ -257,6 +258,59 @@ class TheRuleReachesTheReader(unittest.TestCase):
         name = "tests/nothing-invokes-this.sh"
         found = controls.vacuity_problems({name}, set(), {}, {name: "a recorded reason"})
         self.assertTrue(any("A harness nothing invokes asserts nothing" in p for p in found), found)
+
+
+class TheVerdictOnTheMutatedTree(unittest.TestCase):
+    """What run_control accepts as a gate's rejection: exit 1, and only exit 1.
+
+    The gate is a stand-in that passes the clean tree and answers the mutated one
+    with the status under test, naming the mutated file each time, so the only
+    thing a case varies is the status. Exit 2 is the one that matters: counted as
+    a rejection, it let check-workflows.sh pass its control while it reported a
+    blocking zizmor finding as a run that never audited.
+    """
+
+    def verdict(self, status: int) -> tuple[bool, str]:
+        def mutate(tree: pathlib.Path):
+            path = tree / "planted.txt"
+            path.write_text("planted MARK\n")
+            return path, "", "planted MARK\n", "MARK"
+
+        answers = iter([0, status])
+
+        def run_gate(gate, cwd):
+            code = next(answers)
+            return controls.subprocess.CompletedProcess(
+                [gate], code, stdout="" if code == 0 else "planted.txt: the violation", stderr=""
+            )
+
+        with (
+            mock.patch.object(controls, "copy_tree", lambda dest: None),
+            mock.patch.object(controls, "run_gate", run_gate),
+        ):
+            return controls.run_control("check-x.py", "a planted violation", mutate)
+
+    def test_exit_1_naming_the_file_is_a_rejection(self):
+        ok, why = self.verdict(1)
+        self.assertTrue(ok, why)
+        self.assertIn("rejected a planted violation (exit 1", why)
+
+    def test_could_not_run_is_not_a_rejection(self):
+        ok, why = self.verdict(controls.CANNOT_RUN)
+        self.assertFalse(ok, why)
+        self.assertIn("could-not-run is not a rejection", why)
+
+    def test_a_status_outside_the_taxonomy_is_not_a_rejection(self):
+        for status in (3, 13, 14, 127):
+            with self.subTest(status=status):
+                ok, why = self.verdict(status)
+                self.assertFalse(ok, why)
+                self.assertIn("neither a rejection (1) nor could-not-run", why)
+
+    def test_an_acceptance_is_reported_as_one(self):
+        ok, why = self.verdict(0)
+        self.assertFalse(ok, why)
+        self.assertIn("gate ACCEPTED a planted violation", why)
 
 
 if __name__ == "__main__":

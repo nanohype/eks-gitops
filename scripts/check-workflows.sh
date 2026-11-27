@@ -166,12 +166,19 @@ echo "Scanning $count workflow file(s) with zizmor $have_zizmor (pinned)"
 zizmor --offline --persona=auditor --min-severity=medium --format plain "$WORKFLOWS"
 status=$?
 
-# A bare non-zero conflates two different facts. zizmor exits 14 when it audited
-# the workflows and found something, and 3 when the run itself failed — no
-# inputs collected, a file it could not parse. Printing the finding remedy for
-# the second case tells an operator to fix a `persist-credentials` line in a
-# file that never parsed, which costs them a search that cannot succeed.
-if [ "$status" -eq 14 ]; then
+# A bare non-zero conflates two different facts. zizmor's exit codes (its
+# docs/usage.md, "Exit codes", at the pinned version) say which one this is:
+# 11 to 14 mean it audited the workflows and found something, the code naming
+# the highest severity among the findings (informational, low, medium, high);
+# 1, 2 and 3 mean the audit did not complete (an error, an argument it refused,
+# no inputs collected), and every other code is reserved. With
+# --min-severity=medium only 13 and 14 can occur, but the whole findings range
+# is read as findings, so the mapping does not move with the threshold.
+# Printing the finding remedy for a run that never audited tells an operator to
+# fix a `persist-credentials` line in a file that never parsed, which costs them
+# a search that cannot succeed; reporting a finding as a run that never audited
+# turns a blocking medium finding into "could not run".
+if [ "$status" -ge 11 ] && [ "$status" -le 14 ]; then
   echo
   echo "  A workflow finding at MEDIUM or above blocks. The common ones and their"
   echo "  fixes: artipacked -> set 'persist-credentials: false' on the checkout;"
