@@ -277,20 +277,37 @@ def decimal(value: Fraction) -> str:
     """A Fraction as the decimal a reader will find in the expression.
 
     Exact arithmetic is what lets the comparison be an equality rather than a
-    tolerance, but `72/5` is not the string anyone can search the file for.
+    tolerance, but `72/5` is not the string anyone can search the file for. A
+    factor is read from decimal text, so its denominator divides a power of ten
+    and every digit can be written out; a float would round it to six. A value
+    no decimal writes exactly is written as the fraction it is.
     """
     if value.denominator == 1:
         return str(value.numerator)
-    return f"{float(value):g}"
+    rest, twos, fives = value.denominator, 0, 0
+    while rest % 2 == 0:
+        rest, twos = rest // 2, twos + 1
+    while rest % 5 == 0:
+        rest, fives = rest // 5, fives + 1
+    if rest != 1:
+        return f"{value.numerator}/{value.denominator}"
+    places = max(twos, fives)
+    sign = "-" if value < 0 else ""
+    digits = str(abs(value.numerator) * 10**places // value.denominator).rjust(places + 1, "0")
+    return f"{sign}{digits[:-places]}.{digits[-places:]}"
 
 
 def as_percent(value: Fraction, places: int) -> str:
-    """`value` as a percentage string with `places` decimals, no float."""
-    scaled = value * 100
+    """`value` as a percentage string with `places` decimals.
+
+    Rounded half to even, as round() rounds a Fraction, and written from
+    integers alone: a float would misplace the last digits of a large figure.
+    """
+    units = round(value * 100 * 10**places)
     if places == 0:
-        return str(round(scaled))
-    quantum = Fraction(10) ** places
-    return f"{float(round(scaled * quantum) / quantum):.{places}f}"
+        return str(units)
+    whole, rest = divmod(abs(units), 10**places)
+    return f"{'-' if units < 0 else ''}{whole}.{rest:0{places}d}"
 
 
 def main() -> int:
