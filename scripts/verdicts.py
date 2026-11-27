@@ -384,6 +384,53 @@ def pin(site: str, tagged: str, image: str) -> Verdict:
     ]
 
 
+def stored(tagged: str, image: str) -> Verdict:
+    """Whether the Deployment's pod template was stored as git wrote it, `tagged`.
+
+    The pin belongs on the pods a controller creates and never on its template.
+    ArgoCD compares that template with git, so a template admission rewrote is
+    drift on every workload ArgoCD syncs.
+    """
+    if image == tagged:
+        return HOLDS, [f"  ok    stored the Deployment's pod template as written ({tagged})"]
+    return FINDING, [
+        f"  FAIL  stored the Deployment's pod template as '{image}', not as written.",
+        "        ArgoCD compares that template with git, so every nanohype workload",
+        "        it syncs reads as drift, and selfHeal and admission rewrite it in turn.",
+    ]
+
+
+# ── The run ──────────────────────────────────────────────────────────────────
+
+
+def outcome(policy: str, checked: int, failed: bool) -> Verdict:
+    """What a run of the digest-rewrite gate concludes, once every overlay was checked.
+
+    A run with a finding fails. A run that checked no overlay admitted nothing
+    through the policy, so it decided nothing, and that is not a pass.
+    """
+    if failed:
+        return FINDING, [
+            "",
+            f"The guarantee {policy} makes is that the admitted spec carries the digest",
+            "the signature was checked against, and that a tier with Deny refuses an",
+            "identity the policy does not trust. Under real admission, that did not hold.",
+        ]
+    if checked < 1:
+        return CANNOT_RUN, [
+            f"Cannot run: no overlay of {policy} was checked, so nothing was admitted",
+            "through it. That is a run that decided nothing, not a rewrite that works.",
+        ]
+    return HOLDS, [
+        f"✓ {checked} overlay(s) of {policy} pin a tagged image to the digest admission",
+        "  verified in the init, main and ephemeral container fields and in a",
+        "  controller's pod, leave the controller's template as written, and decide a",
+        "  foreign identity in a pod and in an ephemeral container as their",
+        "  validationActions say — executed through a real API server, the registry",
+        "  and the transparency log",
+    ]
+
+
 # ── Command line ─────────────────────────────────────────────────────────────
 
 
@@ -428,6 +475,14 @@ def answer_kyverno_run(args: argparse.Namespace) -> Verdict:
 
 def answer_pinned(args: argparse.Namespace) -> Verdict:
     return pin(args.site, args.tagged, args.image)
+
+
+def answer_stored(args: argparse.Namespace) -> Verdict:
+    return stored(args.tagged, args.image)
+
+
+def answer_outcome(args: argparse.Namespace) -> Verdict:
+    return outcome(args.policy, args.checked, args.failed != 0)
 
 
 def answer_release_signed(args: argparse.Namespace) -> Verdict:
@@ -493,6 +548,17 @@ def parser() -> argparse.ArgumentParser:
     sub.add_argument("--site", choices=sorted(PIN_SITES), required=True)
     sub.add_argument("--tagged", required=True)
     sub.add_argument("--image", required=True)
+
+    sub = ask("stored", answer_stored)
+    sub.add_argument("--tagged", required=True, help="the reference git wrote")
+    sub.add_argument("--image", required=True, help="the reference the API server stored")
+
+    sub = ask("outcome", answer_outcome)
+    sub.add_argument("--policy", required=True)
+    sub.add_argument("--checked", type=int, required=True, help="the overlays checked")
+    sub.add_argument(
+        "--failed", type=int, required=True, help="non-zero when any check reached a finding"
+    )
 
     sub = ask("release-signed", answer_release_signed, [refused])
     sub.add_argument("--means", required=True, help="what the refusal costs")

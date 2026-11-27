@@ -73,9 +73,9 @@ ALL_MODULES=(test_policy_admission test_platform_crs test_dashboards
   test_image_vulnerabilities test_renovate_coverage test_lb_scheme_inputs
   test_kubeconform_scan test_image_extraction test_image_verification
   test_policy_validity test_verdicts test_kyverno_test test_digest_rewrite
-  test_workflows test_ai_config test_alert_coverage test_athena_panel_columns
-  test_catalog_revision test_env_coverage test_externalsecret_keys
-  test_serviceaccount_bindings test_workflow_id_masking)
+  test_digest_rewrite_run test_workflows test_ai_config test_alert_coverage
+  test_athena_panel_columns test_catalog_revision test_env_coverage
+  test_externalsecret_keys test_serviceaccount_bindings test_workflow_id_masking)
 
 # Bytecode caching keys on (mtime, size). A restore and the next mutation inside
 # the same second can hand the run the PREVIOUS mutant's module, and the suite
@@ -3030,6 +3030,46 @@ rejects "pin: accept the tag with no digest joined to it" test_verdicts,test_dig
   test_a_tag_left_unpinned_fails
 res $F
 
+# The Deployment's template is stored as git wrote it: the pin belongs on its pod.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    if image == tagged:\n        return HOLDS, [f"  ok    stored',
+              '    if image.startswith(tagged):\n        return HOLDS, [f"  ok    stored', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "stored: read a template admission pinned as written" test_verdicts,test_digest_rewrite,test_digest_rewrite_run \
+  test_a_template_stored_as_anything_else_is_a_finding \
+  test_a_template_admission_rewrote_fails \
+  test_a_finding_fails_the_run
+res $F
+
+# A run's outcome: a finding fails it, and a run that checked no overlay decided
+# nothing.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    if failed:\n        return FINDING, [', '    if False:\n        return FINDING, [', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "outcome: pass a run that reached a finding" test_verdicts,test_digest_rewrite_run \
+  test_a_finding_fails_the_run_however_many_overlays_were_checked \
+  test_a_finding_fails_the_run
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    if checked < 1:\n', '    if checked < 0:\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "outcome: pass a run that checked no overlay" test_verdicts \
+  test_a_run_that_checked_no_overlay_decided_nothing
+res $F
+
 # What the Kyverno suite's runner does with each answer.
 F=scripts/kyverno-test.sh
 
@@ -3671,6 +3711,104 @@ PY
 rejects "delete: carry on past an object still present" test_digest_rewrite \
   test_a_policy_not_deleted_in_time_cannot_run \
   test_an_admitted_signed_pod_not_deleted_in_time_cannot_run
+res $F
+
+# The stored template is a verdict of its own, and the run's outcome is the
+# status the script exits with.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('  verdict stored --tagged="$TAGGED" --image="$stored"\n', '', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "stored: leave the Deployment's template unread" test_digest_rewrite \
+  test_a_template_stored_as_written_passes \
+  test_a_template_admission_rewrote_fails
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('[ "$fail" -eq 0 ] || exit 1\n', '[ "$fail" -eq 0 ] || exit 0\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "outcome: exit 0 over a finding" test_digest_rewrite_run \
+  test_a_finding_fails_the_run
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('verdict outcome --policy="$POLICY" --checked="$checked" --failed="$fail"\n', '', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "outcome: end a run without its verdict" test_digest_rewrite_run \
+  test_every_overlay_holding_passes \
+  test_a_finding_fails_the_run
+res $F
+
+# The tree is read before any cluster exists, and a shape the run cannot use
+# refuses there.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("if printf '%s' \"$TAGGED\" | grep -q '@sha256:'; then\n", "if false; then\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "tree: admit a fixture pinned by digest already" test_digest_rewrite_run \
+  test_a_signed_fixture_pinned_by_digest_refuses
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('  command -v "$tool" >/dev/null 2>&1 \\\n    || cannot_run',
+              '  command -v "$tool" >/dev/null 2>&1 \\\n    || true', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "tree: carry on with a cluster tool missing" test_digest_rewrite_run \
+  test_a_missing_tool_refuses
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('  *) cannot_run "KIND_NODE_IMAGE is', '  *) : "KIND_NODE_IMAGE is', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "tree: bring a cluster up on an unpinned node image" test_digest_rewrite_run \
+  test_a_node_image_not_pinned_by_digest_refuses \
+  test_the_node_image_the_environment_names_is_held_to_the_same_pin
+res $F
+
+# Once the cluster exists, an overlay that does not render, and a policy
+# Kyverno never reports ready, each leave nothing to admit through.
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    || cannot_run "$rel does not render', '    || : "$rel does not render', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "cluster: admit through an overlay that did not render" test_digest_rewrite_run \
+  test_an_overlay_that_does_not_render_cannot_run
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    cannot_run "$rel: Kyverno never reported', '    : "$rel: Kyverno never reported', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "policy: admit before Kyverno reports the policy ready" test_digest_rewrite \
+  test_a_policy_never_reported_ready_cannot_run
 res $F
 
 # The configuration gates, each reverted at the decision its verdict rests on.

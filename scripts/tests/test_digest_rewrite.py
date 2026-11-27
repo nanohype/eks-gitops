@@ -10,11 +10,9 @@ reason.
 
 A transport failure inside verification refuses with the policy's own message,
 and only the verifier's log names it, so a refusal is also decided on what the
-admission controller logged. Stubs named kubectl, date and sleep, first on PATH,
-stand in for the cluster and the clock: kubectl answers each call from files
-named for it and records the call, and the clock moves only when a request is
-sent or the script sleeps. Stubs named timeout, kind and helm record what runs
-under a bound and what the bound was.
+admission controller logged. The stand-ins for the cluster, its tools and the
+clock are scripts/tests/digeststubs.py's, shared with
+scripts/tests/test_digest_rewrite_run.py, which runs the script whole.
 
 Each step hands what it read to scripts/verdicts.py, which decides it, and
 scripts/tests/test_verdicts.py holds each decision on its own. These hold every
@@ -26,25 +24,34 @@ to the same module, so both gates read transport failures through one pattern.
 from __future__ import annotations
 
 import os
-import pathlib
 import re
-import shutil
 import subprocess
-import tempfile
 import unittest
 
 import yaml
+from digeststubs import (
+    CHART_VERSION,
+    DENIED,
+    FOREIGN,
+    IDENTITY,
+    IDENTITY_REFUSAL,
+    MISMATCH,
+    PINNED,
+    ROOT,
+    SCRIPT,
+    STEP,
+    TAGGED,
+    StubbedCluster,
+    kubectl_said,
+    log,
+)
 from gateloader import load
-from shellgate import ESC, identity_message, setting, verifier_line
+from shellgate import ESC, setting
 
 verdicts = load("verdicts")
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
-SCRIPT = ROOT / "scripts" / "check-digest-rewrite.sh"
 KYVERNO_TEST = ROOT / "scripts" / "kyverno-test.sh"
 CI = ROOT / ".github" / "workflows" / "ci.yml"
-
-IDENTITY = identity_message()
 
 REQUEST_TIMEOUT = setting(SCRIPT, "REQUEST_TIMEOUT")
 READY_TIMEOUT = setting(SCRIPT, "READY_TIMEOUT")
@@ -53,13 +60,6 @@ CREATE_TIMEOUT = setting(SCRIPT, "CREATE_TIMEOUT")
 KIND_TIMEOUT = setting(SCRIPT, "KIND_TIMEOUT")
 HELM_TIMEOUT = setting(SCRIPT, "HELM_TIMEOUT")
 KILL_TIMEOUT = setting(SCRIPT, "KILL_TIMEOUT")
-
-# What the main body reads out of the fixtures, the appset and ci.yml, set by
-# hand: a tag, a foreign image pinned by digest, and the cluster and chart.
-TAGGED = "ghcr.io/nanohype/x:1.0.0"
-FOREIGN = f"ghcr.io/nanohype/x@sha256:{'0' * 64}"
-PINNED = f"{TAGGED}@sha256:{'a' * 64}"
-CHART_VERSION = "0.0.0"
 
 PRELUDE = f"""
 source "$1" || exit 99
@@ -70,105 +70,15 @@ TIMEOUT_CMD="$2/bin/timeout" CLUSTER=digest-rewrite-test NODE_IMAGE=kindest/node
 CHART_REPO=https://kyverno.github.io/kyverno CHART_VERSION={CHART_VERSION} VALUES=("$2/values.yaml")
 """
 
-# The clock's reading when a run starts, and the seconds it moves across each
-# create or patch: a request the API server takes that long to answer.
-START = 1000
-STEP = 10
-
 # The wait for the Deployment's pod, shortened where the length of the wait is
 # not what a test reads: each poll is a few stub processes.
 SHORT_CREATE_TIMEOUT = 4
-
-# Bash builtins only, so it answers the same whatever else is on PATH. A call is
-# keyed by its subcommand and what it names: the fixture a -f reads, the
-# ephemeral container a patch adds, and which listing a get makes. The key's
-# answer is the files under answers/ named for it, holding what the call prints,
-# what it writes to stderr and the status it exits with. Each call is recorded
-# with the clock's reading when it was made.
-KUBECTL = r"""#!BASH
-work='WORK'
-sub="" base="" prev=""
-for a in "$@"; do
-  [ "$prev" = -f ] && { base="${a##*/}"; base="${base%.yaml}"; }
-  case "$a" in -*) ;; *) [ -n "$sub" ] || sub="$a" ;; esac
-  prev="$a"
-done
-case "$sub $* " in
-  "patch "*'"name":"pinned"'*) key=patch-pinned ;;
-  "patch "*'"name":"foreign"'*) key=patch-foreign ;;
-  "get "*" events "*) key=get-events ;;
-  "get "*" -o name "*) key=get-pods ;;
-  "get "*" pod "*) key=get-pod ;;
-  *) key="$sub${base:+-$base}" ;;
-esac
-{ printf '%s\x1f' "$(<"$work/now")" "$key" "$@"; printf '\n'; } >>"$work/calls"
-answer="$work/answers/$key"
-[ -f "$answer.out" ] && printf '%s\n' "$(<"$answer.out")"
-[ -f "$answer.err" ] && printf '%s\n' "$(<"$answer.err")" >&2
-case "$sub" in
-  create|patch) echo "$(( $(<"$work/now") + STEP ))" >"$work/now" ;;
-esac
-[ -f "$answer.rc" ] && exit "$(<"$answer.rc")"
-exit 0
-"""
-
-# GNU timeout's shape, `timeout [OPTION]... DURATION COMMAND...`. What precedes
-# the command is recorded as the bounds it was given, with the command after
-# them. answers/timeout-<command>.rc stands for the bound ending that command:
-# the stub exits with it and runs nothing.
-TIMEOUT = r"""#!BASH
-work='WORK'
-bounds=()
-while [ "$#" -gt 0 ]; do
-  case "$1" in kubectl|kind|helm) break ;; esac
-  bounds+=("$1"); shift
-done
-{ printf '%s\x1f' "${bounds[@]}" "$@"; printf '\n'; } >>"$work/bounded"
-[ -f "$work/answers/timeout-$1.rc" ] && exit "$(<"$work/answers/timeout-$1.rc")"
-exec "$@"
-"""
-
-# kind and helm, answering every call with success.
-TOOL = r"""#!BASH
-exit 0
-"""
-
-DATE = r"""#!BASH
-printf '%s\n' "$(<'WORK/now')"
-"""
-
-SLEEP = r"""#!BASH
-echo "$(( $(<'WORK/now') + $1 ))" >'WORK/now'
-"""
-
-
-def log(error: str) -> str:
-    """A verifier line as the admission controller writes it, naming the image."""
-    return verifier_line(error, f"image=ghcr.io/nanohype/x@sha256:{'0' * 64}")
-
-
-def kubectl_said(message: str, reason: str = "Forbidden") -> str:
-    """What kubectl writes for an answer the API server sent, carrying `message`."""
-    return f"Error from server ({reason}): {message}"
 
 
 def replicaset_said(message: str) -> str:
     """The FailedCreate event the ReplicaSet writes when the API server refuses its pod."""
     return f"Error creating: {message}"
 
-
-# The API server's refusal under the policy's identity message, and as kubectl
-# reports it.
-IDENTITY_REFUSAL = (
-    f'admission webhook "ivpol.validate.kyverno.svc-fail" denied the request: '
-    f"Policy verify-images failed: {IDENTITY}"
-)
-DENIED = kubectl_said(IDENTITY_REFUSAL)
-
-MISMATCH = log(
-    "failed to verify cosign signatures: no matching signatures: none of the "
-    "expected identities matched what was in the certificate"
-)
 
 # Three outages on the verification path, each worded only one way the shared
 # pattern knows: the Sigstore trusted root, Rekor, and the registry.
@@ -272,40 +182,8 @@ def seconds(argv: list[str], flag: str) -> int | None:
     return None
 
 
-class AGateRun(unittest.TestCase):
-    def setUp(self):
-        bash = shutil.which("bash")
-        if bash is None:
-            self.skipTest("bash is not on PATH")
-        self.bash = bash
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.work = pathlib.Path(tmp.name)
-        self.bin = self.work / "bin"
-        self.bin.mkdir()
-        (self.work / "answers").mkdir()
-        (self.work / "now").write_text(f"{START}\n")
-        for name, body in (
-            ("kubectl", KUBECTL),
-            ("date", DATE),
-            ("sleep", SLEEP),
-            ("timeout", TIMEOUT),
-            ("kind", TOOL),
-            ("helm", TOOL),
-        ):
-            stub = self.bin / name
-            stub.write_text(
-                body.replace("BASH", bash, 1)
-                .replace("WORK", str(self.work))
-                .replace("STEP", str(STEP))
-            )
-            stub.chmod(0o755)
-
-    def answer(self, key: str, out: str | None = None, err: str | None = None, rc: int = 0) -> None:
-        """What the kubectl call keyed `key` prints, writes to stderr and exits with."""
-        for suffix, value in (("out", out), ("err", err), ("rc", str(rc) if rc else None)):
-            if value is not None:
-                (self.work / "answers" / f"{key}.{suffix}").write_text(value)
+class AGateRun(StubbedCluster):
+    """Each step run by sourcing the script, with the stubs first on PATH."""
 
     def run_gate(self, body: str, actions: str = "Deny") -> tuple[int, str]:
         """Source the script, run `body` against the stubs, and report fail."""
@@ -327,32 +205,6 @@ class AGateRun(unittest.TestCase):
         )
         self.assertNotEqual(proc.returncode, 99, proc.stderr)
         return proc.returncode, proc.stdout + proc.stderr
-
-    def calls(self) -> list[tuple[int, str, list[str]]]:
-        """Each kubectl call: the clock when it was made, its key and its argv."""
-        path = self.work / "calls"
-        if not path.exists():
-            return []
-        out = []
-        for line in path.read_text().splitlines():
-            clock, key, *argv = line.split("\x1f")[:-1]
-            out.append((int(clock), key, argv))
-        return out
-
-    def calls_to(self, key: str) -> list[list[str]]:
-        return [argv for _, k, argv in self.calls() if k == key]
-
-    def bounded(self) -> list[tuple[list[str], list[str]]]:
-        """Each command run under timeout: the bounds it was given, and the command."""
-        path = self.work / "bounded"
-        if not path.exists():
-            return []
-        out = []
-        for line in path.read_text().splitlines():
-            fields = line.split("\x1f")[:-1]
-            at = next(i for i, f in enumerate(fields) if f in ("kubectl", "kind", "helm"))
-            out.append((fields[:at], fields[at:]))
-        return out
 
     def assert_cannot_run(
         self, rc: int, said: str, cause: str, headline: str = VERIFIER_OUTAGE
@@ -776,6 +628,95 @@ class AnAdmittedSignedPod(AGateRun):
             "Cannot run: scripts/verdicts.py exited 1 answering pinned, so no verdict was reached.",
             said,
         )
+        self.assertNotIn("fail=", said)
+
+
+class AStoredDeployment(AGateRun):
+    """The Deployment's template is stored as git wrote it, and only its pod is pinned."""
+
+    def store_deployment(self, stored: str) -> tuple[int, str]:
+        self.answer("create-deployment", out=stored)
+        self.answer("get-pod", out=PINNED)
+        return self.run_gate("check_deployment")
+
+    def test_a_template_stored_as_written_passes(self):
+        rc, said = self.store_deployment(TAGGED)
+        self.assertEqual(rc, 0, said)
+        self.assertIn(f"ok    stored the Deployment's pod template as written ({TAGGED})", said)
+        self.assertIn(f"ok    admitted the Deployment's pod as {PINNED}", said)
+        self.assertIn("fail=0", said)
+
+    def test_a_template_admission_rewrote_fails(self):
+        rc, said = self.store_deployment(PINNED)
+        self.assertEqual(rc, 0, said)
+        self.assertIn(
+            f"FAIL  stored the Deployment's pod template as '{PINNED}', not as written.", said
+        )
+        self.assertIn("fail=1", said)
+
+    def test_the_pod_is_still_read_after_a_template_finding(self):
+        _, said = self.store_deployment(PINNED)
+        self.assertIn(f"ok    admitted the Deployment's pod as {PINNED}", said)
+        self.assertEqual(len(self.calls_to("delete-deployment")), 1, self.calls())
+
+
+class WhatTheDeploymentStepCannotRead(AGateRun):
+    """Each read the Deployment's step depends on, failing, ends the run undecided."""
+
+    def test_pods_that_cannot_be_listed_cannot_run(self):
+        self.answer("get-pods", rc=1, err="error: the server is currently unable to handle it")
+        rc, said = self.run_gate("check_deployment")
+        self.assertEqual(rc, 2, said)
+        self.assertIn(
+            "Cannot run: overlays/tier: the Deployment's pods could not be listed — "
+            "error: the server is currently unable to handle it",
+            said,
+        )
+        self.assertEqual(self.calls_to("create-deployment"), [], self.calls())
+
+    def test_events_that_cannot_be_read_cannot_run(self):
+        self.answer("create-deployment", out=TAGGED)
+        self.answer("get-events", rc=1, err="error: events is forbidden")
+        rc, said = self.run_gate(f"CREATE_TIMEOUT={SHORT_CREATE_TIMEOUT}\ncheck_deployment")
+        self.assertEqual(rc, 2, said)
+        self.assertIn(
+            "Cannot run: overlays/tier: the Deployment's events could not be read — "
+            "error: events is forbidden",
+            said,
+        )
+        self.assertNotIn("fail=", said)
+
+
+class InstallingThePolicy(AGateRun):
+    """An admission before Kyverno reports the policy ready would prove nothing."""
+
+    def test_a_policy_applied_and_ready_is_installed(self):
+        rc, said = self.run_gate("install_policy")
+        self.assertEqual(rc, 0, said)
+        self.assertEqual(len(self.calls_to("apply-policy")), 1, self.calls())
+        waits = self.calls_to("wait")
+        self.assertEqual(len(waits), 1, self.calls())
+        self.assertIn("imagevalidatingpolicy/verify-images", waits[0])
+        self.assertIn(f"--timeout={READY_TIMEOUT}s", waits[0])
+
+    def test_a_policy_the_api_server_refused_cannot_run(self):
+        self.answer("apply-policy", rc=1, err="Error from server (Invalid): spec is invalid")
+        rc, said = self.run_gate("install_policy")
+        self.assertEqual(rc, 2, said)
+        self.assertIn(
+            "Cannot run: the API server refused overlays/tier — "
+            "Error from server (Invalid): spec is invalid",
+            said,
+        )
+        self.assertEqual(self.calls_to("wait"), [], self.calls())
+
+    def test_a_policy_never_reported_ready_cannot_run(self):
+        self.answer("wait", rc=1, err="error: timed out waiting for the condition")
+        self.answer("get", out='{"conditionStatus":{"ready":false}}')
+        rc, said = self.run_gate("install_policy")
+        self.assertEqual(rc, 2, said)
+        self.assertIn('{"conditionStatus":{"ready":false}}', said)
+        self.assertIn("Cannot run: overlays/tier: Kyverno never reported verify-images ready", said)
         self.assertNotIn("fail=", said)
 
 

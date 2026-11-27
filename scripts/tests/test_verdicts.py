@@ -4,8 +4,9 @@ scripts/kyverno-test.sh and scripts/check-digest-rewrite.sh run the commands
 and hand what came back to verdicts.py, which decides what it means. These hold
 each decision on its own, on the shapes the verifier, the API server, kubectl
 and GNU timeout produce: the transport failures that decide nothing, the
-refusals whose cause is or is not established, the pin, the foreign identity,
-and the statuses the shell scripts act on. scripts/tests/test_kyverno_test.py
+refusals whose cause is or is not established, the pin, the stored template,
+the foreign identity, a digest-rewrite run's outcome, and the statuses the
+shell scripts act on. scripts/tests/test_kyverno_test.py
 and scripts/tests/test_digest_rewrite.py hold the scripts to these decisions.
 
 The file sits at 100% of its lines and branches in scripts/tests/run.py,
@@ -718,6 +719,97 @@ class APin(unittest.TestCase):
     def test_asked_about_an_image_that_looks_like_a_flag_it_still_answers(self):
         status, _ = run("pinned", "--site=container", f"--tagged={TAGGED}", "--image=-x")
         self.assertEqual(status, verdicts.FINDING)
+
+
+class TheStoredTemplate(unittest.TestCase):
+    """The pin belongs on the pods a controller creates, never on its template."""
+
+    def test_a_template_stored_as_written_holds(self):
+        self.assertEqual(
+            verdicts.stored(TAGGED, TAGGED),
+            (
+                verdicts.HOLDS,
+                [f"  ok    stored the Deployment's pod template as written ({TAGGED})"],
+            ),
+        )
+
+    def test_a_template_stored_as_anything_else_is_a_finding(self):
+        for name, image in {
+            "pinned by admission": PINNED,
+            "nothing": "",
+            "another tag": "ghcr.io/nanohype/x:1.0.1",
+            "the tag with a space after it": f"{TAGGED} ",
+            "a second line": f"{TAGGED}\n{TAGGED}",
+        }.items():
+            with self.subTest(name=name):
+                status, said = verdicts.stored(TAGGED, image)
+                self.assertEqual(status, verdicts.FINDING)
+                self.assertEqual(
+                    said[0],
+                    f"  FAIL  stored the Deployment's pod template as '{image}', not as written.",
+                )
+                self.assertIn("reads as drift", "\n".join(said))
+
+    def test_asked_it_answers_with_the_verdict(self):
+        self.assertEqual(
+            run("stored", f"--tagged={TAGGED}", f"--image={TAGGED}"),
+            (
+                verdicts.HOLDS,
+                f"  ok    stored the Deployment's pod template as written ({TAGGED})\n",
+            ),
+        )
+        status, said = run("stored", f"--tagged={TAGGED}", f"--image={PINNED}")
+        self.assertEqual(status, verdicts.FINDING)
+        self.assertIn(f"as '{PINNED}', not as written.", said)
+
+
+class TheRunsOutcome(unittest.TestCase):
+    """What a run of the digest-rewrite gate concludes once its overlays were checked."""
+
+    def test_a_finding_fails_the_run_however_many_overlays_were_checked(self):
+        for checked in (0, 1, 3):
+            with self.subTest(checked=checked):
+                status, said = verdicts.outcome("verify-images", checked, True)
+                self.assertEqual(status, verdicts.FINDING)
+                self.assertEqual(said[0], "")
+                self.assertIn("Under real admission, that did not hold.", "\n".join(said))
+                self.assertNotIn("✓", "\n".join(said))
+
+    def test_a_run_that_checked_no_overlay_decided_nothing(self):
+        status, said = verdicts.outcome("verify-images", 0, False)
+        self.assertEqual(status, verdicts.CANNOT_RUN)
+        self.assertEqual(
+            said[0],
+            "Cannot run: no overlay of verify-images was checked, so nothing was admitted",
+        )
+        self.assertNotIn("✓", "\n".join(said))
+
+    def test_a_run_with_no_finding_over_its_overlays_holds(self):
+        status, said = verdicts.outcome("verify-images", 3, False)
+        self.assertEqual(status, verdicts.HOLDS)
+        self.assertEqual(
+            said[0],
+            "✓ 3 overlay(s) of verify-images pin a tagged image to the digest admission",
+        )
+        self.assertIn("executed through a real API server", "\n".join(said))
+
+    def test_asked_it_answers_with_the_verdict(self):
+        for failed, checked, status in (
+            ("0", "3", verdicts.HOLDS),
+            ("1", "3", verdicts.FINDING),
+            ("2", "3", verdicts.FINDING),
+            ("0", "0", verdicts.CANNOT_RUN),
+        ):
+            with self.subTest(failed=failed, checked=checked):
+                self.assertEqual(
+                    run(
+                        "outcome",
+                        "--policy=verify-images",
+                        f"--checked={checked}",
+                        f"--failed={failed}",
+                    )[0],
+                    status,
+                )
 
 
 if __name__ == "__main__":
