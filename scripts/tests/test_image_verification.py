@@ -149,8 +149,8 @@ LEGACY_SIGNED_FIXTURES = {
 # pinned operator chart renders, so an operator chart bump moves them.
 BUNDLE_SIGNED_FIXTURES = {
     "ghcr.io/nanohype/eks-agent-platform/operator@sha256:"
-    "1e7d4ce9edbf602edc8cf72ca8dbff278b241122b56139a77f67eabe474d93ee": _RELEASE
-    + "operator-v0.7.0",
+    "a9bd26561e89e58202885d6993e0abd460157e97c7cae671950244f988b95cf0": _RELEASE
+    + "operator-v0.7.2",
     "ghcr.io/nanohype/eks-agent-platform/eval-runner@sha256:"
     "674c0120c381c9b7ab01289e1ed875607864e976d3407734f9eb5be2e65b37dd": _RELEASE
     + "eval-runner-v0.1.2",

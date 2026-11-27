@@ -383,8 +383,8 @@ spec:
 #   legacy  operator@sha256:06a46523… (vi-signed, vi-signed-with-sidecar, the
 #           app container of vi-branch-signed-init) and fab@sha256:9e415943…
 #           (vi-branch-signed, the init container of vi-branch-signed-init)
-#   bundle  operator@sha256:1e7d4ce9… (vi-bundle-signed-operator), the same
-#           image by its tag operator:0.7.0 (vi-tag-only), and
+#   bundle  operator@sha256:a9bd2656… (vi-bundle-signed-operator), the same
+#           image by its tag operator:0.7.2 (vi-tag-only), and
 #           eval-runner@sha256:674c0120… (vi-bundle-signed-eval-runner)
 #
 # The identity refusals, vi-branch-signed and vi-branch-signed-init, are
@@ -468,7 +468,7 @@ spec:
     runAsNonRoot: true
   containers:
     - name: app
-      image: ghcr.io/nanohype/eks-agent-platform/operator@sha256:1e7d4ce9edbf602edc8cf72ca8dbff278b241122b56139a77f67eabe474d93ee
+      image: ghcr.io/nanohype/eks-agent-platform/operator@sha256:a9bd26561e89e58202885d6993e0abd460157e97c7cae671950244f988b95cf0
 ---
 # An eval-runner release in the same bundle format. The operator chart's
 # WorkflowTemplate runs eval-runner in step pods in the eval-runner namespace,
@@ -502,7 +502,7 @@ spec:
     runAsNonRoot: true
   containers:
     - name: app
-      image: ghcr.io/nanohype/eks-agent-platform/operator:0.7.0
+      image: ghcr.io/nanohype/eks-agent-platform/operator:0.7.2
 ---
 # Signed by the org, from ci.yml on a branch push. The subject regex admits only
 # release.ya?ml on refs/tags, so this fails the signature validation.
