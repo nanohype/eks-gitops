@@ -188,11 +188,14 @@ MIN_TESTS = 31
 # check-policy-admission.py is an approval gate, deciding whether the fleet is
 # admissible at Enforce; check-image-verification.py holds the signature-
 # verification contract; check-policy-validity.py holds every rendered
-# ImageValidatingPolicy to the digest pin that verification depends on; and
+# ImageValidatingPolicy to the digest pin that verification depends on;
 # verdicts.py decides what each refusal, run and time bound on the verification
-# path in check-digest-rewrite.sh and kyverno-test.sh established. Each carries
-# 100 lines and 100 branches in PER_GATE_FLOORS, so a branch added to any of
-# them without a test fails this run rather than lowering a ratchet.
+# path in check-digest-rewrite.sh and kyverno-test.sh established; and
+# mask-aws-ids.py and check-workflow-id-masking.py, vendored from landing-zone,
+# keep every AWS account id out of this public repository's Actions logs. Each
+# carries 100 lines and 100 branches in PER_GATE_FLOORS, the id-masking gate
+# just under for the reason given beside it, so a branch added to any of them
+# without a test fails this run rather than lowering a ratchet.
 
 # The coverage floors over the gate scripts, enforced when `coverage` is
 # collecting. Statements and branches are measured apart, each against its own
@@ -219,7 +222,7 @@ BRANCH_FLOOR = 60
 # just under what the suite reaches, so a covered file cannot regress silently,
 # and raising one is what lands with the tests that earn it. A file with no
 # branches reads as covering all of them.
-PER_GATE_FLOORS: dict[str, tuple[int, int]] = {
+PER_GATE_FLOORS: dict[str, tuple[float, float]] = {
     "scripts/check-named-things.py": (42, 34),
     "scripts/check-renovate-coverage.py": (90, 84),
     "scripts/check-label-values.py": (56, 54),
@@ -236,6 +239,18 @@ PER_GATE_FLOORS: dict[str, tuple[int, int]] = {
     "scripts/check-image-verification.py": (100, 100),
     "scripts/check-policy-validity.py": (100, 100),
     "scripts/verdicts.py": (100, 100),
+    # The mask script's core and the account-id gate, vendored from landing-zone
+    # (scripts/vendored.json). Their tests are their own self-tests, run under the
+    # suite: the gate's over this repository's workflows and the cases
+    # scripts/workflow-id-masking.toml plants. The core is at 100. The gate is
+    # held to the tenth just under what it reaches, so one more line or branch
+    # left unreached still fails. What it leaves, one line and two branches, is
+    # taken only by a tree with no scripts/vendored.json, whose policy vendors
+    # nothing. That is landing-zone's own tree, which reaches them there, and
+    # never a copy's. The self-test plants no such tree. When it does, the gate
+    # is re-vendored with its record and held at 100 here.
+    "scripts/mask-aws-ids.py": (100, 100),
+    "scripts/check-workflow-id-masking.py": (99.9, 99.6),
     # The control-exempt gates. Their floors are what keeps the verdict half
     # covered after the module that covers it is edited.
     "scripts/check-platform-crs.py": (51, 51),
@@ -254,12 +269,6 @@ PER_GATE_FLOORS: dict[str, tuple[int, int]] = {
     "scripts/check-lb-scheme-inputs.py": (69, 73),
     # Both verdicts over stubbed reads, --sync and --self-test.
     "scripts/check-chart-deprecation.py": (86, 80),
-    # The account-id gate and the mask script's core, vendored from landing-zone
-    # (scripts/vendored.json). Their self-tests run under the suite, the gate's
-    # over this repository's workflows and scripts/workflow-id-masking.toml; the
-    # floors are what those self-tests reach here.
-    "scripts/check-workflow-id-masking.py": (98, 97),
-    "scripts/mask-aws-ids.py": (99, 98),
 }
 
 
@@ -439,12 +448,12 @@ def check_coverage() -> int:
                 f"the gate was renamed, or its tests stopped importing it"
             )
             continue
-        for what, pct, floor in (
+        for what, pct, file_floor in (
             ("lines", figures.lines, line_floor),
             ("branches", figures.branches, branch_floor),
         ):
-            if pct < floor:
-                failures.append(f"{rel}: {what} at {shown(pct)} are below its {floor}% floor")
+            if pct < file_floor:
+                failures.append(f"{rel}: {what} at {shown(pct)} are below its {file_floor}% floor")
 
     # Read from every Python file in scripts/, so a gate added tomorrow is in
     # the population without anyone remembering to add it.
