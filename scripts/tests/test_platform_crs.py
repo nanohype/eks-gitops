@@ -12,6 +12,8 @@ second signal anywhere to contradict it.
 
 The schemas here are written inline rather than fetched, so the assertions are
 about the walk rather than about whatever the pinned chart currently ships.
+TheGateRunWhole runs the gate end to end the same way: a fixture tree and a
+fixture operator chart, served by fakeregistry through registry.py's own client.
 """
 
 from __future__ import annotations
@@ -21,10 +23,14 @@ import io
 import pathlib
 import tempfile
 import unittest
+from unittest import mock
 
+import fakeregistry as fake
+import yaml
 from gateloader import load
 
 gate = load("check-platform-crs")
+registry = load("registry")
 
 KIND = "Platform"
 SOURCE = "addons/ai-platform/agent-platform/base/platform.yaml"
@@ -399,6 +405,262 @@ class TheVersionThePinResolves(unittest.TestCase):
     def test_a_quoted_revision_is_unquoted(self):
         self.with_appset(self.PINNED.replace("targetRevision: 0.6.7", 'targetRevision: "0.6.7"'))
         self.assertEqual(gate.pinned_chart_version(), "0.6.7")
+
+
+GROUP = "agents.nanohype.dev"
+
+
+def crd(kind: str, spec: dict) -> str:
+    """A CustomResourceDefinition for `kind` whose v1alpha1 spec schema is `spec`."""
+    plural = f"{kind.lower()}s"
+    return yaml.safe_dump(
+        {
+            "apiVersion": "apiextensions.k8s.io/v1",
+            "kind": "CustomResourceDefinition",
+            "metadata": {"name": f"{plural}.{GROUP}"},
+            "spec": {
+                "group": GROUP,
+                "names": {"kind": kind, "plural": plural},
+                "scope": "Namespaced",
+                "versions": [
+                    {
+                        "name": gate.CRD_VERSION,
+                        "served": True,
+                        "storage": True,
+                        "schema": {
+                            "openAPIV3Schema": {"type": "object", "properties": {"spec": spec}}
+                        },
+                    }
+                ],
+            },
+        }
+    )
+
+
+class TheGateRunWhole(unittest.TestCase):
+    """main() over a fixture tree, its CRDs read from a fixture chart by the real client.
+
+    The walk is held above rule by rule. These hold the run: the version read
+    off the ApplicationSet is the chart fetched, its CRDs are the schemas every
+    CR in the tree is walked against, the corpus is complete, and each way the
+    chart can fail to arrive ends the run with the status that failure earns.
+    """
+
+    VERSION = "0.7.5"
+    PATH = "nanohype/eks-agent-platform/charts/operator"
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = pathlib.Path(tmp.name) / "tree"
+        self.appset = self.root / "applicationsets" / "addons-agent-operator.yaml"
+        self.appset.parent.mkdir(parents=True)
+        self.pin(self.VERSION)
+        self.cr("platform.yaml", "Platform", {"datastores": [{"relational": {"minACU": "0.5"}}]})
+        self.cr("gateway.yaml", "ModelGateway", {"model": "claude"})
+        self.schemas = {
+            "Platform": {
+                "type": "object",
+                "properties": {
+                    "datastores": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "relational": {
+                                    "type": "object",
+                                    "properties": {"minACU": {"type": "string"}},
+                                }
+                            },
+                        },
+                    }
+                },
+            },
+            "ModelGateway": {
+                "type": "object",
+                "required": ["model"],
+                "properties": {"model": {"type": "string"}},
+            },
+        }
+        self.operator = self.chart(self.VERSION)
+        self.hosts = fake.serve(
+            self,
+            registry,
+            {
+                f"https://ghcr.io/v2/{self.PATH}/": self.route,
+                fake.OciRegistry.REALM: self.route,
+            },
+            pathlib.Path(tmp.name) / "cache",
+        )
+        for patch in (
+            mock.patch.object(gate, "ROOT", self.root),
+            mock.patch.object(gate, "OPERATOR_APPSET", self.appset),
+        ):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def route(self, req):
+        return self.operator(req)
+
+    def chart(self, version):
+        archive = fake.chart_archive(
+            "operator",
+            version,
+            {},
+            crds={f"{kind.lower()}s.yaml": crd(kind, spec) for kind, spec in self.schemas.items()},
+        )
+        return fake.OciRegistry(
+            "ghcr.io", self.PATH, version, {"name": "operator", "version": version}, content=archive
+        )
+
+    def pin(self, version):
+        self.appset.write_text(
+            yaml.safe_dump(
+                {
+                    "kind": "ApplicationSet",
+                    "spec": {
+                        "template": {
+                            "spec": {
+                                "sources": [
+                                    {
+                                        "repoURL": "ghcr.io/nanohype/eks-agent-platform/charts",
+                                        "chart": "operator",
+                                        "targetRevision": version,
+                                    },
+                                    {
+                                        "repoURL": "https://git.example/eks-gitops",
+                                        "targetRevision": "main",
+                                    },
+                                ]
+                            }
+                        }
+                    },
+                }
+            )
+        )
+
+    def cr(self, name, kind, spec):
+        path = self.root / "addons" / "ai-platform" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            yaml.safe_dump(
+                {
+                    "apiVersion": f"{GROUP}/{gate.CRD_VERSION}",
+                    "kind": kind,
+                    "metadata": {"name": "main"},
+                    "spec": spec,
+                }
+            )
+        )
+
+    def run_gate(self, *argv):
+        out = io.StringIO()
+        with (
+            mock.patch.object(gate.sys, "argv", ["check-platform-crs.py", *argv]),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(out),
+        ):
+            try:
+                rc = gate.main()
+            except SystemExit as exc:
+                rc = exc.code
+        return rc, out.getvalue()
+
+    def test_a_catalog_whose_crs_the_pinned_crds_admit_passes(self):
+        rc, out = self.run_gate("--list")
+        self.assertEqual(rc, 0, out)
+        self.assertIn(f"operator chart {self.VERSION} → ModelGateway, Platform", out)
+        self.assertIn("addons/ai-platform/gateway.yaml: ModelGateway/main", out)
+        self.assertIn(f"ok: 2 platform CR(s) admissible against operator chart {self.VERSION}", out)
+        self.assertIn(f"https://ghcr.io/v2/{self.PATH}/manifests/{self.VERSION}", self.hosts.urls)
+
+    def test_a_field_the_crd_types_as_a_string_written_as_a_number_fails(self):
+        self.cr("platform.yaml", "Platform", {"datastores": [{"relational": {"minACU": 0.5}}]})
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 1, out)
+        self.assertIn(
+            "addons/ai-platform/platform.yaml (main): Platform spec.datastores[0].relational.minACU "
+            "is a number and the CRD declares string — quote it",
+            out,
+        )
+
+    def test_a_required_field_left_out_fails(self):
+        self.cr("gateway.yaml", "ModelGateway", {})
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("ModelGateway spec.model is REQUIRED by the CRD", out)
+
+    def test_a_cr_of_a_kind_the_chart_ships_no_schema_for_fails(self):
+        self.cr("tenant.yaml", "Tenant", {"name": "acme"})
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("1 custom resource(s) carry an operator API group and were not walked", out)
+        self.assertIn("addons/ai-platform/tenant.yaml: Tenant/main", out)
+
+    def test_a_corpus_under_the_floor_cannot_run(self):
+        (self.root / "addons" / "ai-platform" / "gateway.yaml").unlink()
+        rc, out = self.run_gate()
+        self.assertEqual(rc, gate.gatelib.CANNOT_RUN, out)
+        self.assertIn(f"below the floor of {gate.MIN_CRS}", out)
+
+    def test_a_version_the_registry_does_not_have_is_a_finding(self):
+        self.pin("0.9.9")
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 1, out)
+        self.assertIn(
+            "operator 0.9.9: oci://ghcr.io/nanohype/eks-agent-platform/charts/operator answered",
+            out,
+        )
+
+    def test_a_registry_that_stays_down_cannot_run(self):
+        self.operator = lambda req: fake.http_error(req.full_url, 503)
+        rc, out = self.run_gate()
+        self.assertEqual(rc, gate.gatelib.CANNOT_RUN, out)
+        self.assertIn(
+            f"Cannot run: operator {self.VERSION} from {gate.CHART} could not be read", out
+        )
+
+    def test_chart_source_and_other_documents_in_the_tree_are_passed_over(self):
+        templates = self.root / "catalog" / "x" / "chart" / "templates"
+        templates.mkdir(parents=True)
+        (templates.parent / "Chart.yaml").write_text("apiVersion: v2\nname: x\nversion: 0.1.0\n")
+        (templates / "cm.yaml").write_text(
+            "kind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}\n"
+        )
+        (self.root / "addons" / "list.yaml").write_text("- one\n- two\n")
+        path = self.root / "addons" / "ai-platform" / "older.yaml"
+        path.write_text(
+            yaml.safe_dump(
+                {
+                    "apiVersion": f"{GROUP}/v1beta1",
+                    "kind": "Platform",
+                    "metadata": {"name": "old"},
+                    "spec": {"x": 1},
+                }
+            )
+        )
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("ok: 2 platform CR(s) admissible", out)
+
+    def test_a_manifest_that_does_not_parse_cannot_run(self):
+        (self.root / "addons" / "broken.yaml").write_text("kind: Platform\nspec: [unclosed\n")
+        rc, out = self.run_gate()
+        self.assertEqual(rc, gate.gatelib.CANNOT_RUN, out)
+        self.assertIn("addons/broken.yaml is not parseable YAML", out)
+
+    def test_offline_skips_without_reading_the_registry(self):
+        rc, out = self.run_gate("--offline")
+        self.assertEqual(rc, 0, out)
+        self.assertIn(
+            f"--offline: skipped (would validate against operator chart {self.VERSION})", out
+        )
+        self.assertEqual(self.hosts.urls, [])
+
+    def test_the_self_test_holds_the_walker(self):
+        rc, out = self.run_gate("--self-test")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.hosts.urls, [])
 
 
 if __name__ == "__main__":

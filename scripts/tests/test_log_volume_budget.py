@@ -12,6 +12,10 @@ gate. These supply both operands directly.
 The alert-reading half is exercised against fixture files rather than the shipped
 one: the shipped rule is a single sample of a shape with several failure modes,
 and the ones that matter are the shapes it does not have.
+
+TheGateRunWhole runs main() end to end without the network: a fixture tree, a
+chart served by fakeregistry through registry.py's own client and cache, and the
+real helm rendering it, so the stages are proven composed and not only apart.
 """
 
 from __future__ import annotations
@@ -19,14 +23,19 @@ from __future__ import annotations
 import contextlib
 import io
 import pathlib
+import shutil
 import tempfile
 import unittest
 from unittest import mock
 
+import fakeregistry as fake
 import yaml
 from gateloader import load
 
 gate = load("check-log-volume-budget")
+registry = load("registry")
+
+HAS_HELM = shutil.which("helm") is not None
 
 REL = "addons/observability/loki/values-production.yaml"
 
@@ -259,6 +268,201 @@ class TheEnvironmentCorpus(unittest.TestCase):
         threshold = gate.alert_threshold()
         self.assertEqual(gate.failures, [])
         self.assertIsNotNone(threshold)
+
+
+# A chart that renders what the upstream one renders for this gate: the Loki
+# ConfigMap carrying config.yaml, here built from `loki.config` in the values.
+LOKI_CONFIGMAP = """\
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loki
+data:
+  config.yaml: |
+{{ toYaml .Values.loki.config | indent 4 }}
+"""
+
+
+@unittest.skipUnless(HAS_HELM, "helm is not on PATH")
+class TheGateRunWhole(unittest.TestCase):
+    """main() over a fixture tree, its chart fetched by the real client and rendered by helm.
+
+    Each stage has its own tests above. These hold the composition: the pin read
+    off the ApplicationSet is the chart fetched, every environment's values reach
+    the render, the verdict is per environment, and each way a stage can fail
+    ends the run with the status that failure earns.
+    """
+
+    REPO = "https://charts.example/grafana"
+    VERSION = "6.29.0"
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = pathlib.Path(tmp.name)
+        self.addon = self.root / "addons" / "observability" / "loki"
+        self.addon.mkdir(parents=True)
+        self.appset = self.root / "applicationsets" / "addons-loki.yaml"
+        self.appset.parent.mkdir()
+        self.alert = self.root / "dashboards" / "base" / "alerting" / "loki-disk.yaml"
+        self.alert.parent.mkdir(parents=True)
+        self.write_appset(self.VERSION)
+        self.alert.write_text(
+            yaml.safe_dump(
+                {
+                    "apiVersion": "grafana.integreatly.org/v1beta1",
+                    "kind": "GrafanaAlertRuleGroup",
+                    "spec": {"rules": [fill_rule(threshold=0.8)]},
+                }
+            )
+        )
+        self.values("values.yaml", config(cutoff=0.9, retention="720h"))
+        self.values("values-development.yaml", {})
+        self.values("values-production.yaml", {"limits_config": {"retention_period": "2160h"}})
+
+        self.repo = fake.ChartRepository(
+            self.REPO,
+            {
+                ("loki", self.VERSION): fake.chart_archive(
+                    "loki",
+                    self.VERSION,
+                    {"configmap.yaml": LOKI_CONFIGMAP},
+                    values="loki:\n  config: {}\n",
+                )
+            },
+        )
+        self.cache = self.root / "cache"
+        self.hosts = fake.serve(self, registry, {self.REPO: self.repo}, self.cache)
+        self.failures: list[str] = []
+        for patch in (
+            mock.patch.object(gate, "ROOT", self.root),
+            mock.patch.object(gate, "APPSET", self.appset),
+            mock.patch.object(gate, "ADDON", self.addon),
+            mock.patch.object(gate, "ALERT", self.alert),
+            mock.patch.object(gate, "failures", self.failures),
+        ):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def write_appset(self, version):
+        self.appset.write_text(
+            yaml.safe_dump(
+                {
+                    "apiVersion": "argoproj.io/v1alpha1",
+                    "kind": "ApplicationSet",
+                    "metadata": {"name": "addons-loki"},
+                    "spec": {
+                        "template": {
+                            "spec": {
+                                "sources": [
+                                    {
+                                        "repoURL": self.REPO,
+                                        "chart": "loki",
+                                        "targetRevision": version,
+                                    },
+                                    {"repoURL": "https://git.example/eks-gitops", "ref": "values"},
+                                ]
+                            }
+                        }
+                    },
+                }
+            )
+        )
+
+    def values(self, name, loki_config):
+        (self.addon / name).write_text(yaml.safe_dump({"loki": {"config": loki_config}}))
+
+    def run_gate(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            try:
+                rc = gate.main()
+            except SystemExit as exc:
+                rc = exc.code
+        return rc, out.getvalue()
+
+    def test_a_tree_whose_alert_leads_every_cutoff_passes(self):
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("log-volume budget OK: 2 environment(s)", out)
+        self.assertIn("fires at 0.8", out)
+        self.assertIn("(2 checked)", out)
+        self.assertEqual(
+            self.hosts.urls,
+            [f"{self.REPO}/index.yaml", f"{self.REPO}/loki-{self.VERSION}.tgz"],
+            "the chart fetched is not the one the ApplicationSet pins",
+        )
+
+    def test_a_second_run_reads_the_chart_from_the_cache(self):
+        self.assertEqual(self.run_gate()[0], 0)
+        asked = list(self.hosts.urls)
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.hosts.urls, asked, "a cached, intact chart was fetched again")
+
+    def test_an_environment_whose_cutoff_falls_to_the_alert_fails_naming_it(self):
+        self.values("values-production.yaml", {"ingester": {"wal": {"disk_full_threshold": 0.8}}})
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 1, out)
+        self.assertIn(
+            "FAIL  addons/observability/loki/values-production.yaml: the fill alert fires at 0.8 "
+            "but ingestion stops at 0.8",
+            out,
+        )
+        self.assertNotIn("values-development.yaml", out)
+
+    def test_retention_the_render_turns_off_fails(self):
+        self.values("values-development.yaml", {"compactor": {"retention_enabled": False}})
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("values-development.yaml: compactor.retention_enabled is not true", out)
+
+    def test_a_tree_with_no_environment_fails(self):
+        for env in ("development", "production"):
+            (self.addon / f"values-{env}.yaml").unlink()
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 1, out)
+        self.assertIn(
+            "FAIL  addons/observability/loki carries no values-<env>.yaml, so this gate "
+            "examined no environment",
+            out,
+        )
+
+    def test_a_pin_the_repository_does_not_list_is_a_finding(self):
+        self.write_appset("6.30.0")
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("answered, and its answer rules the pin out", out)
+        self.assertIn("lists no loki 6.30.0", out)
+
+    def test_a_repository_that_stays_down_cannot_run(self):
+        self.repo.answer = lambda req: fake.http_error(req.full_url, 503)
+        rc, out = self.run_gate()
+        self.assertEqual(rc, gate.gatelib.CANNOT_RUN, out)
+        self.assertIn(
+            "Cannot run: loki 6.29.0 from https://charts.example/grafana could not be read", out
+        )
+        self.assertTrue(self.hosts.waits, "a 503 was not retried")
+        self.assertNotIn("FAIL", out)
+
+    def test_a_chart_helm_cannot_render_cannot_run(self):
+        self.repo.charts[("loki", self.VERSION)] = fake.chart_archive(
+            "loki", self.VERSION, {"configmap.yaml": "{{ .Values.missing.key }}\n"}
+        )
+        rc, out = self.run_gate()
+        self.assertEqual(rc, gate.gatelib.CANNOT_RUN, out)
+        self.assertIn("Cannot run: helm could not render loki for development.", out)
+
+    def test_a_render_without_the_loki_configmap_cannot_run(self):
+        self.repo.charts[("loki", self.VERSION)] = fake.chart_archive(
+            "loki",
+            self.VERSION,
+            {"configmap.yaml": LOKI_CONFIGMAP.replace("name: loki", "name: other")},
+            values="loki:\n  config: {}\n",
+        )
+        rc, out = self.run_gate()
+        self.assertEqual(rc, gate.gatelib.CANNOT_RUN, out)
+        self.assertIn("the development render produced no loki ConfigMap carrying config.yaml", out)
 
 
 if __name__ == "__main__":

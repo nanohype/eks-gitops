@@ -14,6 +14,9 @@ Everything here is offline. trivy is replaced by a stand-in that answers each
 invocation with a status and what trivy writes, so what the gate does with a
 registry refusing it for now, with any other failure, and with what trivy said
 about either is decided here; a real scan is exercised by running the gate.
+TheGateRunWhole runs main() end to end: a fixture catalog whose charts
+fakeregistry serves through registry.py's own client, rendered by the real helm,
+and a trivy stand-in on PATH answering each image it is asked to scan.
 """
 
 from __future__ import annotations
@@ -22,18 +25,25 @@ import contextlib
 import datetime
 import io
 import json
+import os
 import pathlib
+import shutil
 import subprocess
+import sys
 import tempfile
 import types
 import unittest
 from typing import Any
 from unittest import mock
 
+import fakeregistry as fake
 import yaml
 from gateloader import load
 
 gate = load("check-image-vulnerabilities")
+registry = load("registry")
+
+HAS_HELM = shutil.which("helm") is not None
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 
@@ -598,6 +608,339 @@ class SayingWhyAnImageWasNotScanned(unittest.TestCase):
         lines = gate.Unscannable("trivy exited 1", said).lines("")
         self.assertEqual(len(lines), gate.STDERR_LINES + 1)
         self.assertEqual(lines[-1], f"  line {gate.STDERR_LINES + 4}")
+
+
+# trivy, answering `trivy image ... <ref>` with the next of the answers scripted
+# for <ref> in answers.json, or with the ones under "*", and recording each call.
+TRIVY_STANDIN = """\
+#!PYTHON
+import json, pathlib, sys
+work = pathlib.Path(WORK)
+ref = sys.argv[-1]
+with (work / "calls").open("a") as calls:
+    calls.write(json.dumps(sys.argv[1:]) + "\\n")
+asked = [json.loads(line)[-1] for line in (work / "calls").read_text().splitlines()]
+answers = json.loads((work / "answers.json").read_text())
+steps = answers.get(ref) or answers["*"]
+rc, out, err = steps[min(asked.count(ref), len(steps)) - 1]
+sys.stdout.write(out)
+sys.stderr.write(err)
+sys.exit(rc)
+"""
+
+DEPLOYMENT = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  template:
+    spec:
+      containers:
+        - name: main
+          image: {{ .Values.image }}
+"""
+
+
+def report(*vulns) -> str:
+    return json.dumps({"Results": [{"Vulnerabilities": list(vulns)}]})
+
+
+def vuln(cve, package, severity="CRITICAL"):
+    return {
+        "VulnerabilityID": cve,
+        "PkgName": package,
+        "InstalledVersion": "1.0",
+        "FixedVersion": "1.1",
+        "Severity": severity,
+    }
+
+
+@unittest.skipUnless(HAS_HELM, "helm is not on PATH")
+class TheGateRunWhole(unittest.TestCase):
+    """main() over a fixture catalog, every image it renders scanned by a trivy stand-in.
+
+    The verdict and the scan are held above apart. These hold the run: the
+    canary is scanned before anything is believed, the population is every
+    image the catalog's charts render, each image's findings reach the verdict
+    against the advisories, and each way a stage falls short ends the run with
+    the status that shortfall earns.
+    """
+
+    WIDGETS = "https://charts.example/widgets"
+    GADGETS = ("registry.example", "charts/gadget")
+    WIDGET_IMAGE = "registry.example/widget:1.0.0"
+    GADGET_IMAGE = "registry.example/gadget@sha256:" + "b" * 64
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        base = pathlib.Path(tmp.name)
+        self.root = base / "tree"
+        self.appsets = self.root / "applicationsets"
+        self.appsets.mkdir(parents=True)
+        self.write_appset()
+        for name, image in (("widget", self.WIDGET_IMAGE), ("gadget", self.GADGET_IMAGE)):
+            addon = self.root / "addons" / "demo" / name
+            addon.mkdir(parents=True)
+            (addon / "values.yaml").write_text(yaml.safe_dump({"image": image}))
+        self.advisories = self.root / "image-advisories.yaml"
+        self.advise()
+
+        self.widgets = fake.ChartRepository(
+            self.WIDGETS,
+            {
+                ("widget", "1.0.0"): fake.chart_archive(
+                    "widget", "1.0.0", {"deployment.yaml": DEPLOYMENT}
+                )
+            },
+        )
+        gadgets = fake.OciRegistry(
+            *self.GADGETS,
+            "2.0.0",
+            {"name": "gadget", "version": "2.0.0"},
+            content=fake.chart_archive("gadget", "2.0.0", {"deployment.yaml": DEPLOYMENT}),
+        )
+        fake.serve(
+            self,
+            registry,
+            {
+                self.WIDGETS: self.widgets,
+                f"https://{self.GADGETS[0]}/v2/{self.GADGETS[1]}/": gadgets,
+                fake.OciRegistry.REALM: gadgets,
+            },
+            base / "cache",
+        )
+
+        self.work = base / "trivy"
+        (self.work / "bin").mkdir(parents=True)
+        standin = self.work / "bin" / "trivy"
+        standin.write_text(
+            TRIVY_STANDIN.replace("PYTHON", sys.executable).replace("WORK", repr(str(self.work)))
+        )
+        standin.chmod(0o755)
+        (self.work / "calls").write_text("")
+        self.answer("*", (0, report(), ""))
+        self.answer(gate.CANARY, (0, report(vuln("CVE-2019-14697", "musl")), ""))
+        self.waits: list[float] = []
+        self.failures: list[str] = []
+        for patch in (
+            mock.patch.dict(
+                os.environ, {"PATH": f"{self.work / 'bin'}{os.pathsep}{os.environ['PATH']}"}
+            ),
+            mock.patch.object(gate, "ROOT", self.root),
+            mock.patch.object(gate, "ADVISORIES", self.advisories),
+            mock.patch.object(gate, "failures", self.failures),
+            mock.patch.object(gate.image_pins, "ROOT", self.root),
+            mock.patch.object(gate.image_pins.render_addons, "APPSET_DIR", self.appsets),
+            mock.patch.dict(gate.image_pins.render_addons.SKIP_CHARTS, clear=True),
+            # The catalog's own declarations name images its charts start or carry,
+            # and are held to what the catalog renders; the fixture renders none.
+            mock.patch.dict(gate.image_pins.CONTROLLER_IMAGES, clear=True),
+            mock.patch.dict(gate.image_pins.NOT_A_CONTAINER, clear=True),
+            mock.patch.dict(gate.image_pins.IMAGELESS_CHARTS, clear=True),
+            mock.patch.dict(
+                gate.scan.__kwdefaults__, {"sleep": self.waits.append, "jitter": lambda: 0.0}
+            ),
+        ):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def write_appset(self):
+        elements = [
+            {
+                "appName": "widget",
+                "chart": "widget",
+                "chartRepo": self.WIDGETS,
+                "chartVersion": "1.0.0",
+                "path": "addons/demo/widget",
+            },
+            {
+                "appName": "gadget",
+                "chart": "gadget",
+                "chartRepo": f"oci://{self.GADGETS[0]}/charts",
+                "chartVersion": "2.0.0",
+                "path": "addons/demo/gadget",
+            },
+        ]
+        (self.appsets / "addons-demo.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "kind": "ApplicationSet",
+                    "spec": {
+                        "generators": [
+                            {
+                                "matrix": {
+                                    "generators": [
+                                        {"clusters": {}},
+                                        {"list": {"elements": elements}},
+                                    ]
+                                }
+                            }
+                        ],
+                        "template": {
+                            "spec": {
+                                "sources": [
+                                    {
+                                        "repoURL": "{{ .chartRepo }}",
+                                        "chart": "{{ .chart }}",
+                                        "targetRevision": "{{ .chartVersion }}",
+                                        "helm": {"valueFiles": ["$values/{{ .path }}/values.yaml"]},
+                                    },
+                                    {"repoURL": "https://git.example/eks-gitops", "ref": "values"},
+                                ]
+                            }
+                        },
+                    },
+                }
+            )
+        )
+
+    def advise(self, *entries):
+        self.advisories.write_text(yaml.safe_dump({"advisories": list(entries)}))
+
+    def answer(self, ref, *steps):
+        path = self.work / "answers.json"
+        answers = json.loads(path.read_text()) if path.exists() else {}
+        answers[ref] = [list(step) for step in steps]
+        path.write_text(json.dumps(answers))
+
+    def scanned(self):
+        return [json.loads(line)[-1] for line in (self.work / "calls").read_text().splitlines()]
+
+    def run_gate(self, *argv):
+        out = io.StringIO()
+        with (
+            mock.patch.object(gate.sys, "argv", ["check-image-vulnerabilities.py", *argv]),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(out),
+        ):
+            try:
+                rc = gate.main()
+            except SystemExit as exc:
+                rc = exc.code
+        return rc, out.getvalue()
+
+    def test_a_catalog_whose_images_carry_nothing_unacknowledged_passes(self):
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("canary OK: 1 fixed CRITICAL finding(s)", out)
+        self.assertIn("image vulnerabilities OK: 2 image(s) scanned across 2 chart(s).", out)
+        self.assertEqual(self.scanned(), [gate.CANARY, self.GADGET_IMAGE, self.WIDGET_IMAGE])
+
+    def test_an_unacknowledged_critical_fails_naming_its_image(self):
+        self.answer(self.WIDGET_IMAGE, (0, report(vuln("CVE-2026-1", "openssl")), ""))
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("1 problem(s) across 2 scanned image(s):", out)
+        self.assertIn("CVE-2026-1", out)
+        self.assertIn("registry.example/widget", out)
+
+    def test_an_acknowledged_critical_passes_and_is_counted(self):
+        self.answer(self.WIDGET_IMAGE, (0, report(vuln("CVE-2026-1", "openssl")), ""))
+        self.advise(
+            advisory(cve="CVE-2026-1", package="openssl", images=("registry.example/widget",))
+        )
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("1 fixed CRITICAL finding(s), every one acknowledged", out)
+
+    def test_an_acknowledgement_no_scanned_image_carries_fails(self):
+        self.advise(advisory(cve="CVE-2026-9", package="zlib", images=("registry.example/gadget",)))
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("CVE-2026-9", out)
+
+    def test_a_canary_reporting_nothing_cannot_run(self):
+        self.answer(gate.CANARY, (0, report(), ""))
+        rc, out = self.run_gate()
+        self.assertEqual(rc, gate.gatelib.CANNOT_RUN, out)
+        self.assertIn("the canary returned no fixed CRITICAL findings", out)
+        self.assertEqual(
+            self.scanned(), [gate.CANARY], "images were scanned by a scanner that reports nothing"
+        )
+
+    def test_an_image_refused_for_now_is_scanned_again(self):
+        self.answer(self.GADGET_IMAGE, (1, "", THROTTLED), (0, report(), ""))
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.waits, [gate.SCAN_BACKOFF_SECONDS])
+        self.assertEqual(self.scanned().count(self.GADGET_IMAGE), 2)
+
+    def test_an_image_that_does_not_scan_cannot_run_naming_its_chart(self):
+        self.answer(
+            self.WIDGET_IMAGE,
+            (1, "", "FATAL\tDENIED: requested access to the resource is denied\n"),
+        )
+        rc, out = self.run_gate()
+        self.assertEqual(rc, gate.gatelib.CANNOT_RUN, out)
+        self.assertIn(f"  {self.WIDGET_IMAGE}  (via widget)", out)
+        self.assertIn("DENIED: requested access to the resource is denied", out)
+
+    def test_a_chart_that_does_not_render_cannot_run(self):
+        self.widgets.charts[("widget", "1.0.0")] = fake.chart_archive(
+            "widget", "1.0.0", {"deployment.yaml": "{{ .Values.missing.key }}\n"}
+        )
+        rc, out = self.run_gate()
+        self.assertEqual(rc, gate.gatelib.CANNOT_RUN, out)
+        self.assertIn("charts that did not render contributed no images", out)
+        self.assertIn("addons/demo/widget", out)
+        self.assertEqual(self.scanned(), [gate.CANARY])
+
+    def test_a_reference_reaching_no_pod_template_cannot_run(self):
+        sidecar = "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: injected\ndata:\n  sidecar: registry.example/sidecar:2.0.0\n"
+        self.widgets.charts[("widget", "1.0.0")] = fake.chart_archive(
+            "widget", "1.0.0", {"deployment.yaml": DEPLOYMENT, "sidecar.yaml": sidecar}
+        )
+        rc, out = self.run_gate()
+        self.assertEqual(rc, gate.gatelib.CANNOT_RUN, out)
+        self.assertIn(
+            "image-shaped references that reach no pod template and are on no declaration", out
+        )
+        self.assertIn(
+            "widget: registry.example/sidecar:2.0.0 is image-shaped and reaches no pod template",
+            out,
+        )
+        self.assertEqual(self.scanned(), [gate.CANARY])
+
+    def test_a_chart_that_renders_no_image_cannot_run(self):
+        self.widgets.charts[("widget", "1.0.0")] = fake.chart_archive(
+            "widget",
+            "1.0.0",
+            {"cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: only\n"},
+        )
+        rc, out = self.run_gate()
+        self.assertEqual(rc, gate.gatelib.CANNOT_RUN, out)
+        self.assertIn("the image population is smaller than the charts that rendered it", out)
+        self.assertIn("widget rendered and contributed no image", out)
+
+    def test_charts_sharing_their_one_image_scan_it_once(self):
+        """Two charts rendering one image are one image to scan, not a walk that got
+        smaller: each chart contributed an image, which is what the floor asks."""
+        shared = "registry.example/shared:1.0.0"
+        for name in ("widget", "gadget"):
+            values = self.root / "addons" / "demo" / name / "values.yaml"
+            values.write_text(yaml.safe_dump({"image": shared}))
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("image vulnerabilities OK: 1 image(s) scanned across 2 chart(s).", out)
+        self.assertEqual(self.scanned(), [gate.CANARY, shared])
+
+    def test_list_prints_every_finding_and_blocks_nothing(self):
+        self.answer(
+            self.WIDGET_IMAGE,
+            (0, report(vuln("CVE-2026-1", "openssl"), vuln("CVE-2026-2", "curl", "HIGH")), ""),
+        )
+        rc, out = self.run_gate("--list")
+        self.assertEqual(rc, 0, out)
+        self.assertIn(f"CRITICAL {self.WIDGET_IMAGE}  CVE-2026-1  openssl 1.0 -> 1.1", out)
+        self.assertIn(f"HIGH     {self.WIDGET_IMAGE}  CVE-2026-2  curl 1.0 -> 1.1", out)
+        self.assertIn("2 fixed finding(s) at CRITICAL/HIGH across 2 image(s)", out)
+
+    def test_the_self_test_scans_the_canary_alone(self):
+        rc, out = self.run_gate("--self-test")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.scanned(), [gate.CANARY])
 
 
 if __name__ == "__main__":

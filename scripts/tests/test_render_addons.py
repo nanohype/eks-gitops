@@ -9,7 +9,9 @@ short list — so the omission reports itself as a complete run.
 It fetches every chart from a registry, so the positive-control sweep exempts
 it. These exercise what decides the result without a network: which units exist,
 where each is fetched from, and what a render is handed. What an unavailable
-chart means is registry.py's, and is held in test_registry.
+chart means is registry.py's, and is held in test_registry. TheGateRunWhole runs
+main() end to end over a fixture catalog whose charts fakeregistry serves through
+registry.py's own client, rendered by the real helm.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ import io
 import json
 import os
 import pathlib
+import shutil
 import tempfile
 import unittest
 from typing import Any
@@ -30,6 +33,8 @@ import yaml
 from gateloader import load
 
 gate = load("render-addons")
+
+HAS_HELM = shutil.which("helm") is not None
 
 
 def appset(sources, generators=None, destination=None):
@@ -1030,6 +1035,289 @@ class TheDiscoveredCorpus(unittest.TestCase):
         for chart in gate.SKIP_CHARTS:
             with self.subTest(chart=chart):
                 self.assertIn(chart, charts)
+
+
+# A chart template rendering one namespaced object and one cluster-scoped one,
+# the ClusterRole's name taken from the values so two charts can collide on it.
+ADDON_TEMPLATE = """\
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+data:
+  replicas: {{ .Values.replicas | quote }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Values.clusterRole }}
+rules: []
+"""
+
+GADGET_CRD = yaml.safe_dump(
+    {
+        "apiVersion": "apiextensions.k8s.io/v1",
+        "kind": "CustomResourceDefinition",
+        "metadata": {"name": "gadgets.fixture.example"},
+        "spec": {
+            "group": "fixture.example",
+            "names": {"kind": "Gadget", "plural": "gadgets"},
+            "scope": "Namespaced",
+            "versions": [
+                {
+                    "name": "v1",
+                    "served": True,
+                    "storage": True,
+                    "schema": {"openAPIV3Schema": {"type": "object"}},
+                }
+            ],
+        },
+    }
+)
+
+
+@unittest.skipUnless(HAS_HELM, "helm is not on PATH")
+class TheGateRunWhole(unittest.TestCase):
+    """main() over a fixture catalog: an HTTPS chart and an OCI one, each in its own env set.
+
+    The tests above hold discovery, the render's arguments and the ownership
+    rules apart. These hold the run: every unit is rendered once per environment
+    it carries values for, through the chart the ApplicationSet pins, the
+    cluster-scoped objects of every render are pooled for ownership, and each
+    way a stage fails ends the run with the status that failure earns. The
+    catalog's directory-source ApplicationSets are copied in, so the ownership
+    records are checked against what they describe here too.
+    """
+
+    WIDGETS = "https://charts.example/widgets"
+    GADGETS = ("registry.example", "charts/gadget")
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = pathlib.Path(tmp.name) / "tree"
+        self.appsets = self.root / "applicationsets"
+        self.appsets.mkdir(parents=True)
+        for owner in gate.DIRECTORY_OWNERS:
+            shutil.copy(gate.APPSET_DIR / owner.appset, self.appsets / owner.appset)
+        self.write_appset(gadget_path="addons/demo/gadget")
+        self.addon(
+            "widget",
+            {
+                "values.yaml": "replicas: 1\n",
+                "values-development.yaml": "replicas: 2\n",
+                "values-production.yaml": "replicas: 3\n",
+            },
+        )
+        self.addon(
+            "gadget",
+            {
+                "values.yaml": "{}\n",
+                "values-development.yaml": "{}\n",
+                "values-staging.yaml": "{}\n",
+                "values-hub.yaml": "{}\n",
+            },
+        )
+
+        self.widgets = fake.ChartRepository(
+            self.WIDGETS,
+            {
+                ("widget", "1.0.0"): fake.chart_archive(
+                    "widget",
+                    "1.0.0",
+                    {"addon.yaml": ADDON_TEMPLATE},
+                    values="replicas: 1\nclusterRole: widget\n",
+                )
+            },
+        )
+        self.gadgets = fake.OciRegistry(
+            *self.GADGETS,
+            "2.0.0",
+            {"name": "gadget", "version": "2.0.0"},
+            content=fake.chart_archive(
+                "gadget",
+                "2.0.0",
+                {"addon.yaml": ADDON_TEMPLATE},
+                values="replicas: 1\nclusterRole: gadget\n",
+                crds={"gadgets.yaml": GADGET_CRD},
+            ),
+        )
+        self.cache = pathlib.Path(tmp.name) / "cache"
+        self.hosts = fake.serve(
+            self,
+            gate.registry,
+            {
+                self.WIDGETS: self.widgets,
+                f"https://{self.GADGETS[0]}/v2/{self.GADGETS[1]}/": self.gadgets,
+                fake.OciRegistry.REALM: self.gadgets,
+            },
+            self.cache,
+        )
+        for patch in (
+            mock.patch.object(gate, "REPO_ROOT", self.root),
+            mock.patch.object(gate, "APPSET_DIR", self.appsets),
+            mock.patch.object(gate, "MIN_COMBINATIONS", 5),
+            mock.patch.dict(gate.SKIP_CHARTS, clear=True),
+        ):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def write_appset(self, *, gadget_path):
+        elements = [
+            {
+                "appName": "widget",
+                "chart": "widget",
+                "chartRepo": self.WIDGETS,
+                "chartVersion": "1.0.0",
+                "path": "addons/demo/widget",
+                "namespace": "widget",
+            },
+            {
+                "appName": "gadget",
+                "chart": "gadget",
+                "chartRepo": f"oci://{self.GADGETS[0]}/charts",
+                "chartVersion": "2.0.0",
+                "path": gadget_path,
+                "namespace": "gadget",
+            },
+        ]
+        sources = [
+            {
+                "repoURL": "{{ .chartRepo }}",
+                "chart": "{{ .chart }}",
+                "targetRevision": "{{ .chartVersion }}",
+                "helm": {"valueFiles": ["$values/{{ .path }}/values.yaml"]},
+            },
+            {"repoURL": "https://git.example/eks-gitops", "ref": "values"},
+        ]
+        generators = [
+            {
+                "matrix": {
+                    "generators": [
+                        {"clusters": {"selector": {"matchLabels": {"fleet": "spoke"}}}},
+                        {"list": {"elements": elements}},
+                    ]
+                }
+            }
+        ]
+        (self.appsets / "addons-demo.yaml").write_text(yaml.safe_dump(appset(sources, generators)))
+
+    def addon(self, name, files):
+        where = self.root / "addons" / "demo" / name
+        where.mkdir(parents=True, exist_ok=True)
+        for fname, text in files.items():
+            (where / fname).write_text(text)
+
+    def run_gate(self, *argv):
+        out = io.StringIO()
+        with (
+            mock.patch.object(gate.sys, "argv", ["render-addons.py", *argv]),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(out),
+        ):
+            try:
+                rc = gate.main()
+            except SystemExit as exc:
+                rc = exc.code
+        return rc, out.getvalue()
+
+    def test_a_catalog_rendering_one_owner_per_object_passes(self):
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 0, out)
+        for line in (
+            "  ok    widget@1.0.0 (development)",
+            "  ok    widget@1.0.0 (production)",
+            "  ok    gadget@2.0.0 (development)",
+            "  ok    gadget@2.0.0 (staging)",
+            "  ok    gadget@2.0.0 (hub)",
+            "Rendered 5 addon×env combinations, 0 failed.",
+            "Rendered 3 cluster-scoped object(s), 1 of them CustomResourceDefinitions; "
+            "0 with more than one owning Application.",
+        ):
+            self.assertIn(line, out)
+        self.assertNotIn(
+            "widget@1.0.0 (staging)", out, "an environment with no values was rendered"
+        )
+
+    def test_an_object_two_applications_install_fails_naming_both(self):
+        self.addon("gadget", {"values.yaml": "clusterRole: widget\n"})
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 1, out)
+        self.assertIn(
+            "ClusterRole/widget is installed by 2 Applications: addons-demo.yaml addons/demo/gadget, "
+            "addons-demo.yaml addons/demo/widget",
+            out,
+        )
+
+    def test_a_chart_that_does_not_render_fails_each_environment(self):
+        self.widgets.charts[("widget", "1.0.0")] = fake.chart_archive(
+            "widget", "1.0.0", {"addon.yaml": "{{ .Values.missing.key }}\n"}
+        )
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("  FAIL  widget@1.0.0 (development)", out)
+        self.assertIn("  FAIL  widget@1.0.0 (production)", out)
+        self.assertIn("  ok    gadget@2.0.0 (hub)", out)
+        self.assertIn("Rendered 5 addon×env combinations, 2 failed.", out)
+
+    def test_an_element_pointing_at_no_directory_fails(self):
+        self.write_appset(gadget_path="addons/demo/gizmo")
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("path 'addons/demo/gizmo' does not exist", out)
+
+    def test_a_run_under_the_floor_cannot_run(self):
+        with mock.patch.object(gate, "MIN_COMBINATIONS", 6):
+            rc, out = self.run_gate()
+        self.assertEqual(rc, gate.gatelib.CANNOT_RUN, out)
+        self.assertIn("rendered 5 combination(s), under the floor of 6", out)
+
+    def test_a_skip_whose_chart_an_anonymous_client_can_fetch_is_stale(self):
+        with (
+            mock.patch.dict(gate.SKIP_CHARTS, {"gadget": "needs a registry login"}),
+            mock.patch.object(gate, "MIN_COMBINATIONS", 2),
+        ):
+            rc, out = self.run_gate()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("  skip  gadget@2.0.0 — needs a registry login", out)
+        self.assertIn("These skips claim a chart cannot be fetched, but it can:", out)
+        self.assertIn("declared: needs a registry login", out)
+
+    def test_a_directory_owner_that_reads_another_source_fails(self):
+        owner = gate.DIRECTORY_OWNERS[0]
+        path = self.appsets / owner.appset
+        doc = yaml.safe_load(path.read_text())
+        doc["spec"]["template"]["spec"]["source"]["path"] = "elsewhere"
+        path.write_text(yaml.safe_dump(doc))
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("A directory-source ownership record no longer describes its source:", out)
+        self.assertIn(f"{owner.appset}: ownership recorded for {owner.source}", out)
+
+    def test_a_repository_that_stays_down_cannot_run(self):
+        self.widgets.answer = lambda req: fake.http_error(req.full_url, 503)
+        rc, out = self.run_gate()
+        self.assertEqual(rc, gate.gatelib.CANNOT_RUN, out)
+        self.assertIn(f"Cannot run: widget 1.0.0 from {self.WIDGETS} could not be read", out)
+
+    def test_list_prints_every_unit_and_fetches_nothing(self):
+        rc, out = self.run_gate("--list")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("addons/demo/widget", out)
+        self.assertIn("addons/demo/gadget", out)
+        self.assertEqual(self.hosts.urls, [])
+
+    def test_fetch_keeps_every_pinned_archive_and_renders_nothing(self):
+        rc, out = self.run_gate("--fetch")
+        self.assertEqual(rc, 0, out)
+        for source, chart, version in (
+            (self.WIDGETS, "widget", "1.0.0"),
+            (f"oci://{self.GADGETS[0]}/charts/gadget", "gadget", "2.0.0"),
+        ):
+            archive = gate.registry.archive_path(source, chart, version, self.cache)
+            self.assertTrue(archive.is_file(), f"{chart} {version} was not kept")
+        self.assertNotIn("  ok    ", out)
 
 
 if __name__ == "__main__":

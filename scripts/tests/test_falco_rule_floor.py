@@ -8,7 +8,9 @@ it: which paths count as read, and which priorities count as loading a rule.
 
 Everything here is offline. The rule-set reader is exercised against a scripted
 registry (scripts/tests/fakeregistry.py) through registry.py's client, the same
-path a run against ghcr.io takes.
+path a run against ghcr.io takes. TheGateRunWhole runs main() the same way end
+to end: a fixture tree, a chart and rule sets served through that client, and the
+real helm rendering the chart.
 """
 
 import contextlib
@@ -16,13 +18,21 @@ import hashlib
 import http.client
 import io
 import json
+import pathlib
+import shutil
 import tarfile
+import tempfile
 import unittest
+from unittest import mock
 
 import fakeregistry as fake
+import yaml
 from gateloader import load
 
 gate = load("check-falco-rule-floor")
+registry = load("registry")
+
+HAS_HELM = shutil.which("helm") is not None
 
 
 class PathIsRead(unittest.TestCase):
@@ -315,6 +325,247 @@ class ReadingARuleSetThroughTheSharedClient(unittest.TestCase):
         self.assertIsNone(self.read())
         self.assertEqual(gate.failures, [])
         self.assertNotIn(f"{self.BASE}/blobs/{self.digest}", self.transport.urls())
+
+
+# A chart that renders what the upstream one renders for this gate: Falco's
+# ConfigMap and falcoctl's, each built here from the values that configure it.
+FALCO_CONFIGMAPS = """\
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: falco
+data:
+  falco.yaml: |
+{{ toYaml .Values.falco | indent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: falco-falcoctl
+data:
+  falcoctl.yaml: |
+{{ toYaml .Values.falcoctl.config | indent 4 }}
+"""
+
+PLUGIN_CONFIG = "application/vnd.cncf.falco.plugin.config.v1+json"
+
+
+def rules(count: int, priority: str = "INFO") -> str:
+    return yaml.safe_dump(
+        [
+            {"rule": f"rule {i}", "priority": priority, "condition": "evt.num > 0"}
+            for i in range(count)
+        ]
+    )
+
+
+@unittest.skipUnless(HAS_HELM, "helm is not on PATH")
+class TheGateRunWhole(unittest.TestCase):
+    """main() over a fixture tree, its chart and rule sets read by the real client.
+
+    The tests above hold each decision apart. These hold the run: every
+    environment's render is read, each installed ref is resolved on the registry
+    and counted against what that environment's rules_files reads, and each way
+    a stage fails ends the run with the status that failure earns.
+    """
+
+    CHARTS = "https://charts.example/falcosecurity"
+    VERSION = "7.0.0"
+    RULES = "falcosecurity/rules/falco-rules"
+    SANDBOX = "falcosecurity/rules/falco-sandbox-rules"
+    PLUGIN = "falcosecurity/plugins/plugin/k8smeta"
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = pathlib.Path(tmp.name)
+        self.addon = self.root / "addons" / "security" / "falco"
+        self.addon.mkdir(parents=True)
+        self.appset = self.root / "applicationsets" / "addons-security.yaml"
+        self.appset.parent.mkdir()
+        self.appset.write_text(
+            yaml.safe_dump(
+                {
+                    "kind": "ApplicationSet",
+                    "spec": {
+                        "generators": [
+                            {
+                                "matrix": {
+                                    "generators": [
+                                        {"clusters": {}},
+                                        {
+                                            "list": {
+                                                "elements": [
+                                                    {
+                                                        "appName": "falco",
+                                                        "chart": "falco",
+                                                        "chartRepo": self.CHARTS,
+                                                        "chartVersion": self.VERSION,
+                                                    }
+                                                ]
+                                            }
+                                        },
+                                    ]
+                                }
+                            }
+                        ]
+                    },
+                }
+            )
+        )
+        self.values(
+            "values.yaml",
+            priority="info",
+            rules_files=["/etc/falco/falco_rules.yaml", "/etc/falco/rules.d"],
+            refs=["falco-rules:4", f"ghcr.io/{self.PLUGIN}:0.3"],
+        )
+        (self.addon / "values-development.yaml").write_text("{}\n")
+        (self.addon / "values-production.yaml").write_text("{}\n")
+
+        chart = fake.chart_archive(
+            "falco",
+            self.VERSION,
+            {"configmaps.yaml": FALCO_CONFIGMAPS},
+            values="falco: {}\nfalcoctl:\n  config: {}\n",
+        )
+        self.charts = fake.ChartRepository(self.CHARTS, {("falco", self.VERSION): chart})
+        self.rule_sets = {
+            self.RULES: self.oci(self.RULES, "4", {"falco_rules.yaml": rules(90)}),
+            self.SANDBOX: self.oci(self.SANDBOX, "4", {"falco-sandbox_rules.yaml": rules(40)}),
+            self.PLUGIN: fake.OciRegistry(
+                "ghcr.io", self.PLUGIN, "0.3", {}, content=b"plugin", media_type=PLUGIN_CONFIG
+            ),
+        }
+        routes = {self.CHARTS: self.charts, fake.OciRegistry.REALM: self.rule_sets[self.RULES]}
+        routes.update({f"https://ghcr.io/v2/{repo}/": reg for repo, reg in self.rule_sets.items()})
+        self.hosts = fake.serve(self, registry, routes, self.root / "cache")
+        self.failures: list[str] = []
+        for patch in (
+            mock.patch.object(gate, "ROOT", self.root),
+            mock.patch.object(gate, "APPSET", self.appset),
+            mock.patch.object(gate, "ADDON", self.addon),
+            mock.patch.object(gate, "failures", self.failures),
+        ):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    @staticmethod
+    def oci(repo, tag, files):
+        return fake.OciRegistry(
+            "ghcr.io", repo, tag, {}, content=_rules_layer(files), media_type=gate.RULESFILE_CONFIG
+        )
+
+    def values(self, name, *, priority=None, rules_files=None, refs=None):
+        falco = {}
+        if priority is not None:
+            falco["priority"] = priority
+        if rules_files is not None:
+            falco["rules_files"] = rules_files
+        doc = {"falco": falco}
+        if refs is not None:
+            doc["falcoctl"] = {"config": {"artifact": {"install": {"refs": refs}}}}
+        (self.addon / name).write_text(yaml.safe_dump(doc))
+
+    def run_gate(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            try:
+                rc = gate.main()
+            except SystemExit as exc:
+                rc = exc.code
+        return rc, out.getvalue()
+
+    def test_a_tree_that_loads_every_rule_set_it_installs_passes(self):
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("falco rule floor OK", out)
+        self.assertIn("loaded/installed development 90/90, production 90/90", out)
+        self.assertIn(f"{self.CHARTS}/falco-{self.VERSION}.tgz", self.hosts.urls)
+        self.assertNotIn(
+            f"https://ghcr.io/v2/{self.PLUGIN}/blobs/{self.rule_sets[self.PLUGIN].content_digest}",
+            self.hosts.urls,
+            "the plugin's layer was read as though it carried rules",
+        )
+
+    def test_a_rule_set_installed_where_falco_does_not_read_fails(self):
+        self.values("values-production.yaml", refs=["falco-rules:4", "falco-sandbox-rules:4"])
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 1, out)
+        self.assertIn(
+            "addons/security/falco/values-production.yaml: ref 'falco-sandbox-rules:4' installs "
+            "/etc/falco/falco-sandbox_rules.yaml, which falco.rules_files does not name",
+            out,
+        )
+        self.assertNotIn("values-development.yaml", out)
+
+    def test_a_priority_floor_that_drops_rules_below_the_floor_fails(self):
+        self.values("values-development.yaml", priority="warning")
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 1, out)
+        self.assertIn(
+            "values-development.yaml: falco.priority is 'warning', stricter than 'info'", out
+        )
+        self.assertIn(
+            "values-development.yaml: 0 rule(s) load at priority 'warning', below the floor of 85. "
+            "90 are installed on disk.",
+            out,
+        )
+
+    def test_a_ref_the_registry_does_not_have_is_a_finding(self):
+        self.values("values-production.yaml", refs=["falco-rules:99"])
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("ref 'falco-rules:99' does not resolve", out)
+        self.assertIn("values-production.yaml: none of the 1 installed ref(s) is a rule set", out)
+
+    def test_a_registry_that_stays_down_cannot_run(self):
+        reg = self.rule_sets[self.RULES]
+        reg_call = reg.__call__
+
+        def down(req):
+            if req.full_url.startswith(f"{reg.base}/manifests/"):
+                return fake.http_error(req.full_url, 503)
+            return reg_call(req)
+
+        self.hosts.routes[f"https://ghcr.io/v2/{self.RULES}/"] = down
+        rc, out = self.run_gate()
+        self.assertEqual(rc, gate.gatelib.CANNOT_RUN, out)
+        self.assertIn(f"Cannot run: ghcr.io/{self.RULES}:4 could not be read", out)
+        self.assertNotIn("FAIL", out)
+
+    def test_a_tree_with_no_environment_fails(self):
+        for env in ("development", "production"):
+            (self.addon / f"values-{env}.yaml").unlink()
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 1, out)
+        self.assertIn(
+            "addons/security/falco carries no values-<env>.yaml, so this gate examined no environment",
+            out,
+        )
+
+    def test_a_priority_falco_does_not_know_fails_and_counts_nothing(self):
+        self.values("values-development.yaml", priority="urgent")
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("values-development.yaml: the render sets falco.priority to 'urgent'", out)
+        self.assertNotIn("values-development.yaml: 0 rule(s) load", out)
+
+    def test_an_environment_installing_no_refs_fails(self):
+        self.values("values-production.yaml", refs=[])
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("values-production.yaml: the rendered falcoctl config installs no refs", out)
+
+    def test_a_render_with_no_falcoctl_configmap_cannot_run(self):
+        self.charts.charts[("falco", self.VERSION)] = fake.chart_archive(
+            "falco",
+            self.VERSION,
+            {"configmaps.yaml": FALCO_CONFIGMAPS.split("---")[0]},
+            values="falco: {}\n",
+        )
+        rc, out = self.run_gate()
+        self.assertEqual(rc, gate.gatelib.CANNOT_RUN, out)
+        self.assertIn("the development render produced no ConfigMap carrying falcoctl.yaml", out)
 
 
 if __name__ == "__main__":

@@ -12,6 +12,10 @@ board — so a pattern covering only `${name}` would report nothing while the tr
 writes `$name`. TEMPLATE_VAR carries all four of Grafana's spellings and each is
 exercised here; check_local_dashboards carries a floor that fails when the whole
 corpus declares variables and references none.
+
+TheGateRunWhole runs the gate end to end over the shipped tree with grafana.com
+answered by a fake at urlopen, so every pinned id is resolved, its board's title
+compared and its revision read without the network.
 """
 
 from __future__ import annotations
@@ -20,11 +24,14 @@ import contextlib
 import io
 import json
 import pathlib
+import re
 import tempfile
 import textwrap
 import unittest
+from collections.abc import Mapping
 from unittest import mock
 
+import fakeregistry as fake
 from gateloader import load
 
 gate = load("validate-dashboards")
@@ -452,6 +459,238 @@ class AnUnreachableGrafanaCom(unittest.TestCase):
     def test_a_run_that_reads_everything_returns_its_own_status(self):
         with mock.patch.object(gate, "main", return_value=1):
             self.assertEqual(gate.entry(), 1)
+
+
+class GrafanaCom:
+    """grafana.com's dashboard API as the gate reads it, for the boards given.
+
+    Each board answers its revisions, its metadata naming it and its latest
+    revision, and that revision's download carrying its panels. An id with no
+    board, a revision that is not the board's, and the metadata or download of
+    a board marking it False, answer 404 as grafana.com does; `down` answers
+    every request 503.
+    """
+
+    PATH = re.compile(rf"{re.escape(gate.API)}/(\d+)(/revisions(?:/(\d+)/download)?)?")
+
+    def __init__(self, boards: dict[int, dict]) -> None:
+        self.boards = boards
+        self.down = False
+        self.urls: list[str] = []
+
+    def urlopen(self, req, timeout=None):
+        url = req.full_url
+        self.urls.append(url)
+        if self.down:
+            raise fake.http_error(url, 503)
+        match = self.PATH.fullmatch(url)
+        board = self.boards.get(int(match.group(1))) if match else None
+        if match is None or board is None:
+            raise fake.http_error(url, 404)
+        if match.group(2) is None and board.get("metadata", True):
+            body = {"name": board["name"], "revision": board["revision"]}
+        elif match.group(2) is None:
+            raise fake.http_error(url, 404)
+        elif match.group(3) is None:
+            body = {"items": [{"revision": board["revision"]}]}
+        elif int(match.group(3)) == board["revision"] and board.get("downloadable", True):
+            body = {"panels": board["panels"]}
+        else:
+            raise fake.http_error(url, 404)
+        return fake.served(json.dumps(body).encode())
+
+
+class TheGateRunWhole(unittest.TestCase):
+    """entry() over the shipped tree, with grafana.com answered by GrafanaCom.
+
+    The extractors above hold the offline half. These hold the run: every
+    pinned id is asked for its revisions, its metadata and its latest revision,
+    each answer reaches the check it decides, and a grafana.com that never
+    answers is could-not-run after every retry rather than a dead catalog.
+    """
+
+    def setUp(self):
+        self.refs = gate.discover(ROOT)
+        self.grafana = GrafanaCom(
+            {
+                gnet_id: {
+                    "name": json.loads(f'"{expected}"'),
+                    "revision": 7,
+                    "panels": [{"title": "Requests", "type": "timeseries"}],
+                }
+                for gnet_id, _, expected in self.refs
+            }
+        )
+        self.waits: list[float] = []
+        for patch in (
+            mock.patch.object(gate.urllib.request, "urlopen", self.grafana.urlopen),
+            mock.patch.object(gate.time, "sleep", self.waits.append),
+            mock.patch.object(gate.sys, "argv", ["validate-dashboards.py"]),
+        ):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def run_gate(self):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            status = gate.entry()
+        return status, out.getvalue(), err.getvalue()
+
+    def first(self):
+        gnet_id, path, _ = self.refs[0]
+        return gnet_id, path.relative_to(ROOT)
+
+    def test_every_pin_resolving_to_its_own_board_passes(self):
+        status, out, err = self.run_gate()
+        self.assertEqual(status, 0, out + err)
+        self.assertGreaterEqual(len(self.refs), gate.MIN_DASHBOARD_REFS)
+        self.assertIn(f"all {len(self.refs)} grafana.com dashboards exist", out)
+        self.assertEqual(
+            len(self.grafana.urls),
+            3 * len(self.refs),
+            "an id was not asked for its revisions, its metadata and its download",
+        )
+        self.assertEqual(self.waits, [])
+
+    def test_an_id_grafana_com_no_longer_has_fails_naming_it(self):
+        gnet_id, rel = self.first()
+        del self.grafana.boards[gnet_id]
+        status, out, _ = self.run_gate()
+        self.assertEqual(status, 1, out)
+        self.assertIn("FAIL — dead grafana.com dashboard id(s):", out)
+        self.assertIn(f"{gnet_id}  ({rel})  /revisions -> HTTP 404", out)
+
+    def test_an_id_resolving_to_another_board_fails_naming_both_titles(self):
+        gnet_id, rel = self.first()
+        self.grafana.boards[gnet_id]["name"] = "AKA SNMP Network"
+        status, out, _ = self.run_gate()
+        self.assertEqual(status, 1, out)
+        self.assertIn("FAIL — grafana.com id(s) that resolve to a different dashboard:", out)
+        self.assertIn(f"{gnet_id}  ({rel})  annotation says", out)
+        self.assertIn('grafana.com says "AKA SNMP Network"', out)
+
+    def test_a_board_carrying_legacy_alert_panels_fails(self):
+        gnet_id, rel = self.first()
+        self.grafana.boards[gnet_id]["panels"] = [
+            {"title": "Requests", "type": "timeseries"},
+            {"title": "Errors", "type": "graph", "alert": {"name": "errors high"}},
+        ]
+        status, out, _ = self.run_gate()
+        self.assertEqual(status, 1, out)
+        self.assertIn("FAIL — dashboard(s) carrying legacy panel `alert` blocks:", out)
+        self.assertIn(f"{gnet_id}  ({rel})", out)
+        self.assertIn("1 alert panel(s): Errors", out)
+
+    def test_a_revision_that_cannot_be_downloaded_is_dead(self):
+        gnet_id, rel = self.first()
+        self.grafana.boards[gnet_id]["downloadable"] = False
+        status, out, _ = self.run_gate()
+        self.assertEqual(status, 1, out)
+        self.assertIn(f"{gnet_id}  ({rel})  rev 7 download -> HTTP 404", out)
+
+    def test_a_grafana_com_that_stays_down_cannot_run_after_every_retry(self):
+        self.grafana.down = True
+        gnet_id, _ = self.first()
+        status, out, err = self.run_gate()
+        self.assertEqual(status, gate.gatelib.CANNOT_RUN, out + err)
+        self.assertIn(
+            f"Cannot run: {gate.API}/{gnet_id}/revisions: unreachable after {gate.RETRIES} "
+            f"attempts (HTTP 503)",
+            err,
+        )
+        self.assertEqual(self.waits, [gate.BACKOFF * n for n in range(1, gate.RETRIES)])
+        self.assertNotIn("FAIL", out)
+
+    def test_metadata_grafana_com_will_not_serve_is_dead(self):
+        gnet_id, rel = self.first()
+        self.grafana.boards[gnet_id]["metadata"] = False
+        status, out, _ = self.run_gate()
+        self.assertEqual(status, 1, out)
+        self.assertIn(f"{gnet_id}  ({rel})  metadata -> HTTP 404", out)
+
+    def test_a_dead_id_and_a_legacy_board_are_each_reported(self):
+        (dead, dead_path, _), (old, old_path, _) = self.refs[:2]
+        del self.grafana.boards[dead]
+        self.grafana.boards[old]["panels"] = [{"title": "Errors", "alert": {"name": "x"}}]
+        status, out, _ = self.run_gate()
+        self.assertEqual(status, 1, out)
+        self.assertIn(f"{dead}  ({dead_path.relative_to(ROOT)})  /revisions -> HTTP 404", out)
+        self.assertIn(f"{old}  ({old_path.relative_to(ROOT)})", out)
+        self.assertLess(out.index("FAIL — dead"), out.index("FAIL — dashboard(s) carrying legacy"))
+
+    def tree(self, pins: Mapping[int, str | None], *, local=None):
+        """A root wiring one datasource, a GrafanaDashboard pinning each of `pins`
+        ({id: the title its annotation records, or None for no annotation}), and,
+        when given, a locally-authored board carrying `local` as its JSON."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = pathlib.Path(tmp.name)
+        base = root / "dashboards" / "base"
+        (base / "datasources").mkdir(parents=True)
+        (base / "kustomization.yaml").write_text("resources:\n  - datasources/managed-loki.yaml\n")
+        (base / "datasources" / "managed-loki.yaml").write_text(
+            "spec:\n  datasource:\n    uid: managed-loki\n"
+        )
+        for gnet_id, title in pins.items():
+            note = (
+                f'  annotations:\n    nanohype.dev/grafana-com-title: "{title}"\n' if title else ""
+            )
+            (base / f"board-{gnet_id}.yaml").write_text(
+                f"kind: GrafanaDashboard\nmetadata:\n  name: board-{gnet_id}\n{note}"
+                f"spec:\n  grafanaCom:\n    id: {gnet_id}\n"
+            )
+        if local is not None:
+            payload = "\n".join("    " + line for line in json.dumps(local, indent=1).splitlines())
+            (base / "local.yaml").write_text(
+                f"kind: GrafanaDashboard\nspec:\n  json: |\n{payload}\n"
+            )
+        self.grafana.boards = {
+            gnet_id: {"name": title or "Untitled", "revision": 7, "panels": []}
+            for gnet_id, title in pins.items()
+        }
+        return root
+
+    def run_tree(self, root):
+        with mock.patch.object(gate.sys, "argv", ["validate-dashboards.py", "--root", str(root)]):
+            return self.run_gate()
+
+    def test_a_tree_pinning_fewer_ids_than_the_floor_cannot_run(self):
+        root = self.tree({1001: "One", 1002: "Two", 1003: "Three"})
+        status, out, _ = self.run_tree(root)
+        self.assertEqual(status, gate.gatelib.CANNOT_RUN, out)
+        self.assertIn(
+            f"found 3 grafanaCom.id reference(s), below the floor of {gate.MIN_DASHBOARD_REFS}", out
+        )
+        self.assertEqual(self.grafana.urls, [])
+
+    def test_a_tree_pinning_no_id_cannot_run(self):
+        status, out, _ = self.run_tree(self.tree({}))
+        self.assertEqual(status, gate.gatelib.CANNOT_RUN, out)
+        self.assertIn("no grafanaCom.id references found", out)
+
+    def test_a_pin_recording_no_title_fails(self):
+        pins: dict[int, str | None] = {
+            1000 + n: f"Board {n}" for n in range(gate.MIN_DASHBOARD_REFS)
+        }
+        pins[1000] = None
+        status, out, _ = self.run_tree(self.tree(pins))
+        self.assertEqual(status, 1, out)
+        self.assertIn(
+            "1000  (dashboards/base/board-1000.yaml)  has no nanohype.dev/grafana-com-title annotation",
+            out,
+        )
+
+    def test_a_local_board_naming_an_unwired_datasource_fails(self):
+        pins = {1000 + n: f"Board {n}" for n in range(gate.MIN_DASHBOARD_REFS)}
+        root = self.tree(pins, local={"panels": [{"datasource": "athena-cur"}]})
+        status, out, _ = self.run_tree(root)
+        self.assertEqual(status, 1, out)
+        self.assertIn("Locally-authored dashboard problems:", out)
+        self.assertIn("panel datasource 'athena-cur' is not wired", out)
+        self.assertIn(
+            f"Validating {gate.MIN_DASHBOARD_REFS} grafana.com dashboard reference(s)", out
+        )
+        self.assertNotIn("✓", out)
 
 
 if __name__ == "__main__":

@@ -151,10 +151,10 @@ class TheFloorsGuardTheRightQuantity(unittest.TestCase):
     def test_the_image_floor_is_derived_per_chart(self):
         """Not a constant, because here a second enumerator exists: every chart
         the render covers must contribute an image, which is the shape a total
-        cannot see."""
+        cannot see. Nor a total of images against charts, which refuses a catalog
+        whose charts share an image; test_image_vulnerabilities runs one."""
         source = (ROOT / "scripts" / "check-image-vulnerabilities.py").read_text()
         self.assertIn("coverage = image_pins.chart_coverage(images, units, seen)", source)
-        self.assertIn("if len(images) < len(units):", source)
         self.assertNotIn(
             "MIN_IMAGES",
             source,
