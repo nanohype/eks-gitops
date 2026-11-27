@@ -152,6 +152,9 @@ EXPECTED = (
     # The ServiceAccounts a chart's pods run as and the ones it creates, held to
     # one set in both directions.
     "test_serviceaccount_bindings",
+    # The one render of the catalog's own charts, which every renderer of them
+    # goes through, the image gates included.
+    "test_catalog",
     # Every AWS account id a workflow reads is a secret masked first, and the
     # vendored mask script is the copy its record names.
     "test_workflow_id_masking",
@@ -247,6 +250,9 @@ PER_GATE_FLOORS: dict[str, tuple[int, int]] = {
     "scripts/check-image-verification.py": (100, 100),
     "scripts/check-policy-validity.py": (100, 100),
     "scripts/verdicts.py": (100, 100),
+    # What the image gates scan of a catalog chart is what this renders, so a
+    # branch no test reaches here is a population nothing proves.
+    "scripts/catalog.py": (100, 100),
     # The control-exempt gates. Their floors are what keeps the verdict half
     # covered after the module that covers it is edited.
     "scripts/check-platform-crs.py": (51, 51),

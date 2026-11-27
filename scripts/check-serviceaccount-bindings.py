@@ -31,23 +31,12 @@ from pathlib import Path
 import gatelib
 import yaml
 
-# Seconds a child process may run before the gate gives up on it. A subprocess
-# with no deadline turns an unreachable registry into a job that hangs until the
-# CI runner's own ceiling, with no diagnostic naming the command that stalled.
-# NETWORK_TIMEOUT covers commands that resolve a remote chart or registry;
-# LOCAL_TIMEOUT covers commands that only read the working tree.
-LOCAL_TIMEOUT = 120
+import catalog
 
-# Charts rendered from this repo. Upstream-charted addons are covered by
-# render-addons.py, which templates them against their appset-pinned versions.
-CHART_GLOB = "catalog/*/chart"
-
-# Minimal values needed to make a chart render at all. A chart that requires an input
-# it cannot default is not a finding here — it is the chart's contract with its
-# consumer, and render-addons.py documents the same pattern for --set parameters.
-RENDER_VALUES = {
-    "druid": ["--set", "hostedId=ci"],
-}
+# The environment each chart renders for. The gate reads one render per chart, as
+# it did when it set no environment at all, so a ServiceAccount that only some
+# environment's values add or rename is outside what it sees.
+ENVIRONMENT = "production"
 
 # ServiceAccounts a chart creates for something other than a pod in the same chart.
 # Each entry names what consumes it, so "unused" stays a finding rather than a
@@ -61,18 +50,14 @@ EXTERNAL_CONSUMERS = {
 }
 
 
-def render(chart: Path) -> list[dict]:
-    name = chart.parent.name
-    values = chart.parent / "values.yaml"
-    cmd = ["helm", "template", name, str(chart)]
-    if values.exists():
-        cmd += ["-f", str(values)]
-    cmd += RENDER_VALUES.get(name, [])
-    out = gatelib.run(cmd, timeout=LOCAL_TIMEOUT, what=f"helm template of {name}")
-    if out.returncode != 0:
-        print(f"::error file={chart}::helm template failed\n{out.stderr.strip()[:1200]}")
+def render(chart: catalog.CatalogChart) -> list[dict]:
+    """The chart's documents, rendered the way scripts/catalog.py renders it."""
+    try:
+        manifests = catalog.render(chart, ENVIRONMENT)
+    except catalog.RenderFailed as exc:
+        print(f"::error file={chart.path}::helm template failed\n{exc}")
         return []
-    return [d for d in yaml.safe_load_all(out.stdout) if d]
+    return [d for d in yaml.safe_load_all(manifests) if d]
 
 
 def pod_specs(doc: dict):
@@ -94,17 +79,21 @@ def pod_specs(doc: dict):
 def main() -> int:
     gatelib.require("helm")
     repo = Path(__file__).resolve().parent.parent
-    charts = sorted(repo.glob(CHART_GLOB))
+    charts = catalog.discover(repo)
     if not charts:
-        print(f"::error::no charts matched {CHART_GLOB} — this gate verified nothing")
-        return 1
+        print(f"::error::no charts matched {catalog.CHART_GLOB} — this gate verified nothing")
+        return gatelib.CANNOT_RUN
 
     failures = []
     for chart in charts:
-        name = chart.parent.name
-        docs = render(chart)
+        name = chart.name
+        try:
+            docs = render(chart)
+        except catalog.CannotRender as exc:
+            print(f"Cannot run: {exc}. No chart after it was checked.")
+            return gatelib.CANNOT_RUN
         if not docs:
-            failures.append(f"::error file={chart}::rendered no documents")
+            failures.append(f"::error file={chart.path}::rendered no documents")
             continue
 
         created = {d["metadata"]["name"] for d in docs if d.get("kind") == "ServiceAccount"}
@@ -116,7 +105,7 @@ def main() -> int:
 
         for sa in sorted(used - created):
             failures.append(
-                f"::error file={chart}::a pod runs as ServiceAccount {sa!r}, which this chart "
+                f"::error file={chart.path}::a pod runs as ServiceAccount {sa!r}, which this chart "
                 f"does not create\n"
                 f"    It will not schedule, or it will silently run as `default` with none of\n"
                 f"    the AWS identity its Pod Identity association was meant to give it."
@@ -125,7 +114,7 @@ def main() -> int:
             if (name, sa) in EXTERNAL_CONSUMERS:
                 continue
             failures.append(
-                f"::error file={chart}::ServiceAccount {sa!r} is created and no pod in this "
+                f"::error file={chart.path}::ServiceAccount {sa!r} is created and no pod in this "
                 f"chart runs as it\n"
                 f"    Either a pod should and does not — in which case its Pod Identity\n"
                 f"    association is attached to nothing and the real pods run on the node\n"

@@ -1,0 +1,18 @@
+# The inputs a tenant's Application supplies when it installs this chart, as
+# synthetic values. No ApplicationSet in this repository deploys the chart, so
+# every render made here stands in for a tenant's, and this file is what it
+# stands in with. scripts/catalog.py reads it beside values.yaml for every
+# render: CI's validate job, `task render`, check-serviceaccount-bindings.py and
+# the image gates. `environment` is set per render.
+hostedId: ci
+
+secrets:
+  metadata: ci/druid/metadata
+  admin: ci/druid/admin
+  system: ci/druid/system
+  keystore: ci/druid/keystore
+
+s3:
+  indexLogsBucket: ci-druid-indexlogs
+  deepStorageBucket: ci-druid-deepstorage
+  msqBucket: ci-druid-msq
