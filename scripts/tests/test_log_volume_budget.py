@@ -29,11 +29,11 @@ import unittest
 from unittest import mock
 
 import fakeregistry as fake
-import registry
 import yaml
 from gateloader import load
 
 gate = load("check-log-volume-budget")
+registry = load("registry")
 
 HAS_HELM = shutil.which("helm") is not None
 

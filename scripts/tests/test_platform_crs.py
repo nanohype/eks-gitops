@@ -26,11 +26,11 @@ import unittest
 from unittest import mock
 
 import fakeregistry as fake
-import registry
 import yaml
 from gateloader import load
 
 gate = load("check-platform-crs")
+registry = load("registry")
 
 KIND = "Platform"
 SOURCE = "addons/ai-platform/agent-platform/base/platform.yaml"

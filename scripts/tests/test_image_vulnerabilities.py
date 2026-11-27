@@ -37,11 +37,11 @@ from typing import Any
 from unittest import mock
 
 import fakeregistry as fake
-import registry
 import yaml
 from gateloader import load
 
 gate = load("check-image-vulnerabilities")
+registry = load("registry")
 
 HAS_HELM = shutil.which("helm") is not None
 
