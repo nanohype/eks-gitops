@@ -75,7 +75,8 @@ ALL_MODULES=(test_policy_admission test_platform_crs test_dashboards
   test_policy_validity test_verdicts test_kyverno_test test_digest_rewrite
   test_digest_rewrite_run test_workflows test_ai_config test_alert_coverage
   test_athena_panel_columns test_catalog_revision test_env_coverage
-  test_externalsecret_keys test_serviceaccount_bindings test_workflow_id_masking)
+  test_externalsecret_keys test_serviceaccount_bindings test_workflow_id_masking
+  test_hardcoded_org)
 
 # Bytecode caching keys on (mtime, size). A restore and the next mutation inside
 # the same second can hand the run the PREVIOUS mutant's module, and the suite
@@ -3916,6 +3917,56 @@ p.write_text(m)
 PY
 rejects "externalsecret-keys: let a sibling sharing a prefix own a manifest" test_externalsecret_keys \
   test_a_sibling_sharing_a_prefix_does_not_own_it
+res $F
+
+# The fork-safety gate: which lines name this catalog as a source, and what a
+# scan concludes. Each mutant leaves the planted repoURL in the real tree
+# rejected, which is why the control alone does not hold these.
+F=scripts/check-hardcoded-org.py
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    rf"(?:\\.git)?[\'\\"]?\\s*(?:#.*)?$",\n', '    rf"[\'\\"]?\\s*(?:#.*)?$",\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "fork-safety: leave a catalog repoURL ending in .git" test_hardcoded_org \
+  test_each_spelling_of_the_catalog_is_taken \
+  test_a_hardcoded_repo_url_fails_a_blocking_scan
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    rf"(?:\\.git)?[\'\\"]?\\s*(?:#.*)?$",\n', '    rf"(?:\\.git)?",\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "fork-safety: take another repo sharing the catalog's prefix" test_hardcoded_org \
+  test_what_is_not_the_catalog_as_a_source_is_left
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("    if args.blocking:\n        return 1\n", "    if args.blocking:\n        return 0\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "fork-safety: pass a blocking scan that found one" test_hardcoded_org \
+  test_a_hardcoded_repo_url_fails_a_blocking_scan
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('appsets.glob("*.y*ml")', 'appsets.rglob("*.y*ml")', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "fork-safety: read the opt-in ApplicationSets nothing applies" test_hardcoded_org \
+  test_opt_in_appsets_are_not_applied_so_not_read
 res $F
 
 F=scripts/check-serviceaccount-bindings.py
