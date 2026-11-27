@@ -179,7 +179,7 @@ class Main(ATree):
         patch = mock.patch.object(catalog, "discover", lambda root=None: real(self.root))
         patch.start()
         self.addCleanup(patch.stop)
-        self.out = str(self.root / "rendered" / "catalog-{name}-chart.yaml")
+        self.out: str = str(self.root / "rendered" / "catalog-{name}-chart.yaml")
 
     def run_main(self, *argv: str) -> tuple[int, str]:
         said = io.StringIO()
