@@ -1,4 +1,5 @@
-"""A registry served at the urlopen level, for tests of scripts/registry.py.
+"""A registry served at the urlopen level, for tests of scripts/registry.py and
+of the gates that read charts through it.
 
 What a registry serves is stated here rather than read from the client under
 test: the media types are the ones the OCI and Helm specifications name, so a
@@ -6,18 +7,31 @@ client that drifted from them fails against this fake instead of agreeing with
 itself. A 200 is the http.client.HTTPResponse urlopen hands back, parsed from
 the bytes a server would send, so the client reads a body, Content-Length or
 chunked, through the same code it reads one through in CI.
+
+A gate is run whole against these with serve(): the real client, its real
+cache under a test's own directory, and every request routed to a fake by URL.
+The charts they serve are real archives (chart_archive()), so the gate renders
+them with the real helm.
 """
 
 from __future__ import annotations
 
 import email.message
 import functools
+import gzip
 import hashlib
 import http.client
 import io
 import json
+import pathlib
+import tarfile
+import unittest
 import urllib.error
 from collections.abc import Callable
+from types import ModuleType
+from unittest import mock
+
+import yaml
 
 NOW = 1_800_000_000.0
 
@@ -263,3 +277,120 @@ class OciRegistry:
     def transport(self, *overrides):
         """A transport answering from this registry, with scripted steps first."""
         return self.transport_class(*overrides, *([self] * 20))
+
+
+def chart_archive(
+    name: str,
+    version: str,
+    templates: dict[str, str],
+    *,
+    values: str = "",
+    crds: dict[str, str] | None = None,
+) -> bytes:
+    """An archive `helm template` renders, laid out as `helm package` writes one.
+
+    `name/` holds Chart.yaml, values.yaml, each of `templates` under templates/
+    and each of `crds` under crds/. Modes and times are fixed, so the same files
+    give the same bytes, and so the digest an index publishes for them.
+    """
+    files = {
+        "Chart.yaml": f"apiVersion: v2\nname: {name}\nversion: {version}\n",
+        "values.yaml": values,
+        **{f"templates/{path}": text for path, text in templates.items()},
+        **{f"crds/{path}": text for path, text in (crds or {}).items()},
+    }
+    raw = io.BytesIO()
+    with (
+        gzip.GzipFile(fileobj=raw, mode="wb", mtime=0) as gz,
+        tarfile.open(fileobj=gz, mode="w") as tar,
+    ):
+        for path, text in files.items():
+            data = text.encode()
+            info = tarfile.TarInfo(f"{name}/{path}")
+            info.size, info.mode, info.mtime = len(data), 0o644, 0
+            tar.addfile(info, io.BytesIO(data))
+    return raw.getvalue()
+
+
+class ChartRepository:
+    """An HTTPS chart repository: an index.yaml listing each archive with the
+    digest Helm's index carries for it, and each archive at the URL it names.
+
+    `answer`, when set, answers every request in its place, which is how a
+    repository that is down or refusing is written.
+    """
+
+    def __init__(self, base: str, charts: dict[tuple[str, str], bytes]) -> None:
+        self.base = base.rstrip("/")
+        self.charts = dict(charts)
+        self.answer: Callable | None = None
+
+    def index(self) -> bytes:
+        entries: dict[str, list[dict]] = {}
+        for (name, version), data in sorted(self.charts.items()):
+            entries.setdefault(name, []).append(
+                {
+                    "version": version,
+                    "urls": [f"{name}-{version}.tgz"],
+                    "digest": hashlib.sha256(data).hexdigest(),
+                }
+            )
+        return yaml.safe_dump({"apiVersion": "v1", "entries": entries}).encode()
+
+    def __call__(self, req):
+        url = req.full_url
+        if self.answer is not None:
+            return self.answer(req)
+        if url == f"{self.base}/index.yaml":
+            return self.index()
+        for (name, version), data in self.charts.items():
+            if url == f"{self.base}/{name}-{version}.tgz":
+                return data
+        return http_error(url, 404)
+
+
+class Hosts:
+    """urlopen for registry.http_get over several fakes, each serving the URLs
+    under its prefix, with every URL asked for and every wait recorded.
+
+    A URL no fake serves raises AssertionError, which no registry read handles,
+    so a request the test did not expect fails it rather than reading as a
+    registry's answer.
+    """
+
+    def __init__(self, routes: dict[str, Callable]) -> None:
+        self.routes = routes
+        self.urls: list[str] = []
+        self.waits: list[float] = []
+
+    def urlopen(self, req, timeout=None):
+        url = req.full_url
+        self.urls.append(url)
+        server = next((s for prefix, s in self.routes.items() if url.startswith(prefix)), None)
+        if server is None:
+            raise AssertionError(f"no fake serves {url}")
+        answer = server(req)
+        if isinstance(answer, BaseException):
+            raise answer
+        return served(answer) if isinstance(answer, bytes) else answer
+
+    def sleep(self, seconds: float) -> None:
+        self.waits.append(seconds)
+
+
+def serve(
+    case: unittest.TestCase, client: ModuleType, routes: dict[str, Callable], cache: pathlib.Path
+) -> Hosts:
+    """Point `client`, the registry module the gates import, at `routes` for the
+    length of `case`, keeping its charts in `cache` and its indexes fresh."""
+    hosts = Hosts(routes)
+    for patch in (
+        mock.patch.object(client, "CHART_CACHE", cache),
+        mock.patch.dict(client._INDEXES, clear=True),
+        mock.patch.dict(
+            client.http_get.__kwdefaults__, {"urlopen": hosts.urlopen, "sleep": hosts.sleep}
+        ),
+    ):
+        patch.start()
+        case.addCleanup(patch.stop)
+    return hosts
