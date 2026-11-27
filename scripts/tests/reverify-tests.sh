@@ -306,6 +306,17 @@ rejects "pin: keep the quotes a YAML scalar carries" test_platform_crs \
   test_a_quoted_revision_is_unquoted
 res $F
 
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("    missed = sorted(candidates - reached)\n", "    missed: list[str] = []\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "platform-crs run: pass a CR no schema reached as walked" test_platform_crs \
+  test_a_cr_of_a_kind_the_chart_ships_no_schema_for_fails
+res $F
+
 F=scripts/validate-dashboards.py
 edit $F <<'PY'
 import pathlib, sys
@@ -369,6 +380,17 @@ rejects "offline verdict: report nothing, whatever the tree holds" test_dashboar
   test_a_locally_authored_board_whose_json_cannot_be_read_is_reported \
   test_a_declared_variable_nothing_references_reports_a_broken_parser \
   test_every_detection_is_reported_from_one_pass
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("        if json.loads(f'\"{expected}\"') != name:\n", "        if False:\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "dashboards run: compare no pinned title with the board's" test_dashboards \
+  test_an_id_resolving_to_another_board_fails_naming_both_titles
 res $F
 
 F=scripts/render-addons.py
@@ -517,6 +539,18 @@ p.write_text(m)
 PY
 rejects "stale skips: take an archive the chart cache holds for a fetch" test_render_addons \
   test_an_archive_left_in_the_chart_cache_is_no_stale_skip
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("            ok, msg = render(u, env, objects)\n", "            ok, msg = render(u, env, None)\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "render-addons run: pool no render's cluster-scoped objects" test_render_addons \
+  test_an_object_two_applications_install_fails_naming_both \
+  test_a_catalog_rendering_one_owner_per_object_passes
 res $F
 
 F=scripts/check-policy-admission.py
@@ -1966,6 +2000,17 @@ rejects "rulesfile: unpack a layer that is not an archive" test_falco_rule_floor
   test_a_layer_that_is_not_a_rule_set_archive_cannot_run
 res $F
 
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("                is_read = reachable(path, files, dirs)\n", "                is_read = True\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "falco run: count a rule set read wherever it is written" test_falco_rule_floor \
+  test_a_rule_set_installed_where_falco_does_not_read_fails
+res $F
+
 
 # A chart repository that could not be read says nothing about the controller
 # this catalog pins. Exiting 1 for it hands a network failure to whoever reads
@@ -2256,6 +2301,19 @@ rejects "trivy: drop what a scan past its timeout had written" test_image_vulner
   test_a_scan_past_its_timeout_is_reported_with_what_trivy_had_said
 res $F
 
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("    run_canary()\n    if args.self_test:\n", "    if args.self_test:\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "image-vulnerabilities run: scan without the canary first" test_image_vulnerabilities \
+  test_a_canary_reporting_nothing_cannot_run \
+  test_the_self_test_scans_the_canary_alone
+res $F
+
+
 
 F=scripts/check-renovate-coverage.py
 
@@ -2358,6 +2416,18 @@ PY
 rejects "alert: accept a rule keyed on the edge counter" test_log_volume_budget \
   test_a_rule_querying_the_edge_counter_fails_twice \
   test_a_rule_querying_both_still_fails_on_the_edge_counter
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("        for problem in problems:\n            fail(problem)\n", "        del problems\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "log-volume run: drop each environment's problems" test_log_volume_budget \
+  test_an_environment_whose_cutoff_falls_to_the_alert_fails_naming_it \
+  test_retention_the_render_turns_off_fails
 res $F
 
 # The harness layer. controls.py excuses four executables from a positive

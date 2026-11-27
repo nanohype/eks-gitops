@@ -247,16 +247,17 @@ PER_GATE_FLOORS: dict[str, tuple[int, int]] = {
     "scripts/check-image-verification.py": (100, 100),
     "scripts/check-policy-validity.py": (100, 100),
     "scripts/verdicts.py": (100, 100),
-    # The control-exempt gates. Their floors are what keeps the verdict half
-    # covered after the module that covers it is edited.
-    "scripts/check-platform-crs.py": (51, 51),
-    "scripts/validate-dashboards.py": (52, 49),
-    "scripts/render-addons.py": (67, 56),
-    "scripts/check-log-volume-budget.py": (65, 59),
-    "scripts/check-falco-rule-floor.py": (58, 33),
+    # The control-exempt gates. Six of them read a registry or grafana.com, and
+    # each one's test module runs its orchestrator end to end against fakes
+    # (TheGateRunWhole), so these floors hold the run as well as the verdict.
+    "scripts/check-platform-crs.py": (96, 91),
+    "scripts/validate-dashboards.py": (98, 97),
+    "scripts/render-addons.py": (98, 95),
+    "scripts/check-log-volume-budget.py": (100, 97),
+    "scripts/check-falco-rule-floor.py": (97, 91),
     "scripts/check-alert-severity-routes.py": (96, 90),
-    "scripts/check-image-vulnerabilities.py": (76, 70),
-    "scripts/check-image-pins.py": (91, 85),
+    "scripts/check-image-vulnerabilities.py": (98, 97),
+    "scripts/check-image-pins.py": (93, 88),
     # The half of the directory-size gate that decides the verdict. The rest is
     # `--sync`, `--live` and `--self-test`, which run against a clone.
     "scripts/check-directory-manifest-size.py": (68, 71),
