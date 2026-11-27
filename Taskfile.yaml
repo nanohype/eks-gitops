@@ -346,21 +346,9 @@ tasks:
           echo "Rendering $dir ..."
           kustomize build --enable-helm "$dir" > "rendered/${name}.yaml" || exit 1
         done
-        # Druid catalog chart with synthetic tenant values — same render CI
-        # gates (see .github/workflows/ci.yml).
-        echo "Rendering catalog/druid/chart ..."
-        helm template ci catalog/druid/chart -n druid-ci \
-          -f catalog/druid/values.yaml \
-          --set hostedId=ci \
-          --set environment={{.ENVIRONMENT}} \
-          --set secrets.metadata=ci/druid/metadata \
-          --set secrets.admin=ci/druid/admin \
-          --set secrets.system=ci/druid/system \
-          --set secrets.keystore=ci/druid/keystore \
-          --set s3.indexLogsBucket=ci-druid-indexlogs \
-          --set s3.deepStorageBucket=ci-druid-deepstorage \
-          --set s3.msqBucket=ci-druid-msq \
-          > rendered/catalog-druid-chart.yaml
+        # The catalog charts, rendered with their tenant inputs: the same
+        # render CI's validate job makes (see .github/workflows/ci.yml).
+        python3 scripts/catalog.py --env {{.ENVIRONMENT}} --out 'rendered/catalog-{name}-chart.yaml' || exit 1
         echo "All {{.ENVIRONMENT}} overlays rendered to rendered/"
 
   clean:

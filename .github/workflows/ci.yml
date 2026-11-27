@@ -1370,24 +1370,18 @@ jobs:
           done
           echo "All ${{ matrix.environment }} manifests rendered successfully."
 
-      # The druid catalog chart is a tenant-workload chart (not wired by a
-      # default ApplicationSet). Render it with synthetic tenant values so its
-      # templates still pass the same render-assert / schema / misconfiguration
+      # The catalog charts are tenant workloads, which no default ApplicationSet
+      # installs. scripts/catalog.py renders each one with the tenant inputs
+      # beside it, the render `task render` and the image gates also make, so
+      # its templates pass the same render-assert / schema / misconfiguration
       # gates as every kustomize root.
-      - name: Render druid catalog chart
-        run: |
-          helm template ci catalog/druid/chart -n druid-ci \
-            -f catalog/druid/values.yaml \
-            --set hostedId=ci \
-            --set environment=${{ matrix.environment }} \
-            --set secrets.metadata=ci/druid/metadata \
-            --set secrets.admin=ci/druid/admin \
-            --set secrets.system=ci/druid/system \
-            --set secrets.keystore=ci/druid/keystore \
-            --set s3.indexLogsBucket=ci-druid-indexlogs \
-            --set s3.deepStorageBucket=ci-druid-deepstorage \
-            --set s3.msqBucket=ci-druid-msq \
-            > rendered/catalog_druid_chart.yaml
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: .python-version
+
+      - name: Render the catalog charts
+        run: python3 scripts/catalog.py --env "${{ matrix.environment }}" --out 'rendered/catalog_{name}_chart.yaml'
 
       # Source files are gated by the zero-placeholder job; this asserts the
       # RENDERED output too — catching a zero account id, placeholder token, or

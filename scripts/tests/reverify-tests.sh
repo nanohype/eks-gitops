@@ -76,7 +76,7 @@ ALL_MODULES=(test_policy_admission test_platform_crs test_dashboards
   test_digest_rewrite_run test_workflows test_ai_config test_alert_coverage
   test_athena_panel_columns test_catalog_revision test_env_coverage
   test_externalsecret_keys test_serviceaccount_bindings test_workflow_id_masking
-  test_hardcoded_org)
+  test_hardcoded_org test_catalog)
 
 # Bytecode caching keys on (mtime, size). A restore and the next mutation inside
 # the same second can hand the run the PREVIOUS mutant's module, and the suite
@@ -3992,6 +3992,94 @@ p.write_text(m)
 PY
 rejects "serviceaccount-bindings: let a pod name an account nothing creates" test_serviceaccount_bindings \
   test_a_pod_naming_an_account_the_chart_does_not_create_fails
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("        except catalog.CannotRender as exc:\n"
+              "            print(f\"Cannot run: {exc}. No chart after it was checked.\")\n"
+              "            return gatelib.CANNOT_RUN\n",
+              "        except catalog.CannotRender:\n            continue\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "serviceaccount-bindings: pass over a render that never finished" test_serviceaccount_bindings \
+  test_a_render_that_runs_out_of_time_cannot_run
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("this gate verified nothing\")\n        return gatelib.CANNOT_RUN\n",
+              "this gate verified nothing\")\n        return 1\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "serviceaccount-bindings: report an empty catalog as a finding" test_serviceaccount_bindings \
+  test_no_chart_is_a_gate_that_verified_nothing
+res $F
+
+F=scripts/catalog.py
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    if missing:\n        raise RenderFailed(',
+              '    if False:\n        raise RenderFailed(', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "catalog: render a chart without its tenant inputs" test_catalog \
+  test_missing_inputs_are_named_and_helm_is_not_run
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    for values in chart.value_files:\n        cmd += ["-f", str(values)]\n',
+              '    for values in chart.value_files[:1]:\n        cmd += ["-f", str(values)]\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "catalog: leave the tenant inputs out of the command" test_catalog \
+  test_it_renders_the_chart_with_its_values_then_its_inputs_then_the_environment
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        raise CannotRender(\n',
+              '        raise RenderFailed(\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "catalog: report a hung render as a finding" test_catalog \
+  test_a_render_that_runs_out_of_time_decided_nothing
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    return 1 if failed else 0\n',
+              '    return 0\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "catalog: exit 0 over a chart that did not render" test_catalog \
+  test_a_chart_that_fails_fails_the_run_and_the_rest_still_render
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        ap.error("--out must contain {name}, or every chart would be written to one file")\n',
+              '        pass\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "catalog: write every chart to one --out file" test_catalog \
+  test_an_out_path_without_the_chart_name_is_refused
 res $F
 
 # scripts/check-workflow-id-masking.py and scripts/mask-aws-ids.py carry no

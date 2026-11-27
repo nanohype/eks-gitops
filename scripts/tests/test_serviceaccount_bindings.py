@@ -5,9 +5,10 @@ ServiceAccount by name, and neither fails when the name is wrong. The gate
 renders each in-repo chart and requires the names its pods run as and the names
 it creates to be one set, in both directions, with an exemption that has to say
 what consumes a ServiceAccount no pod uses. These hold where it finds a PodSpec
-in each workload kind, what it renders with, and the verdict over rendered
-charts. helm is replaced by a stub that returns the documents a test hands it,
-so no case depends on the chart tree on disk.
+in each workload kind, that it renders each chart the way scripts/catalog.py
+does, and the verdict over rendered charts. helm is replaced by a stub that
+returns the documents a test hands it, so no case depends on the chart tree on
+disk.
 """
 
 from __future__ import annotations
@@ -78,29 +79,32 @@ class Charts(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.root = pathlib.Path(tmp.name).resolve()
         (self.root / "scripts").mkdir()
-        self.rendered: dict[str, list[dict] | None] = {}
+        self.rendered: dict[str, list[dict] | str | None] = {}
         self.commands: list[list[str]] = []
         # The gate finds charts relative to its own file, so it is pointed at the tree.
         for patch in (
             mock.patch.object(gate, "__file__", str(self.root / "scripts" / "gate.py")),
             mock.patch.object(gate.gatelib, "require", lambda *tools: None),
-            mock.patch.object(gate.gatelib.subprocess, "run", self.helm),
+            mock.patch.object(gate.catalog.subprocess, "run", self.helm),
         ):
             patch.start()
             self.addCleanup(patch.stop)
 
     def helm(self, cmd, **kwargs):
         self.commands.append(cmd)
-        docs = self.rendered[cmd[2]]
+        docs = self.rendered[pathlib.Path(cmd[3]).parent.name]
+        if docs == "hang":
+            raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
         if docs is None:
             return subprocess.CompletedProcess(cmd, 1, "", "Error: values don't meet the schema")
         return subprocess.CompletedProcess(cmd, 0, yaml.safe_dump_all([*docs, None]), "")
 
-    def chart(self, name: str, *docs: dict, values: bool = True) -> None:
+    def chart(self, name: str, *docs: dict, inputs: bool = True) -> None:
         chart = self.root / "catalog" / name / "chart"
         chart.mkdir(parents=True)
-        if values:
-            (chart.parent / "values.yaml").write_text("{}\n")
+        (chart.parent / "values.yaml").write_text("{}\n")
+        if inputs:
+            (chart.parent / gate.catalog.TENANT_INPUTS).write_text("{}\n")
         self.rendered[name] = list(docs)
 
     def check(self) -> tuple[int, str]:
@@ -152,26 +156,37 @@ class Charts(unittest.TestCase):
         self.assertIn("helm template failed\nError: values don't meet the schema", said)
         self.assertIn("broken/chart::rendered no documents", said)
 
-    def test_each_chart_renders_with_its_values_and_its_required_inputs(self):
+    def test_each_chart_renders_the_way_the_catalog_renders_it(self):
         self.chart("druid", account("druid-msk-client"))
-        self.chart("plain", account("app"), deployment("app"), values=False)
+        self.chart("plain", account("app"), deployment("app"))
         self.check()
-        druid, plain = self.commands
-        self.assertEqual(druid[:3], ["helm", "template", "druid"])
-        self.assertEqual(
-            druid[4:],
-            [
-                "-f",
-                str(self.root / "catalog" / "druid" / "values.yaml"),
-                *gate.RENDER_VALUES["druid"],
-            ],
-        )
-        self.assertEqual(plain[3:], [str(self.root / "catalog" / "plain" / "chart")])
+        expected = [
+            gate.catalog.template_command(chart, gate.ENVIRONMENT)
+            for chart in gate.catalog.discover(self.root)
+        ]
+        self.assertEqual(self.commands, expected)
+        self.assertEqual(len(expected), 2)
+
+    def test_a_chart_without_its_tenant_inputs_fails_unrendered(self):
+        self.chart("app", account("app"), deployment("app"), inputs=False)
+        rc, said = self.check()
+        self.assertEqual(rc, 1, said)
+        self.assertIn(f"catalog/app/{gate.catalog.TENANT_INPUTS} does not exist", said)
+        self.assertIn("app/chart::rendered no documents", said)
+        self.assertEqual(self.commands, [], "helm ran without the chart's inputs")
+
+    def test_a_render_that_runs_out_of_time_cannot_run(self):
+        self.chart("app", account("app"), deployment("app"))
+        self.rendered["app"] = "hang"
+        rc, said = self.check()
+        self.assertEqual(rc, gate.gatelib.CANNOT_RUN, said)
+        self.assertIn("Cannot run: helm template ran past", said)
+        self.assertNotIn("every ServiceAccount has a consumer", said)
 
     def test_no_chart_is_a_gate_that_verified_nothing(self):
         rc, said = self.check()
-        self.assertEqual(rc, 1, said)
-        self.assertIn(f"no charts matched {gate.CHART_GLOB}", said)
+        self.assertEqual(rc, gate.gatelib.CANNOT_RUN, said)
+        self.assertIn(f"no charts matched {gate.catalog.CHART_GLOB}", said)
 
 
 class TheExemptions(unittest.TestCase):
