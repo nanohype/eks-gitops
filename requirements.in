@@ -5,6 +5,9 @@ pyyaml
 yamllint
 coverage
 zizmor
+# Property-based tests for the gates' invariant-carrying logic (scripts/tests/
+# test_properties.py), test-only like coverage.
+hypothesis
 # Linter and type checker for the gate scripts. types-PyYAML is what makes the
 # type check see through yaml.safe_load, which every gate calls.
 ruff

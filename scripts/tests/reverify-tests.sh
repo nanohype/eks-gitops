@@ -75,7 +75,8 @@ ALL_MODULES=(test_policy_admission test_platform_crs test_dashboards
   test_policy_validity test_verdicts test_kyverno_test test_digest_rewrite
   test_digest_rewrite_run test_workflows test_ai_config test_alert_coverage
   test_athena_panel_columns test_catalog_revision test_env_coverage
-  test_externalsecret_keys test_serviceaccount_bindings test_workflow_id_masking)
+  test_externalsecret_keys test_serviceaccount_bindings test_workflow_id_masking
+  test_properties)
 
 # Bytecode caching keys on (mtime, size). A restore and the next mutation inside
 # the same second can hand the run the PREVIOUS mutant's module, and the suite
@@ -3941,6 +3942,71 @@ p.write_text(m)
 PY
 rejects "serviceaccount-bindings: let a pod name an account nothing creates" test_serviceaccount_bindings \
   test_a_pod_naming_an_account_the_chart_does_not_create_fails
+res $F
+
+F=scripts/check-label-values.py
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('LABEL_VALUE = re.compile(r"(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?")\n',
+              'LABEL_VALUE = re.compile(r"^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$")\n', 1)
+start = m.index("    bad = sorted({c for c in elided if not LABEL_CHAR.fullmatch(c)})\n")
+end = m.index("    return None\n", m.index("    head, tail = ")) + len("    return None\n")
+m = m[:start] + (
+    "    if not LABEL_VALUE.match(elided):\n"
+    "        bad = sorted({c for c in elided if not LABEL_CHAR.fullmatch(c)})\n"
+    "        if bad:\n"
+    "            return 'contains ' + ', '.join(f'{c!r}' for c in bad)\n"
+    "        return 'must start and end with an alphanumeric character'\n"
+    "    return None\n"
+) + m[end:]
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "label values: judge the elided text with a \$-anchored match" test_properties \
+  test_a_value_is_refused_exactly_when_the_api_server_refuses_it \
+  test_a_template_is_never_refused_for_what_it_renders
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("    head, tail = raw[: spans[0][0]], raw[spans[-1][1] :]\n",
+              "    head = tail = elided\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "label values: hold an end a template holds to the literal text" test_properties \
+  test_a_template_is_never_refused_for_what_it_renders
+res $F
+
+F=scripts/check-burn-rate-budgets.py
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("    whole, rest = divmod(abs(units), 10**places)\n"
+              "    return f\"{'-' if units < 0 else ''}{whole}.{rest:0{places}d}\"\n",
+              "    return f\"{units / 10**places:.{places}f}\"\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "burn rate: write a percentage through a float" test_properties \
+  test_a_percentage_is_written_exactly
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace("    rest, twos, fives = value.denominator, 0, 0\n",
+              "    return f\"{float(value):g}\"\n    rest, twos, fives = value.denominator, 0, 0\n", 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "burn rate: print a factor rounded to six digits" test_properties \
+  test_a_factor_prints_as_the_expression_writes_it \
+  test_a_printed_factor_reads_back_as_the_value_it_is
 res $F
 
 # scripts/check-workflow-id-masking.py and scripts/mask-aws-ids.py carry no

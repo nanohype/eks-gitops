@@ -47,14 +47,20 @@ REPO = Path(__file__).resolve().parent.parent
 
 # The API server's rule, from k8s.io/apimachinery validation: a label value is
 # either empty, or up to 63 chars of alphanumerics/'-'/'_'/'.' that starts and
-# ends alphanumeric.
-LABEL_VALUE = re.compile(r"^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$")
+# ends alphanumeric. Matched whole with fullmatch: a `$` anchor also matches
+# before a final newline, and "app\n", which a YAML block scalar yields, is no
+# label value.
+LABEL_VALUE = re.compile(r"(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?")
+LABEL_CHAR = re.compile(r"[-A-Za-z0-9_.]")
+ALNUM = re.compile(r"[A-Za-z0-9]")
 MAX_LEN = 63
 
 # A value that is entirely a Go template resolves at render time, so its literal
 # text is not the value the API server sees and this gate cannot judge it. What
-# it CAN judge is the surrounding literal text: `{{ .x }}-suffix` is checked with
-# the template elided, so a slash typed next to a placeholder is still caught.
+# it CAN judge is the literal text around a template: every character of it, its
+# length, and an end of the value that it holds. So `{{ .x }}/canary` is still
+# refused for its slash and `-{{ .x }}` for its leading dash, while
+# `{{ .x }}-canary` starts with whatever .x renders, which this gate cannot see.
 TEMPLATE = re.compile(r"\{\{[^}]*\}\}")
 
 SKIP_DIRS = {".git", "node_modules", "rendered", "__pycache__", ".task"}
@@ -99,10 +105,18 @@ def check_value(raw) -> str | None:
 
     if len(elided) > MAX_LEN:
         return f"{len(elided)} chars of literal text exceeds the {MAX_LEN}-char limit"
-    if not LABEL_VALUE.match(elided):
-        bad = sorted({c for c in elided if not re.match(r"[-A-Za-z0-9_.]", c)})
-        if bad:
-            return "contains " + ", ".join(f"{c!r}" for c in bad)
+    bad = sorted({c for c in elided if not LABEL_CHAR.fullmatch(c)})
+    if bad:
+        return "contains " + ", ".join(f"{c!r}" for c in bad)
+    spans = [m.span() for m in TEMPLATE.finditer(raw)]
+    if not spans:
+        if LABEL_VALUE.fullmatch(raw):
+            return None
+        return "must start and end with an alphanumeric character"
+    # An end a template holds is whatever it renders; an end the literal text
+    # holds is the value's own.
+    head, tail = raw[: spans[0][0]], raw[spans[-1][1] :]
+    if (head and not ALNUM.fullmatch(head[0])) or (tail and not ALNUM.fullmatch(tail[-1])):
         return "must start and end with an alphanumeric character"
     return None
 

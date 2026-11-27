@@ -109,6 +109,10 @@ EXPECTED = (
     # The arithmetic behind a figure an on-call reads at the worst moment, and
     # the anchoring that keeps it from being a constant compared to nothing.
     "test_burn_rate_budgets",
+    # What must hold for every input to the four pieces of logic an invariant
+    # rests on: the digest pin, the transport classifier, the label grammar and
+    # the burn-rate figure. Hypothesis searches for the input that breaks one.
+    "test_properties",
     # A name restated in eleven places, and the two readers it takes to find
     # them all — half the corpus is chart source that does not parse as YAML.
     "test_secret_store_refs",
@@ -222,7 +226,7 @@ BRANCH_FLOOR = 60
 PER_GATE_FLOORS: dict[str, tuple[int, int]] = {
     "scripts/check-named-things.py": (42, 34),
     "scripts/check-renovate-coverage.py": (90, 84),
-    "scripts/check-label-values.py": (56, 54),
+    "scripts/check-label-values.py": (59, 58),
     "scripts/check-sync-waves.py": (14, 1),
     "scripts/gatelib.py": (73, 80),
     # The registry client checks every chart archive against a digest and
