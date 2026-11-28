@@ -663,9 +663,18 @@ class WhatCannotBeReadReachesAVerdict(unittest.TestCase):
                 [],
             )
 
-        saved = (gate.inventory, gate.render_addons.discover, dict(gate.ALLOWED_MUTABLE), sys.argv)
+        saved = (
+            gate.inventory,
+            gate.render_addons.discover,
+            dict(gate.ALLOWED_MUTABLE),
+            sys.argv,
+            gate.catalog.discover,
+        )
         gate.inventory = inventory
         gate.render_addons.discover = lambda *a, **k: units
+        # The stubbed discovery is this case's whole population, the catalog's
+        # own charts included.
+        gate.catalog.discover = lambda *a, **k: []
         gate.ALLOWED_MUTABLE.clear()
         sys.argv = ["check-image-pins.py"]
         try:
@@ -673,6 +682,7 @@ class WhatCannotBeReadReachesAVerdict(unittest.TestCase):
                 rc = gate.main()
         finally:
             gate.inventory, gate.render_addons.discover, argv = saved[0], saved[1], saved[3]
+            gate.catalog.discover = saved[4]
             gate.ALLOWED_MUTABLE.update(saved[2])
             sys.argv = argv
         self.assertEqual(rc, gate.gatelib.CANNOT_RUN, out.getvalue())
@@ -736,9 +746,13 @@ class WhatTheInventoryRenders(unittest.TestCase):
             gate.registry.chart_archive,
             gate.gatelib.subprocess.run,
             gate.gatelib.require,
+            gate.catalog.discover,
         )
         gate.ROOT = root
         gate.render_addons.discover = lambda *a, **k: [self.Unit()]
+        # One upstream unit is this case's whole population; the catalog's own
+        # charts are rendered by TheCatalogsOwnCharts below.
+        gate.catalog.discover = lambda *a, **k: []
         gate.registry.chart_archive = chart_archive
         gate.gatelib.subprocess.run = run
         gate.gatelib.require = lambda *a, **k: None
@@ -751,6 +765,7 @@ class WhatTheInventoryRenders(unittest.TestCase):
                 gate.registry.chart_archive,
                 gate.gatelib.subprocess.run,
                 gate.gatelib.require,
+                gate.catalog.discover,
             ) = saved
 
     def test_helm_renders_the_fetched_archive(self):
@@ -834,6 +849,98 @@ spec.loader.exec_module(g)
 found = [c for grp in g.IMAGE_REF.findall(sys.argv[2]) for c in grp if c]
 print(len(found))
 """
+
+
+DIGEST = "sha256:" + "ab" * 32
+
+
+class TheCatalogsOwnCharts(unittest.TestCase):
+    """The charts this repository authors are in the population, held to a digest.
+
+    No ApplicationSet installs a catalog chart, so render-addons' discovery never
+    names one. They are rendered the one way scripts/catalog.py renders them, and
+    every image one renders carries its digest: an upstream chart's defaults are
+    not ours to repin, but a catalog chart's values are.
+    """
+
+    def setUp(self):
+        self.chart = gate.catalog.CatalogChart(
+            pathlib.Path("/repo"), pathlib.Path("/repo/catalog/app/chart")
+        )
+        self.renders: list[tuple[str, str]] = []
+        self.answer: str | Exception = render(
+            DEPLOYMENT.replace("ghcr.io/example/app:1.0.0", f"app/img:1@{DIGEST}")
+        )
+        saved = (gate.render_addons.discover, gate.catalog.discover, gate.catalog.render)
+
+        def catalog_render(chart, env):
+            self.renders.append((chart.path, env))
+            if isinstance(self.answer, Exception):
+                raise self.answer
+            return self.answer
+
+        gate.render_addons.discover = lambda *a, **k: []
+        gate.catalog.discover = lambda *a, **k: [self.chart]
+        gate.catalog.render = catalog_render
+
+        def restore():
+            gate.render_addons.discover, gate.catalog.discover, gate.catalog.render = saved
+
+        self.addCleanup(restore)
+
+    def test_the_units_are_the_fleets_pins_then_the_catalogs(self):
+        upstream = Unit("karpenter")
+        gate.render_addons.discover = lambda *a, **k: [upstream]
+        self.assertEqual(gate.units(), [upstream, self.chart])
+
+    def test_a_catalog_chart_renders_for_the_environment_and_records_its_images(self):
+        images, unrendered, unclassified = gate.inventory("staging")
+        self.assertEqual(self.renders, [("catalog/app/chart", "staging")])
+        self.assertEqual(images, {f"app/img:1@{DIGEST}": {"app"}})
+        self.assertEqual((unrendered, unclassified), ([], []))
+
+    def test_a_catalog_chart_that_does_not_render_was_not_examined(self):
+        self.answer = gate.catalog.RenderFailed("Error: broken")
+        images, unrendered, _ = gate.inventory("production")
+        self.assertEqual(images, {})
+        self.assertEqual(unrendered, [("catalog/app/chart", "Error: broken")])
+
+    def test_a_catalog_render_that_never_finished_was_not_examined(self):
+        self.answer = gate.catalog.CannotRender("helm template ran past the 120s")
+        _, unrendered, _ = gate.inventory("production")
+        self.assertEqual(unrendered, [("catalog/app/chart", "helm template ran past the 120s")])
+
+    def test_an_image_a_first_party_chart_renders_with_its_digest_passes(self):
+        self.assertEqual(gate.first_party_verdict({f"app/img:1@{DIGEST}": {"app"}}, {"app"}), [])
+
+    def test_a_tag_alone_on_a_first_party_image_is_refused(self):
+        (failure,) = gate.first_party_verdict({"app/img:1": {"app"}}, {"app"})
+        self.assertIn("app/img:1 (via app) is rendered by a chart this repository authors", failure)
+        self.assertIn("`<repo>:<tag>@sha256:<hex>`", failure)
+
+    def test_a_mutable_first_party_image_is_refused_too(self):
+        (failure,) = gate.first_party_verdict({"app/img": {"app"}}, {"app"})
+        self.assertIn("app/img (via app)", failure)
+
+    def test_an_upstream_charts_tag_is_not_held_to_a_digest(self):
+        self.assertEqual(gate.first_party_verdict({"up/img:1": {"karpenter"}}, {"app"}), [])
+
+    def test_an_image_a_first_party_chart_shares_with_upstream_is_held(self):
+        (failure,) = gate.first_party_verdict({"img:1": {"app", "karpenter"}}, {"app"})
+        self.assertIn("img:1 (via app)", failure)
+
+    def test_main_fails_a_first_party_image_pinned_by_tag(self):
+        self.answer = render(DEPLOYMENT.replace("ghcr.io/example/app:1.0.0", "app/img:1"))
+        saved = (gate.chart_coverage, sys.argv)
+        gate.chart_coverage = lambda *a, **k: []
+        sys.argv = ["check-image-pins.py"]
+        try:
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                rc = gate.main()
+        finally:
+            gate.chart_coverage, sys.argv = saved
+        self.assertEqual(rc, 1, out.getvalue())
+        self.assertIn("is rendered by a chart this repository authors", out.getvalue())
 
 
 class TheHostGrammarHasOneParse(unittest.TestCase):

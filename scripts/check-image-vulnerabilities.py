@@ -583,7 +583,7 @@ def main() -> int:
             "below covers them is unknown:",
             *(f"  {chart}: {detail}" for chart, detail in unclassified),
         )
-    units = image_pins.render_addons.discover()
+    units = image_pins.units()
     coverage = image_pins.chart_coverage(images, units, seen)
     if coverage:
         cannot_run(

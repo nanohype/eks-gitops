@@ -9,7 +9,10 @@ WHY THE RENDERED STACK IS THE INPUT
 A values file names an image only when this catalog overrides one. Almost every
 image reaching a cluster comes from a chart's own defaults, so scanning
 `addons/**/values.yaml` scans the handful this repo happens to have opinions
-about and misses the rest. The population is what `helm template` produces.
+about and misses the rest. The population is what `helm template` produces:
+every chart an ApplicationSet pins, rendered as render-addons.py renders it, and
+every chart this repository authors under catalog/, rendered with its tenant
+inputs as scripts/catalog.py renders it.
 
 That is also how this gate found its first defect: the kyverno chart leaves its
 readiness-checker tag unset, which resolves to `:latest`, and no values file in
@@ -34,6 +37,11 @@ chart's values and go stale the moment a chart bumps. The line this gate draws
 is the one that catches real drift: a reference with no tag, or an explicitly
 mutable one (`latest`, `main`, `master`, `edge`, `stable`, `dev`), resolves to
 something different tomorrow with nothing in this repo changing.
+
+A chart this repository authors is held to the digest. The reason not to demand
+one of an upstream chart is that its defaults are not ours to repin; a catalog
+chart's values are, so an image one renders carries `<repo>:<tag>@sha256:<hex>`,
+the form Renovate's docker datasource moves tag and digest together in.
 
 WHAT CANNOT BE READ IS NOT THEREFORE ABSENT
 
@@ -75,6 +83,8 @@ from collections.abc import Collection
 import gatelib
 import registry
 import yaml
+
+import catalog
 
 # Reuse render-addons' discovery rather than re-deriving which chart a path
 # belongs to: each Unit it yields carries the chart, its source and version, the
@@ -130,6 +140,15 @@ ALLOWED_MUTABLE: dict[str, str] = {
     "StatefulSet it creates. The chart pins two other tags of this image and "
     "leaves the exporter's unset. Clears on a chart version that pins it.",
 }
+
+
+def units() -> list:
+    """Every chart whose render this gate reads: the fleet's pins, then the catalog's.
+
+    Both carry `.chart` and `.path`, which is all chart_coverage and the
+    vulnerability gate's count read of a unit.
+    """
+    return [*render_addons.discover(), *catalog.discover()]
 
 
 def inventory(
@@ -194,6 +213,18 @@ def inventory(
             continue
         for ref_str in extract_images(proc.stdout, u.chart, unrendered, unclassified, seen):
             images.setdefault(ref_str, set()).add(u.chart)
+
+    # The catalog's own charts, which no ApplicationSet installs, rendered the one
+    # way scripts/catalog.py renders them. A chart there that does not render is a
+    # chart this run did not examine, the same as an upstream one.
+    for chart in catalog.discover():
+        try:
+            manifests = catalog.render(chart, env)
+        except (catalog.RenderFailed, catalog.CannotRender) as exc:
+            unrendered.append((chart.path, str(exc)[:200]))
+            continue
+        for ref_str in extract_images(manifests, chart.chart, unrendered, unclassified, seen):
+            images.setdefault(ref_str, set()).add(chart.chart)
     return images, unrendered, unclassified
 
 
@@ -606,6 +637,21 @@ def verdict(images: dict[str, set[str]], allowed: dict[str, str]) -> list[str]:
     return failures
 
 
+def first_party_verdict(images: dict[str, set[str]], first_party: Collection[str]) -> list[str]:
+    """Every image a chart this repository authors renders, held to its digest."""
+    failures = []
+    for ref in sorted(images):
+        authors = sorted(images[ref] & set(first_party))
+        if authors and classify(ref) != "digest":
+            failures.append(
+                f"{ref} (via {', '.join(authors)}) is rendered by a chart this "
+                f"repository authors, so it is pinned by digest. Write it as "
+                f"`<repo>:<tag>@sha256:<hex>` in the chart's values, the form "
+                f"Renovate's docker datasource moves tag and digest together in."
+            )
+    return failures
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--list", action="store_true", help="print the image inventory")
@@ -637,10 +683,9 @@ def main() -> int:
             print(f"        {path}: {err}")
         return 2
 
-    failures = chart_coverage(
-        images, render_addons.discover(), seen, unrendered={path for path, _ in unrendered}
-    )
+    failures = chart_coverage(images, units(), seen, unrendered={path for path, _ in unrendered})
     failures += verdict(images, ALLOWED_MUTABLE)
+    failures += first_party_verdict(images, {c.chart for c in catalog.discover()})
 
     # A reference the classifier cannot place is a verdict this gate owes and has
     # not given: the chart rendered, the string is image-shaped, and whether

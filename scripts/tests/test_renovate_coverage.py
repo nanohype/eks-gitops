@@ -10,6 +10,7 @@ import contextlib
 import io
 import json
 import pathlib
+import re
 import tempfile
 import unittest
 
@@ -867,6 +868,20 @@ class RepointingAnyManagerInTheShippedConfig(unittest.TestCase):
         rc, _ = self.run_with(self.cfg)
         self.assertEqual(rc, 0, f"unmutated run failed: {cov.failures}")
 
+    def test_the_catalogs_image_is_counted_in_what_passed(self):
+        rc, out = self.run_with(self.cfg)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("catalog OK: 1 image(s) the catalog's own charts render", out)
+
+    def test_a_catalog_image_whose_manager_is_removed_is_caught(self):
+        self.cfg["customManagers"] = [
+            m for m in self.cfg["customManagers"] if m.get("depNameTemplate") != "apache/druid"
+        ]
+        rc, out = self.run_with(self.cfg)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("catalog/druid/values.yaml: catalog image apache/druid:", out)
+        self.assertIn("is read by no customManager", out)
+
     def test_the_success_sentence_names_every_non_chart_family(self):
         """Built from OTHER_FAMILIES, so a family declared there is one it names."""
         rc, out = self.run_with(self.cfg)
@@ -1495,6 +1510,191 @@ class EachFamilyRunsItsOwnChecker(unittest.TestCase):
         self.assertEqual(len(failures), 1)
         self.assertIn(f"CATALOG_REF pins {sha} with no `# renovate:` annotation", failures[0])
         self.assertIn("this schema catalog ref is watched by nothing", failures[0])
+
+
+DIGEST = "sha256:" + "ab" * 32
+APP_IMAGE = f"app/img:1.0.0@{DIGEST}"
+
+
+class TheCatalogsImages(unittest.TestCase):
+    """An image a catalog chart renders is a pin, read where it is written.
+
+    The image's chart is installed by no ApplicationSet, so no chart pin names
+    it, and only the image's own reference moves it. These hold that a reference
+    the render carries is found once in the chart's files, read there by a
+    manager that yields its tag and digest and opens the file, and agreed with by
+    every other pin of the same image.
+    """
+
+    VALUES = f'image:\n  uri: {APP_IMAGE}\nversion: "1.0.0"\n'
+    CHART = "apiVersion: v2\nname: app\nversion: 1.0.0\n"
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = pathlib.Path(tmp.name).resolve()
+        self.chart_dir = self.root / "catalog" / "app" / "chart"
+        self.chart_dir.mkdir(parents=True)
+        self.write("catalog/app/values.yaml", self.VALUES)
+        self.write("catalog/app/chart/Chart.yaml", self.CHART)
+        saved = cov.ROOT
+        cov.ROOT = self.root
+        self.addCleanup(setattr, cov, "ROOT", saved)
+        cov.failures.clear()
+        self.addCleanup(cov.failures.clear)
+
+    def write(self, rel, text):
+        path = self.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    def manager(self, patterns=None, dep="app/img"):
+        strings = [
+            r"\n  uri:\s*app/img:(?<currentValue>[^@\s]+)@(?<currentDigest>sha256:[a-f0-9]{64})",
+            r"\nversion:\s*\"?(?<currentValue>[0-9][^\"\s]*)\"?",
+        ]
+        matchers = [re.compile(re.sub(r"\(\?<(?=[A-Za-z_])", "(?P<", s)) for s in strings]
+        patterns = (
+            ["/^catalog/app/values\\.yaml$/", "/^catalog/app/chart/Chart\\.yaml$/"]
+            if patterns is None
+            else patterns
+        )
+        return cov.CustomManager("customManagers[9]", patterns, matchers, dep)
+
+    def images(self, *refs):
+        chart = cov.catalog.CatalogChart(self.root, self.chart_dir)
+        return [cov.CatalogImage(chart, ref, *cov.split_image(ref)) for ref in refs]
+
+    def test_an_image_read_where_it_is_written_is_covered(self):
+        count = cov.check_catalog_images(self.images(APP_IMAGE), [self.manager()])
+        self.assertEqual(count, 1)
+        self.assertEqual(cov.failures, [])
+
+    def test_an_image_no_manager_reads_is_unwatched(self):
+        cov.check_catalog_images(self.images(APP_IMAGE), [])
+        (failure,) = cov.failures
+        self.assertIn("catalog/app/values.yaml: catalog image", failure)
+        self.assertIn("is read by no customManager that yields its", failure)
+
+    def test_a_manager_reading_another_digest_does_not_cover_it(self):
+        other = f"app/img:1.0.0@sha256:{'cd' * 32}"
+        self.write("catalog/app/values.yaml", self.VALUES.replace(APP_IMAGE, other))
+        self.write("catalog/app/rendered-elsewhere.txt", APP_IMAGE)
+        cov.check_catalog_images(self.images(APP_IMAGE), [self.manager()])
+        (failure,) = cov.failures
+        self.assertIn("catalog/app/rendered-elsewhere.txt: catalog image", failure)
+        self.assertIn("is read by no customManager", failure)
+
+    def test_a_reader_that_opens_no_such_file_is_not_coverage(self):
+        cov.check_catalog_images(self.images(APP_IMAGE), [self.manager(patterns=["/^nowhere$/"])])
+        (failure,) = cov.failures
+        self.assertIn("none of the managerFilePatterns it runs with reaches that file", failure)
+
+    def test_an_image_written_twice_is_refused(self):
+        self.write("catalog/app/chart/values-copy.yaml", f"uri: {APP_IMAGE}\n")
+        cov.check_catalog_images(self.images(APP_IMAGE), [self.manager()])
+        (failure,) = cov.failures
+        self.assertIn(
+            "is written in catalog/app/chart/values-copy.yaml, catalog/app/values.yaml", failure
+        )
+
+    def test_an_image_written_nowhere_is_refused(self):
+        self.write("catalog/app/values.yaml", "image: {}\n")
+        cov.check_catalog_images(self.images(APP_IMAGE), [self.manager()])
+        (failure,) = cov.failures
+        self.assertIn("is written in none of them", failure)
+
+    def test_a_chart_version_left_behind_its_image_is_refused(self):
+        self.write("catalog/app/chart/Chart.yaml", self.CHART.replace("1.0.0", "0.9.0"))
+        cov.check_catalog_images(self.images(APP_IMAGE), [self.manager()])
+        (failure,) = cov.failures
+        self.assertIn(
+            "catalog/app/chart/Chart.yaml: pins app/img at 0.9.0, while the render runs 1.0.0",
+            failure,
+        )
+
+    def test_a_pin_of_another_image_is_not_held_to_this_one(self):
+        cov.check_catalog_images(
+            self.images(APP_IMAGE), [self.manager(), self.manager(dep="other/img")]
+        )
+        self.assertEqual(cov.failures, [])
+
+    def test_a_file_the_manager_does_not_open_is_not_held_either(self):
+        self.write("catalog/app/notes.md", "\nversion: 0.1.0\n")
+        cov.check_catalog_images(self.images(APP_IMAGE), [self.manager()])
+        self.assertEqual(cov.failures, [])
+
+    def test_charts_that_render_no_image_checked_nothing(self):
+        cov.check_catalog_images([], [self.manager()])
+        (failure,) = cov.failures
+        self.assertIn("the catalog's 1 chart(s) rendered no image", failure)
+
+    def test_no_catalog_is_not_a_failure(self):
+        empty = pathlib.Path(tempfile.mkdtemp())
+        cov.ROOT = empty
+        self.assertEqual(cov.check_catalog_images([], [self.manager()]), 0)
+        self.assertEqual(cov.failures, [])
+
+
+class ReadingTheCatalogsRender(unittest.TestCase):
+    def test_a_reference_splits_into_repository_tag_and_digest(self):
+        self.assertEqual(cov.split_image(APP_IMAGE), ("app/img", "1.0.0", DIGEST))
+        self.assertEqual(cov.split_image("reg:5000/app/img:2"), ("reg:5000/app/img", "2", None))
+        self.assertEqual(cov.split_image("reg:5000/app/img"), ("reg:5000/app/img", None, None))
+        self.assertEqual(cov.split_image(f"img@{DIGEST}"), ("img", None, DIGEST))
+
+    def test_every_image_key_at_any_depth_is_read(self):
+        manifests = yaml.safe_dump_all(
+            [
+                {"spec": {"template": {"spec": {"containers": [{"image": "a:1"}]}}}},
+                {"data": {"nested": [{"image": "b:2"}, {"image": {"not": "a string"}}]}},
+                None,
+            ]
+        )
+        self.assertEqual(cov.rendered_images(manifests), {"a:1", "b:2"})
+
+    def _charts(self, answer):
+        chart = cov.catalog.CatalogChart(ROOT, ROOT / "catalog" / "druid" / "chart")
+        saved = (cov.catalog.discover, cov.catalog.render)
+        cov.catalog.discover = lambda root=None: [chart]
+
+        def render(c, env):
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+
+        cov.catalog.render = render
+        self.addCleanup(setattr, cov.catalog, "discover", saved[0])
+        self.addCleanup(setattr, cov.catalog, "render", saved[1])
+        cov.failures.clear()
+        self.addCleanup(cov.failures.clear)
+
+    def test_each_rendered_image_becomes_one_pin(self):
+        self._charts(yaml.safe_dump({"image": APP_IMAGE}))
+        (img,) = cov.catalog_images()
+        self.assertEqual(
+            (img.ref, img.repo, img.tag, img.digest), (APP_IMAGE, "app/img", "1.0.0", DIGEST)
+        )
+
+    def test_a_chart_that_does_not_render_is_a_failure_naming_it(self):
+        self._charts(cov.catalog.RenderFailed("Error: broken"))
+        self.assertEqual(cov.catalog_images(), [])
+        (failure,) = cov.failures
+        self.assertIn("catalog/druid/chart: does not render", failure)
+
+    def test_a_render_that_never_finished_cannot_run(self):
+        self._charts(cov.catalog.CannotRender("helm template ran past"))
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as raised:
+            cov.catalog_images()
+        self.assertEqual(raised.exception.code, 2)
+
+    def test_the_real_catalog_is_watched(self):
+        """Over the tree on disk, with the shipped config: druid's one image."""
+        cov.failures.clear()
+        self.addCleanup(cov.failures.clear)
+        count = cov.check_catalog_images(cov.catalog_images(), cov.load_custom_managers())
+        self.assertEqual(cov.failures, [])
+        self.assertEqual(count, 1)
 
 
 if __name__ == "__main__":

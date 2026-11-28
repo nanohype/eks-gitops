@@ -86,6 +86,8 @@ from typing import NamedTuple, NoReturn
 import gatelib
 import yaml
 
+import catalog
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 APPSETS = ROOT / "applicationsets"
 
@@ -158,6 +160,9 @@ class CustomManager(NamedTuple):
     where: str  # how renovate.json identifies it
     file_patterns: list[str]
     matchers: list[re.Pattern[str]]
+    # depNameTemplate, when the manager names its dependency rather than
+    # capturing it: what a match it makes is a pin OF.
+    dep_name: str | None = None
 
 
 def load_custom_managers() -> list[CustomManager]:
@@ -194,7 +199,12 @@ def load_custom_managers() -> list[CustomManager]:
                     fail(f"{where}: matchString is not a valid regex ({exc}):\n      {s}")
         patterns = m.get("managerFilePatterns")
         out.append(
-            CustomManager(where, list(patterns) if isinstance(patterns, list) else [], matchers)
+            CustomManager(
+                where,
+                list(patterns) if isinstance(patterns, list) else [],
+                matchers,
+                m.get("depNameTemplate") if isinstance(m.get("depNameTemplate"), str) else None,
+            )
         )
     return out
 
@@ -1213,6 +1223,155 @@ def enabled_managers() -> set[str]:
     return set(cfg.get("enabledManagers") or [])
 
 
+# ── The catalog's own charts ───────────────────────────────────────────────
+#
+# A chart under catalog/ is installed by no ApplicationSet, so no chart pin names
+# what it runs: the image a catalog chart renders IS the pin, written in that
+# chart's own files. Derived like the chart pins, from what renders rather than
+# from a list of keys somebody remembered: scripts/catalog.py renders each chart
+# with its tenant inputs, every `image` the render carries is located in the
+# chart's files, and a customManager that reaches that file must read the image's
+# tag and digest out of it. Any other pin of the same dependency in the chart's
+# files must name the tag the render runs, which is what holds a chart version
+# that tracks its image to the image.
+
+# The environment the catalog's charts are rendered for here. What a chart pins
+# is in its base values, which every environment reads.
+CATALOG_ENV = "production"
+
+
+class CatalogImage(NamedTuple):
+    chart: catalog.CatalogChart
+    ref: str  # as the render carries it
+    repo: str
+    tag: str | None
+    digest: str | None
+
+
+def split_image(ref: str) -> tuple[str, str | None, str | None]:
+    """(repository, tag, digest) of an image reference, either of the last two absent."""
+    name, _, digest = ref.partition("@")
+    repo, tag = name, None
+    if ":" in name.rsplit("/", 1)[-1]:
+        repo, tag = name.rsplit(":", 1)
+    return repo, tag, digest or None
+
+
+def rendered_images(manifests: str) -> set[str]:
+    """Every string an `image` key carries, at any depth of any document."""
+    found: set[str] = set()
+
+    def walk(node) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == "image" and isinstance(value, str):
+                    found.add(value)
+                walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    for doc in yaml.safe_load_all(manifests):
+        walk(doc)
+    return found
+
+
+def catalog_images() -> list[CatalogImage]:
+    images: list[CatalogImage] = []
+    for chart in catalog.discover(ROOT):
+        try:
+            manifests = catalog.render(chart, CATALOG_ENV)
+        except catalog.CannotRender as exc:
+            _cannot_run(chart.path, f"{exc}, so the images it runs are unknown")
+        except catalog.RenderFailed as exc:
+            fail(f"{chart.path}: does not render, so the images it runs are unknown: {exc}")
+            continue
+        for ref in sorted(rendered_images(manifests)):
+            images.append(CatalogImage(chart, ref, *split_image(ref)))
+    return images
+
+
+def reaches(cm: CustomManager, rel: str) -> bool:
+    return any(compile_file_pattern(raw).search(rel) for raw in cm.file_patterns)
+
+
+def catalog_matches(cm: CustomManager, text: str) -> list[dict[str, str | None]]:
+    """What `cm` reads out of `text`: each match's dependency, value and digest."""
+    out = []
+    for matcher in cm.matchers:
+        for hit in matcher.finditer(text):
+            groups = hit.groupdict()
+            out.append(
+                {
+                    "dep": groups.get("depName") or cm.dep_name,
+                    "value": groups.get("currentValue"),
+                    "digest": groups.get("currentDigest"),
+                }
+            )
+    return out
+
+
+def check_catalog_images(images: list[CatalogImage], managers: list[CustomManager]) -> int:
+    """Every image a catalog chart renders is read by a manager, and agreed with."""
+    charts = catalog.discover(ROOT)
+    if charts and not images:
+        fail(
+            f"the catalog's {len(charts)} chart(s) rendered no image, so no pin in them "
+            f"was checked. A chart shipping a workload renders at least one."
+        )
+    for img in images:
+        chart_dir = img.chart.chart_dir.parent
+        files = {
+            f.relative_to(ROOT).as_posix(): f.read_text()
+            for f in sorted(chart_dir.rglob("*"))
+            if f.is_file()
+        }
+        holding = [rel for rel, text in files.items() if img.ref in text]
+        what = f"catalog image {img.ref}"
+        if len(holding) != 1:
+            where = ", ".join(holding) if holding else "none of them"
+            fail(
+                f"{img.chart.path}: {what} is written in {where}. A pin is read "
+                f"where it is written, so it is written once, whole, in the chart's "
+                f"own files."
+            )
+            continue
+        (rel,) = holding
+        readers = [
+            cm
+            for cm in managers
+            if any(
+                m["dep"] == img.repo and m["value"] == img.tag and m["digest"] == img.digest
+                for m in catalog_matches(cm, files[rel])
+            )
+        ]
+        if not readers:
+            fail(
+                f"{rel}: {what} is read by no customManager that yields its "
+                f"repository, tag and digest, so nothing moves it."
+            )
+            continue
+        # One reader that opens the file is coverage. Asserted against that one,
+        # or, when none opens it, against the first, which fails naming its
+        # patterns.
+        cm = next((r for r in readers if reaches(r, rel)), readers[0])
+        assert_reach(
+            f"custom.regex {cm.where}", FilePatterns(cm.file_patterns, "renovate.json"), rel, what
+        )
+        for other, text in files.items():
+            for cm in managers:
+                if not reaches(cm, other):
+                    continue
+                for m in catalog_matches(cm, text):
+                    if m["dep"] == img.repo and m["value"] != img.tag:
+                        fail(
+                            f"{other}: pins {img.repo} at {m['value']}, while the "
+                            f"render runs {img.tag}. One release, written twice, "
+                            f"names two."
+                        )
+    return len(images)
+
+
 def main() -> int:
     managers = load_custom_managers()
     if failures:
@@ -1281,6 +1440,9 @@ def main() -> int:
     others = check_other_families(managers)
     oci = check_oci_repourl_shape(pins)
     derived = check_derived_pins(workflow_pins())
+    # The catalog's pins are found in its render, which helm makes.
+    gatelib.require("helm")
+    catalogued = check_catalog_images(catalog_images(), managers)
 
     if failures:
         report()
@@ -1304,6 +1466,11 @@ def main() -> int:
         f"every one watched by a manager that resolves. {oci} of the chart pins "
         f"are OCI and also assert repoURL repeats their chart name; "
         f"{len(NO_PINS)} file(s) are asserted to pin nothing"
+    )
+    print(
+        f"catalog OK: {catalogued} image(s) the catalog's own charts render, each "
+        f"read where it is written by a customManager that yields its tag and "
+        f"digest, and every other pin of the same image naming the tag it runs"
     )
     print(
         f"toolchain OK: {derived} pin(s) derived from what the workflows resolve — "

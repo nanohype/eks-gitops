@@ -181,6 +181,24 @@ advisories:
     images:
       - ghcr.io/grafana/grafana-operator
 
+  - id: CVE-2019-20444
+    package: io.netty:netty
+    reason: >-
+      netty 3.10.5.Final, the copy bundled in the ambari-metrics-emitter
+      extension's ambari-metrics-common-2.7.0.0.0.jar, in apache/druid 36.0.0 and
+      39.0.0 alike. Druid loads only the extensions druid.extensions.loadList
+      names. Every process catalog/druid runs, the task pods the overlord
+      launches included, reads that list from the common properties it mounts,
+      and the list does not name ambari-metrics-emitter, so no class in the jar
+      is loaded and the HTTP decoder the advisory is in never runs. The published
+      fix is netty 4, a different artifact the extension does not use, so no
+      apache/druid release clears it while the image ships the extension. Wrong
+      the day the loadList names ambari-metrics-emitter; clears when an
+      apache/druid release ships without that jar.
+    review_by: 2026-12-27
+    images:
+      - apache/druid
+
   # ── Images a controller starts ────────────────────────────────────────
   #
   # Every entry below was invisible until the population took in the images a

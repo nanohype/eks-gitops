@@ -95,6 +95,20 @@
         "#\\s*renovate:\\s*datasource=git-refs\\s+depName=(?<depName>[^\\s]+)\\s+packageName=(?<packageName>[^\\s]+)\\s+branch=(?<currentValue>[^\\s]+)\\s*\\n[A-Z0-9_]+_REF=\"(?<currentDigest>[0-9a-f]{40})\""
       ],
       "datasourceTemplate": "git-refs"
+    },
+    {
+      "customType": "regex",
+      "description": [
+        "The apache/druid image catalog/druid runs, pinned in its values.yaml as a tag and the digest that tag resolved to, and the two version fields that name the same release: values.yaml's version, which every object the chart renders carries as its nanohype.dev/version label, and the chart's own Chart.yaml version.",
+        "All three are one depName on the docker datasource, so Renovate moves them in one pull request, and a major arrives as its own pull request to be read against Druid's upgrade notes. check-renovate-coverage.py holds every image a catalog chart renders to a manager like this one, and every pin of the same image to the tag the render runs."
+      ],
+      "managerFilePatterns": ["/^catalog/druid/values\\.yaml$/", "/^catalog/druid/chart/Chart\\.yaml$/"],
+      "matchStrings": [
+        "\\n  uri:\\s*apache/druid:(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]{64})",
+        "\\nversion:\\s*\"?(?<currentValue>[0-9][^\"\\s]*)\"?"
+      ],
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "apache/druid"
     }
   ],
   "packageRules": [

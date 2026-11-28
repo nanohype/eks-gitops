@@ -4082,6 +4082,130 @@ rejects "catalog: write every chart to one --out file" test_catalog \
   test_an_out_path_without_the_chart_name_is_refused
 res $F
 
+F=scripts/check-image-pins.py
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    return [*render_addons.discover(), *catalog.discover()]\n',
+              '    return list(render_addons.discover())\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "image-pins: leave the catalog's charts out of the units" test_image_extraction \
+  test_the_units_are_the_fleets_pins_then_the_catalogs
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('            images.setdefault(ref_str, set()).add(chart.chart)\n',
+              '            pass\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "image-pins: render a catalog chart and drop its images" test_image_extraction \
+  test_a_catalog_chart_renders_for_the_environment_and_records_its_images
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('            unrendered.append((chart.path, str(exc)[:200]))\n            continue\n',
+              '            continue\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "image-pins: pass over a catalog chart that did not render" test_image_extraction \
+  test_a_catalog_chart_that_does_not_render_was_not_examined
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        if authors and classify(ref) != "digest":\n',
+              '        if authors and classify(ref) == "mutable":\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "image-pins: hold a first-party image to a tag" test_image_extraction \
+  test_a_tag_alone_on_a_first_party_image_is_refused
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    failures += first_party_verdict(images, {c.chart for c in catalog.discover()})\n',
+              '', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "image-pins: never ask the first-party question" test_image_extraction \
+  test_main_fails_a_first_party_image_pinned_by_tag
+res $F
+
+F=scripts/check-renovate-coverage.py
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace(' and m["digest"] == img.digest',
+              '', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "renovate-coverage: take a reader of another digest as coverage" test_renovate_coverage \
+  test_a_manager_reading_another_digest_does_not_cover_it
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        if len(holding) != 1:\n',
+              '        if not holding:\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "renovate-coverage: read a catalog image written twice" test_renovate_coverage \
+  test_an_image_written_twice_is_refused
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('                    if m["dep"] == img.repo and m["value"] != img.tag:\n',
+              '                    if False:\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "renovate-coverage: leave a chart version behind its image" test_renovate_coverage \
+  test_a_chart_version_left_behind_its_image_is_refused
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('        cm = next((r for r in readers if reaches(r, rel)), readers[0])\n        assert_reach(\n',
+              '        cm = next((r for r in readers if reaches(r, rel)), readers[0])\n        continue\n        assert_reach(\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "renovate-coverage: count a reader that opens no such file" test_renovate_coverage \
+  test_a_reader_that_opens_no_such_file_is_not_coverage
+res $F
+
+edit $F <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+m = s.replace('    catalogued = check_catalog_images(catalog_images(), managers)\n',
+              '    catalogued = 0\n', 1)
+assert m != s, "mutation did not land"
+p.write_text(m)
+PY
+rejects "renovate-coverage: skip the catalog's images in main" test_renovate_coverage \
+  test_a_catalog_image_whose_manager_is_removed_is_caught
+res $F
+
 # scripts/check-workflow-id-masking.py and scripts/mask-aws-ids.py carry no
 # probe here. Both are vendored (scripts/vendored.json): an edit to either is
 # refused by the record check before any rule is reached, so a probe planted in

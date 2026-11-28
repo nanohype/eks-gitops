@@ -783,6 +783,12 @@ jobs:
       # Renovate does not use and prints the same success as a correct one.
       - name: Recorded manager defaults and pip-compile headers match the shipped package
         run: node scripts/check-renovate-defaults.mjs
+      # The catalog's own charts pin their images in their values, and the gate
+      # finds those pins in what scripts/catalog.py renders, so it needs helm.
+      - name: Install Helm
+        uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5
+        with:
+          version: ${{ env.HELM_VERSION }} # zizmor: ignore[unpinned-tools]
       - name: Every chart pin is watched
         run: ./scripts/check-renovate-coverage.py
 
